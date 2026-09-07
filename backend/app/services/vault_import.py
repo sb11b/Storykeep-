@@ -19,6 +19,7 @@ from app.services.vault_paths import (
 )
 
 VAULT_FEED_URL = "https://storykeep.local/obsidian-vault"
+MAX_VAULT_ZIP_BYTES = 100 * 1024 * 1024
 MAX_NOTE_BYTES = 1_500_000
 
 

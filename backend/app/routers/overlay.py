@@ -12,7 +12,7 @@ from app.routers.articles import _owned_article
 from app.schemas import CorrectionIn, CorrectionOut, OverlayAdditionIn, OverlayAdditionOut, VaultImportOut
 from app.services import changelog
 from app.services.overlay_pack import build_obsidian_pack
-from app.services.vault_import import import_obsidian_zip
+from app.services.vault_import import MAX_VAULT_ZIP_BYTES, import_obsidian_zip
 
 router = APIRouter(tags=["overlay"])
 
@@ -24,8 +24,8 @@ async def import_obsidian_vault(
     user: User = Depends(get_current_user),
 ) -> VaultImportOut:
     payload = await file.read()
-    if len(payload) > 80 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Zip is larger than 80 MB.")
+    if len(payload) > MAX_VAULT_ZIP_BYTES:
+        raise HTTPException(status_code=400, detail="Zip is larger than 100 MB.")
     try:
         result = import_obsidian_zip(db, user, payload)
     except ValueError as exc:
