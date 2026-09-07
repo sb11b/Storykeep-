@@ -6,6 +6,7 @@ import {
   Archive,
   Bookmark,
   BookmarkCheck,
+  Check,
   CheckCheck,
   Inbox,
   LoaderCircle,
@@ -22,7 +23,6 @@ import { toast } from "sonner";
 import { ListenControls } from "@/components/listen-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -372,13 +372,18 @@ export function LibraryApp({ user }: { user: User }) {
               {shelf.kind !== "notes" && items.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Checkbox
-                      checked={allVisibleSelected}
-                      onCheckedChange={(checked) => {
-                        setSelectedIds(checked ? visibleIds : []);
-                      }}
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex size-5 items-center justify-center rounded-[5px] border border-foreground/40 bg-background",
+                        allVisibleSelected && "border-primary bg-primary text-primary-foreground",
+                      )}
+                      aria-pressed={allVisibleSelected}
                       aria-label="Select all articles"
-                    />
+                      onClick={() => setSelectedIds(allVisibleSelected ? [] : visibleIds)}
+                    >
+                      {allVisibleSelected ? <Check className="size-3.5" /> : someVisibleSelected ? <span className="block h-0.5 w-2.5 bg-foreground/70" /> : null}
+                    </button>
                     Select all
                   </label>
                   {someVisibleSelected ? (
@@ -757,13 +762,22 @@ function ArticleRow({
         !item.is_read && "bg-primary/4",
       )}
     >
-      <Checkbox
-        className="mt-1"
-        checked={selected}
+      <button
+        type="button"
+        className={cn(
+          "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-[5px] border border-foreground/40 bg-background",
+          selected && "border-primary bg-primary text-primary-foreground",
+        )}
+        aria-pressed={selected}
         aria-label={`Select ${item.title}`}
-        onClick={(event) => event.stopPropagation()}
-        onCheckedChange={() => onToggleSelect()}
-      />
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleSelect();
+        }}
+      >
+        {selected ? <Check className="size-3.5" /> : null}
+      </button>
       <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
           <span className="truncate">{item.feed_title || "Feed"}</span>
