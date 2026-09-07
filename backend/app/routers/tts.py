@@ -42,11 +42,14 @@ def speak_article(
     if chunk >= len(chunks):
         raise HTTPException(status_code=400, detail="That speech part does not exist.")
     offset = sum(tts_service.word_count(part) for part in chunks[:chunk])
-    timed = tts_service.synthesize_timed(chunks[chunk], voice_id)
+    timed = tts_service.synthesize_timed(
+        chunks[chunk], voice_id, article_id=article.id, chunk_index=chunk
+    )
     return {
         "chunk": chunk,
         "chunks": len(chunks),
         "word_offset": offset,
+        "chunk_word_counts": [tts_service.word_count(part) for part in chunks],
         "duration": timed.get("duration"),
         "content_type": timed.get("content_type") or "audio/mpeg",
         "audio": base64.b64encode(timed["audio"]).decode("ascii"),

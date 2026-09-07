@@ -136,6 +136,18 @@ export type TtsStatus = {
   voices: TtsVoice[];
 };
 
+export type FeedCandidate = {
+  url: string;
+  title: string | null;
+  kind: string | null;
+};
+
+export type OpmlImportResult = {
+  imported: number;
+  skipped: number;
+  errors: { url: string; detail: string }[];
+};
+
 export type Shelf =
   | { kind: "inbox" }
   | { kind: "unread" }

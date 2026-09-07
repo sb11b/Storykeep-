@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -10,8 +11,9 @@ from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models import Article, Category, Feed, User
 from app.presenters import feed_out
-from app.schemas import FeedCreate, FeedOut, FeedUpdate
+from app.schemas import DiscoverOut, FeedCandidate, FeedCreate, FeedOut, FeedUpdate, OpmlImportOut
 from app.services import changelog, rss
+from app.services import opml as opml_service
 
 router = APIRouter(tags=["feeds"])
 
@@ -59,22 +61,23 @@ def list_feeds(
     return [feed_out(feed, *_counts(db, feed.id)) for feed in feeds]
 
 
-@router.post("/feeds", response_model=FeedOut, status_code=201)
-def create_feed(
-    payload: FeedCreate,
-    background: BackgroundTasks,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> FeedOut:
-    url = str(payload.url)
+def _subscribe(
+    db: Session,
+    user: User,
+    url: str,
+    *,
+    title: str | None = None,
+    category_id: UUID | None = None,
+    background: BackgroundTasks | None = None,
+) -> tuple[Feed, bool]:
     existing = db.scalar(select(Feed).where(Feed.user_id == user.id, Feed.url == url))
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Feed already added")
-    if payload.category_id:
-        category = db.get(Category, payload.category_id)
+        return existing, False
+    if category_id:
+        category = db.get(Category, category_id)
         if not category or category.user_id != user.id:
             raise HTTPException(status_code=404, detail="Category not found")
-    feed = Feed(user_id=user.id, url=url, title=url, category_id=payload.category_id)
+    feed = Feed(user_id=user.id, url=url, title=title or url, category_id=category_id)
     db.add(feed)
     db.flush()
     changelog.record(db, user.id, "feed", feed.id, "upsert", {"url": url})
@@ -84,8 +87,90 @@ def create_feed(
         feed.last_error = str(exc)[:500]
         db.add(feed)
         db.commit()
-    background.add_task(_refresh_later, feed.id)
+    if background is not None:
+        background.add_task(_refresh_later, feed.id)
     db.refresh(feed)
+    return feed, True
+
+
+@router.get("/feeds/opml")
+def export_opml(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> Response:
+    feeds = [
+        feed
+        for feed in db.scalars(select(Feed).where(Feed.user_id == user.id).order_by(Feed.title.asc().nulls_last())).all()
+        if feed.url != "https://storykeep.local/saved-pages"
+    ]
+    xml = opml_service.build_opml(feeds)
+    return Response(
+        content=xml,
+        media_type="text/xml; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="storykeep.opml"'},
+    )
+
+
+@router.post("/feeds/import-opml", response_model=OpmlImportOut)
+async def import_opml(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> OpmlImportOut:
+    raw = (await file.read()).decode("utf-8", errors="replace")
+    try:
+        outlines = opml_service.parse_opml(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    imported = 0
+    skipped = 0
+    errors: list[dict[str, str]] = []
+    for outline in outlines:
+        url = outline.get("url") or ""
+        try:
+            _, created = _subscribe(db, user, url, title=outline.get("title"), background=background)
+        except Exception as exc:
+            errors.append({"url": url, "detail": str(exc)[:300]})
+            continue
+        if created:
+            imported += 1
+        else:
+            skipped += 1
+    return OpmlImportOut(imported=imported, skipped=skipped, errors=errors)
+
+
+@router.get("/feeds/discover", response_model=DiscoverOut)
+def discover_feeds(
+    url: str = Query(min_length=3),
+    user: User = Depends(get_current_user),
+) -> DiscoverOut:
+    _ = user
+    try:
+        candidates = rss.discover_feeds(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DiscoverOut(
+        queried_url=url,
+        candidates=[FeedCandidate(**row) for row in candidates],
+    )
+
+
+@router.post("/feeds", response_model=FeedOut, status_code=201)
+def create_feed(
+    payload: FeedCreate,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FeedOut:
+    url = str(payload.url)
+    feed, created = _subscribe(
+        db,
+        user,
+        url,
+        title=payload.title,
+        category_id=payload.category_id,
+        background=background,
+    )
+    if not created:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Feed already added")
     return feed_out(feed, *_counts(db, feed.id))
 
 

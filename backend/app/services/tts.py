@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import logging
 import re
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
@@ -126,9 +129,63 @@ def words_from_timestamps(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return words
 
 
-def synthesize_timed(text: str, voice_id: str, language: str = "en") -> dict[str, Any]:
-    key = require_key()
+def cache_key(article_id: UUID | str, voice_id: str, chunk_index: int, text: str) -> str:
+    payload = f"{article_id}|{voice_id}|{chunk_index}|{text}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def load_cached_speech(key: str) -> dict[str, Any] | None:
+    path = settings.tts_dir / f"{key}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        audio_b64 = data.get("audio_b64")
+        if not audio_b64:
+            return None
+        return {
+            "audio": base64.b64decode(audio_b64),
+            "content_type": data.get("content_type") or "audio/mpeg",
+            "duration": data.get("duration"),
+            "words": data.get("words") or [],
+        }
+    except Exception:
+        return None
+
+
+def store_cached_speech(key: str, timed: dict[str, Any]) -> None:
+    path = settings.tts_dir / f"{key}.json"
+    try:
+        path.write_text(
+            json.dumps(
+                {
+                    "audio_b64": base64.b64encode(timed["audio"]).decode("ascii"),
+                    "content_type": timed.get("content_type") or "audio/mpeg",
+                    "duration": timed.get("duration"),
+                    "words": timed.get("words") or [],
+                }
+            ),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.info("tts cache write failed: %s", exc)
+
+
+def synthesize_timed(
+    text: str,
+    voice_id: str,
+    language: str = "en",
+    *,
+    article_id: UUID | str | None = None,
+    chunk_index: int = 0,
+) -> dict[str, Any]:
     voice = (voice_id or "eve").strip().lower() or "eve"
+    if article_id is not None:
+        key = cache_key(article_id, voice, chunk_index, text)
+        cached = load_cached_speech(key)
+        if cached:
+            return cached
+    key_token = require_key()
     payload = {
         "text": text,
         "voice_id": voice,
@@ -142,7 +199,7 @@ def synthesize_timed(text: str, voice_id: str, language: str = "en") -> dict[str
             response = client.post(
                 XAI_TTS_URL,
                 headers={
-                    "Authorization": f"Bearer {key}",
+                    "Authorization": f"Bearer {key_token}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
@@ -169,17 +226,23 @@ def synthesize_timed(text: str, voice_id: str, language: str = "en") -> dict[str
             audio = base64.b64decode(raw)
         except Exception as exc:
             raise HTTPException(status_code=502, detail="xAI audio could not be decoded.") from exc
-        return {
+        timed = {
             "audio": audio,
             "content_type": data.get("content_type") or "audio/mpeg",
             "duration": data.get("duration"),
             "words": words_from_timestamps(data),
         }
+        if article_id is not None:
+            store_cached_speech(cache_key(article_id, voice, chunk_index, text), timed)
+        return timed
 
     audio = response.content
     if not audio:
         raise HTTPException(status_code=502, detail="xAI returned empty audio.")
-    return {"audio": audio, "content_type": "audio/mpeg", "duration": None, "words": []}
+    timed = {"audio": audio, "content_type": "audio/mpeg", "duration": None, "words": []}
+    if article_id is not None:
+        store_cached_speech(cache_key(article_id, voice, chunk_index, text), timed)
+    return timed
 
 
 def synthesize(text: str, voice_id: str, language: str = "en") -> bytes:

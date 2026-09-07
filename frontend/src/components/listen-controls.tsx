@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,11 @@ import type { TtsStatus, TtsWord } from "@/lib/types";
 
 const SPEED_KEY = "storykeep-tts-speed";
 const SPEEDS = [0.7, 0.8, 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5, 2.8, 3] as const;
+
+export type ListenControlsHandle = {
+  togglePlay: () => void;
+  playFromWord: (wordIndex: number) => void;
+};
 
 function formatSpeed(rate: number): string {
   return `${rate.toFixed(1)}×`;
@@ -22,6 +27,31 @@ function readStoredSpeed(): number {
   return SPEEDS.includes(value as (typeof SPEEDS)[number]) ? value : 1;
 }
 
+function resumeKey(articleId: string) {
+  return `storykeep-tts-resume:${articleId}`;
+}
+
+function readResume(articleId: string): number | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(resumeKey(articleId));
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw) as { wordIndex?: number };
+    return typeof data.wordIndex === "number" ? data.wordIndex : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeResume(articleId: string, wordIndex: number | null) {
+  if (typeof window === "undefined") return;
+  if (wordIndex == null) {
+    window.localStorage.removeItem(resumeKey(articleId));
+    return;
+  }
+  window.localStorage.setItem(resumeKey(articleId), JSON.stringify({ wordIndex }));
+}
+
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   audio.playbackRate = rate;
   audio.defaultPlaybackRate = rate;
@@ -30,15 +60,26 @@ function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   }
 }
 
-export function ListenControls({
-  articleId,
-  hasText,
-  onCue,
-}: {
-  articleId: string;
-  hasText: boolean;
-  onCue?: (wordIndex: number | null) => void;
-}) {
+function chunkForWord(counts: number[], wordIndex: number) {
+  if (!counts.length) return { chunk: 0, local: 0 };
+  let acc = 0;
+  for (let i = 0; i < counts.length; i += 1) {
+    const next = acc + counts[i];
+    if (wordIndex < next) return { chunk: i, local: Math.max(0, wordIndex - acc) };
+    acc = next;
+  }
+  return { chunk: counts.length - 1, local: Math.max(0, counts[counts.length - 1] - 1) };
+}
+
+export const ListenControls = forwardRef<
+  ListenControlsHandle,
+  {
+    articleId: string;
+    hasText: boolean;
+    onCue?: (wordIndex: number | null) => void;
+    getCaretWord?: () => number | null;
+  }
+>(function ListenControls({ articleId, hasText, onCue, getCaretWord }, ref) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const generationRef = useRef(0);
@@ -46,13 +87,24 @@ export function ListenControls({
   const wordOffsetRef = useRef(0);
   const cueRafRef = useRef<number | null>(null);
   const lastCueRef = useRef<number | null>(null);
+  const seekLocalRef = useRef<number | null>(null);
   const [status, setStatus] = useState<TtsStatus | null>(null);
   const [voiceId, setVoiceId] = useState("eve");
   const [speed, setSpeed] = useState(1);
   const speedRef = useRef(1);
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
+  const phaseRef = useRef(phase);
   const [chunk, setChunk] = useState(0);
   const [chunks, setChunks] = useState(1);
+  const voiceRef = useRef(voiceId);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  useEffect(() => {
+    voiceRef.current = voiceId;
+  }, [voiceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +143,10 @@ export function ListenControls({
     [onCue],
   );
 
+  const persistCue = useCallback(() => {
+    writeResume(articleId, lastCueRef.current);
+  }, [articleId]);
+
   const startCueLoop = useCallback(() => {
     stopCueLoop();
     const tick = () => {
@@ -117,27 +173,32 @@ export function ListenControls({
     cueRafRef.current = requestAnimationFrame(tick);
   }, [emitCue, stopCueLoop]);
 
-  const stop = useCallback(() => {
-    generationRef.current += 1;
-    stopCueLoop();
-    lastCueRef.current = null;
-    emitCue(null);
-    const audio = audioRef.current;
-    if (audio) {
-      audio.onended = null;
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-    }
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-    wordsRef.current = [];
-    setPhase("idle");
-    setChunk(0);
-    setChunks(1);
-  }, [emitCue, stopCueLoop]);
+  const stop = useCallback(
+    (clearResume = false) => {
+      generationRef.current += 1;
+      stopCueLoop();
+      if (clearResume) writeResume(articleId, null);
+      else persistCue();
+      lastCueRef.current = null;
+      emitCue(null);
+      const audio = audioRef.current;
+      if (audio) {
+        audio.onended = null;
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      wordsRef.current = [];
+      setPhase("idle");
+      setChunk(0);
+      setChunks(1);
+    },
+    [articleId, emitCue, persistCue, stopCueLoop],
+  );
 
   useEffect(() => {
     generationRef.current += 1;
@@ -148,6 +209,7 @@ export function ListenControls({
     applyPlaybackRate(audio, speedRef.current);
     audioRef.current = audio;
     return () => {
+      persistCue();
       audio.pause();
       audio.onended = null;
       audioRef.current = null;
@@ -158,15 +220,19 @@ export function ListenControls({
       }
       onCue?.(null);
     };
-  }, [articleId]);
+  }, [articleId, persistCue]);
 
   const playChunk = useCallback(
-    async (index: number, voice: string) => {
+    async (index: number, voice: string, seekLocal: number | null = null) => {
       const generation = generationRef.current + 1;
       generationRef.current = generation;
       setPhase("loading");
       try {
-        const { blob, chunks: total, words, wordOffset } = await api.articleSpeech(articleId, voice, index);
+        const { blob, chunks: total, words, wordOffset, chunkWordCounts } = await api.articleSpeech(
+          articleId,
+          voice,
+          index,
+        );
         if (generation !== generationRef.current) return;
         setChunks(total);
         setChunk(index);
@@ -180,25 +246,97 @@ export function ListenControls({
         audio.onended = () => {
           if (generation !== generationRef.current) return;
           if (index + 1 < total) {
-            void playChunk(index + 1, voice);
+            void playChunk(index + 1, voice, null);
           } else {
-            stop();
+            stop(true);
           }
         };
         audio.src = url;
         applyPlaybackRate(audio, speedRef.current);
+        const local = seekLocal ?? seekLocalRef.current;
+        seekLocalRef.current = null;
+        const applySeek = () => {
+          if (local != null && words[local]) {
+            audio.currentTime = words[local].start;
+          }
+        };
+        audio.onloadedmetadata = applySeek;
         await audio.play();
+        applySeek();
         applyPlaybackRate(audio, speedRef.current);
         if (generation !== generationRef.current) return;
         startCueLoop();
         setPhase("playing");
+        if (chunkWordCounts.length && lastCueRef.current == null && local != null) {
+          lastCueRef.current = wordOffset + local;
+          emitCue(lastCueRef.current);
+        }
       } catch (err) {
         if (generation !== generationRef.current) return;
         stop();
         toast.error(err instanceof ApiError ? err.message : "Could not start speech");
       }
     },
-    [articleId, startCueLoop, stop],
+    [articleId, emitCue, startCueLoop, stop],
+  );
+
+  const startAtWord = useCallback(
+    async (wordIndex: number | null) => {
+      if (!hasText) {
+        toast.error("Extract the full text first, then listen.");
+        return;
+      }
+      const voice = voiceRef.current;
+      let startWord = wordIndex;
+      if (startWord == null) startWord = readResume(articleId);
+      if (startWord == null) {
+        void playChunk(0, voice, null);
+        return;
+      }
+      const first = await api.articleSpeech(articleId, voice, 0);
+      const counts = first.chunkWordCounts.length
+        ? first.chunkWordCounts
+        : [first.words.length || 1];
+      const { chunk: target, local } = chunkForWord(counts, startWord);
+      void playChunk(target, voice, local);
+    },
+    [articleId, hasText, playChunk],
+  );
+
+  const togglePlay = useCallback(() => {
+    if (!hasText) {
+      toast.error("Extract the full text first, then listen.");
+      return;
+    }
+    if (phaseRef.current === "playing") {
+      audioRef.current?.pause();
+      stopCueLoop();
+      persistCue();
+      setPhase("paused");
+      return;
+    }
+    if (phaseRef.current === "paused") {
+      const audio = audioRef.current;
+      if (audio) applyPlaybackRate(audio, speedRef.current);
+      void audio?.play().then(() => {
+        startCueLoop();
+        setPhase("playing");
+      });
+      return;
+    }
+    if (phaseRef.current === "loading") return;
+    void startAtWord(null);
+  }, [hasText, persistCue, startAtWord, startCueLoop, stopCueLoop]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      togglePlay,
+      playFromWord: (wordIndex: number) => {
+        void startAtWord(wordIndex);
+      },
+    }),
+    [startAtWord, togglePlay],
   );
 
   return (
@@ -208,11 +346,7 @@ export function ListenControls({
           size="sm"
           variant="outline"
           onClick={() => {
-            if (!hasText) {
-              toast.error("Extract the full text first, then listen.");
-              return;
-            }
-            void playChunk(0, voiceId);
+            void startAtWord(null);
           }}
         >
           <Volume2 className="size-3.5" />
@@ -226,52 +360,72 @@ export function ListenControls({
         </Button>
       ) : null}
       {phase === "playing" ? (
-        <Button size="sm" variant="outline" onClick={() => {
-          audioRef.current?.pause();
-          stopCueLoop();
-          setPhase("paused");
-        }}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            audioRef.current?.pause();
+            stopCueLoop();
+            persistCue();
+            setPhase("paused");
+          }}
+        >
           <Pause className="size-3.5" />
           Pause
         </Button>
       ) : null}
       {phase === "paused" ? (
-        <Button size="sm" variant="outline" onClick={() => {
-          const audio = audioRef.current;
-          if (audio) applyPlaybackRate(audio, speedRef.current);
-          void audio?.play().then(() => {
-            startCueLoop();
-            setPhase("playing");
-          });
-        }}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            const audio = audioRef.current;
+            if (audio) applyPlaybackRate(audio, speedRef.current);
+            void audio?.play().then(() => {
+              startCueLoop();
+              setPhase("playing");
+            });
+          }}
+        >
           <Volume2 className="size-3.5" />
           Resume
         </Button>
       ) : null}
       {phase !== "idle" && phase !== "loading" ? (
-        <Button size="sm" variant="ghost" onClick={stop}>
+        <Button size="sm" variant="ghost" onClick={() => stop()}>
           <Square className="size-3" />
           Stop
         </Button>
       ) : null}
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          const word = getCaretWord?.();
+          if (word == null) {
+            toast.message("Click a word in the article, then listen from there.");
+            return;
+          }
+          void startAtWord(word);
+        }}
+      >
+        From caret
+      </Button>
       <label className="sr-only" htmlFor={`voice-${articleId}`}>
         Voice
       </label>
       <select
         id={`voice-${articleId}`}
-        className={cn(
-          "h-7 rounded-md border border-border bg-background px-2 text-[0.8rem]",
-          phase !== "idle" && "opacity-70",
-        )}
+        className={cn("h-7 rounded-md border border-border bg-background px-2 text-[0.8rem]", phase !== "idle" && "opacity-70")}
         value={voiceId}
         disabled={phase === "loading"}
         onChange={(event) => {
           const next = event.target.value;
           setVoiceId(next);
-          if (phase !== "idle") void playChunk(0, next);
+          if (phase !== "idle") void playChunk(0, next, null);
         }}
       >
-        {(status?.voices.length ? status.voices : [{ voice_id: "eve", name: "Eve" }]).map((voice) => (
+        {(status?.voices.length ? status.voices : [{ voice_id: "eve", name: "Eve" }]).map((voice: { voice_id: string; name: string }) => (
           <option key={voice.voice_id} value={voice.voice_id}>
             {voice.name}
           </option>
@@ -307,4 +461,4 @@ export function ListenControls({
       ) : null}
     </div>
   );
-}
+});

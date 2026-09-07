@@ -20,6 +20,7 @@ from app.schemas import (
     ArticlePatch,
     MarkReadIn,
     Page,
+    SaveUrlIn,
     TagIdsIn,
     TagIn,
     TagOut,
@@ -28,6 +29,25 @@ from app.services import archive as archive_service
 from app.services import changelog, extractor
 
 router = APIRouter(tags=["articles"])
+
+SAVED_PAGES_URL = "https://storykeep.local/saved-pages"
+
+
+def _saved_pages_feed(db: Session, user: User) -> Feed:
+    feed = db.scalar(select(Feed).where(Feed.user_id == user.id, Feed.url == SAVED_PAGES_URL))
+    if feed:
+        return feed
+    feed = Feed(
+        user_id=user.id,
+        url=SAVED_PAGES_URL,
+        title="Saved pages",
+        site_url=None,
+        is_active=False,
+    )
+    db.add(feed)
+    db.flush()
+    changelog.record(db, user.id, "feed", feed.id, "upsert", {"url": SAVED_PAGES_URL})
+    return feed
 
 
 def _owned_article(db: Session, user: User, article_id: UUID) -> Article:
@@ -84,10 +104,24 @@ def list_articles(
     if since:
         stmt = stmt.where(Article.updated_at >= since)
     if q:
+        tsquery = func.plainto_tsquery("english", q)
+        note_hit = (
+            select(Annotation.id)
+            .where(
+                Annotation.article_id == Article.id,
+                Annotation.user_id == user.id,
+                or_(
+                    func.to_tsvector("english", func.coalesce(Annotation.body, "")).bool_op("@@")(tsquery),
+                    Annotation.body.ilike(f"%{q}%"),
+                ),
+            )
+            .exists()
+        )
         stmt = stmt.where(
             or_(
-                Article.search_vector.bool_op("@@")(func.plainto_tsquery("english", q)),
+                Article.search_vector.bool_op("@@")(tsquery),
                 Article.title.ilike(f"%{q}%"),
+                note_hit,
             )
         )
     if sort == "published_asc":
@@ -100,6 +134,47 @@ def list_articles(
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = db.scalars(stmt.offset(offset).limit(limit)).unique().all()
     return Page(items=[article_list_item(article) for article in items], total=total, limit=limit, offset=offset)
+
+
+@router.post("/articles/from-url", response_model=ArticleOut, status_code=201)
+def save_url(
+    payload: SaveUrlIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> ArticleOut:
+    url = str(payload.url)
+    feed = _saved_pages_feed(db, user)
+    existing = db.scalar(select(Article).where(Article.feed_id == feed.id, Article.guid == url[:2000]))
+    now = datetime.now(timezone.utc)
+    html, text, title = extractor.extract_page(url)
+    if existing:
+        article = existing
+        if html:
+            article.content_html = html
+        if text:
+            article.content_text = text
+        if title:
+            article.title = title[:500]
+        article.fetched_at = now
+        article.is_saved = True
+        article.saved_at = article.saved_at or now
+    else:
+        article = Article(
+            feed_id=feed.id,
+            guid=url[:2000],
+            url=url[:4000],
+            title=(title or url)[:500],
+            content_html=html,
+            content_text=text,
+            published_at=now,
+            fetched_at=now if html or text else None,
+            is_saved=True,
+            saved_at=now,
+        )
+        db.add(article)
+        db.flush()
+    archive_service.snapshot_article(db, article, "html")
+    changelog.record(db, user.id, "article", article.id, "upsert", {"url": url, "saved_page": True})
+    db.commit()
+    return article_out(_owned_article(db, user, article.id))
 
 
 @router.get("/articles/{article_id}", response_model=ArticleOut)

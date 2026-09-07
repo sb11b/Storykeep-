@@ -61,3 +61,16 @@ export function wrapPlainWords(text: string, startIndex: number): string {
   const escaped = escapeHtml(text).replace(/\n/g, "<br/>");
   return wrapHtmlWords(`<p>${escaped}</p>`, startIndex);
 }
+
+export function wordIndexFromCaret(root: HTMLElement | null): number | null {
+  if (!root || typeof window === "undefined") return null;
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const node = selection.focusNode;
+  if (!node || !root.contains(node)) return null;
+  const start = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const word = start?.closest?.("[data-tts-word]");
+  if (!(word instanceof HTMLElement)) return null;
+  const index = Number(word.dataset.ttsWord);
+  return Number.isFinite(index) ? index : null;
+}

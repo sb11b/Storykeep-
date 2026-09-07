@@ -1,7 +1,8 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -18,6 +19,7 @@ from app.schemas import (
     SearchHit,
     StatsOut,
     TagIn,
+    TagMergeIn,
     TagOut,
 )
 from app.services import changelog
@@ -83,8 +85,15 @@ def delete_category(
 
 
 @router.get("/tags", response_model=list[TagOut])
-def list_tags(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[TagOut]:
-    tags = db.scalars(select(Tag).where(Tag.user_id == user.id).order_by(Tag.name)).all()
+def list_tags(
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[TagOut]:
+    stmt = select(Tag).where(Tag.user_id == user.id).order_by(Tag.name)
+    if q and q.strip():
+        stmt = stmt.where(Tag.name.ilike(f"%{q.strip()}%"))
+    tags = db.scalars(stmt).all()
     out: list[TagOut] = []
     for tag in tags:
         count = db.scalar(
@@ -115,12 +124,48 @@ def update_tag(
     tag = db.get(Tag, tag_id)
     if not tag or tag.user_id != user.id:
         raise HTTPException(status_code=404, detail="Tag not found")
+    clash = db.scalar(
+        select(Tag).where(
+            Tag.user_id == user.id,
+            func.lower(Tag.name) == payload.name.strip().lower(),
+            Tag.id != tag.id,
+        )
+    )
+    if clash:
+        raise HTTPException(status_code=409, detail="Another tag already has that name. Merge them instead.")
     tag.name = payload.name.strip()
     tag.color = payload.color
     db.add(tag)
     db.commit()
     db.refresh(tag)
-    return TagOut(id=tag.id, name=tag.name, color=tag.color, article_count=0)
+    count = db.scalar(select(func.count()).select_from(Article).join(Article.tags).where(Tag.id == tag.id)) or 0
+    return TagOut(id=tag.id, name=tag.name, color=tag.color, article_count=count)
+
+
+@router.post("/tags/{tag_id}/merge", response_model=TagOut)
+def merge_tag(
+    tag_id: UUID, payload: TagMergeIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> TagOut:
+    source = db.scalar(select(Tag).options(selectinload(Tag.articles)).where(Tag.id == tag_id, Tag.user_id == user.id))
+    dest = db.get(Tag, payload.into_tag_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if not dest or dest.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Target tag not found")
+    if source.id == dest.id:
+        raise HTTPException(status_code=400, detail="Pick a different tag to merge into.")
+    for article in list(source.articles):
+        if dest not in article.tags:
+            article.tags.append(dest)
+        if source in article.tags:
+            article.tags.remove(source)
+        db.add(article)
+    changelog.record(db, user.id, "tag", dest.id, "upsert", {"merged_from": str(source.id)})
+    db.delete(source)
+    db.commit()
+    db.refresh(dest)
+    count = db.scalar(select(func.count()).select_from(Article).join(Article.tags).where(Tag.id == dest.id)) or 0
+    return TagOut(id=dest.id, name=dest.name, color=dest.color, article_count=count)
 
 
 @router.delete("/tags/{tag_id}")
@@ -153,6 +198,7 @@ def update_note(
         raise HTTPException(status_code=404, detail="Note not found")
     note.body = payload.body
     note.quote = payload.quote
+    note.updated_at = datetime.now(timezone.utc)
     changelog.record(db, user.id, "annotation", note.id, "upsert", {"body": note.body})
     db.add(note)
     db.commit()
@@ -199,18 +245,40 @@ def search(
 ) -> Page[SearchHit]:
     tsquery = func.plainto_tsquery("english", q)
     rank = func.ts_rank_cd(Article.search_vector, tsquery)
+    note_body = (
+        select(func.string_agg(Annotation.body, " "))
+        .where(Annotation.article_id == Article.id, Annotation.user_id == user.id)
+        .correlate(Article)
+        .scalar_subquery()
+    )
     headline = func.ts_headline(
         "english",
-        func.coalesce(Article.content_text, Article.summary, Article.title),
+        func.concat(
+            func.coalesce(Article.content_text, Article.summary, Article.title, ""),
+            " ",
+            func.coalesce(note_body, ""),
+        ),
         tsquery,
         "StartSel=<mark>, StopSel=</mark>, MaxWords=32, MinWords=12",
+    )
+    note_hit = exists(
+        select(Annotation.id).where(
+            Annotation.article_id == Article.id,
+            Annotation.user_id == user.id,
+            or_(
+                func.to_tsvector("english", func.coalesce(Annotation.body, "")).bool_op("@@")(tsquery),
+                Annotation.body.ilike(f"%{q}%"),
+            ),
+        )
     )
     stmt = (
         select(Article, rank, headline)
         .join(Feed)
         .where(Feed.user_id == user.id)
         .where(
-            Article.search_vector.bool_op("@@")(tsquery) | Article.title.ilike(f"%{q}%")
+            Article.search_vector.bool_op("@@")(tsquery)
+            | Article.title.ilike(f"%{q}%")
+            | note_hit
         )
         .options(selectinload(Article.feed), selectinload(Article.tags))
         .order_by(rank.desc(), Article.published_at.desc().nulls_last())

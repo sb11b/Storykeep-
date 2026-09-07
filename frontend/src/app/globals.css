@@ -160,7 +160,17 @@
   border-radius: 0.2em;
   transition: background-color 80ms ease, box-shadow 80ms ease;
 }
-.tts-word-active {
-  background: oklch(0.9 0.08 85);
-  box-shadow: 0 0 0 2px oklch(0.9 0.08 85);
+.note-md p,
+.note-md li {
+  margin-bottom: 0.4em;
+}
+.note-md a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.note-md code {
+  font-size: 0.85em;
+  background: var(--muted);
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
 }

@@ -78,5 +78,11 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    @property
+    def tts_dir(self) -> Path:
+        path = self.data_dir / "tts"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
 
 settings = Settings()

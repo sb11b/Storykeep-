@@ -58,6 +58,25 @@ def _strip_tags(html: str) -> str:
         return html
 
 
+def extract_page(url: str) -> tuple[str | None, str | None, str | None]:
+    html, text = extract_url(url)
+    title = None
+    source = html or ""
+    if source:
+        try:
+            from lxml import html as lxml_html
+
+            tree = lxml_html.fromstring(source)
+            heading = tree.find(".//h1")
+            if heading is not None:
+                title = (heading.text_content() or "").strip()[:500] or None
+        except Exception:
+            title = None
+    if not title:
+        title = (url.rstrip("/").rsplit("/", 1)[-1] or url)[:500]
+    return html, text, title
+
+
 def fill_article(db: Session, article: Article, force: bool = False) -> Article:
     if article.content_text and not force:
         return article

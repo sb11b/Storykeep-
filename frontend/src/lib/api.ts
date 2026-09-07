@@ -4,6 +4,8 @@ import type {
   Backup,
   Category,
   Feed,
+  FeedCandidate,
+  OpmlImportResult,
   Page,
   SearchHit,
   Stats,
@@ -61,10 +63,63 @@ export const api = {
   logout: () => request<{ ok: boolean }>("/api/v1/auth/logout", { method: "POST" }),
   stats: () => request<Stats>("/api/v1/stats"),
   feeds: () => request<Feed[]>("/api/v1/feeds"),
-  addFeed: (url: string, category_id?: string | null) =>
+  addFeed: (url: string, category_id?: string | null, title?: string | null) =>
     request<Feed>("/api/v1/feeds", {
       method: "POST",
-      body: JSON.stringify({ url, category_id: category_id || null }),
+      body: JSON.stringify({ url, category_id: category_id || null, title: title || null }),
+    }),
+  discoverFeeds: (url: string) =>
+    request<{ queried_url: string; candidates: FeedCandidate[] }>(
+      `/api/v1/feeds/discover?url=${encodeURIComponent(url)}`,
+    ),
+  importOpml: async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("/api/v1/feeds/import-opml", {
+      method: "POST",
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return (await response.json()) as OpmlImportResult;
+  },
+  exportOpml: async () => {
+    const response = await fetch("/api/v1/feeds/opml", { credentials: "include", cache: "no-store" });
+    if (!response.ok) throw new ApiError(response.status, "Could not export OPML");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "storykeep.opml";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  },
+  saveUrl: (url: string) =>
+    request<Article>("/api/v1/articles/from-url", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+  renameTag: (id: string, name: string) =>
+    request<Tag>(`/api/v1/tags/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  mergeTag: (id: string, into_tag_id: string) =>
+    request<Tag>(`/api/v1/tags/${id}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ into_tag_id }),
     }),
   refreshFeed: (id: string) =>
     request<Feed>(`/api/v1/feeds/${id}/refresh`, { method: "POST" }),
@@ -151,6 +206,7 @@ export const api = {
       content_type?: string;
       chunks: number;
       word_offset?: number;
+      chunk_word_counts?: number[];
       duration?: number | null;
       words?: TtsWord[];
     };
@@ -161,6 +217,7 @@ export const api = {
       blob,
       chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1,
       wordOffset: Number(data.word_offset || 0),
+      chunkWordCounts: Array.isArray(data.chunk_word_counts) ? data.chunk_word_counts : [],
       duration: data.duration ?? null,
       words: Array.isArray(data.words) ? data.words : [],
     };

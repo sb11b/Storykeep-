@@ -61,7 +61,33 @@ class CategoryOut(BaseModel):
 
 class FeedCreate(BaseModel):
     url: HttpUrl
+    title: str | None = None
     category_id: uuid.UUID | None = None
+
+
+class FeedCandidate(BaseModel):
+    url: str
+    title: str | None = None
+    kind: str | None = None
+
+
+class DiscoverOut(BaseModel):
+    queried_url: str
+    candidates: list[FeedCandidate]
+
+
+class OpmlImportOut(BaseModel):
+    imported: int
+    skipped: int
+    errors: list[dict[str, str]]
+
+
+class SaveUrlIn(BaseModel):
+    url: HttpUrl
+
+
+class TagMergeIn(BaseModel):
+    into_tag_id: uuid.UUID
 
 
 class FeedUpdate(BaseModel):

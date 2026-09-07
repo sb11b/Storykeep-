@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from time import mktime
 from typing import Any
+from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
 import feedparser
@@ -61,6 +63,114 @@ def _entry_html(entry: Any) -> str | None:
         if content.get("value"):
             return content["value"]
     return entry.get("summary")
+
+
+COMMON_FEED_PATHS = (
+    "/feed",
+    "/rss",
+    "/rss.xml",
+    "/atom.xml",
+    "/feed.xml",
+    "/index.xml",
+    "/feeds/posts/default",
+)
+
+
+def _looks_like_feed(parsed: Any) -> bool:
+    if parsed is None:
+        return False
+    if parsed.entries:
+        return True
+    feed = parsed.feed or {}
+    if feed.get("title") and (feed.get("link") or feed.get("subtitle")):
+        return True
+    version = str(getattr(parsed, "version", "") or "")
+    return bool(version)
+
+
+def discover_feeds(site_url: str) -> list[dict[str, str | None]]:
+    url = site_url.strip()
+    if not url:
+        return []
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    headers = dict(HEADERS)
+    candidates: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+
+    def add(href: str, title: str | None = None, kind: str | None = None) -> None:
+        href = href.strip()
+        if not href or href in seen:
+            return
+        seen.add(href)
+        candidates.append({"url": href, "title": title, "kind": kind})
+
+    try:
+        with httpx.Client(timeout=18.0, follow_redirects=True, headers=headers) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            body = response.content
+            final_url = str(response.url)
+            content_type = (response.headers.get("content-type") or "").lower()
+            encoding = response.encoding or "utf-8"
+    except Exception as exc:
+        logger.info("discover fetch failed %s: %s", url, exc)
+        raise ValueError(f"Could not fetch {url}") from exc
+
+    parsed = feedparser.parse(body)
+    if _looks_like_feed(parsed) and (
+        "xml" in content_type or "rss" in content_type or "atom" in content_type or parsed.entries
+    ):
+        add(final_url, parsed.feed.get("title"), "feed")
+        return candidates
+
+    html = body.decode(encoding, errors="replace")
+    for match in re.finditer(r"<link\b[^>]*>", html, re.I):
+        tag = match.group(0)
+        rel = _attr(tag, "rel").lower()
+        typ = _attr(tag, "type").lower()
+        href = _attr(tag, "href")
+        title = _attr(tag, "title") or None
+        if not href:
+            continue
+        absolute = urljoin(final_url, href)
+        if any(token in typ for token in ("rss", "atom", "xml")) or any(
+            token in rel for token in ("alternate", "feed", "rss", "atom")
+        ):
+            if "rss" in typ or "atom" in typ or "xml" in typ or "feed" in rel or "rss" in rel or "atom" in rel:
+                kind = "atom" if "atom" in typ else "rss"
+                add(absolute, title, kind)
+
+    parsed_url = urlparse(final_url)
+    origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+    extras: list[str] = []
+    for path in COMMON_FEED_PATHS:
+        extras.append(urljoin(origin + "/", path.lstrip("/")))
+    for extra in extras:
+        if extra in seen:
+            continue
+        try:
+            with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
+                probe = client.get(extra)
+                if probe.status_code >= 400:
+                    continue
+                probed = feedparser.parse(probe.content)
+                if _looks_like_feed(probed):
+                    add(str(probe.url), probed.feed.get("title"), "feed")
+        except Exception:
+            continue
+        if len(candidates) >= 8:
+            break
+
+    return candidates
+
+
+def _attr(tag: str, name: str) -> str:
+    match = re.search(rf"""{name}\s*=\s*["']([^"']+)["']""", tag, re.I)
+    if match:
+        return match.group(1).strip()
+    match = re.search(rf"""{name}\s*=\s*([^\s>]+)""", tag, re.I)
+    return match.group(1).strip() if match else ""
 
 
 def fetch_feed_document(url: str, etag: str | None = None, last_modified: str | None = None) -> tuple[Any, str | None, str | None]:

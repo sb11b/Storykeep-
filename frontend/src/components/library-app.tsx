@@ -20,7 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ListenControls } from "@/components/listen-controls";
+import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -31,7 +31,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
-import { countWords, spokenTitle, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
+import { renderMarkdown } from "@/lib/markdown";
+import { countWords, spokenTitle, wordIndexFromCaret, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
   Annotation,
   Article,
@@ -92,6 +93,11 @@ export function LibraryApp({ user }: { user: User }) {
   const [feedToRemove, setFeedToRemove] = useState<Feed | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const noteFocusRef = useRef<(() => void) | null>(null);
+  const listenRef = useRef<ListenControlsHandle>(null);
+  const caretWordRef = useRef<(() => number | null) | null>(null);
 
   const loadNav = useCallback(async () => {
     const [nextFeeds, nextCategories, nextTags, nextStats, nextNotes, nextBackups] = await Promise.all([
@@ -149,6 +155,73 @@ export function LibraryApp({ user }: { user: User }) {
       toast.error(error instanceof ApiError ? error.message : "Could not load library");
     });
   }, [loadNav]);
+
+  useEffect(() => {
+    const save = new URLSearchParams(window.location.search).get("save");
+    if (!save) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    void api
+      .saveUrl(save)
+      .then((next) => {
+        toast.success("Page extracted and snapshotted");
+        setSelectedId(next.id);
+        setShelf({ kind: "saved" });
+        void loadNav();
+      })
+      .catch((error) => {
+        toast.error(error instanceof ApiError ? error.message : "Could not save that URL");
+      });
+  }, [loadNav]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (!typing) {
+          event.preventDefault();
+          searchRef.current?.focus();
+          searchRef.current?.select();
+        }
+        return;
+      }
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "j" || event.key === "k") {
+        event.preventDefault();
+        if (!items.length) return;
+        const index = selectedId ? items.findIndex((item) => item.id === selectedId) : -1;
+        const nextIndex = event.key === "j" ? Math.min(items.length - 1, index + 1) : Math.max(0, index <= 0 ? 0 : index - 1);
+        const next = items[index < 0 ? 0 : nextIndex];
+        if (next) setSelectedId(next.id);
+        return;
+      }
+      if (event.key === "m") {
+        if (!article) return;
+        event.preventDefault();
+        void patchSelected({ is_read: !article.is_read });
+        return;
+      }
+      if (event.key === "s") {
+        if (!article) return;
+        event.preventDefault();
+        void patchSelected({ is_saved: !article.is_saved });
+        return;
+      }
+      if (event.key === "n") {
+        event.preventDefault();
+        noteFocusRef.current?.();
+        return;
+      }
+      if (event.key === "l") {
+        event.preventDefault();
+        const caret = caretWordRef.current?.();
+        if (caret != null) listenRef.current?.playFromWord(caret);
+        else listenRef.current?.togglePlay();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [article, items, selectedId]);
 
   useEffect(() => {
     void loadList();
@@ -277,6 +350,7 @@ export function LibraryApp({ user }: { user: User }) {
         setMobileNav(false);
       }}
       onAdd={() => setAddOpen(true)}
+      onManageTags={() => setTagsOpen(true)}
       onRemoveFeed={(feed) => {
         setFeedToRemove(feed);
         setMobileNav(false);
@@ -322,15 +396,17 @@ export function LibraryApp({ user }: { user: User }) {
             <div className="relative">
               <Search className="size-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
+                ref={searchRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search the archive…"
+                placeholder="Search the archive…  (/)"
                 className="pl-8 bg-card"
               />
             </div>
           </form>
           <div className="ml-auto text-xs text-muted-foreground hidden sm:block">
             {stats ? `${stats.saved_count} kept · ${stats.unread_count} unread` : ""}
+            <span className="ml-3 hidden lg:inline">j/k m s n / l</span>
           </div>
         </header>
 
@@ -420,7 +496,10 @@ export function LibraryApp({ user }: { user: User }) {
                       className="w-full text-left px-4 py-3 border-b hover:bg-accent/50"
                     >
                       <p className="text-xs text-muted-foreground">{note.article_title}</p>
-                      <p className="text-sm mt-1">{note.body}</p>
+                      <div className="text-sm mt-1 note-md line-clamp-3" dangerouslySetInnerHTML={{ __html: renderMarkdown(note.body) }} />
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {formatRelative(note.updated_at || note.created_at)}
+                      </p>
                     </button>
                   ))
                 )
@@ -458,6 +537,10 @@ export function LibraryApp({ user }: { user: User }) {
             ) : article ? (
               <Reader
                 article={article}
+                tags={tags}
+                listenRef={listenRef}
+                noteFocusRef={noteFocusRef}
+                caretWordRef={caretWordRef}
                 onBack={() => setSelectedId(null)}
                 onToggleRead={() => void patchSelected({ is_read: !article.is_read })}
                 onToggleSaved={() => void patchSelected({ is_saved: !article.is_saved })}
@@ -504,6 +587,19 @@ export function LibraryApp({ user }: { user: User }) {
         onAdded={async () => {
           await Promise.all([loadNav(), loadList()]);
         }}
+        onSavedPage={async (articleId) => {
+          setSelectedId(articleId);
+          setShelf({ kind: "saved" });
+          await Promise.all([loadNav(), loadList()]);
+        }}
+      />
+      <TagsDialog
+        open={tagsOpen}
+        tags={tags}
+        onOpenChange={setTagsOpen}
+        onChanged={async () => {
+          await Promise.all([loadNav(), loadList()]);
+        }}
       />
       <RemoveFeedDialog
         feed={feedToRemove}
@@ -533,6 +629,7 @@ function Sidebar({
   tags,
   onShelf,
   onAdd,
+  onManageTags,
   onRemoveFeed,
   onMarkFeedRead,
   onBackup,
@@ -548,6 +645,7 @@ function Sidebar({
   tags: Tag[];
   onShelf: (shelf: Shelf) => void;
   onAdd: () => void;
+  onManageTags: () => void;
   onRemoveFeed: (feed: Feed) => void;
   onMarkFeedRead: (feed: Feed) => void;
   onBackup: () => void;
@@ -564,7 +662,7 @@ function Sidebar({
       <div className="flex shrink-0 gap-2 px-3 pb-3">
         <Button size="sm" className="flex-1" onClick={onAdd}>
           <Plus className="size-3.5" />
-          Add feed
+          Add
         </Button>
         <Button size="sm" variant="secondary" onClick={onRefresh} disabled={refreshing}>
           <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
@@ -633,7 +731,13 @@ function Sidebar({
         )}
         {tags.length > 0 ? (
           <>
-            <p className="px-2 pt-5 pb-1 text-[11px] uppercase tracking-[0.14em] text-sidebar-foreground/50">Tags</p>
+            <button
+              type="button"
+              onClick={onManageTags}
+              className="px-2 pt-5 pb-1 text-[11px] uppercase tracking-[0.14em] text-sidebar-foreground/50 hover:text-sidebar-foreground"
+            >
+              Tags · rename
+            </button>
             {tags.map((tag) => (
               <NavButton
                 key={tag.id}
@@ -672,12 +776,16 @@ function FeedNavItem({
   onRemove: () => void;
   onMarkRead: () => void;
 }) {
+  const fetched = feed.last_fetched_at ? formatRelative(feed.last_fetched_at) : "never fetched";
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="flex items-start gap-0.5">
       <div className="min-w-0 flex-1">
         <NavButton active={active} onClick={onSelect} count={feed.unread_count}>
           {feed.title || feed.url}
         </NavButton>
+        <p className={cn("px-2 pb-1 text-[10px] leading-tight", feed.last_error ? "text-destructive/80" : "text-sidebar-foreground/45")}>
+          {feed.last_error ? `Error · ${fetched}` : fetched}
+        </p>
       </div>
       <Button
         type="button"
@@ -814,6 +922,10 @@ function SpokenWords({ text, offset }: { text: string; offset: number }) {
 
 function Reader({
   article,
+  tags,
+  listenRef,
+  noteFocusRef,
+  caretWordRef,
   onBack,
   onToggleRead,
   onToggleSaved,
@@ -824,6 +936,10 @@ function Reader({
   onNote,
 }: {
   article: Article;
+  tags: Tag[];
+  listenRef: React.RefObject<ListenControlsHandle | null>;
+  noteFocusRef: React.MutableRefObject<(() => void) | null>;
+  caretWordRef: React.MutableRefObject<(() => number | null) | null>;
   onBack: () => void;
   onToggleRead: () => void;
   onToggleSaved: () => void;
@@ -838,11 +954,17 @@ function Reader({
   const [busy, setBusy] = useState(false);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const articleRef = useRef<HTMLElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
   const titleSpoken = spokenTitle(article.title);
   const titleWordCount = countWords(titleSpoken);
   const fallbackBody = article.content_text || stripHtml(article.summary) || "";
   const [bodyHtml, setBodyHtml] = useState(html || "");
+  const suggestions = tags
+    .filter((item) => !article.tags.some((attached) => attached.id === item.id))
+    .filter((item) => !tag.trim() || item.name.toLowerCase().includes(tag.trim().toLowerCase()))
+    .slice(0, 8);
 
   useEffect(() => {
     if (html) {
@@ -858,6 +980,36 @@ function Reader({
 
   useEffect(() => {
     setActiveWord(null);
+    setNote("");
+    setTag("");
+  }, [article.id]);
+
+  useEffect(() => {
+    noteFocusRef.current = () => noteRef.current?.focus();
+    caretWordRef.current = () => wordIndexFromCaret(articleRef.current);
+    return () => {
+      noteFocusRef.current = null;
+      caretWordRef.current = null;
+    };
+  }, [caretWordRef, noteFocusRef]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const key = `storykeep-scroll:${article.id}`;
+    const saved = Number(window.localStorage.getItem(key) || 0);
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollTop = Number.isFinite(saved) ? saved : 0;
+    });
+    const onScroll = () => {
+      window.localStorage.setItem(key, String(el.scrollTop));
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", onScroll);
+      window.localStorage.setItem(key, String(el.scrollTop));
+    };
   }, [article.id]);
 
   useEffect(() => {
@@ -879,8 +1031,18 @@ function Reader({
   }, [activeWord]);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <article ref={articleRef} className="max-w-3xl mx-auto px-5 py-6">
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <article
+        ref={articleRef}
+        className="max-w-3xl mx-auto px-5 py-6"
+        onClick={(event) => {
+          const word = (event.target as HTMLElement).closest("[data-tts-word]");
+          if (word instanceof HTMLElement) {
+            const index = Number(word.dataset.ttsWord);
+            if (Number.isFinite(index)) setActiveWord(index);
+          }
+        }}
+      >
         <Button variant="ghost" className="lg:hidden mb-3 -ml-2" onClick={onBack}>
           Back to list
         </Button>
@@ -936,9 +1098,11 @@ function Reader({
         </div>
         <div className="mt-3">
           <ListenControls
+            ref={listenRef}
             articleId={article.id}
             hasText={Boolean(article.content_text || article.content_html || article.summary)}
             onCue={setActiveWord}
+            getCaretWord={() => wordIndexFromCaret(articleRef.current) ?? (activeWord != null ? activeWord : null)}
           />
         </div>
         {article.tags.length > 0 ? (
@@ -963,17 +1127,39 @@ function Reader({
         <section className="space-y-4 pb-10">
           <h2 className="font-[family-name:var(--font-serif)] text-xl">Keep it findable</h2>
           <form
-            className="flex gap-2"
+            className="flex gap-2 relative"
             onSubmit={(event) => {
               event.preventDefault();
               if (!tag.trim()) return;
               void onTag(tag.trim()).then(() => setTag(""));
             }}
           >
-            <Input value={tag} onChange={(event) => setTag(event.target.value)} placeholder="Add a tag, e.g. fusion" />
+            <Input
+              value={tag}
+              onChange={(event) => setTag(event.target.value)}
+              placeholder="Add a tag, e.g. fusion"
+              autoComplete="off"
+            />
             <Button type="submit" variant="secondary">
               Tag
             </Button>
+            {tag.trim() && suggestions.length > 0 ? (
+              <ul className="absolute left-0 right-20 top-9 z-10 rounded-md border bg-popover shadow-md">
+                {suggestions.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        void onTag(item.name).then(() => setTag(""));
+                      }}
+                    >
+                      {item.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </form>
           <form
             className="space-y-2"
@@ -983,7 +1169,13 @@ function Reader({
               void onNote(note.trim()).then(() => setNote(""));
             }}
           >
-            <Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="A note to your future self…" rows={4} />
+            <Textarea
+              ref={noteRef}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Markdown note to your future self… (n)"
+              rows={4}
+            />
             <Button type="submit">Save note</Button>
           </form>
           {article.annotations.length === 0 ? (
@@ -993,8 +1185,11 @@ function Reader({
               {article.annotations.map((item) => (
                 <li key={item.id} className="rounded-lg border bg-background px-3 py-2">
                   {item.quote ? <p className="text-sm italic text-muted-foreground">“{item.quote}”</p> : null}
-                  <p className="text-sm mt-1">{item.body}</p>
-                  <p className="text-[11px] text-muted-foreground mt-1">{formatRelative(item.created_at)}</p>
+                  <div className="text-sm mt-1 note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.body) }} />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Added {formatRelative(item.created_at)}
+                    {item.updated_at && item.updated_at !== item.created_at ? ` · edited ${formatRelative(item.updated_at)}` : ""}
+                  </p>
                 </li>
               ))}
             </ul>
@@ -1110,75 +1305,344 @@ function AddFeedDialog({
   onOpenChange,
   categories,
   onAdded,
+  onSavedPage,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   categories: Category[];
   onAdded: () => Promise<void>;
+  onSavedPage: (articleId: string) => Promise<void>;
 }) {
+  const [tab, setTab] = useState<"feed" | "page" | "opml">("feed");
   const [url, setUrl] = useState("");
+  const [pageUrl, setPageUrl] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [candidates, setCandidates] = useState<{ url: string; title: string | null }[]>([]);
+  const bookmarklet =
+    typeof window === "undefined"
+      ? ""
+      : `javascript:void(location='${window.location.origin}/?save='+encodeURIComponent(location.href))`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Subscribe to a feed</DialogTitle>
-          <DialogDescription>Paste an RSS or Atom URL. Storykeep will import recent items and store their text.</DialogDescription>
+          <DialogTitle>Collect</DialogTitle>
+          <DialogDescription>
+            Subscribe to a site, save a single page, or bring in an OPML list of feeds.
+          </DialogDescription>
         </DialogHeader>
-        <form
-          className="space-y-3"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true);
-            try {
-              await api.addFeed(url, categoryId || null);
-              toast.success("Feed added. Articles are importing.");
-              setUrl("");
-              onOpenChange(false);
-              await onAdded();
-            } catch (error) {
-              toast.error(error instanceof ApiError ? error.message : "Could not add feed");
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="feed-url">Feed URL</Label>
-            <Input
-              id="feed-url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://example.com/feed.xml"
-              required
-            />
-          </div>
-          {categories.length > 0 ? (
+        <div className="flex gap-1 rounded-lg bg-muted p-1">
+          {(
+            [
+              ["feed", "Feed"],
+              ["page", "Save URL"],
+              ["opml", "OPML"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={cn(
+                "flex-1 rounded-md px-2 py-1.5 text-sm",
+                tab === id ? "bg-background shadow-sm" : "text-muted-foreground",
+              )}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {tab === "feed" ? (
+          <form
+            className="space-y-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setBusy(true);
+              try {
+                await api.addFeed(url, categoryId || null);
+                toast.success("Feed added. Articles are importing.");
+                setUrl("");
+                setCandidates([]);
+                onOpenChange(false);
+                await onAdded();
+              } catch (error) {
+                toast.error(error instanceof ApiError ? error.message : "Could not add feed");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
             <div className="space-y-1.5">
-              <Label htmlFor="feed-category">Category</Label>
-              <select
-                id="feed-category"
-                className="w-full h-9 rounded-md border bg-background px-3 text-sm"
-                value={categoryId}
-                onChange={(event) => setCategoryId(event.target.value)}
-              >
-                <option value="">Uncategorized</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+              <Label htmlFor="feed-url">Site or feed URL</Label>
+              <Input
+                id="feed-url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com"
+                required
+              />
             </div>
-          ) : null}
-          <DialogFooter>
+            {categories.length > 0 ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="feed-category">Category</Label>
+                <select
+                  id="feed-category"
+                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  value={categoryId}
+                  onChange={(event) => setCategoryId(event.target.value)}
+                >
+                  <option value="">Uncategorized</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || !url.trim()}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const found = await api.discoverFeeds(url.trim());
+                    setCandidates(found.candidates);
+                    if (!found.candidates.length) toast.message("No feeds found on that page.");
+                    else if (found.candidates[0]) setUrl(found.candidates[0].url);
+                  } catch (error) {
+                    toast.error(error instanceof ApiError ? error.message : "Could not discover feeds");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Find feed
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? "Fetching…" : "Add feed"}
+              </Button>
+            </div>
+            {candidates.length > 0 ? (
+              <ul className="space-y-1 rounded-md border p-2">
+                {candidates.map((item) => (
+                  <li key={item.url}>
+                    <button
+                      type="button"
+                      className="w-full rounded px-2 py-1 text-left text-sm hover:bg-accent"
+                      onClick={() => setUrl(item.url)}
+                    >
+                      <span className="font-medium">{item.title || "Untitled feed"}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{item.url}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </form>
+        ) : null}
+        {tab === "page" ? (
+          <form
+            className="space-y-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setBusy(true);
+              try {
+                const article = await api.saveUrl(pageUrl.trim());
+                toast.success("Page extracted and snapshotted");
+                setPageUrl("");
+                onOpenChange(false);
+                await onSavedPage(article.id);
+              } catch (error) {
+                toast.error(error instanceof ApiError ? error.message : "Could not save that URL");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="page-url">Page URL</Label>
+              <Input
+                id="page-url"
+                value={pageUrl}
+                onChange={(event) => setPageUrl(event.target.value)}
+                placeholder="https://example.com/article"
+                required
+              />
+            </div>
             <Button type="submit" disabled={busy}>
-              {busy ? "Fetching…" : "Add feed"}
+              {busy ? "Extracting…" : "Save URL"}
             </Button>
-          </DialogFooter>
-        </form>
+            <div className="space-y-1.5">
+              <Label>Bookmarklet</Label>
+              <p className="text-xs text-muted-foreground">
+                Drag this to your bookmarks bar. On any page, click it to extract and snapshot into Storykeep.
+              </p>
+              <a
+                className="inline-flex h-8 items-center rounded-md border px-3 text-sm"
+                href={bookmarklet}
+                onClick={(event) => event.preventDefault()}
+              >
+                Save to Storykeep
+              </a>
+            </div>
+          </form>
+        ) : null}
+        {tab === "opml" ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Import subscriptions from another reader, or export the feeds you already keep here.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  void api.exportOpml().then(() => toast.success("OPML downloaded"));
+                }}
+              >
+                Export OPML
+              </Button>
+              <label className="inline-flex h-8 cursor-pointer items-center rounded-md bg-primary px-3 text-sm text-primary-foreground">
+                Import OPML
+                <input
+                  type="file"
+                  accept=".opml,.xml,text/xml"
+                  className="hidden"
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    setBusy(true);
+                    try {
+                      const result = await api.importOpml(file);
+                      toast.success(
+                        `Imported ${result.imported}, skipped ${result.skipped}${result.errors.length ? `, ${result.errors.length} errors` : ""}`,
+                      );
+                      await onAdded();
+                    } catch (error) {
+                      toast.error(error instanceof ApiError ? error.message : "OPML import failed");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TagsDialog({
+  open,
+  tags,
+  onOpenChange,
+  onChanged,
+}: {
+  open: boolean;
+  tags: Tag[];
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [mergeInto, setMergeInto] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const tag of tags) next[tag.id] = tag.name;
+    setNames(next);
+  }, [tags, open]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Rename or merge tags</DialogTitle>
+          <DialogDescription>Merging moves every article onto the target tag, then deletes the source.</DialogDescription>
+        </DialogHeader>
+        {tags.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No tags yet. Add one from an article.</p>
+        ) : (
+          <ul className="space-y-3">
+            {tags.map((tag) => (
+              <li key={tag.id} className="space-y-2 rounded-md border p-3">
+                <div className="flex gap-2">
+                  <Input
+                    value={names[tag.id] ?? tag.name}
+                    onChange={(event) => setNames((current) => ({ ...current, [tag.id]: event.target.value }))}
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy === tag.id || !(names[tag.id] || "").trim()}
+                    onClick={async () => {
+                      setBusy(tag.id);
+                      try {
+                        await api.renameTag(tag.id, (names[tag.id] || "").trim());
+                        toast.success("Tag renamed");
+                        await onChanged();
+                      } catch (error) {
+                        toast.error(error instanceof ApiError ? error.message : "Could not rename tag");
+                      } finally {
+                        setBusy(null);
+                      }
+                    }}
+                  >
+                    Rename
+                  </Button>
+                </div>
+                {tags.length > 1 ? (
+                  <div className="flex gap-2">
+                    <select
+                      className="h-8 flex-1 rounded-md border bg-background px-2 text-sm"
+                      value={mergeInto[tag.id] || ""}
+                      onChange={(event) => setMergeInto((current) => ({ ...current, [tag.id]: event.target.value }))}
+                    >
+                      <option value="">Merge into…</option>
+                      {tags
+                        .filter((other) => other.id !== tag.id)
+                        .map((other) => (
+                          <option key={other.id} value={other.id}>
+                            {other.name}
+                          </option>
+                        ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!mergeInto[tag.id] || busy === tag.id}
+                      onClick={async () => {
+                        const dest = mergeInto[tag.id];
+                        if (!dest) return;
+                        setBusy(tag.id);
+                        try {
+                          await api.mergeTag(tag.id, dest);
+                          toast.success("Tags merged");
+                          await onChanged();
+                        } catch (error) {
+                          toast.error(error instanceof ApiError ? error.message : "Could not merge tags");
+                        } finally {
+                          setBusy(null);
+                        }
+                      }}
+                    >
+                      Merge
+                    </Button>
+                  </div>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground">{tag.article_count} articles</p>
+              </li>
+            ))}
+          </ul>
+        )}
       </DialogContent>
     </Dialog>
   );
