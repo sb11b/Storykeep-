@@ -8,6 +8,28 @@ import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { TtsStatus } from "@/lib/types";
 
+const SPEED_KEY = "storykeep-tts-speed";
+const SPEEDS = [0.7, 0.8, 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5, 2.8, 3] as const;
+
+function formatSpeed(rate: number): string {
+  return `${rate.toFixed(1)}×`;
+}
+
+function readStoredSpeed(): number {
+  if (typeof window === "undefined") return 1;
+  const raw = window.localStorage.getItem(SPEED_KEY);
+  const value = raw ? Number(raw) : 1;
+  return SPEEDS.includes(value as (typeof SPEEDS)[number]) ? value : 1;
+}
+
+function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
+  audio.playbackRate = rate;
+  audio.defaultPlaybackRate = rate;
+  if ("preservesPitch" in audio) {
+    (audio as HTMLAudioElement & { preservesPitch: boolean }).preservesPitch = true;
+  }
+}
+
 export function ListenControls({
   articleId,
   hasText,
@@ -20,6 +42,8 @@ export function ListenControls({
   const generationRef = useRef(0);
   const [status, setStatus] = useState<TtsStatus | null>(null);
   const [voiceId, setVoiceId] = useState("eve");
+  const [speed, setSpeed] = useState(1);
+  const speedRef = useRef(1);
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [chunk, setChunk] = useState(0);
   const [chunks, setChunks] = useState(1);
@@ -39,6 +63,12 @@ export function ListenControls({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const next = readStoredSpeed();
+    setSpeed(next);
+    speedRef.current = next;
   }, []);
 
   const stop = useCallback(() => {
@@ -65,6 +95,7 @@ export function ListenControls({
     setChunk(0);
     setChunks(1);
     const audio = new Audio();
+    applyPlaybackRate(audio, speedRef.current);
     audioRef.current = audio;
     return () => {
       audio.pause();
@@ -101,7 +132,9 @@ export function ListenControls({
           }
         };
         audio.src = url;
+        applyPlaybackRate(audio, speedRef.current);
         await audio.play();
+        applyPlaybackRate(audio, speedRef.current);
         if (generation !== generationRef.current) return;
         setPhase("playing");
       } catch (err) {
@@ -148,7 +181,9 @@ export function ListenControls({
       ) : null}
       {phase === "paused" ? (
         <Button size="sm" variant="outline" onClick={() => {
-          void audioRef.current?.play().then(() => setPhase("playing"));
+          const audio = audioRef.current;
+          if (audio) applyPlaybackRate(audio, speedRef.current);
+          void audio?.play().then(() => setPhase("playing"));
         }}>
           <Volume2 className="size-3.5" />
           Resume
@@ -180,6 +215,29 @@ export function ListenControls({
         {(status?.voices.length ? status.voices : [{ voice_id: "eve", name: "Eve" }]).map((voice) => (
           <option key={voice.voice_id} value={voice.voice_id}>
             {voice.name}
+          </option>
+        ))}
+      </select>
+      <label className="sr-only" htmlFor={`speed-${articleId}`}>
+        Speed
+      </label>
+      <select
+        id={`speed-${articleId}`}
+        className="h-7 rounded-md border border-border bg-background px-2 text-[0.8rem]"
+        value={String(speed)}
+        disabled={phase === "loading"}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          setSpeed(next);
+          speedRef.current = next;
+          window.localStorage.setItem(SPEED_KEY, String(next));
+          const audio = audioRef.current;
+          if (audio) applyPlaybackRate(audio, next);
+        }}
+      >
+        {SPEEDS.map((rate) => (
+          <option key={rate} value={String(rate)}>
+            {formatSpeed(rate)}
           </option>
         ))}
       </select>
