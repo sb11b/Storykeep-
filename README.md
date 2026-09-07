@@ -30,7 +30,7 @@ Planning documents live in `docs/`:
 - `docs/rss_reader_api_design.md` — endpoint contract
 - `docs/rss_reader_architecture.md` — why these decisions
 
-**Stuck on Windows?** Do not start with Railway or GitHub. Follow [`docs/START_HERE.md`](docs/START_HERE.md) in order: get the code → Docker Desktop → `docker compose up --build` → http://127.0.0.1:8080
+**Windows, no Ubuntu:** follow [`docs/START_HERE.md`](docs/START_HERE.md) — open the repo in Cursor, push to GitHub, deploy on Railway. You do not need WSL or Docker on the PC.
 
 ## Local setup
 

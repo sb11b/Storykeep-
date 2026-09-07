@@ -1,108 +1,80 @@
-# Start here (Windows)
+# Start here (Windows, no Ubuntu)
 
-Three different places got mixed together. Use them in this order. Do not jump to Railway until step 4 works in a browser.
+You do not need Ubuntu, WSL, or Docker. Origin CLI is Linux/macOS/WSL only, so skip it.
 
-| Place | What it is | Use it for |
-| --- | --- | --- |
-| [Origin / Storykeep](https://cursor.com/codebase/steve-bitsko/Storykeep) | The real repo with the code | Opening or cloning the project |
-| GitHub `sb11b/Storykeep-` | Empty (no code) | Ignore until local works |
-| Railway | Hosting | Last step, after you can log in locally |
+Railway reads **GitHub**, not Origin. The GitHub repo `sb11b/Storykeep-` is empty until you push. The code already lives here:
 
-Login once the app is up:
+https://cursor.com/codebase/steve-bitsko/Storykeep
+
+Login after it is online:
 
 - email: `steve@storykeep.local`
 - password: `commonplace`
 
 ---
 
-## 1. Get the code onto this PC
+## 1. Open the project in Cursor (Windows)
 
-**Easiest:** open [cursor.com/codebase/steve-bitsko/Storykeep](https://cursor.com/codebase/steve-bitsko/Storykeep) and use **Open in Cursor**.
+1. In the browser, open [cursor.com/codebase/steve-bitsko/Storykeep](https://cursor.com/codebase/steve-bitsko/Storykeep).
+2. Click **Open in Cursor** (or Clone / Open).
+3. When Cursor asks, pick a folder on this PC (for example `D:\Storykeep`).
 
-**If that is missing**, clone from **WSL** (Ubuntu). Origin CLI does not work in PowerShell.
+You should see `README.md`, `backend\`, `frontend\`, and `Dockerfile` in the sidebar.
 
-In PowerShell (once, if you do not have Ubuntu yet):
+If Cursor will not open the Origin repo, install [Git for Windows](https://git-scm.com/download/win), then in Cursor’s terminal (PowerShell):
 
 ```powershell
-wsl --install
+git clone https://origin.cursor.com/steve-bitsko/Storykeep.git D:\Storykeep
 ```
 
-Restart Windows, then open **Ubuntu** and run:
-
-```bash
-# If `origin` is not found after install:
-# echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
-
-curl -fsSL https://downloads.cursor.com/origin/install.sh | sh
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-
-origin auth login
-origin repo clone steve-bitsko/Storykeep
-cd Storykeep
-```
-
-Docs: https://cursor.com/docs/origin/cli
+Sign in if the browser pops up. Then **File → Open Folder → D:\Storykeep**.
 
 ---
 
-## 2. Install Docker Desktop
+## 2. Put the code on GitHub
 
-Download [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/). Install it, start it, and wait until it says it is running.
+In Cursor, open the terminal (PowerShell) in the Storykeep folder:
 
-In Docker Desktop → Settings → Resources → WSL integration, enable your Ubuntu distro.
-
----
-
-## 3. Start Storykeep
-
-In the same Ubuntu terminal, from the `Storykeep` folder:
-
-```bash
-docker compose up --build
-```
-
-The first build takes several minutes. Leave the terminal open.
-
----
-
-## 4. Open the library
-
-In your Windows browser: [http://127.0.0.1:8080](http://127.0.0.1:8080)
-
-Sign in with `steve@storykeep.local` / `commonplace`. Feeds keep importing for a minute after first boot.
-
-If the page never loads, Docker Desktop is not running, or port 8080 is already in use. In Ubuntu:
-
-```bash
-docker compose logs --tail 80
-```
-
----
-
-## 5. Railway (only after step 4 works)
-
-Railway deploys from **GitHub**, not Origin. Your GitHub repo is still empty, so Railway has nothing to build.
-
-From WSL, inside `Storykeep`:
-
-```bash
+```powershell
 git remote add github https://github.com/sb11b/Storykeep-.git
 git push -u github main
 ```
 
-Sign in to GitHub in the browser if it asks.
+If `remote github already exists`, skip the first line and only run `git push -u github main`.
 
-Then on [railway.app](https://railway.app):
-
-1. New project → Deploy from GitHub → `sb11b/Storykeep-`
-2. New → Database → PostgreSQL
-3. On the web service, add `DATABASE_URL=${{Postgres.DATABASE_URL}}`
-4. Settings → Networking → Generate domain
-5. Open that URL and use the same demo login
+GitHub will ask you to sign in in the browser. After the push, [github.com/sb11b/Storykeep-](https://github.com/sb11b/Storykeep-) should show the Storykeep files, not an empty repo.
 
 ---
 
-## If a command fails
+## 3. Deploy on Railway
 
-Copy the **full terminal output** of the command that failed (Origin install, `origin auth login`, `docker compose`, or Railway). That one log is enough to pick the next fix.
+1. Open [railway.app](https://railway.app) and sign in (GitHub login is fine).
+2. **New project → Deploy from GitHub repo → `sb11b/Storykeep-`**.
+3. **New → Database → PostgreSQL**.
+4. Click the **web/app service** (not Postgres) → **Variables** → add:
+
+```
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+The Postgres plugin name might be `Postgres` or `PostgreSQL`. Railway’s variable picker can fill this in.
+
+5. That same service → **Settings → Networking → Generate domain**.
+6. Wait until the deploy is **Success**. Open the `*.up.railway.app` URL.
+7. Sign in with `steve@storykeep.local` / `commonplace`.
+
+The first deploy builds the Docker image and can take several minutes. Feeds keep importing for a minute after the site comes up.
+
+---
+
+## If something fails
+
+| What you see | What to do |
+| --- | --- |
+| Cursor cannot open the Origin repo | Use the `git clone` line in step 1, or tell me the exact error text |
+| `git push` asks for a password and fails | Use **Sign in with browser** / GitHub, not your GitHub account password |
+| GitHub is still empty | You are not in the Storykeep folder, or push never finished |
+| Railway build fails | Open the failed deploy log and send the last 40 lines |
+| Railway site loads but login fails | Confirm `DATABASE_URL` is on the **app** service, not only on Postgres |
+
+Do not install Ubuntu for this path.
