@@ -119,6 +119,7 @@ export type Article = ArticleListItem & {
   saved_at: string | null;
   fetched_at: string | null;
   created_at: string;
+  guid?: string | null;
   annotations: Annotation[];
   archives: Archive[];
   source_ref?: string | null;

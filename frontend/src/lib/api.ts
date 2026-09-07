@@ -118,6 +118,32 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ title, markdown, tags }),
     }),
+  updateComposedNote: (articleId: string, title: string, markdown: string) =>
+    request<Article>(`/api/v1/articles/${articleId}/storykeep-note`, {
+      method: "PATCH",
+      body: JSON.stringify({ title, markdown }),
+    }),
+  uploadNoteImage: async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("/api/v1/media", {
+      method: "POST",
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return (await response.json()) as { id: string; url: string; markdown: string; filename: string };
+  },
   uploadDocument: async (file: File, title?: string, tags?: string) => {
     const body = new FormData();
     body.append("file", file);

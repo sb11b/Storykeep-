@@ -263,6 +263,7 @@ class ArticleOut(BaseModel):
     annotations: list[AnnotationOut] = []
     archives: list[ArchiveOut] = []
     has_full_text: bool = False
+    guid: str | None = None
     source_kind: str = "rss"
     source_ref: str | None = None
     obsidian_path: str | None = None

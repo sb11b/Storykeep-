@@ -8,7 +8,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 
 - Add RSS/Atom feeds, grouped into categories
 - Import Steve's Surface Vault (zip). Original markdown stays in Obsidian.
-- Highlight, add overlay notes, and save corrections, then **Download Obsidian pack**
+- Highlight, add overlay notes (with in-note highlights and images), and save corrections, then **Download Obsidian pack**
 - Read extracted article text in a dedicated reader, or listen with xAI speech
 - Save stories for later / for life, star them, mark read
 - Tag articles and write notes

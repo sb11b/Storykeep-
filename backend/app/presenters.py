@@ -90,6 +90,7 @@ def article_out(article: Article) -> ArticleOut:
         annotations=[annotation_out(note) for note in article.annotations],
         archives=[archive_out(row) for row in article.archives],
         has_full_text=bool(article.content_text),
+        guid=article.guid,
         source_kind=getattr(article, "source_kind", None) or "rss",
         source_ref=getattr(article, "source_ref", None),
         obsidian_path=getattr(article, "obsidian_path", None),

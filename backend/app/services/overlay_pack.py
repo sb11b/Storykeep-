@@ -5,10 +5,13 @@ import zipfile
 from datetime import datetime, timezone
 from uuid import UUID
 
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Article, Correction, OverlayAddition, OverlayHighlight, User
+from app.models import Article, Correction, NoteMedia, OverlayAddition, OverlayHighlight, User
+from app.services.note_media import media_ids_in_markdown
 from app.services.vault_paths import overlay_relpath
 
 YAML_ESCAPE = str.maketrans({'"': '\\"', "\\": "\\\\"})
@@ -56,6 +59,7 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
         "",
     ]
     listed = 0
+    packed_media: set[UUID] = set()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for article_id, rows in grouped_highlights.items():
@@ -81,12 +85,13 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
         for row in additions:
             path = overlay_relpath("addition", None, f"{row.title}-{str(row.id)[:8]}")
             source_ref = _source_ref(row.article) if row.article else None
+            packed_body = _pack_addition_markdown(zf, db, user, row.markdown, packed_media)
             text = [
                 _frontmatter(row.id, "addition", source_ref, row.updated_at or row.created_at),
                 "",
                 f"# {row.title}",
                 "",
-                row.markdown,
+                packed_body,
                 "",
             ]
             zf.writestr(path, "\n".join(text))
@@ -116,6 +121,26 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
         zf.writestr("StoryKeep/Index.md", "\n".join(index_lines) + "\n")
 
     return buf.getvalue()
+
+
+def _pack_addition_markdown(
+    zf: zipfile.ZipFile, db: Session, user: User, markdown: str, packed_media: set[UUID]
+) -> str:
+    rewritten = markdown or ""
+    for media_id in media_ids_in_markdown(rewritten):
+        row = db.get(NoteMedia, media_id)
+        if not row or row.user_id != user.id:
+            continue
+        src = Path(row.storage_path)
+        suffix = src.suffix or Path(row.filename).suffix or ".bin"
+        name = f"{media_id}{suffix}"
+        zip_path = f"StoryKeep/Additions/media/{name}"
+        if media_id not in packed_media and src.is_file():
+            zf.write(src, zip_path)
+            packed_media.add(media_id)
+        rewritten = rewritten.replace(f"/api/v1/media/{media_id}", f"media/{name}")
+        rewritten = rewritten.replace(f"/api/v1/media/{str(media_id).upper()}", f"media/{name}")
+    return rewritten
 
 
 def _source_ref(article: Article | None) -> str | None:

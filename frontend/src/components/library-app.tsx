@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
+import { NoteComposer } from "@/components/note-composer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -53,6 +54,12 @@ import type {
   User,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+function isStoryKeepNote(article: Article): boolean {
+  const guid = article.guid || "";
+  const ref = (article.source_ref || "").replaceAll("\\", "/");
+  return guid.startsWith("storykeep-note:") || ref.startsWith("StoryKeep/Additions/");
+}
 
 function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: Tag[]): string {
   switch (shelf.kind) {
@@ -700,6 +707,12 @@ export function LibraryApp({ user }: { user: User }) {
                   setArticle(next);
                   toast.success("Addition will be in the next Obsidian pack");
                 }}
+                onEditComposed={async (title, markdown) => {
+                  const next = await api.updateComposedNote(article.id, title, markdown);
+                  setArticle(next);
+                  setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                  toast.success("StoryKeep note updated");
+                }}
                 onCorrection={async (markdown) => {
                   await api.addCorrection(article.id, markdown);
                   const next = await api.article(article.id);
@@ -1103,6 +1116,7 @@ function Reader({
   onHighlight,
   onDeleteAnnotation,
   onAddition,
+  onEditComposed,
   onCorrection,
   onDownloadPack,
 }: {
@@ -1124,12 +1138,15 @@ function Reader({
   onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string; note?: string }) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
   onAddition: (title: string, markdown: string) => Promise<void>;
+  onEditComposed: (title: string, markdown: string) => Promise<void>;
   onCorrection: (markdown: string) => Promise<void>;
   onDownloadPack: () => Promise<void>;
 }) {
   const [note, setNote] = useState("");
   const [additionTitle, setAdditionTitle] = useState("");
   const [additionBody, setAdditionBody] = useState("");
+  const [editTitle, setEditTitle] = useState(article.title);
+  const [editBody, setEditBody] = useState(article.content_text || "");
   const [correction, setCorrection] = useState("");
   const [highlightNote, setHighlightNote] = useState("");
   const [tag, setTag] = useState("");
@@ -1185,6 +1202,8 @@ function Reader({
     setTag("");
     setAdditionTitle("");
     setAdditionBody("");
+    setEditTitle(article.title);
+    setEditBody(article.content_text || "");
     setCorrection(article.content_text || "");
     setHighlightNote("");
   }, [article.id]);
@@ -1416,10 +1435,11 @@ function Reader({
               void onNote(note.trim()).then(() => setNote(""));
             }}
           >
-            <Textarea
-              ref={noteRef}
+            <Label>Margin note</Label>
+            <NoteComposer
+              textareaRef={noteRef}
               value={note}
-              onChange={(event) => setNote(event.target.value)}
+              onChange={setNote}
               placeholder="Markdown note to your future self… (n)"
               rows={4}
             />
@@ -1444,6 +1464,31 @@ function Reader({
               ))}
             </ul>
           ) : null}
+          {isStoryKeepNote(article) ? (
+            <form
+              className="space-y-2 rounded-md border p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!editTitle.trim() || !editBody.trim()) return;
+                void onEditComposed(editTitle.trim(), editBody.trim());
+              }}
+            >
+              <Label>Edit this StoryKeep note</Label>
+              <p className="text-xs text-muted-foreground">
+                This is overlay markdown you wrote here. Imported vault files stay read-only.
+              </p>
+              <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="Title" />
+              <NoteComposer
+                value={editBody}
+                onChange={setEditBody}
+                placeholder="Full note, with ==highlights== and images…"
+                rows={10}
+              />
+              <Button type="submit" variant="secondary">
+                Update note
+              </Button>
+            </form>
+          ) : null}
           <form
             className="space-y-2"
             onSubmit={(event) => {
@@ -1457,7 +1502,12 @@ function Reader({
           >
             <Label>Addition (new note in StoryKeep/Additions)</Label>
             <Input value={additionTitle} onChange={(event) => setAdditionTitle(event.target.value)} placeholder="Title for a new overlay note" />
-            <Textarea value={additionBody} onChange={(event) => setAdditionBody(event.target.value)} placeholder="Markdown that exists only in the overlay pack…" rows={4} />
+            <NoteComposer
+              value={additionBody}
+              onChange={setAdditionBody}
+              placeholder="Markdown that exists only in the overlay pack…"
+              rows={6}
+            />
             <Button type="submit" variant="secondary">
               Save addition
             </Button>
@@ -1467,6 +1517,7 @@ function Reader({
               {(article.overlay_additions || []).map((item) => (
                 <li key={item.id} className="rounded-md border px-3 py-2 text-sm">
                   <p className="font-medium">{item.title}</p>
+                  <div className="note-md mt-1" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.markdown) }} />
                   <p className="text-[11px] text-muted-foreground">{formatRelative(item.created_at)}</p>
                 </li>
               ))}
@@ -1997,9 +2048,9 @@ function AddFeedDialog({
                 onChange={(event) => setAdditionSubject(event.target.value)}
                 placeholder="Subjects / tags, comma-separated (e.g. calculus, DAT-200)"
               />
-              <Textarea
+              <NoteComposer
                 value={additionBody}
-                onChange={(event) => setAdditionBody(event.target.value)}
+                onChange={setAdditionBody}
                 placeholder="Paste or write the full markdown: lecture notes, a paper, a chapter…"
                 rows={14}
                 required

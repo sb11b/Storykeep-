@@ -212,3 +212,48 @@ def create_composed_note(db: Session, user: User, title: str, markdown: str, tag
     changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "composed": True})
     db.commit()
     return article
+
+
+def is_composed_note(article: Article) -> bool:
+    guid = article.guid or ""
+    ref = (article.source_ref or "").replace("\\", "/")
+    return guid.startswith("storykeep-note:") or ref.startswith("StoryKeep/Additions/")
+
+
+def update_composed_note(db: Session, user: User, article: Article, title: str, markdown: str) -> Article:
+    """Edit a StoryKeep-authored note. Imported vault files stay read-only."""
+    if not is_composed_note(article):
+        raise ValueError("Imported vault notes stay read-only. Save a correction or an addition instead.")
+    heading = (title or "").strip()
+    body = (markdown or "").strip()
+    if not heading or not body:
+        raise ValueError("Title and body are required.")
+    if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
+        raise ValueError("That note is larger than 1.5 MB.")
+    now = datetime.now(timezone.utc)
+    article.title = heading[:500]
+    article.summary = body[:280]
+    article.content_text = body
+    article.content_html = markdown_to_html(body)
+    addition = db.scalar(
+        select(OverlayAddition)
+        .where(OverlayAddition.user_id == user.id, OverlayAddition.article_id == article.id)
+        .order_by(OverlayAddition.created_at.asc())
+    )
+    if addition:
+        addition.title = heading[:200]
+        addition.markdown = body
+        addition.updated_at = now
+    else:
+        addition = OverlayAddition(
+            user_id=user.id,
+            article_id=article.id,
+            title=heading[:200],
+            markdown=body,
+        )
+        db.add(addition)
+        db.flush()
+    changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "edited": True})
+    changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "edited": True})
+    db.commit()
+    return article

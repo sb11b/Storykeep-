@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -11,9 +12,10 @@ from app.presenters import article_out
 from app.routers.articles import _owned_article
 from app.schemas import ArticleOut, CorrectionIn, CorrectionOut, OverlayAdditionIn, OverlayAdditionOut, VaultImportOut
 from app.services import changelog
+from app.services.note_media import markdown_image, owned_media, save_note_image
 from app.services.overlay_pack import build_obsidian_pack
 from app.services.file_ingest import MAX_UPLOAD_BYTES, ingest_upload, original_file_path
-from app.services.vault_import import MAX_VAULT_ZIP_BYTES, create_composed_note, import_obsidian_zip
+from app.services.vault_import import MAX_VAULT_ZIP_BYTES, create_composed_note, import_obsidian_zip, update_composed_note
 
 router = APIRouter(tags=["overlay"])
 
@@ -88,6 +90,53 @@ def compose_vault_note(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     loaded = _owned_article(db, user, article.id)
     return article_out(loaded)
+
+
+@router.patch("/articles/{article_id}/storykeep-note", response_model=ArticleOut)
+def edit_composed_note(
+    article_id: UUID,
+    payload: OverlayAdditionIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    try:
+        update_composed_note(db, user, article, payload.title, payload.markdown)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return article_out(_owned_article(db, user, article.id))
+
+
+@router.post("/media", status_code=201)
+async def upload_note_image(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    payload = await file.read()
+    try:
+        row = save_note_image(db, user, file.filename or "image.png", payload, file.content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "id": str(row.id),
+        "url": f"/api/v1/media/{row.id}",
+        "markdown": markdown_image(row),
+        "filename": row.filename,
+    }
+
+
+@router.get("/media/{media_id}")
+def get_note_image(
+    media_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FileResponse:
+    row = owned_media(db, user, media_id)
+    path = Path(row.storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file is missing.")
+    return FileResponse(path, media_type=row.content_type, filename=row.filename)
 
 
 @router.post("/storykeep-notes", response_model=OverlayAdditionOut, status_code=201)
