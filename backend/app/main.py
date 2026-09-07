@@ -105,6 +105,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _static_headers(path: Path) -> dict[str, str]:
+    suffix = path.suffix.lower()
+    if suffix in {".html", ".js", ".css"}:
+        return {"Cache-Control": "no-store"}
+    return {"Cache-Control": "public, max-age=3600"}
+
+
 def _register_frontend(app: FastAPI) -> None:
     directory = Path(settings.frontend_dir) if settings.frontend_dir else None
     if not directory or not directory.is_dir():
@@ -116,15 +123,15 @@ def _register_frontend(app: FastAPI) -> None:
             return {"detail": "Not found"}
         direct = directory / full_path
         if direct.is_file():
-            return FileResponse(direct)
+            return FileResponse(direct, headers=_static_headers(direct))
         nested = directory / full_path / "index.html"
         if nested.is_file():
-            return FileResponse(nested)
+            return FileResponse(nested, headers=_static_headers(nested))
         html = directory / f"{full_path}.html"
         if html.is_file():
-            return FileResponse(html)
+            return FileResponse(html, headers=_static_headers(html))
         index = directory / "index.html"
-        return FileResponse(index)
+        return FileResponse(index, headers=_static_headers(index))
 
 
 _register_frontend(app)

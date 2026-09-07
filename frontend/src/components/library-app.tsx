@@ -406,7 +406,7 @@ export function LibraryApp({ user }: { user: User }) {
           </form>
           <div className="ml-auto text-xs text-muted-foreground hidden sm:block">
             {stats ? `${stats.saved_count} kept · ${stats.unread_count} unread` : ""}
-            <span className="ml-3 hidden lg:inline">j/k m s n / l</span>
+            <span className="ml-3 hidden md:inline">j/k m s n / l</span>
           </div>
         </header>
 
@@ -783,7 +783,7 @@ function FeedNavItem({
         <NavButton active={active} onClick={onSelect} count={feed.unread_count}>
           {feed.title || feed.url}
         </NavButton>
-        <p className={cn("px-2 pb-1 text-[10px] leading-tight", feed.last_error ? "text-destructive/80" : "text-sidebar-foreground/45")}>
+        <p className={cn("px-2 pb-1 text-[11px] leading-tight", feed.last_error ? "text-destructive/80" : "text-sidebar-foreground/55")}>
           {feed.last_error ? `Error · ${fetched}` : fetched}
         </p>
       </div>
