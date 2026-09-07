@@ -111,6 +111,12 @@ class Article(Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_kind: Mapped[str] = mapped_column(String(16), default="rss", server_default="rss")
+    source_ref: Mapped[str | None] = mapped_column(Text)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("articles.id", ondelete="SET NULL")
+    )
+    obsidian_path: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     search_vector: Mapped[str | None] = mapped_column(
@@ -130,6 +136,15 @@ class Article(Base):
     tags: Mapped[list[Tag]] = relationship(secondary="article_tags", back_populates="articles")
     annotations: Mapped[list[Annotation]] = relationship(back_populates="article", cascade="all, delete-orphan")
     archives: Mapped[list[Archive]] = relationship(back_populates="article", cascade="all, delete-orphan")
+    overlay_highlights: Mapped[list["OverlayHighlight"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
+    overlay_additions: Mapped[list["OverlayAddition"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
+    corrections: Mapped[list["Correction"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
 
 
 class Tag(Base):
@@ -190,6 +205,52 @@ class Archive(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     article: Mapped[Article] = relationship(back_populates="archives")
+
+
+class OverlayHighlight(Base):
+    __tablename__ = "highlights"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    article_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("articles.id", ondelete="CASCADE"))
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    start_offset: Mapped[int | None] = mapped_column(Integer)
+    end_offset: Mapped[int | None] = mapped_column(Integer)
+    color: Mapped[str | None] = mapped_column(String(24))
+    prefix: Mapped[str | None] = mapped_column(Text)
+    suffix: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    article: Mapped[Article] = relationship(back_populates="overlay_highlights")
+
+
+class OverlayAddition(Base):
+    __tablename__ = "storykeep_notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    article_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("articles.id", ondelete="SET NULL")
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    article: Mapped[Article | None] = relationship(back_populates="overlay_additions")
+
+
+class Correction(Base):
+    __tablename__ = "corrections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    article_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("articles.id", ondelete="CASCADE"))
+    markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    article: Mapped[Article] = relationship(back_populates="corrections")
 
 
 class Backup(Base):

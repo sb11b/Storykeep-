@@ -6,7 +6,10 @@ from app.schemas import (
     ArchiveOut,
     ArticleListItem,
     ArticleOut,
+    CorrectionOut,
     FeedOut,
+    OverlayAdditionOut,
+    OverlayHighlightOut,
     TagOut,
 )
 
@@ -58,6 +61,7 @@ def article_list_item(article: Article) -> ArticleListItem:
         is_saved=article.is_saved,
         is_starred=article.is_starred,
         has_full_text=bool(article.content_text),
+        source_kind=getattr(article, "source_kind", None) or "rss",
         tags=[tag_out(tag) for tag in article.tags],
     )
 
@@ -86,6 +90,40 @@ def article_out(article: Article) -> ArticleOut:
         annotations=[annotation_out(note) for note in article.annotations],
         archives=[archive_out(row) for row in article.archives],
         has_full_text=bool(article.content_text),
+        source_kind=getattr(article, "source_kind", None) or "rss",
+        source_ref=getattr(article, "source_ref", None),
+        obsidian_path=getattr(article, "obsidian_path", None),
+        overlay_highlights=[
+            OverlayHighlightOut(
+                id=row.id,
+                article_id=row.article_id,
+                quote=row.quote,
+                note=row.note,
+                color=row.color,
+                created_at=row.created_at,
+            )
+            for row in getattr(article, "overlay_highlights", []) or []
+        ],
+        overlay_additions=[
+            OverlayAdditionOut(
+                id=row.id,
+                article_id=row.article_id,
+                title=row.title,
+                markdown=row.markdown,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+            for row in getattr(article, "overlay_additions", []) or []
+        ],
+        corrections=[
+            CorrectionOut(
+                id=row.id,
+                article_id=row.article_id,
+                markdown=row.markdown,
+                created_at=row.created_at,
+            )
+            for row in getattr(article, "corrections", []) or []
+        ],
     )
 
 

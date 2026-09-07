@@ -78,3 +78,28 @@ The first deploy builds the Docker image and can take several minutes. Feeds kee
 | Railway site loads but login fails | Confirm `DATABASE_URL` is on the **app** service, not only on Postgres |
 
 Do not install Ubuntu for this path.
+
+---
+
+## Overlay pack (the only thing that goes back to Obsidian)
+
+StoryKeep never overwrites `Steve's Surface Vault\**`. Import is one-way. What you add in StoryKeep comes back as a zip you unzip at the **vault root**.
+
+1. In StoryKeep, open an imported note. Highlight a passage (optional comment), save an **addition**, or **Save correction**.
+2. Click **Download Obsidian pack** in the reader or on the Backup page.
+3. On Windows, unzip `storykeep-obsidian-pack.zip` into the same folder that contains `Steve's Surface Vault` so you get:
+
+```
+Steve's Surface Vault\
+  StoryKeep\
+    Highlights\
+    Additions\
+    Corrections\
+    Index.md
+```
+
+4. `Index.md` lists overlay files and article ids. It does not list original vault notes as modified.
+5. Merge **Corrections** by hand if you want those edits in the source note. Do not replace the original file with a StoryKeep export of the article body.
+
+uCertify is not integrated. There is no login, scrape, or stored password. If you already have a page open, use **Save URL**.
+

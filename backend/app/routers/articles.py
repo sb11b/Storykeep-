@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Annotation, Archive, Article, Feed, Tag, User
+from app.models import Annotation, Archive, Article, Feed, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, archive_out, article_list_item, article_out, tag_out
 from app.schemas import (
     AnnotationIn,
@@ -60,6 +60,9 @@ def _owned_article(db: Session, user: User, article_id: UUID) -> Article:
             selectinload(Article.tags),
             selectinload(Article.annotations),
             selectinload(Article.archives),
+            selectinload(Article.overlay_highlights),
+            selectinload(Article.overlay_additions),
+            selectinload(Article.corrections),
         )
     )
     if not article:
@@ -168,6 +171,8 @@ def save_url(
             fetched_at=now if html or text else None,
             is_saved=True,
             saved_at=now,
+            source_kind="url",
+            source_ref=url[:4000],
         )
         db.add(article)
         db.flush()
@@ -337,10 +342,21 @@ def create_note(
     )
     db.add(note)
     db.flush()
-    if payload.kind == "highlight" and not article.is_saved:
-        article.is_saved = True
-        article.saved_at = datetime.now(timezone.utc)
-        db.add(article)
+    if payload.kind == "highlight":
+        overlay = OverlayHighlight(
+            user_id=user.id,
+            article_id=article.id,
+            quote=payload.quote or payload.body,
+            note=(payload.body if payload.body.strip() and payload.body.strip() != (payload.quote or "").strip() else None),
+            color=payload.color,
+            prefix=payload.prefix,
+            suffix=payload.suffix,
+        )
+        db.add(overlay)
+        if not article.is_saved:
+            article.is_saved = True
+            article.saved_at = datetime.now(timezone.utc)
+            db.add(article)
     changelog.record(db, user.id, "annotation", note.id, "upsert", {"article_id": str(article.id)})
     db.commit()
     db.refresh(note)

@@ -13,6 +13,7 @@ import type {
   TtsStatus,
   TtsWord,
   User,
+  VaultImportResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -72,6 +73,55 @@ export const api = {
     request<{ queried_url: string; candidates: FeedCandidate[] }>(
       `/api/v1/feeds/discover?url=${encodeURIComponent(url)}`,
     ),
+  importVault: async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("/api/v1/sources/obsidian/import", {
+      method: "POST",
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return (await response.json()) as VaultImportResult;
+  },
+  downloadObsidianPack: async () => {
+    const response = await fetch("/api/v1/export/obsidian-pack", { credentials: "include", cache: "no-store" });
+    if (!response.ok) throw new ApiError(response.status, "Could not build the Obsidian pack");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "storykeep-obsidian-pack.zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  },
+  addStandaloneAddition: (title: string, markdown: string) =>
+    request(`/api/v1/storykeep-notes`, {
+      method: "POST",
+      body: JSON.stringify({ title, markdown }),
+    }),
+  addAddition: (articleId: string, title: string, markdown: string) =>
+    request(`/api/v1/articles/${articleId}/additions`, {
+      method: "POST",
+      body: JSON.stringify({ title, markdown }),
+    }),
+  addCorrection: (articleId: string, markdown: string) =>
+    request(`/api/v1/articles/${articleId}/corrections`, {
+      method: "POST",
+      body: JSON.stringify({ markdown }),
+    }),
   importOpml: async (file: File) => {
     const body = new FormData();
     body.append("file", file);

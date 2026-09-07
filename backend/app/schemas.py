@@ -179,6 +179,54 @@ class AnnotationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class OverlayHighlightOut(BaseModel):
+    id: uuid.UUID
+    article_id: uuid.UUID
+    quote: str
+    note: str | None
+    color: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OverlayAdditionIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    markdown: str = Field(min_length=1)
+
+
+class OverlayAdditionOut(BaseModel):
+    id: uuid.UUID
+    article_id: uuid.UUID | None
+    title: str
+    markdown: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CorrectionIn(BaseModel):
+    markdown: str = Field(min_length=1)
+
+
+class CorrectionOut(BaseModel):
+    id: uuid.UUID
+    article_id: uuid.UUID
+    markdown: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VaultImportOut(BaseModel):
+    imported: int
+    updated: int
+    skipped: int
+    attachments: int
+    errors: list[str]
+
+
 class ArchiveOut(BaseModel):
     id: uuid.UUID
     article_id: uuid.UUID
@@ -214,6 +262,12 @@ class ArticleOut(BaseModel):
     annotations: list[AnnotationOut] = []
     archives: list[ArchiveOut] = []
     has_full_text: bool = False
+    source_kind: str = "rss"
+    source_ref: str | None = None
+    obsidian_path: str | None = None
+    overlay_highlights: list[OverlayHighlightOut] = []
+    overlay_additions: list[OverlayAdditionOut] = []
+    corrections: list[CorrectionOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -232,6 +286,7 @@ class ArticleListItem(BaseModel):
     is_saved: bool
     is_starred: bool
     has_full_text: bool = False
+    source_kind: str = "rss"
     tags: list[TagOut] = []
 
     model_config = {"from_attributes": True}

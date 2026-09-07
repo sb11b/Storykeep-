@@ -61,6 +61,39 @@ export type Archive = {
   created_at: string;
 };
 
+export type OverlayHighlight = {
+  id: string;
+  article_id: string;
+  quote: string;
+  note: string | null;
+  color?: string | null;
+  created_at: string;
+};
+
+export type OverlayAddition = {
+  id: string;
+  article_id: string | null;
+  title: string;
+  markdown: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Correction = {
+  id: string;
+  article_id: string;
+  markdown: string;
+  created_at: string;
+};
+
+export type VaultImportResult = {
+  imported: number;
+  updated: number;
+  skipped: number;
+  attachments: number;
+  errors: string[];
+};
+
 export type ArticleListItem = {
   id: string;
   feed_id: string;
@@ -75,6 +108,7 @@ export type ArticleListItem = {
   is_saved: boolean;
   is_starred: boolean;
   has_full_text: boolean;
+  source_kind?: string;
   tags: Tag[];
 };
 
@@ -87,6 +121,11 @@ export type Article = ArticleListItem & {
   created_at: string;
   annotations: Annotation[];
   archives: Archive[];
+  source_ref?: string | null;
+  obsidian_path?: string | null;
+  overlay_highlights?: OverlayHighlight[];
+  overlay_additions?: OverlayAddition[];
+  corrections?: Correction[];
 };
 
 export type Page<T> = {

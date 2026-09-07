@@ -7,8 +7,9 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 ## What you can do
 
 - Add RSS/Atom feeds, grouped into categories
+- Import Steve's Surface Vault (zip). Original markdown stays in Obsidian.
+- Highlight, add overlay notes, and save corrections, then **Download Obsidian pack**
 - Read extracted article text in a dedicated reader, or listen with xAI speech
-- Save stories for later / for life, star them, mark read
 - Save stories for later / for life, star them, mark read
 - Tag articles and write notes
 - Snapshot HTML so a dead original URL still has a copy
@@ -60,11 +61,7 @@ Open [http://127.0.0.1:43123](http://127.0.0.1:43123). A demo account is created
 - email: `steve@storykeep.local`
 - password: `commonplace`
 
-Or run everything with Docker:
-
-```bash
-docker compose up --build
-```
+Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export npm --prefix frontend run build`. Hard-refresh the browser. Do not run local Docker, WSL, or Ubuntu for this project.
 
 ## Environment
 

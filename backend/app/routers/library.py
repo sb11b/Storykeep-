@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Annotation, Archive, Article, Category, Feed, Tag, User
+from app.models import Annotation, Archive, Article, Category, Feed, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, article_list_item
 from app.schemas import (
     AnnotationIn,
@@ -211,6 +211,16 @@ def delete_note(note_id: UUID, db: Session = Depends(get_db), user: User = Depen
     note = db.get(Annotation, note_id)
     if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")
+    if note.kind == "highlight" and note.quote:
+        extras = db.scalars(
+            select(OverlayHighlight).where(
+                OverlayHighlight.user_id == user.id,
+                OverlayHighlight.article_id == note.article_id,
+                OverlayHighlight.quote == note.quote,
+            )
+        ).all()
+        for row in extras:
+            db.delete(row)
     changelog.record(db, user.id, "annotation", note.id, "delete")
     db.delete(note)
     db.commit()

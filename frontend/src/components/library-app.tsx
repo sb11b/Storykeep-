@@ -649,7 +649,7 @@ export function LibraryApp({ user }: { user: User }) {
                   void loadNav();
                 }}
                 onHighlight={async (payload) => {
-                  await api.addNote(article.id, payload.quote, {
+                  await api.addNote(article.id, payload.note || payload.quote, {
                     kind: "highlight",
                     quote: payload.quote,
                     color: payload.color,
@@ -659,8 +659,24 @@ export function LibraryApp({ user }: { user: User }) {
                   const next = await api.article(article.id);
                   setArticle(next);
                   setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
-                  toast.success("Highlight saved with this article");
+                  toast.success("Highlight saved in the overlay pack");
                   void loadNav();
+                }}
+                onAddition={async (title, markdown) => {
+                  await api.addAddition(article.id, title, markdown);
+                  const next = await api.article(article.id);
+                  setArticle(next);
+                  toast.success("Addition will be in the next Obsidian pack");
+                }}
+                onCorrection={async (markdown) => {
+                  await api.addCorrection(article.id, markdown);
+                  const next = await api.article(article.id);
+                  setArticle(next);
+                  toast.success("Correction stored. The original imported note was not changed.");
+                }}
+                onDownloadPack={async () => {
+                  await api.downloadObsidianPack();
+                  toast.success("Obsidian pack downloaded");
                 }}
                 onDeleteAnnotation={async (id) => {
                   await api.deleteNote(id);
@@ -1035,6 +1051,9 @@ function Reader({
   onNote,
   onHighlight,
   onDeleteAnnotation,
+  onAddition,
+  onCorrection,
+  onDownloadPack,
 }: {
   article: Article;
   tags: Tag[];
@@ -1049,10 +1068,17 @@ function Reader({
   onArchive: () => Promise<void>;
   onTag: (name: string) => Promise<void>;
   onNote: (body: string) => Promise<void>;
-  onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string }) => Promise<void>;
+  onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string; note?: string }) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
+  onAddition: (title: string, markdown: string) => Promise<void>;
+  onCorrection: (markdown: string) => Promise<void>;
+  onDownloadPack: () => Promise<void>;
 }) {
   const [note, setNote] = useState("");
+  const [additionTitle, setAdditionTitle] = useState("");
+  const [additionBody, setAdditionBody] = useState("");
+  const [correction, setCorrection] = useState("");
+  const [highlightNote, setHighlightNote] = useState("");
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeWord, setActiveWord] = useState<number | null>(null);
@@ -1104,6 +1130,10 @@ function Reader({
     setActiveWord(null);
     setNote("");
     setTag("");
+    setAdditionTitle("");
+    setAdditionBody("");
+    setCorrection(article.content_text || "");
+    setHighlightNote("");
   }, [article.id]);
 
   useEffect(() => {
@@ -1169,7 +1199,11 @@ function Reader({
           Back to list
         </Button>
         <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-          {article.feed_title} · {formatRelative(article.published_at)}
+          {article.source_kind === "obsidian" || article.source_kind === "textbook"
+            ? "Vault"
+            : article.feed_title}{" "}
+          · {formatRelative(article.published_at)}
+          {article.source_ref ? ` · ${article.source_ref}` : ""}
         </p>
         <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl leading-tight mt-2">
           <SpokenWords text={titleSpoken || article.title} offset={0} />
@@ -1208,6 +1242,13 @@ function Reader({
             }}
           >
             Snapshot
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void onDownloadPack()}
+          >
+            Download Obsidian pack
           </Button>
           <a
             href={article.url}
@@ -1309,7 +1350,7 @@ function Reader({
             <Button type="submit">Save note</Button>
           </form>
           <p className="text-xs text-muted-foreground">
-            Select a passage in the article, then pick a color. Highlights stay with the story when you save it.
+            Select a passage, pick a color, optionally add a comment. Highlights land in StoryKeep/Highlights of the pack. They never rewrite the original vault file.
           </p>
           {highlights.length > 0 ? (
             <ul className="flex flex-wrap gap-2">
@@ -1327,6 +1368,53 @@ function Reader({
               ))}
             </ul>
           ) : null}
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!additionTitle.trim() || !additionBody.trim()) return;
+              void onAddition(additionTitle.trim(), additionBody.trim()).then(() => {
+                setAdditionTitle("");
+                setAdditionBody("");
+              });
+            }}
+          >
+            <Label>Addition (new note in StoryKeep/Additions)</Label>
+            <Input value={additionTitle} onChange={(event) => setAdditionTitle(event.target.value)} placeholder="Title for a new overlay note" />
+            <Textarea value={additionBody} onChange={(event) => setAdditionBody(event.target.value)} placeholder="Markdown that exists only in the overlay pack…" rows={4} />
+            <Button type="submit" variant="secondary">
+              Save addition
+            </Button>
+          </form>
+          {(article.overlay_additions || []).length > 0 ? (
+            <ul className="space-y-2">
+              {(article.overlay_additions || []).map((item) => (
+                <li key={item.id} className="rounded-md border px-3 py-2 text-sm">
+                  <p className="font-medium">{item.title}</p>
+                  <p className="text-[11px] text-muted-foreground">{formatRelative(item.created_at)}</p>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!correction.trim()) return;
+              void onCorrection(correction.trim());
+            }}
+          >
+            <Label>Correction (StoryKeep-owned copy; original body stays)</Label>
+            <Textarea value={correction} onChange={(event) => setCorrection(event.target.value)} rows={8} />
+            <Button type="submit" variant="outline">
+              Save correction
+            </Button>
+            {(article.corrections || []).length > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Latest correction stored {formatRelative(article.corrections![article.corrections!.length - 1].created_at)}.
+              </p>
+            ) : null}
+          </form>
           {notesOnly.length === 0 ? (
             <p className="text-sm text-muted-foreground">No notes on this story yet.</p>
           ) : (
@@ -1352,30 +1440,41 @@ function Reader({
       </article>
       {picker ? (
         <div
-          className="fixed z-50 flex -translate-x-1/2 -translate-y-full gap-1 rounded-full border bg-background p-1 shadow-md"
+          className="fixed z-50 flex w-72 -translate-x-1/2 -translate-y-full flex-col gap-2 rounded-lg border bg-background p-2 shadow-md"
           style={{ top: Math.max(48, picker.top - 8), left: picker.left }}
         >
-          {HIGHLIGHT_COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={cn("size-7 rounded-full border border-black/10", `hl-${color}`)}
-              title={`Highlight ${color}`}
-              aria-label={`Highlight ${color}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                void onHighlight({
-                  quote: picker.quote,
-                  color,
-                  prefix: picker.prefix,
-                  suffix: picker.suffix,
-                }).finally(() => {
-                  setPicker(null);
-                  window.getSelection()?.removeAllRanges();
-                });
-              }}
-            />
-          ))}
+          <div className="flex justify-center gap-1">
+            {HIGHLIGHT_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={cn("size-7 rounded-full border border-black/10", `hl-${color}`)}
+                title={`Highlight ${color}`}
+                aria-label={`Highlight ${color}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  void onHighlight({
+                    quote: picker.quote,
+                    color,
+                    prefix: picker.prefix,
+                    suffix: picker.suffix,
+                    note: highlightNote.trim() || undefined,
+                  }).finally(() => {
+                    setPicker(null);
+                    setHighlightNote("");
+                    window.getSelection()?.removeAllRanges();
+                  });
+                }}
+              />
+            ))}
+          </div>
+          <input
+            className="h-7 rounded-md border bg-background px-2 text-xs"
+            placeholder="Optional comment for Highlights/"
+            value={highlightNote}
+            onChange={(event) => setHighlightNote(event.target.value)}
+            onMouseDown={(event) => event.stopPropagation()}
+          />
         </div>
       ) : null}
     </div>
@@ -1490,12 +1589,14 @@ function AddFeedDialog({
   onAdded: () => Promise<void>;
   onSavedPage: (articleId: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"feed" | "page" | "opml">("feed");
+  const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault">("feed");
   const [url, setUrl] = useState("");
   const [pageUrl, setPageUrl] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<{ url: string; title: string | null }[]>([]);
+  const [additionTitle, setAdditionTitle] = useState("");
+  const [additionBody, setAdditionBody] = useState("");
   const bookmarklet =
     typeof window === "undefined"
       ? ""
@@ -1507,7 +1608,7 @@ function AddFeedDialog({
         <DialogHeader>
           <DialogTitle>Collect</DialogTitle>
           <DialogDescription>
-            Subscribe to a site, save a single page, or bring in an OPML list of feeds.
+            Subscribe to a site, save a page, import OPML, or zip in Steve's Surface Vault.
           </DialogDescription>
         </DialogHeader>
         <div className="flex gap-1 rounded-lg bg-muted p-1">
@@ -1516,6 +1617,7 @@ function AddFeedDialog({
               ["feed", "Feed"],
               ["page", "Save URL"],
               ["opml", "OPML"],
+              ["vault", "Vault"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -1668,6 +1770,80 @@ function AddFeedDialog({
               </a>
             </div>
           </form>
+        ) : null}
+        {tab === "vault" ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Zip Steve&apos;s Surface Vault and import it here. StoryKeep never writes back into that folder. Highlights,
+              additions, and corrections download as a separate overlay pack you unzip at the vault root on Windows.
+            </p>
+            <label className="inline-flex h-8 cursor-pointer items-center rounded-md bg-primary px-3 text-sm text-primary-foreground">
+              Import vault zip
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                className="hidden"
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (!file) return;
+                  setBusy(true);
+                  try {
+                    const result = await api.importVault(file);
+                    toast.success(
+                      `Imported ${result.imported}, updated ${result.updated}, skipped ${result.skipped}${
+                        result.attachments ? `, ${result.attachments} attachments ignored` : ""
+                      }${result.errors.length ? `, ${result.errors.length} errors` : ""}`,
+                    );
+                    await onAdded();
+                    onOpenChange(false);
+                  } catch (error) {
+                    toast.error(error instanceof ApiError ? error.message : "Vault import failed");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              />
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Skips <code>.obsidian</code>, does not turn png/jpg into articles, and tags book / course / clipping / daily from
+              the path. Merge Corrections by hand in Obsidian; do not let StoryKeep overwrite originals.
+            </p>
+            <form
+              className="space-y-2 rounded-md border p-3"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (!additionTitle.trim() || !additionBody.trim()) return;
+                setBusy(true);
+                try {
+                  await api.addStandaloneAddition(additionTitle.trim(), additionBody.trim());
+                  toast.success("Addition stored for the next Obsidian pack");
+                  setAdditionTitle("");
+                  setAdditionBody("");
+                } catch (error) {
+                  toast.error(error instanceof ApiError ? error.message : "Could not save addition");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Label>New overlay note (Additions/ — not a vault original)</Label>
+              <Input
+                value={additionTitle}
+                onChange={(event) => setAdditionTitle(event.target.value)}
+                placeholder="Title"
+              />
+              <Textarea
+                value={additionBody}
+                onChange={(event) => setAdditionBody(event.target.value)}
+                placeholder="Markdown that lives only in StoryKeep/Additions"
+                rows={4}
+              />
+              <Button type="submit" variant="secondary" disabled={busy}>
+                Save addition
+              </Button>
+            </form>
+          </div>
         ) : null}
         {tab === "opml" ? (
           <div className="space-y-3">
@@ -1843,10 +2019,28 @@ function BackupDialog({
         <DialogHeader>
           <DialogTitle>Backup the archive</DialogTitle>
           <DialogDescription>
-            JSON export is always local. Database dumps use pg_dump. If S3 is configured, a copy is uploaded automatically.
+            The Obsidian pack is the only thing that goes back to the vault: Highlights, Additions, Corrections, and Index.md.
+            JSON export is a full archive dump. Database dumps use pg_dump.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await api.downloadObsidianPack();
+                toast.success("Obsidian pack downloaded");
+              } catch (error) {
+                toast.error(error instanceof ApiError ? error.message : "Pack download failed");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Download Obsidian pack
+          </Button>
           <Button
             disabled={busy}
             onClick={async () => {

@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, feeds, library, sync, tts
+from app.routers import articles, auth, backups, feeds, library, overlay, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 
@@ -58,6 +58,11 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS prefix TEXT")
     _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS suffix TEXT")
     _try_sql("UPDATE annotations SET kind = 'note' WHERE kind IS NULL")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS source_kind VARCHAR(16) DEFAULT 'rss'")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS source_ref TEXT")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS parent_id UUID")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS obsidian_path TEXT")
+    _try_sql("UPDATE articles SET source_kind = 'rss' WHERE source_kind IS NULL")
 
 
 def _seed_in_background() -> None:
@@ -97,6 +102,7 @@ API = "/api/v1"
 app.include_router(auth.router, prefix=API)
 app.include_router(feeds.router, prefix=API)
 app.include_router(articles.router, prefix=API)
+app.include_router(overlay.router, prefix=API)
 app.include_router(library.router, prefix=API)
 app.include_router(sync.router, prefix=API)
 app.include_router(backups.router, prefix=API)
