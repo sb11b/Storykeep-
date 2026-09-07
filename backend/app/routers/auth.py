@@ -18,6 +18,7 @@ def _set_cookie(response: Response, token: str) -> None:
         token,
         httponly=True,
         samesite="lax",
+        secure=settings.cookie_secure,
         max_age=settings.access_token_minutes * 60,
         path="/",
     )
@@ -54,7 +55,7 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)) -
 
 @router.post("/logout")
 def logout(response: Response) -> dict[str, bool]:
-    response.delete_cookie("sk_access", path="/")
+    response.delete_cookie("sk_access", path="/", secure=settings.cookie_secure, samesite="lax")
     return {"ok": True}
 
 

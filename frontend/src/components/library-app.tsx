@@ -121,7 +121,7 @@ export function LibraryApp({ user }: { user: User }) {
         setTotal(page.total);
         return;
       }
-      const params: Record<string, string | boolean> = { limit: 50 };
+      const params: Record<string, string | number | boolean> = { limit: 50 };
       if (shelf.kind === "unread") params.read = false;
       if (shelf.kind === "saved") params.saved = true;
       if (shelf.kind === "starred") params.starred = true;
@@ -643,11 +643,14 @@ function Reader({
           >
             Snapshot
           </Button>
-          <Button size="sm" variant="ghost" asChild>
-            <a href={article.url} target="_blank" rel="noreferrer">
-              Original
-            </a>
-          </Button>
+          <a
+            href={article.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-7 items-center rounded-md px-2.5 text-[0.8rem] hover:bg-muted"
+          >
+            Original
+          </a>
         </div>
         {article.tags.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mt-4">

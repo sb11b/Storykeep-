@@ -1,18 +1,23 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import logging
+import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.models import Feed, ensure_search_index
+from app.models import Feed
 from app.routers import articles, auth, backups, feeds, library, sync
 from app.seed import seed_demo
 from app.services import rss
 
+logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
 
@@ -30,19 +35,44 @@ def refresh_due_feeds() -> None:
         db.close()
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
+def _try_sql(statement: str) -> None:
+    with engine.connect() as connection:
+        try:
+            connection.execute(text(statement))
+            connection.commit()
+        except Exception as exc:
+            logger.warning("Skipping SQL (%s): %s", statement.split(" ", 3)[2] if "EXTENSION" in statement else statement[:48], exc)
+            connection.rollback()
+
+
+def _create_schema() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    _try_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    _try_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
     with engine.begin() as connection:
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         Base.metadata.create_all(bind=connection)
-        ensure_search_index(connection)
+        connection.execute(text("CREATE INDEX IF NOT EXISTS articles_search_idx ON articles USING GIN (search_vector)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS change_log_user_cursor_idx ON change_log (user_id, id)"))
+    _try_sql("CREATE INDEX IF NOT EXISTS articles_url_trgm_idx ON articles USING GIN (url gin_trgm_ops)")
+    _try_sql("CREATE INDEX IF NOT EXISTS articles_title_trgm_idx ON articles USING GIN (title gin_trgm_ops)")
+
+
+def _seed_in_background() -> None:
+    if not settings.seed_demo:
+        return
     db = SessionLocal()
     try:
         seed_demo(db)
+    except Exception:
+        logger.exception("Demo seed failed")
     finally:
         db.close()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    _create_schema()
+    threading.Thread(target=_seed_in_background, daemon=True, name="storykeep-seed").start()
     scheduler.add_job(refresh_due_feeds, "interval", minutes=settings.refresh_minutes, id="refresh")
     scheduler.start()
     yield
@@ -71,3 +101,8 @@ app.include_router(backups.router, prefix=API)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+_frontend = Path(settings.frontend_dir) if settings.frontend_dir else None
+if _frontend and _frontend.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend), html=True), name="frontend")

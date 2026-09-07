@@ -80,6 +80,17 @@ S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 
 `POST /api/v1/sync/delta` and `POST /api/v1/sync/push` are the contract for an offline reader. Saved articles include `content_html` so a phone can keep the text without hitting the original site.
 
-## Deploy
+## Deploy on Railway
 
-A $5–10 Amazon Lightsail instance running `docker compose` is enough for a personal archive. Point a domain at it when you want one. Regular JSON exports or `pg_dump` files should be copied off-box (S3 or a disk you already back up).
+One service plus Railway PostgreSQL. The image serves the API and the web UI on a single public URL.
+
+1. New Railway project → deploy this repo (GitHub) or `npx @railway/cli up`
+2. Add a **PostgreSQL** plugin
+3. On the web service, set `DATABASE_URL=${{Postgres.DATABASE_URL}}`
+4. Generate a public domain
+
+Demo login after first boot: `steve@storykeep.local` / `commonplace`
+
+Step-by-step notes, optional `SECRET_KEY`, and backup caveats: [`docs/railway.md`](docs/railway.md).
+
+Lightsail / Docker Compose still works for a VPS if you prefer that over Railway.

@@ -233,11 +233,13 @@ def ensure_search_index(connection) -> None:
         text("CREATE INDEX IF NOT EXISTS articles_search_idx ON articles USING GIN (search_vector)")
     )
     connection.execute(
-        text("CREATE INDEX IF NOT EXISTS articles_url_trgm_idx ON articles USING GIN (url gin_trgm_ops)")
-    )
-    connection.execute(
-        text("CREATE INDEX IF NOT EXISTS articles_title_trgm_idx ON articles USING GIN (title gin_trgm_ops)")
-    )
-    connection.execute(
         text("CREATE INDEX IF NOT EXISTS change_log_user_cursor_idx ON change_log (user_id, id)")
     )
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS articles_url_trgm_idx ON articles USING GIN (url gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS articles_title_trgm_idx ON articles USING GIN (title gin_trgm_ops)",
+    ):
+        try:
+            connection.execute(text(statement))
+        except Exception:
+            pass

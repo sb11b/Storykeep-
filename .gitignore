@@ -8,5 +8,6 @@ backend/var/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/out/
 *.log
 .DS_Store
