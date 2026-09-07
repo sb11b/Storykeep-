@@ -8,6 +8,13 @@ export function countWords(text: string | null | undefined): number {
   return (text || "").match(/\S+/g)?.length ?? 0;
 }
 
+export function visibleSpeechText(text: string | null | undefined): string {
+  return (text || "")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/==([^=]+)==/g, "$1")
+    .replace(/<img\b[^>]*>/gi, " ");
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -41,7 +48,7 @@ export function wrapHtmlWords(html: string, startIndex: number): string {
   const root = doc.getElementById("tts-root");
   if (!root) return html;
   const index = { value: startIndex };
-  const skip = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
+  const skip = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "IMG", "SVG", "VIDEO", "AUDIO"]);
   const visit = (node: Node) => {
     if (node.nodeType === Node.ELEMENT_NODE && skip.has((node as Element).tagName)) return;
     if (node.nodeType === Node.TEXT_NODE) {
@@ -58,19 +65,51 @@ export function wrapHtmlWords(html: string, startIndex: number): string {
 }
 
 export function wrapPlainWords(text: string, startIndex: number): string {
-  const escaped = escapeHtml(text).replace(/\n/g, "<br/>");
+  const escaped = escapeHtml(visibleSpeechText(text)).replace(/\n/g, "<br/>");
   return wrapHtmlWords(`<p>${escaped}</p>`, startIndex);
 }
 
 export function wordIndexFromCaret(root: HTMLElement | null): number | null {
+  return wordIndexFromSelection(root);
+}
+
+export function wordIndexFromSelection(root: HTMLElement | null): number | null {
   if (!root || typeof window === "undefined") return null;
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return null;
-  const node = selection.focusNode;
-  if (!node || !root.contains(node)) return null;
-  const start = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  const word = start?.closest?.("[data-tts-word]");
-  if (!(word instanceof HTMLElement)) return null;
-  const index = Number(word.dataset.ttsWord);
-  return Number.isFinite(index) ? index : null;
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.startContainer) && !root.contains(range.commonAncestorContainer)) return null;
+  const startNode = range.startContainer;
+  const startEl = startNode.nodeType === Node.ELEMENT_NODE ? (startNode as Element) : startNode.parentElement;
+  if (!startEl) return null;
+  const direct = startEl.closest("[data-tts-word]");
+  if (direct instanceof HTMLElement && root.contains(direct)) {
+    const index = Number(direct.dataset.ttsWord);
+    return Number.isFinite(index) ? index : null;
+  }
+  const scoped = startEl instanceof HTMLElement ? startEl : startEl.parentElement;
+  const nested = scoped?.querySelector?.("[data-tts-word]");
+  if (nested instanceof HTMLElement && root.contains(nested)) {
+    const index = Number(nested.dataset.ttsWord);
+    return Number.isFinite(index) ? index : null;
+  }
+  const words = Array.from(root.querySelectorAll("[data-tts-word]")) as HTMLElement[];
+  for (const word of words) {
+    let position: number;
+    try {
+      position = range.comparePoint(word, 0);
+    } catch {
+      continue;
+    }
+    if (position === 1 || position === 0) {
+      const index = Number(word.dataset.ttsWord);
+      if (Number.isFinite(index)) return index;
+    }
+  }
+  const last = words[words.length - 1];
+  if (last) {
+    const index = Number(last.dataset.ttsWord);
+    if (Number.isFinite(index)) return index;
+  }
+  return null;
 }

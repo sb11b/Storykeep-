@@ -40,7 +40,7 @@ import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { renderMarkdown } from "@/lib/markdown";
-import { countWords, spokenTitle, wordIndexFromCaret, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
+import { countWords, spokenTitle, wordIndexFromSelection, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
   Annotation,
   Article,
@@ -245,11 +245,14 @@ export function LibraryApp({ user }: { user: User }) {
         setReaderFull((current) => !current);
         return;
       }
+      if (event.shiftKey && event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        listenRef.current?.listenFromHere();
+        return;
+      }
       if (event.key === "l") {
         event.preventDefault();
-        const caret = caretWordRef.current?.();
-        if (caret != null) listenRef.current?.playFromWord(caret);
-        else listenRef.current?.togglePlay();
+        listenRef.current?.togglePlay();
       }
     }
     window.addEventListener("keydown", onKey);
@@ -498,16 +501,22 @@ export function LibraryApp({ user }: { user: User }) {
               size="xs"
               variant="outline"
               disabled={!article}
-              title="Listen to this article"
-              onClick={() => {
-                const caret = caretWordRef.current?.();
-                if (caret != null) listenRef.current?.playFromWord(caret);
-                else listenRef.current?.togglePlay();
-              }}
+              title="Listen to this article from the beginning"
+              onClick={() => listenRef.current?.togglePlay()}
             >
               <Volume2 className="size-3" />
               Listen
               <kbd className="text-[10px] text-muted-foreground">l</kbd>
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!article}
+              title="Listen from the selected word"
+              onClick={() => listenRef.current?.listenFromHere()}
+            >
+              From here
+              <kbd className="text-[10px] text-muted-foreground">⇧L</kbd>
             </Button>
             <Button
               size="xs"
@@ -1155,6 +1164,7 @@ function Reader({
   const articleRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const clickedWordRef = useRef<number | null>(null);
   const [picker, setPicker] = useState<{ quote: string; prefix: string; suffix: string; top: number; left: number } | null>(
     null,
   );
@@ -1198,6 +1208,7 @@ function Reader({
 
   useEffect(() => {
     setActiveWord(null);
+    clickedWordRef.current = null;
     setNote("");
     setTag("");
     setAdditionTitle("");
@@ -1210,7 +1221,7 @@ function Reader({
 
   useEffect(() => {
     noteFocusRef.current = () => noteRef.current?.focus();
-    caretWordRef.current = () => wordIndexFromCaret(articleRef.current);
+    caretWordRef.current = () => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current;
     return () => {
       noteFocusRef.current = null;
       caretWordRef.current = null;
@@ -1263,7 +1274,10 @@ function Reader({
           const word = (event.target as HTMLElement).closest("[data-tts-word]");
           if (word instanceof HTMLElement) {
             const index = Number(word.dataset.ttsWord);
-            if (Number.isFinite(index)) setActiveWord(index);
+            if (Number.isFinite(index)) {
+              clickedWordRef.current = index;
+              setActiveWord(index);
+            }
           }
         }}
       >
@@ -1360,7 +1374,7 @@ function Reader({
             articleId={article.id}
             hasText={Boolean(article.content_text || article.content_html || article.summary)}
             onCue={setActiveWord}
-            getCaretWord={() => wordIndexFromCaret(articleRef.current) ?? (activeWord != null ? activeWord : null)}
+            getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
           />
         </div>
         {article.tags.length > 0 ? (

@@ -11,9 +11,33 @@ import type { TtsStatus, TtsWord } from "@/lib/types";
 const SPEED_KEY = "storykeep-tts-speed";
 const SPEEDS = [0.7, 0.8, 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5, 2.8, 3] as const;
 
+type SpeechPayload = {
+  blob: Blob;
+  chunks: number;
+  wordOffset: number;
+  chunkWordCounts: number[];
+  duration: number | null;
+  words: TtsWord[];
+};
+
+const speechMemory = new Map<string, SpeechPayload>();
+
+function memoryKey(articleId: string, voice: string, chunk: number) {
+  return `${articleId}:${voice}:${chunk}`;
+}
+
+function rememberSpeech(key: string, data: SpeechPayload) {
+  speechMemory.set(key, data);
+  if (speechMemory.size > 32) {
+    const oldest = speechMemory.keys().next().value;
+    if (oldest) speechMemory.delete(oldest);
+  }
+}
+
 export type ListenControlsHandle = {
   togglePlay: () => void;
   playFromWord: (wordIndex: number) => void;
+  listenFromHere: () => void;
 };
 
 function formatSpeed(rate: number): string {
@@ -29,18 +53,6 @@ function readStoredSpeed(): number {
 
 function resumeKey(articleId: string) {
   return `storykeep-tts-resume:${articleId}`;
-}
-
-function readResume(articleId: string): number | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(resumeKey(articleId));
-  if (!raw) return null;
-  try {
-    const data = JSON.parse(raw) as { wordIndex?: number };
-    return typeof data.wordIndex === "number" ? data.wordIndex : null;
-  } catch {
-    return null;
-  }
 }
 
 function writeResume(articleId: string, wordIndex: number | null) {
@@ -87,7 +99,9 @@ export const ListenControls = forwardRef<
   const wordOffsetRef = useRef(0);
   const cueRafRef = useRef<number | null>(null);
   const lastCueRef = useRef<number | null>(null);
-  const seekLocalRef = useRef<number | null>(null);
+  const loadedChunkRef = useRef<number | null>(null);
+  const loadedVoiceRef = useRef<string | null>(null);
+  const countsRef = useRef<number[]>([]);
   const [status, setStatus] = useState<TtsStatus | null>(null);
   const [voiceId, setVoiceId] = useState("eve");
   const [speed, setSpeed] = useState(1);
@@ -185,13 +199,9 @@ export const ListenControls = forwardRef<
       if (audio) {
         audio.onended = null;
         audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
       }
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
+      loadedChunkRef.current = null;
+      loadedVoiceRef.current = null;
       wordsRef.current = [];
       setPhase("idle");
       setChunk(0);
@@ -205,6 +215,9 @@ export const ListenControls = forwardRef<
     setPhase("idle");
     setChunk(0);
     setChunks(1);
+    loadedChunkRef.current = null;
+    loadedVoiceRef.current = null;
+    countsRef.current = [];
     const audio = new Audio();
     applyPlaybackRate(audio, speedRef.current);
     audioRef.current = audio;
@@ -222,27 +235,27 @@ export const ListenControls = forwardRef<
     };
   }, [articleId, persistCue]);
 
+  const loadChunk = useCallback(
+    async (index: number, voice: string) => {
+      const key = memoryKey(articleId, voice, index);
+      const hit = speechMemory.get(key);
+      if (hit) return hit;
+      const data = await api.articleSpeech(articleId, voice, index);
+      rememberSpeech(key, data);
+      if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
+      return data;
+    },
+    [articleId],
+  );
+
   const playChunk = useCallback(
     async (index: number, voice: string, seekLocal: number | null = null) => {
       const generation = generationRef.current + 1;
       generationRef.current = generation;
-      setPhase("loading");
-      try {
-        const { blob, chunks: total, words, wordOffset, chunkWordCounts } = await api.articleSpeech(
-          articleId,
-          voice,
-          index,
-        );
-        if (generation !== generationRef.current) return;
-        setChunks(total);
-        setChunk(index);
-        wordsRef.current = words;
-        wordOffsetRef.current = wordOffset;
-        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        objectUrlRef.current = url;
-        const audio = audioRef.current;
-        if (!audio) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      const attachEnded = (total: number) => {
         audio.onended = () => {
           if (generation !== generationRef.current) return;
           if (index + 1 < total) {
@@ -251,57 +264,98 @@ export const ListenControls = forwardRef<
             stop(true);
           }
         };
-        audio.src = url;
+      };
+
+      const seekAndPlay = async (words: TtsWord[], wordOffset: number) => {
+        wordsRef.current = words;
+        wordOffsetRef.current = wordOffset;
         applyPlaybackRate(audio, speedRef.current);
-        const local = seekLocal ?? seekLocalRef.current;
-        seekLocalRef.current = null;
         const applySeek = () => {
-          if (local != null && words[local]) {
-            audio.currentTime = words[local].start;
+          if (seekLocal != null && words[seekLocal]) {
+            audio.currentTime = words[seekLocal].start;
+          } else if (seekLocal == null) {
+            audio.currentTime = 0;
           }
         };
         audio.onloadedmetadata = applySeek;
+        applySeek();
         await audio.play();
         applySeek();
         applyPlaybackRate(audio, speedRef.current);
         if (generation !== generationRef.current) return;
         startCueLoop();
         setPhase("playing");
-        if (chunkWordCounts.length && lastCueRef.current == null && local != null) {
-          lastCueRef.current = wordOffset + local;
+        if (seekLocal != null) {
+          lastCueRef.current = wordOffset + seekLocal;
           emitCue(lastCueRef.current);
         }
+      };
+
+      const alreadyLoaded = loadedChunkRef.current === index && loadedVoiceRef.current === voice && Boolean(audio.src);
+      if (alreadyLoaded && wordsRef.current.length) {
+        const cached = speechMemory.get(memoryKey(articleId, voice, index));
+        const total = cached?.chunks ?? 1;
+        attachEnded(total);
+        setChunk(index);
+        setChunks(total);
+        await seekAndPlay(wordsRef.current, wordOffsetRef.current);
+        return;
+      }
+
+      setPhase("loading");
+      try {
+        const data = await loadChunk(index, voice);
+        if (generation !== generationRef.current) return;
+        setChunks(data.chunks);
+        setChunk(index);
+        attachEnded(data.chunks);
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        const url = URL.createObjectURL(data.blob);
+        objectUrlRef.current = url;
+        audio.src = url;
+        loadedChunkRef.current = index;
+        loadedVoiceRef.current = voice;
+        await seekAndPlay(data.words, data.wordOffset);
       } catch (err) {
         if (generation !== generationRef.current) return;
         stop();
         toast.error(err instanceof ApiError ? err.message : "Could not start speech");
       }
     },
-    [articleId, emitCue, startCueLoop, stop],
+    [articleId, emitCue, loadChunk, startCueLoop, stop],
   );
 
   const startAtWord = useCallback(
-    async (wordIndex: number | null) => {
+    async (wordIndex: number) => {
       if (!hasText) {
         toast.error("Extract the full text first, then listen.");
         return;
       }
       const voice = voiceRef.current;
-      let startWord = wordIndex;
-      if (startWord == null) startWord = readResume(articleId);
-      if (startWord == null) {
-        void playChunk(0, voice, null);
-        return;
+      let counts = countsRef.current;
+      if (!counts.length) {
+        const first = await loadChunk(0, voice);
+        counts = first.chunkWordCounts.length ? first.chunkWordCounts : [first.words.length || 1];
+        countsRef.current = counts;
       }
-      const first = await api.articleSpeech(articleId, voice, 0);
-      const counts = first.chunkWordCounts.length
-        ? first.chunkWordCounts
-        : [first.words.length || 1];
-      const { chunk: target, local } = chunkForWord(counts, startWord);
+      const { chunk: target, local } = chunkForWord(counts, Math.max(0, wordIndex));
       void playChunk(target, voice, local);
     },
-    [articleId, hasText, playChunk],
+    [hasText, loadChunk, playChunk],
   );
+
+  const listenFromHere = useCallback(() => {
+    if (!hasText) {
+      toast.error("Extract the full text first, then listen.");
+      return;
+    }
+    const word = getCaretWord?.();
+    if (word == null) {
+      toast.message("Select a word first");
+      return;
+    }
+    void startAtWord(word);
+  }, [getCaretWord, hasText, startAtWord]);
 
   const togglePlay = useCallback(() => {
     if (!hasText) {
@@ -325,7 +379,7 @@ export const ListenControls = forwardRef<
       return;
     }
     if (phaseRef.current === "loading") return;
-    void startAtWord(null);
+    void startAtWord(0);
   }, [hasText, persistCue, startAtWord, startCueLoop, stopCueLoop]);
 
   useImperativeHandle(
@@ -335,8 +389,9 @@ export const ListenControls = forwardRef<
       playFromWord: (wordIndex: number) => {
         void startAtWord(wordIndex);
       },
+      listenFromHere,
     }),
-    [startAtWord, togglePlay],
+    [listenFromHere, startAtWord, togglePlay],
   );
 
   return (
@@ -345,8 +400,9 @@ export const ListenControls = forwardRef<
         <Button
           size="sm"
           variant="outline"
+          title="Listen from the beginning (L)"
           onClick={() => {
-            void startAtWord(null);
+            void startAtWord(0);
           }}
         >
           <Volume2 className="size-3.5" />
@@ -397,19 +453,8 @@ export const ListenControls = forwardRef<
           Stop
         </Button>
       ) : null}
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => {
-          const word = getCaretWord?.();
-          if (word == null) {
-            toast.message("Click a word in the article, then listen from there.");
-            return;
-          }
-          void startAtWord(word);
-        }}
-      >
-        From caret
+      <Button size="sm" variant="ghost" title="Listen from the selected word (Shift+L)" onClick={listenFromHere}>
+        Listen from here
       </Button>
       <label className="sr-only" htmlFor={`voice-${articleId}`}>
         Voice

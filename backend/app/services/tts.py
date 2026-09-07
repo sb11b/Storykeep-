@@ -58,11 +58,11 @@ def article_script(article: Article) -> str:
         parts.append(title)
     body = ""
     if article.content_html:
-        body = _strip_markup(article.content_html)
+        body = speech_plain(article.content_html)
     if not body:
-        body = (article.content_text or "").strip()
+        body = speech_plain(article.content_text or "")
     if not body and article.summary:
-        body = _strip_markup(article.summary)
+        body = speech_plain(article.summary)
     if body:
         parts.append(body)
     script = "\n\n".join(parts)
@@ -312,6 +312,20 @@ def _strip_markup(value: str) -> str:
     text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
     text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+IMAGE_MD = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+HIGHLIGHT_MD = re.compile(r"==([^=]+)==")
+HTML_IMG = re.compile(r"(?is)<img\b[^>]*>")
+
+
+def speech_plain(value: str) -> str:
+    """Visible words only: drop images and ==highlight== markers, keep the inner text."""
+    text = value or ""
+    text = HTML_IMG.sub(" ", text)
+    text = IMAGE_MD.sub(" ", text)
+    text = HIGHLIGHT_MD.sub(r"\1", text)
+    return _strip_markup(text)
 
 
 def _split_long(text: str, max_chars: int) -> list[str]:
