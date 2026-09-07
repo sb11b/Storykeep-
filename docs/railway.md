@@ -5,7 +5,7 @@ One web service plus Railway PostgreSQL. The container serves the API and the we
 ## 1. Create the project
 
 1. Open [Railway](https://railway.app) and start a new project.
-2. **Deploy from GitHub** (connect the Storykeep repo) or use the CLI from this directory.
+2. **Deploy from GitHub**. Railway cannot see the Origin repo. Push `main` to GitHub first (`sb11b/Storykeep-` is empty until you do). See [`START_HERE.md`](START_HERE.md) step 5.
 3. Railway picks up the root `Dockerfile` and `railway.toml`.
 
 CLI alternative:
