@@ -182,7 +182,7 @@ def delete_tag(tag_id: UUID, db: Session = Depends(get_db), user: User = Depends
 def list_notes(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[AnnotationOut]:
     notes = db.scalars(
         select(Annotation)
-        .where(Annotation.user_id == user.id)
+        .where(Annotation.user_id == user.id, func.coalesce(Annotation.kind, "note") != "highlight")
         .options(selectinload(Annotation.article))
         .order_by(Annotation.updated_at.desc())
     ).all()

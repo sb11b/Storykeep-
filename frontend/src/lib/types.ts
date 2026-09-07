@@ -42,6 +42,10 @@ export type Annotation = {
   article_id: string;
   body: string;
   quote: string | null;
+  kind?: "note" | "highlight";
+  color?: string | null;
+  prefix?: string | null;
+  suffix?: string | null;
   created_at: string;
   updated_at: string;
   article_title?: string | null;

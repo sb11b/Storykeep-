@@ -8,6 +8,8 @@ import {
   BookmarkCheck,
   Check,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Inbox,
   LoaderCircle,
   Menu,
@@ -18,6 +20,7 @@ import {
   Star,
   StarOff,
   Trash2,
+  Volume2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
@@ -31,6 +34,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
+import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { renderMarkdown } from "@/lib/markdown";
 import { countWords, spokenTitle, wordIndexFromCaret, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
@@ -173,6 +177,17 @@ export function LibraryApp({ user }: { user: User }) {
       });
   }, [loadNav]);
 
+  const selectRelative = useCallback(
+    (delta: number) => {
+      if (!items.length) return;
+      const index = selectedId ? items.findIndex((item) => item.id === selectedId) : -1;
+      const nextIndex = index < 0 ? 0 : Math.min(items.length - 1, Math.max(0, index + delta));
+      const next = items[nextIndex];
+      if (next) setSelectedId(next.id);
+    },
+    [items, selectedId],
+  );
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -188,11 +203,7 @@ export function LibraryApp({ user }: { user: User }) {
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "j" || event.key === "k") {
         event.preventDefault();
-        if (!items.length) return;
-        const index = selectedId ? items.findIndex((item) => item.id === selectedId) : -1;
-        const nextIndex = event.key === "j" ? Math.min(items.length - 1, index + 1) : Math.max(0, index <= 0 ? 0 : index - 1);
-        const next = items[index < 0 ? 0 : nextIndex];
-        if (next) setSelectedId(next.id);
+        selectRelative(event.key === "j" ? 1 : -1);
         return;
       }
       if (event.key === "m") {
@@ -221,7 +232,7 @@ export function LibraryApp({ user }: { user: User }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [article, items, selectedId]);
+  }, [article, items, selectedId, selectRelative]);
 
   useEffect(() => {
     void loadList();
@@ -379,12 +390,12 @@ export function LibraryApp({ user }: { user: User }) {
       </Sheet>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
+        <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
           </Button>
           <form
-            className="flex-1 max-w-xl"
+            className="min-w-40 flex-1 max-w-xl"
             onSubmit={(event) => {
               event.preventDefault();
               if (query.trim()) {
@@ -404,9 +415,77 @@ export function LibraryApp({ user }: { user: User }) {
               />
             </div>
           </form>
-          <div className="ml-auto text-xs text-muted-foreground hidden sm:block">
-            {stats ? `${stats.saved_count} kept · ${stats.unread_count} unread` : ""}
-            <span className="ml-3 hidden md:inline">j/k m s n / l</span>
+          <div className="ml-auto flex flex-wrap items-center gap-1">
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!items.length}
+              title="Previous article in this shelf"
+              onClick={() => selectRelative(-1)}
+            >
+              <ChevronUp className="size-3" />
+              Prev
+              <kbd className="text-[10px] text-muted-foreground">k</kbd>
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!items.length}
+              title="Next article in this shelf"
+              onClick={() => selectRelative(1)}
+            >
+              <ChevronDown className="size-3" />
+              Next
+              <kbd className="text-[10px] text-muted-foreground">j</kbd>
+            </Button>
+            <Button
+              size="xs"
+              variant={article?.is_read ? "default" : "outline"}
+              disabled={!article}
+              title="Mark this article read or unread"
+              onClick={() => void patchSelected({ is_read: !article!.is_read })}
+            >
+              <Check className="size-3" />
+              {article?.is_read ? "Unread" : "Read"}
+              <kbd className="text-[10px] opacity-70">m</kbd>
+            </Button>
+            <Button
+              size="xs"
+              variant={article?.is_saved ? "default" : "outline"}
+              disabled={!article}
+              title="Save this article in the archive"
+              onClick={() => void patchSelected({ is_saved: !article!.is_saved })}
+            >
+              {article?.is_saved ? <BookmarkCheck className="size-3" /> : <Bookmark className="size-3" />}
+              Save
+              <kbd className="text-[10px] opacity-70">s</kbd>
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!article}
+              title="Jump to notes on this article"
+              onClick={() => noteFocusRef.current?.()}
+            >
+              <NotebookPen className="size-3" />
+              Note
+              <kbd className="text-[10px] text-muted-foreground">n</kbd>
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!article}
+              title="Listen to this article"
+              onClick={() => {
+                const caret = caretWordRef.current?.();
+                if (caret != null) listenRef.current?.playFromWord(caret);
+                else listenRef.current?.togglePlay();
+              }}
+            >
+              <Volume2 className="size-3" />
+              Listen
+              <kbd className="text-[10px] text-muted-foreground">l</kbd>
+            </Button>
           </div>
         </header>
 
@@ -565,6 +644,26 @@ export function LibraryApp({ user }: { user: User }) {
                 }}
                 onNote={async (body) => {
                   await api.addNote(article.id, body);
+                  const next = await api.article(article.id);
+                  setArticle(next);
+                  void loadNav();
+                }}
+                onHighlight={async (payload) => {
+                  await api.addNote(article.id, payload.quote, {
+                    kind: "highlight",
+                    quote: payload.quote,
+                    color: payload.color,
+                    prefix: payload.prefix,
+                    suffix: payload.suffix,
+                  });
+                  const next = await api.article(article.id);
+                  setArticle(next);
+                  setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                  toast.success("Highlight saved with this article");
+                  void loadNav();
+                }}
+                onDeleteAnnotation={async (id) => {
+                  await api.deleteNote(id);
                   const next = await api.article(article.id);
                   setArticle(next);
                   void loadNav();
@@ -934,6 +1033,8 @@ function Reader({
   onArchive,
   onTag,
   onNote,
+  onHighlight,
+  onDeleteAnnotation,
 }: {
   article: Article;
   tags: Tag[];
@@ -948,6 +1049,8 @@ function Reader({
   onArchive: () => Promise<void>;
   onTag: (name: string) => Promise<void>;
   onNote: (body: string) => Promise<void>;
+  onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string }) => Promise<void>;
+  onDeleteAnnotation: (id: string) => Promise<void>;
 }) {
   const [note, setNote] = useState("");
   const [tag, setTag] = useState("");
@@ -956,6 +1059,10 @@ function Reader({
   const articleRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const [picker, setPicker] = useState<{ quote: string; prefix: string; suffix: string; top: number; left: number } | null>(
+    null,
+  );
+  const bodyRef = useRef<HTMLDivElement>(null);
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
   const titleSpoken = spokenTitle(article.title);
   const titleWordCount = countWords(titleSpoken);
@@ -965,18 +1072,33 @@ function Reader({
     .filter((item) => !article.tags.some((attached) => attached.id === item.id))
     .filter((item) => !tag.trim() || item.name.toLowerCase().includes(tag.trim().toLowerCase()))
     .slice(0, 8);
+  const highlightKey = article.annotations
+    .filter((item) => item.kind === "highlight")
+    .map((item) => `${item.id}:${item.color}:${item.quote}`)
+    .join("|");
+  const highlights = article.annotations.filter((item) => item.kind === "highlight" && item.quote);
+  const notesOnly = article.annotations.filter((item) => item.kind !== "highlight");
 
   useEffect(() => {
+    const marks = article.annotations
+      .filter((item) => item.kind === "highlight" && item.quote)
+      .map((item) => ({
+        id: item.id,
+        quote: item.quote || "",
+        color: item.color || "yellow",
+        prefix: item.prefix,
+        suffix: item.suffix,
+      }));
     if (html) {
-      setBodyHtml(wrapHtmlWords(html, titleWordCount));
+      setBodyHtml(applyHighlights(wrapHtmlWords(html, titleWordCount), marks));
       return;
     }
     if (fallbackBody) {
-      setBodyHtml(wrapPlainWords(fallbackBody, titleWordCount));
+      setBodyHtml(applyHighlights(wrapPlainWords(fallbackBody, titleWordCount), marks));
       return;
     }
     setBodyHtml("");
-  }, [article.id, fallbackBody, html, titleWordCount]);
+  }, [article.id, fallbackBody, html, highlightKey, titleWordCount]);
 
   useEffect(() => {
     setActiveWord(null);
@@ -1116,7 +1238,15 @@ function Reader({
         ) : null}
         <Separator className="my-6" />
         {bodyHtml ? (
-          <div className="article-body" dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+          <div
+            ref={bodyRef}
+            className="article-body"
+            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+            onMouseUp={() => {
+              const next = selectionInRoot(bodyRef.current);
+              setPicker(next);
+            }}
+          />
         ) : (
           <EmptyState
             title="Only the feed snippet is stored"
@@ -1178,11 +1308,30 @@ function Reader({
             />
             <Button type="submit">Save note</Button>
           </form>
-          {article.annotations.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Select a passage in the article, then pick a color. Highlights stay with the story when you save it.
+          </p>
+          {highlights.length > 0 ? (
+            <ul className="flex flex-wrap gap-2">
+              {highlights.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={cn("max-w-xs truncate rounded-md px-2 py-1 text-left text-xs", `hl hl-${item.color || "yellow"}`)}
+                    title="Remove highlight"
+                    onClick={() => void onDeleteAnnotation(item.id)}
+                  >
+                    {item.quote}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {notesOnly.length === 0 ? (
             <p className="text-sm text-muted-foreground">No notes on this story yet.</p>
           ) : (
             <ul className="space-y-3">
-              {article.annotations.map((item) => (
+              {notesOnly.map((item) => (
                 <li key={item.id} className="rounded-lg border bg-background px-3 py-2">
                   {item.quote ? <p className="text-sm italic text-muted-foreground">“{item.quote}”</p> : null}
                   <div className="text-sm mt-1 note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.body) }} />
@@ -1201,6 +1350,34 @@ function Reader({
           ) : null}
         </section>
       </article>
+      {picker ? (
+        <div
+          className="fixed z-50 flex -translate-x-1/2 -translate-y-full gap-1 rounded-full border bg-background p-1 shadow-md"
+          style={{ top: Math.max(48, picker.top - 8), left: picker.left }}
+        >
+          {HIGHLIGHT_COLORS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={cn("size-7 rounded-full border border-black/10", `hl-${color}`)}
+              title={`Highlight ${color}`}
+              aria-label={`Highlight ${color}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                void onHighlight({
+                  quote: picker.quote,
+                  color,
+                  prefix: picker.prefix,
+                  suffix: picker.suffix,
+                }).finally(() => {
+                  setPicker(null);
+                  window.getSelection()?.removeAllRanges();
+                });
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -53,8 +53,11 @@ def _create_schema() -> None:
         Base.metadata.create_all(bind=connection)
         connection.execute(text("CREATE INDEX IF NOT EXISTS articles_search_idx ON articles USING GIN (search_vector)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS change_log_user_cursor_idx ON change_log (user_id, id)"))
-    _try_sql("CREATE INDEX IF NOT EXISTS articles_url_trgm_idx ON articles USING GIN (url gin_trgm_ops)")
-    _try_sql("CREATE INDEX IF NOT EXISTS articles_title_trgm_idx ON articles USING GIN (title gin_trgm_ops)")
+    _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'note'")
+    _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS color VARCHAR(24)")
+    _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS prefix TEXT")
+    _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS suffix TEXT")
+    _try_sql("UPDATE annotations SET kind = 'note' WHERE kind IS NULL")
 
 
 def _seed_in_background() -> None:

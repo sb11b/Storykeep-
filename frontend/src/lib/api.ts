@@ -160,10 +160,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
-  addNote: (id: string, body: string, quote?: string) =>
+  addNote: (
+    id: string,
+    body: string,
+    extra?: { quote?: string; kind?: "note" | "highlight"; color?: string; prefix?: string; suffix?: string },
+  ) =>
     request<Annotation>(`/api/v1/articles/${id}/annotations`, {
       method: "POST",
-      body: JSON.stringify({ body, quote }),
+      body: JSON.stringify({ body, quote: extra?.quote, kind: extra?.kind || "note", color: extra?.color, prefix: extra?.prefix, suffix: extra?.suffix }),
     }),
   deleteNote: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/annotations/${id}`, { method: "DELETE" }),

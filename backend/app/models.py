@@ -166,6 +166,10 @@ class Annotation(Base):
     article_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("articles.id", ondelete="CASCADE"))
     body: Mapped[str] = mapped_column(Text, nullable=False)
     quote: Mapped[str | None] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(16), default="note", server_default="note")
+    color: Mapped[str | None] = mapped_column(String(24))
+    prefix: Mapped[str | None] = mapped_column(Text)
+    suffix: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -325,9 +325,22 @@ def create_note(
     user: User = Depends(get_current_user),
 ) -> AnnotationOut:
     article = _owned_article(db, user, article_id)
-    note = Annotation(user_id=user.id, article_id=article.id, body=payload.body, quote=payload.quote)
+    note = Annotation(
+        user_id=user.id,
+        article_id=article.id,
+        body=payload.body.strip() or (payload.quote or ""),
+        quote=payload.quote,
+        kind=payload.kind,
+        color=payload.color,
+        prefix=payload.prefix,
+        suffix=payload.suffix,
+    )
     db.add(note)
     db.flush()
+    if payload.kind == "highlight" and not article.is_saved:
+        article.is_saved = True
+        article.saved_at = datetime.now(timezone.utc)
+        db.add(article)
     changelog.record(db, user.id, "annotation", note.id, "upsert", {"article_id": str(article.id)})
     db.commit()
     db.refresh(note)

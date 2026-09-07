@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 T = TypeVar("T")
 
@@ -130,9 +130,37 @@ class TagIn(BaseModel):
     color: str | None = None
 
 
+HIGHLIGHT_COLORS = {"yellow", "green", "blue", "pink", "orange"}
+
+
 class AnnotationIn(BaseModel):
-    body: str = Field(min_length=1)
+    body: str = ""
     quote: str | None = None
+    kind: str = "note"
+    color: str | None = None
+    prefix: str | None = None
+    suffix: str | None = None
+
+    @model_validator(mode="after")
+    def validate_kind(self) -> "AnnotationIn":
+        kind = (self.kind or "note").strip().lower()
+        if kind not in {"note", "highlight"}:
+            raise ValueError("Kind must be note or highlight")
+        self.kind = kind
+        if kind == "note" and not self.body.strip():
+            raise ValueError("Note cannot be empty")
+        if kind == "highlight":
+            quote = (self.quote or "").strip()
+            if len(quote) < 2:
+                raise ValueError("Select text to highlight")
+            color = (self.color or "").strip().lower()
+            if color not in HIGHLIGHT_COLORS:
+                raise ValueError("Pick yellow, green, blue, pink, or orange")
+            self.quote = quote
+            self.color = color
+            if not self.body.strip():
+                self.body = quote
+        return self
 
 
 class AnnotationOut(BaseModel):
@@ -140,6 +168,10 @@ class AnnotationOut(BaseModel):
     article_id: uuid.UUID
     body: str
     quote: str | None
+    kind: str = "note"
+    color: str | None = None
+    prefix: str | None = None
+    suffix: str | None = None
     created_at: datetime
     updated_at: datetime
     article_title: str | None = None

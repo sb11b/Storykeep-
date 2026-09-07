@@ -71,7 +71,15 @@ def create_json_export(db: Session, user: User) -> Backup:
                         "is_starred": article.is_starred,
                         "is_read": article.is_read,
                         "tag_names": [tag.name for tag in article.tags],
-                        "notes": [{"body": note.body, "quote": note.quote} for note in article.annotations],
+                        "notes": [
+                            {
+                                "body": note.body,
+                                "quote": note.quote,
+                                "kind": getattr(note, "kind", None) or "note",
+                                "color": getattr(note, "color", None),
+                            }
+                            for note in article.annotations
+                        ],
                     }
                     for article in feed.articles
                 ],
