@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 XAI_TTS_URL = "https://api.x.ai/v1/tts"
 XAI_VOICES_URL = "https://api.x.ai/v1/tts/voices"
 MAX_CHUNK_CHARS = 1400
+LONG_SCRIPT_CHARS = 20_000
+CACHE_TTL = timedelta(hours=24)
 FALLBACK_VOICES = [
     {"voice_id": "eve", "name": "Eve"},
     {"voice_id": "ara", "name": "Ara"},
@@ -51,18 +54,27 @@ def word_count(text: str) -> int:
     return len(re.findall(r"\S+", text or ""))
 
 
-def article_script(article: Article) -> str:
+def article_script(article: Article, section_id: str | None = None) -> str:
     parts: list[str] = []
     title = spoken_title(article.title)
-    if title:
+    if title and not section_id:
         parts.append(title)
     body = ""
-    if article.content_html:
-        body = speech_plain(article.content_html)
-    if not body:
-        body = speech_plain(article.content_text or "")
-    if not body and article.summary:
-        body = speech_plain(article.summary)
+    if section_id:
+        for section in body_sections(article):
+            if section["id"] == section_id:
+                body = speech_plain(section["markdown"])
+                heading = spoken_title(section["title"])
+                if heading:
+                    parts.append(heading)
+                break
+    else:
+        if article.content_html:
+            body = speech_plain(article.content_html)
+        if not body:
+            body = speech_plain(article.content_text or "")
+        if not body and article.summary:
+            body = speech_plain(article.summary)
     if body:
         parts.append(body)
     script = "\n\n".join(parts)
@@ -70,6 +82,25 @@ def article_script(article: Article) -> str:
     script = re.sub(r"[ \t]+\n", "\n", script)
     script = re.sub(r"\n{3,}", "\n\n", script).strip()
     return script
+
+
+def body_sections(article: Article) -> list[dict[str, str]]:
+    raw = article.content_text or ""
+    if not raw.strip():
+        raw = speech_plain(article.content_html or article.summary or "")
+    blocks = re.split(r"(?m)(?=^#{1,3}\s+)", raw)
+    sections: list[dict[str, str]] = []
+    for block in blocks:
+        text = block.strip()
+        if not text:
+            continue
+        first = text.splitlines()[0]
+        heading = re.match(r"^#{1,3}\s+(.*)$", first)
+        title = heading.group(1).strip() if heading else first[:80]
+        sections.append({"id": str(len(sections)), "title": title[:80], "markdown": text})
+    if not sections:
+        sections.append({"id": "0", "title": article.title or "Full text", "markdown": raw})
+    return sections
 
 
 def split_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
@@ -129,9 +160,21 @@ def words_from_timestamps(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return words
 
 
+def script_digest(script: str, voice_id: str) -> str:
+    return hashlib.sha256(f"{voice_id}\n{script}".encode("utf-8")).hexdigest()[:40]
+
+
+def _safe_voice(voice_id: str) -> str:
+    return re.sub(r"[^a-z0-9_-]", "", (voice_id or "eve").lower())[:32] or "eve"
+
+
+def cache_path(article_id: UUID | str, digest: str, voice_id: str, chunk_index: int):
+    return settings.tts_dir / f"{article_id}_{digest}_{_safe_voice(voice_id)}_{chunk_index}.json"
+
+
 def cache_key(article_id: UUID | str, voice_id: str, chunk_index: int, text: str) -> str:
-    payload = f"{article_id}|{voice_id}|{chunk_index}|{text}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    digest = script_digest(text, voice_id)
+    return f"{article_id}_{digest}_{_safe_voice(voice_id)}_{chunk_index}"
 
 
 def load_cached_speech(key: str) -> dict[str, Any] | None:
@@ -140,7 +183,16 @@ def load_cached_speech(key: str) -> dict[str, Any] | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        stored_raw = data.get("stored_at")
+        stored = datetime.fromisoformat(stored_raw) if stored_raw else None
+        if stored and stored.tzinfo is None:
+            stored = stored.replace(tzinfo=timezone.utc)
         audio_b64 = data.get("audio_b64")
+        if audio_b64 and stored and datetime.now(timezone.utc) - stored > CACHE_TTL:
+            data.pop("audio_b64", None)
+            data["audio_dropped_at"] = datetime.now(timezone.utc).isoformat()
+            path.write_text(json.dumps(data), encoding="utf-8")
+            audio_b64 = None
         if not audio_b64:
             return None
         return {
@@ -159,6 +211,7 @@ def store_cached_speech(key: str, timed: dict[str, Any]) -> None:
         path.write_text(
             json.dumps(
                 {
+                    "stored_at": datetime.now(timezone.utc).isoformat(),
                     "audio_b64": base64.b64encode(timed["audio"]).decode("ascii"),
                     "content_type": timed.get("content_type") or "audio/mpeg",
                     "duration": timed.get("duration"),
@@ -171,6 +224,32 @@ def store_cached_speech(key: str, timed: dict[str, Any]) -> None:
         logger.info("tts cache write failed: %s", exc)
 
 
+def release_article_audio(article_id: UUID | str, voice_id: str | None = None) -> int:
+    """Drop mp3 payloads; keep timestamp JSON for later replay."""
+    prefix = str(article_id)
+    dropped = 0
+    voice = _safe_voice(voice_id) if voice_id else None
+    for path in settings.tts_dir.glob(f"{prefix}_*.json"):
+        if voice and f"_{voice}_" not in path.name:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not data.get("audio_b64"):
+                continue
+            data.pop("audio_b64", None)
+            data["audio_dropped_at"] = datetime.now(timezone.utc).isoformat()
+            path.write_text(json.dumps(data), encoding="utf-8")
+            dropped += 1
+        except Exception:
+            continue
+    return dropped
+
+
+def cached_chunk_count(article_id: UUID | str, digest: str, voice_id: str) -> int:
+    voice = _safe_voice(voice_id)
+    return sum(1 for path in settings.tts_dir.glob(f"{article_id}_{digest}_{voice}_*.json") if path.is_file())
+
+
 def synthesize_timed(
     text: str,
     voice_id: str,
@@ -178,10 +257,12 @@ def synthesize_timed(
     *,
     article_id: UUID | str | None = None,
     chunk_index: int = 0,
+    digest: str | None = None,
 ) -> dict[str, Any]:
     voice = (voice_id or "eve").strip().lower() or "eve"
+    key = None
     if article_id is not None:
-        key = cache_key(article_id, voice, chunk_index, text)
+        key = f"{article_id}_{digest or script_digest(text, voice)}_{_safe_voice(voice)}_{chunk_index}"
         cached = load_cached_speech(key)
         if cached:
             return cached
@@ -232,16 +313,16 @@ def synthesize_timed(
             "duration": data.get("duration"),
             "words": words_from_timestamps(data),
         }
-        if article_id is not None:
-            store_cached_speech(cache_key(article_id, voice, chunk_index, text), timed)
+        if article_id is not None and key:
+            store_cached_speech(key, timed)
         return timed
 
     audio = response.content
     if not audio:
         raise HTTPException(status_code=502, detail="xAI returned empty audio.")
     timed = {"audio": audio, "content_type": "audio/mpeg", "duration": None, "words": []}
-    if article_id is not None:
-        store_cached_speech(cache_key(article_id, voice, chunk_index, text), timed)
+    if article_id is not None and key:
+        store_cached_speech(key, timed)
     return timed
 
 

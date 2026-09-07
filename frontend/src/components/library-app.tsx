@@ -4,13 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Archive,
+  BookOpen,
   Bookmark,
   BookmarkCheck,
   Check,
   CheckCheck,
   ChevronDown,
   ChevronUp,
+  FilePlus,
   Inbox,
+  Library,
   LoaderCircle,
   Maximize2,
   Menu,
@@ -73,6 +76,12 @@ function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: T
       return "Starred";
     case "notes":
       return "Notes";
+    case "vault":
+      return "Vault";
+    case "additions":
+      return "Additions";
+    case "books":
+      return "Books";
     case "search":
       return `Search: ${shelf.q}`;
     case "feed":
@@ -152,6 +161,9 @@ export function LibraryApp({ user }: { user: User }) {
       if (shelf.kind === "unread") params.read = false;
       if (shelf.kind === "saved") params.saved = true;
       if (shelf.kind === "starred") params.starred = true;
+      if (shelf.kind === "vault") params.shelf = "vault";
+      if (shelf.kind === "additions") params.shelf = "additions";
+      if (shelf.kind === "books") params.shelf = "books";
       if (shelf.kind === "feed") params.feed_id = shelf.id;
       if (shelf.kind === "category") params.category_id = shelf.id;
       if (shelf.kind === "tag") params.tag_id = shelf.id;
@@ -627,11 +639,27 @@ export function LibraryApp({ user }: { user: User }) {
                 )
               ) : items.length === 0 ? (
                 <EmptyState
-                  title={shelf.kind === "saved" ? "Nothing kept yet" : "This shelf is empty"}
+                  title={
+                    shelf.kind === "saved"
+                      ? "Nothing kept yet"
+                      : shelf.kind === "vault"
+                        ? "Vault is empty"
+                        : shelf.kind === "additions"
+                          ? "No StoryKeep additions yet"
+                          : shelf.kind === "books"
+                            ? "No books imported yet"
+                            : "This shelf is empty"
+                  }
                   body={
                     shelf.kind === "inbox" || shelf.kind === "unread"
                       ? "Add a feed to start collecting stories you want to keep."
-                      : "Try another shelf, or search the full text of saved articles."
+                      : shelf.kind === "vault"
+                        ? "Collect → Vault and zip Steve's Surface Vault. Originals stay in Obsidian."
+                        : shelf.kind === "additions"
+                          ? "Type a complete note in Collect → Vault. It lands here and in StoryKeep/Additions of the pack."
+                          : shelf.kind === "books"
+                            ? "Import _book_ notes from the vault. They stay read-only in StoryKeep."
+                            : "Try another shelf, or search the full text of saved articles."
                   }
                 />
               ) : (
@@ -763,8 +791,12 @@ export function LibraryApp({ user }: { user: User }) {
         }}
         onCreatedNote={async (articleId) => {
           setSelectedId(articleId);
-          setShelf({ kind: "saved" });
+          setShelf({ kind: "additions" });
           setReaderFull(true);
+          await Promise.all([loadNav(), loadList()]);
+        }}
+        onImportedVault={async () => {
+          setShelf({ kind: "vault" });
           await Promise.all([loadNav(), loadList()]);
         }}
       />
@@ -863,6 +895,15 @@ function Sidebar({
         </NavButton>
         <NavButton active={shelf.kind === "saved"} onClick={() => onShelf({ kind: "saved" })} icon={<Bookmark className="size-4" />} count={stats?.saved_count}>
           Saved
+        </NavButton>
+        <NavButton active={shelf.kind === "vault"} onClick={() => onShelf({ kind: "vault" })} icon={<Library className="size-4" />} count={stats?.vault_count}>
+          Vault
+        </NavButton>
+        <NavButton active={shelf.kind === "additions"} onClick={() => onShelf({ kind: "additions" })} icon={<FilePlus className="size-4" />} count={stats?.additions_count}>
+          Additions
+        </NavButton>
+        <NavButton active={shelf.kind === "books"} onClick={() => onShelf({ kind: "books" })} icon={<BookOpen className="size-4" />} count={stats?.books_count}>
+          Books
         </NavButton>
         <NavButton active={shelf.kind === "starred"} onClick={() => onShelf({ kind: "starred" })} icon={<Star className="size-4" />}>
           Starred
@@ -1724,6 +1765,7 @@ function AddFeedDialog({
   onAdded,
   onSavedPage,
   onCreatedNote,
+  onImportedVault,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1731,6 +1773,7 @@ function AddFeedDialog({
   onAdded: () => Promise<void>;
   onSavedPage: (articleId: string) => Promise<void>;
   onCreatedNote: (articleId: string) => Promise<void>;
+  onImportedVault: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault" | "file">("feed");
   const [url, setUrl] = useState("");
@@ -2007,7 +2050,7 @@ function AddFeedDialog({
                         result.attachments ? `, ${result.attachments} attachments ignored` : ""
                       }${result.errors.length ? `, ${result.errors.length} errors` : ""}`,
                     );
-                    await onAdded();
+                    await onImportedVault();
                     onOpenChange(false);
                   } catch (error) {
                     toast.error(error instanceof ApiError ? error.message : "Vault import failed");

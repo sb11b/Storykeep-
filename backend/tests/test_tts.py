@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.tts import speech_plain, spoken_title, word_count
+from app.services.tts import body_sections, script_digest, speech_plain, spoken_title, word_count
 
 
 class SpeechPlainTests(unittest.TestCase):
@@ -16,6 +16,20 @@ class SpeechPlainTests(unittest.TestCase):
 
     def test_title_word_count_matches_spoken_title(self):
         self.assertEqual(word_count(spoken_title("Note highlights demo")), 3)
+
+    def test_digest_changes_with_body_and_sections_split(self):
+        self.assertNotEqual(script_digest("hello", "eve"), script_digest("hello world", "eve"))
+        self.assertEqual(script_digest("same", "eve"), script_digest("same", "eve"))
+
+        class Fake:
+            title = "_book_demo"
+            content_text = "# Limits\nA limit is...\n\n# Derivatives\nSlope of the tangent."
+            content_html = None
+            summary = None
+
+        sections = body_sections(Fake())
+        self.assertGreaterEqual(len(sections), 2)
+        self.assertEqual(sections[0]["title"], "Limits")
 
 
 if __name__ == "__main__":

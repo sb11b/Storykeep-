@@ -10,6 +10,7 @@ import type {
   SearchHit,
   Stats,
   Tag,
+  TtsPlan,
   TtsStatus,
   TtsWord,
   User,
@@ -294,6 +295,12 @@ export const api = {
       body: JSON.stringify({ backup_type, destination: "local" }),
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
+  ttsPlan: (id: string, voiceId: string) =>
+    request<TtsPlan>(`/api/v1/articles/${id}/tts/plan?voice_id=${encodeURIComponent(voiceId)}`),
+  releaseTtsAudio: (id: string, voiceId: string) =>
+    request<{ ok: boolean }>(`/api/v1/articles/${id}/tts/release?voice_id=${encodeURIComponent(voiceId)}`, {
+      method: "POST",
+    }),
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   streamChat: async (
     body: { messages: { role: "user" | "assistant"; content: string }[]; article_id: string | null; include_article: boolean },
@@ -341,8 +348,15 @@ export const api = {
       }
     }
   },
-  articleSpeech: async (id: string, voiceId: string, chunk = 0) => {
+  articleSpeech: async (
+    id: string,
+    voiceId: string,
+    chunk = 0,
+    opts?: { confirm?: boolean; section?: string | null },
+  ) => {
     const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
+    if (opts?.confirm) search.set("confirm", "true");
+    if (opts?.section) search.set("section", opts.section);
     const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {
       credentials: "include",
       cache: "no-store",

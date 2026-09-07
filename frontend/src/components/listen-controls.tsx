@@ -4,6 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { TtsStatus, TtsWord } from "@/lib/types";
@@ -22,8 +23,8 @@ type SpeechPayload = {
 
 const speechMemory = new Map<string, SpeechPayload>();
 
-function memoryKey(articleId: string, voice: string, chunk: number) {
-  return `${articleId}:${voice}:${chunk}`;
+function memoryKey(articleId: string, voice: string, chunk: number, section: string | null) {
+  return `${articleId}:${voice}:${section || "full"}:${chunk}`;
 }
 
 function rememberSpeech(key: string, data: SpeechPayload) {
@@ -102,6 +103,11 @@ export const ListenControls = forwardRef<
   const loadedChunkRef = useRef<number | null>(null);
   const loadedVoiceRef = useRef<string | null>(null);
   const countsRef = useRef<number[]>([]);
+  const sectionRef = useRef<string | null>(null);
+  const confirmRef = useRef(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [plan, setPlan] = useState<{ chars: number; sections: { id: string; title: string; chars: number }[] } | null>(null);
+  const pendingWordRef = useRef(0);
   const [status, setStatus] = useState<TtsStatus | null>(null);
   const [voiceId, setVoiceId] = useState("eve");
   const [speed, setSpeed] = useState(1);
@@ -191,7 +197,10 @@ export const ListenControls = forwardRef<
     (clearResume = false) => {
       generationRef.current += 1;
       stopCueLoop();
-      if (clearResume) writeResume(articleId, null);
+      if (clearResume) {
+        writeResume(articleId, null);
+        void api.releaseTtsAudio(articleId, voiceRef.current).catch(() => undefined);
+      }
       else persistCue();
       lastCueRef.current = null;
       emitCue(null);
@@ -218,6 +227,8 @@ export const ListenControls = forwardRef<
     loadedChunkRef.current = null;
     loadedVoiceRef.current = null;
     countsRef.current = [];
+    sectionRef.current = null;
+    confirmRef.current = false;
     const audio = new Audio();
     applyPlaybackRate(audio, speedRef.current);
     audioRef.current = audio;
@@ -237,10 +248,14 @@ export const ListenControls = forwardRef<
 
   const loadChunk = useCallback(
     async (index: number, voice: string) => {
-      const key = memoryKey(articleId, voice, index);
+      const section = sectionRef.current;
+      const key = memoryKey(articleId, voice, index, section);
       const hit = speechMemory.get(key);
       if (hit) return hit;
-      const data = await api.articleSpeech(articleId, voice, index);
+      const data = await api.articleSpeech(articleId, voice, index, {
+        confirm: confirmRef.current,
+        section,
+      });
       rememberSpeech(key, data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
       return data;
@@ -293,7 +308,7 @@ export const ListenControls = forwardRef<
 
       const alreadyLoaded = loadedChunkRef.current === index && loadedVoiceRef.current === voice && Boolean(audio.src);
       if (alreadyLoaded && wordsRef.current.length) {
-        const cached = speechMemory.get(memoryKey(articleId, voice, index));
+        const cached = speechMemory.get(memoryKey(articleId, voice, index, sectionRef.current));
         const total = cached?.chunks ?? 1;
         attachEnded(total);
         setChunk(index);
@@ -316,6 +331,9 @@ export const ListenControls = forwardRef<
         loadedChunkRef.current = index;
         loadedVoiceRef.current = voice;
         await seekAndPlay(data.words, data.wordOffset);
+        if (index + 1 < data.chunks) {
+          void loadChunk(index + 1, voice);
+        }
       } catch (err) {
         if (generation !== generationRef.current) return;
         stop();
@@ -326,12 +344,30 @@ export const ListenControls = forwardRef<
   );
 
   const startAtWord = useCallback(
-    async (wordIndex: number) => {
+    async (wordIndex: number, opts?: { confirm?: boolean; section?: string | null }) => {
       if (!hasText) {
         toast.error("Extract the full text first, then listen.");
         return;
       }
       const voice = voiceRef.current;
+      if (opts?.confirm) confirmRef.current = true;
+      if (opts?.section !== undefined) {
+        sectionRef.current = opts.section;
+        countsRef.current = [];
+      }
+      if (!confirmRef.current && !sectionRef.current) {
+        try {
+          const nextPlan = await api.ttsPlan(articleId, voice);
+          if (nextPlan.long) {
+            pendingWordRef.current = wordIndex;
+            setPlan(nextPlan);
+            setPlanOpen(true);
+            return;
+          }
+        } catch {
+          /* play anyway; the speech endpoint will error if needed */
+        }
+      }
       let counts = countsRef.current;
       if (!counts.length) {
         const first = await loadChunk(0, voice);
@@ -341,7 +377,7 @@ export const ListenControls = forwardRef<
       const { chunk: target, local } = chunkForWord(counts, Math.max(0, wordIndex));
       void playChunk(target, voice, local);
     },
-    [hasText, loadChunk, playChunk],
+    [articleId, hasText, loadChunk, playChunk],
   );
 
   const listenFromHere = useCallback(() => {
@@ -350,11 +386,7 @@ export const ListenControls = forwardRef<
       return;
     }
     const word = getCaretWord?.();
-    if (word == null) {
-      toast.message("Select a word first");
-      return;
-    }
-    void startAtWord(word);
+    void startAtWord(word == null ? 0 : word);
   }, [getCaretWord, hasText, startAtWord]);
 
   const togglePlay = useCallback(() => {
@@ -395,6 +427,7 @@ export const ListenControls = forwardRef<
   );
 
   return (
+    <>
     <div className="flex flex-wrap items-center gap-2">
       {phase === "idle" ? (
         <Button
@@ -505,5 +538,51 @@ export const ListenControls = forwardRef<
         </span>
       ) : null}
     </div>
+    <Dialog open={planOpen} onOpenChange={setPlanOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>This note is long to speak</DialogTitle>
+          <DialogDescription>
+            About {plan ? plan.chars.toLocaleString() : ""} characters. Confirm a full listen, or speak one chapter. Audio is
+            cached until this listen ends or 24 hours pass.
+          </DialogDescription>
+        </DialogHeader>
+        {plan && plan.sections.length > 1 ? (
+          <div className="max-h-40 space-y-1 overflow-y-auto">
+            {plan.sections.map((section) => (
+              <Button
+                key={section.id}
+                type="button"
+                size="sm"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => {
+                  setPlanOpen(false);
+                  void startAtWord(0, { section: section.id });
+                }}
+              >
+                {section.title}
+                <span className="ml-auto text-[11px] text-muted-foreground">{section.chars.toLocaleString()} chars</span>
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setPlanOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              setPlanOpen(false);
+              void startAtWord(pendingWordRef.current, { confirm: true, section: null });
+            }}
+          >
+            Listen to all
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 });

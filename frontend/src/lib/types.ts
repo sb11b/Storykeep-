@@ -148,6 +148,9 @@ export type Stats = {
   unread_count: number;
   saved_count: number;
   annotation_count: number;
+  vault_count?: number;
+  additions_count?: number;
+  books_count?: number;
   oldest_saved_at: string | null;
 };
 
@@ -181,6 +184,17 @@ export type ChatStatus = {
   requests_per_hour: number;
 };
 
+export type TtsPlan = {
+  enabled: boolean;
+  chars: number;
+  chunks: number;
+  long: boolean;
+  content_hash: string;
+  cached_chunks: number;
+  sections: { id: string; title: string; chars: number }[];
+  source_kind?: string;
+};
+
 export type TtsStatus = {
   enabled: boolean;
   provider: string;
@@ -205,6 +219,9 @@ export type Shelf =
   | { kind: "saved" }
   | { kind: "starred" }
   | { kind: "notes" }
+  | { kind: "vault" }
+  | { kind: "additions" }
+  | { kind: "books" }
   | { kind: "feed"; id: string }
   | { kind: "category"; id: string }
   | { kind: "tag"; id: string }

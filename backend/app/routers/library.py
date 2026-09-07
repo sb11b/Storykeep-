@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -23,6 +23,7 @@ from app.schemas import (
     TagOut,
 )
 from app.services import changelog
+from app.services.overlay_search import article_search_match, overlay_text_subquery
 
 router = APIRouter(tags=["library"])
 
@@ -255,41 +256,28 @@ def search(
 ) -> Page[SearchHit]:
     tsquery = func.plainto_tsquery("english", q)
     rank = func.ts_rank_cd(Article.search_vector, tsquery)
-    note_body = (
-        select(func.string_agg(Annotation.body, " "))
-        .where(Annotation.article_id == Article.id, Annotation.user_id == user.id)
-        .correlate(Article)
-        .scalar_subquery()
-    )
+    notes, highlights, additions, corrections = overlay_text_subquery(user.id)
     headline = func.ts_headline(
         "english",
         func.concat(
             func.coalesce(Article.content_text, Article.summary, Article.title, ""),
             " ",
-            func.coalesce(note_body, ""),
+            func.coalesce(notes, ""),
+            " ",
+            func.coalesce(highlights, ""),
+            " ",
+            func.coalesce(additions, ""),
+            " ",
+            func.coalesce(corrections, ""),
         ),
         tsquery,
         "StartSel=<mark>, StopSel=</mark>, MaxWords=32, MinWords=12",
-    )
-    note_hit = exists(
-        select(Annotation.id).where(
-            Annotation.article_id == Article.id,
-            Annotation.user_id == user.id,
-            or_(
-                func.to_tsvector("english", func.coalesce(Annotation.body, "")).bool_op("@@")(tsquery),
-                Annotation.body.ilike(f"%{q}%"),
-            ),
-        )
     )
     stmt = (
         select(Article, rank, headline)
         .join(Feed)
         .where(Feed.user_id == user.id)
-        .where(
-            Article.search_vector.bool_op("@@")(tsquery)
-            | Article.title.ilike(f"%{q}%")
-            | note_hit
-        )
+        .where(article_search_match(user.id, tsquery, q))
         .options(selectinload(Article.feed), selectinload(Article.tags))
         .order_by(rank.desc(), Article.published_at.desc().nulls_last())
     )
@@ -337,6 +325,20 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
         )
         or 0,
         annotation_count=db.scalar(select(func.count()).select_from(Annotation).where(Annotation.user_id == user.id))
+        or 0,
+        vault_count=db.scalar(
+            select(func.count()).select_from(
+                article_base.where(Article.guid.startswith("obsidian:"), Article.source_kind != "textbook").subquery()
+            )
+        )
+        or 0,
+        additions_count=db.scalar(
+            select(func.count()).select_from(article_base.where(Article.guid.startswith("storykeep-note:")).subquery())
+        )
+        or 0,
+        books_count=db.scalar(
+            select(func.count()).select_from(article_base.where(Article.source_kind == "textbook").subquery())
+        )
         or 0,
         oldest_saved_at=db.scalar(
             select(func.min(Article.saved_at)).where(Article.feed_id.in_(feed_ids), Article.is_saved.is_(True))

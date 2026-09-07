@@ -49,7 +49,15 @@ class VaultPathTests(unittest.TestCase):
         path = overlay_relpath("highlight", r"Daily Notes\bad:name.md", "id")
         self.assertTrue(path.startswith("StoryKeep/Highlights/"))
         self.assertNotIn(":", path)
+        self.assertNotIn("\\", path)
         self.assertTrue(path.endswith(".md"))
+        dashed = overlay_relpath("correction", "Books/Calc – limits.md", "id")
+        self.assertTrue(dashed.startswith("StoryKeep/Corrections/"))
+        self.assertIn("Calc", dashed)
+        odd = overlay_relpath("addition", None, "(.md")
+        self.assertTrue(odd.startswith("StoryKeep/Additions/"))
+        self.assertTrue(odd.endswith(".md"))
+        self.assertNotIn(":", odd)
 
     def test_zip_listing(self):
         buf = BytesIO()

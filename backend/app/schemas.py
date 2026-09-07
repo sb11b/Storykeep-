@@ -389,4 +389,7 @@ class StatsOut(BaseModel):
     unread_count: int
     saved_count: int
     annotation_count: int
+    vault_count: int = 0
+    additions_count: int = 0
+    books_count: int = 0
     oldest_saved_at: datetime | None

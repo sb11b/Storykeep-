@@ -53,7 +53,7 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
         "# StoryKeep overlay",
         "",
         "This pack is additive. Unzip into the vault root. It does not modify original notes.",
-        "Merge Corrections by hand if you want those edits in the source file.",
+        "Original vault paths are not listed here. Merge Corrections by hand if you want those edits in the source file.",
         "",
         "## Files in this pack",
         "",

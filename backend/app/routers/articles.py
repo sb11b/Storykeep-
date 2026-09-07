@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -25,7 +25,7 @@ from app.schemas import (
     TagIn,
     TagOut,
 )
-from app.services import archive as archive_service
+from app.services.overlay_search import article_search_match
 from app.services import changelog, extractor
 
 router = APIRouter(tags=["articles"])
@@ -79,6 +79,7 @@ def list_articles(
     starred: bool | None = None,
     read: bool | None = None,
     q: str | None = None,
+    shelf: str | None = Query(default=None),
     since: datetime | None = None,
     limit: int = Query(default=40, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -106,27 +107,15 @@ def list_articles(
         stmt = stmt.where(Article.is_read.is_(read))
     if since:
         stmt = stmt.where(Article.updated_at >= since)
+    if shelf == "vault":
+        stmt = stmt.where(Article.guid.startswith("obsidian:"), Article.source_kind != "textbook")
+    elif shelf == "additions":
+        stmt = stmt.where(Article.guid.startswith("storykeep-note:"))
+    elif shelf == "books":
+        stmt = stmt.where(Article.source_kind == "textbook")
     if q:
         tsquery = func.plainto_tsquery("english", q)
-        note_hit = (
-            select(Annotation.id)
-            .where(
-                Annotation.article_id == Article.id,
-                Annotation.user_id == user.id,
-                or_(
-                    func.to_tsvector("english", func.coalesce(Annotation.body, "")).bool_op("@@")(tsquery),
-                    Annotation.body.ilike(f"%{q}%"),
-                ),
-            )
-            .exists()
-        )
-        stmt = stmt.where(
-            or_(
-                Article.search_vector.bool_op("@@")(tsquery),
-                Article.title.ilike(f"%{q}%"),
-                note_hit,
-            )
-        )
+        stmt = stmt.where(article_search_match(user.id, tsquery, q))
     if sort == "published_asc":
         stmt = stmt.order_by(Article.published_at.asc().nulls_last(), Article.created_at.asc())
     elif sort == "saved_desc":

@@ -86,6 +86,10 @@ def import_obsidian_zip(db: Session, user: User, payload: bytes) -> dict[str, in
             html = markdown_to_html(text)
             guid = f"obsidian:{rel}"[:2000]
             article = db.scalar(select(Article).where(Article.feed_id == feed.id, Article.guid == guid))
+            if not article:
+                article = db.scalar(
+                    select(Article).where(Article.feed_id == feed.id, Article.obsidian_path == rel)
+                )
             created = False
             if not article:
                 article = Article(
@@ -110,6 +114,7 @@ def import_obsidian_zip(db: Session, user: User, payload: bytes) -> dict[str, in
                 article.title = title[:500]
                 article.content_text = text
                 article.content_html = html
+                article.guid = guid
                 article.source_kind = kind
                 article.source_ref = rel
                 article.obsidian_path = rel
