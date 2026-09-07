@@ -47,6 +47,7 @@ def chat(
     user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     history = chat_service.validate_payload([item.model_dump() for item in payload.messages])
+    chat_service.require_key()
     chat_service.enforce_rate_limit(user.id)
     excerpt = None
     if payload.include_article:
