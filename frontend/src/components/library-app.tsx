@@ -6,6 +6,7 @@ import {
   Archive,
   Bookmark,
   BookmarkCheck,
+  CheckCheck,
   Inbox,
   LoaderCircle,
   Menu,
@@ -21,6 +22,7 @@ import { toast } from "sonner";
 import { ListenControls } from "@/components/listen-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -86,6 +88,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [listError, setListError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedToRemove, setFeedToRemove] = useState<Feed | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -149,6 +152,7 @@ export function LibraryApp({ user }: { user: User }) {
 
   useEffect(() => {
     void loadList();
+    setSelectedIds([]);
   }, [loadList]);
 
   useEffect(() => {
@@ -183,6 +187,10 @@ export function LibraryApp({ user }: { user: User }) {
     return { groups, uncategorized };
   }, [categories, feeds]);
 
+  const visibleIds = items.map((item) => item.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedIds.includes(id));
+
   async function onRefresh() {
     setRefreshing(true);
     try {
@@ -202,6 +210,41 @@ export function LibraryApp({ user }: { user: User }) {
     setArticle(next);
     setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
     void loadNav();
+  }
+
+  async function onBulk(body: { is_read?: boolean; is_saved?: boolean }) {
+    if (!selectedIds.length) return;
+    try {
+      const result = await api.bulkArticles(selectedIds, body);
+      const label = body.is_saved
+        ? "saved"
+        : body.is_read
+          ? "marked read"
+          : "marked unread";
+      toast.success(`${result.updated} ${label}`);
+      const chosen = new Set(selectedIds);
+      setSelectedIds([]);
+      if (selectedId && chosen.has(selectedId) && article) {
+        setArticle({
+          ...article,
+          ...(body.is_read !== undefined ? { is_read: body.is_read } : {}),
+          ...(body.is_saved !== undefined ? { is_saved: body.is_saved } : {}),
+        });
+      }
+      await Promise.all([loadNav(), loadList()]);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not update articles");
+    }
+  }
+
+  async function onMarkFeedRead(feed: Feed) {
+    try {
+      const result = await api.markFeedRead(feed.id);
+      toast.success(result.updated ? `Marked ${result.updated} articles read` : "This feed is already read");
+      await Promise.all([loadNav(), loadList()]);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not mark feed read");
+    }
   }
 
   async function onRemoveFeed(feed: Feed, force: boolean) {
@@ -238,6 +281,7 @@ export function LibraryApp({ user }: { user: User }) {
         setFeedToRemove(feed);
         setMobileNav(false);
       }}
+      onMarkFeedRead={(feed) => void onMarkFeedRead(feed)}
       onBackup={() => setBackupOpen(true)}
       onRefresh={() => void onRefresh()}
       refreshing={refreshing}
@@ -292,27 +336,67 @@ export function LibraryApp({ user }: { user: User }) {
 
         <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
           <section className={cn("flex h-full min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex")}>
-            <div className="shrink-0 px-4 py-3">
+            <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
                   <p className="text-xs text-muted-foreground">{total} {shelf.kind === "notes" ? "notes" : "articles"}</p>
                 </div>
                 {shelf.kind === "feed" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="shrink-0"
-                    onClick={() => {
-                      const feed = feeds.find((item) => item.id === shelf.id);
-                      if (feed) setFeedToRemove(feed);
-                    }}
-                  >
-                    <Trash2 className="size-3.5" />
-                    Remove
-                  </Button>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const feed = feeds.find((item) => item.id === shelf.id);
+                        if (feed) void onMarkFeedRead(feed);
+                      }}
+                    >
+                      <CheckCheck className="size-3.5" />
+                      Mark read
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const feed = feeds.find((item) => item.id === shelf.id);
+                        if (feed) setFeedToRemove(feed);
+                      }}
+                    >
+                      <Trash2 className="size-3.5" />
+                      Remove
+                    </Button>
+                  </div>
                 ) : null}
               </div>
+              {shelf.kind !== "notes" && items.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      onCheckedChange={(checked) => {
+                        setSelectedIds(checked ? visibleIds : []);
+                      }}
+                      aria-label="Select all articles"
+                    />
+                    Select all
+                  </label>
+                  {someVisibleSelected ? (
+                    <>
+                      <span className="text-xs text-muted-foreground">{selectedIds.filter((id) => visibleIds.includes(id)).length} selected</span>
+                      <Button size="xs" variant="outline" onClick={() => void onBulk({ is_read: true })}>
+                        Mark read
+                      </Button>
+                      <Button size="xs" variant="outline" onClick={() => void onBulk({ is_read: false })}>
+                        Mark unread
+                      </Button>
+                      <Button size="xs" variant="outline" onClick={() => void onBulk({ is_saved: true })}>
+                        Save
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {loadingList ? (
@@ -350,6 +434,12 @@ export function LibraryApp({ user }: { user: User }) {
                     key={item.id}
                     item={item}
                     active={item.id === selectedId}
+                    selected={selectedIds.includes(item.id)}
+                    onToggleSelect={() => {
+                      setSelectedIds((current) =>
+                        current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id],
+                      );
+                    }}
                     onClick={() => setSelectedId(item.id)}
                   />
                 ))
@@ -439,6 +529,7 @@ function Sidebar({
   onShelf,
   onAdd,
   onRemoveFeed,
+  onMarkFeedRead,
   onBackup,
   onRefresh,
   refreshing,
@@ -453,6 +544,7 @@ function Sidebar({
   onShelf: (shelf: Shelf) => void;
   onAdd: () => void;
   onRemoveFeed: (feed: Feed) => void;
+  onMarkFeedRead: (feed: Feed) => void;
   onBackup: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -516,6 +608,7 @@ function Sidebar({
                       active={shelf.kind === "feed" && shelf.id === feed.id}
                       onSelect={() => onShelf({ kind: "feed", id: feed.id })}
                       onRemove={() => onRemoveFeed(feed)}
+                      onMarkRead={() => onMarkFeedRead(feed)}
                     />
                   ))}
                 </div>
@@ -528,6 +621,7 @@ function Sidebar({
                 active={shelf.kind === "feed" && shelf.id === feed.id}
                 onSelect={() => onShelf({ kind: "feed", id: feed.id })}
                 onRemove={() => onRemoveFeed(feed)}
+                onMarkRead={() => onMarkFeedRead(feed)}
               />
             ))}
           </>
@@ -565,11 +659,13 @@ function FeedNavItem({
   active,
   onSelect,
   onRemove,
+  onMarkRead,
 }: {
   feed: Feed;
   active?: boolean;
   onSelect: () => void;
   onRemove: () => void;
+  onMarkRead: () => void;
 }) {
   return (
     <div className="flex items-center gap-0.5">
@@ -578,6 +674,21 @@ function FeedNavItem({
           {feed.title || feed.url}
         </NavButton>
       </div>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="shrink-0 text-sidebar-foreground/45 hover:text-sidebar-foreground"
+        aria-label={`Mark ${feed.title || "feed"} read`}
+        disabled={!feed.unread_count}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onMarkRead();
+        }}
+      >
+        <CheckCheck className="size-3.5" />
+      </Button>
       <Button
         type="button"
         size="icon-xs"
@@ -628,31 +739,42 @@ function NavButton({
 function ArticleRow({
   item,
   active,
+  selected,
+  onToggleSelect,
   onClick,
 }: {
   item: ArticleListItem;
   active: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={cn(
-        "w-full text-left px-4 py-3 border-b hover:bg-accent/40",
+        "flex items-start gap-2 border-b px-3 py-3 hover:bg-accent/40",
         active && "bg-accent/70",
         !item.is_read && "bg-primary/4",
       )}
     >
-      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-        <span className="truncate">{item.feed_title || "Feed"}</span>
-        <span>·</span>
-        <span>{formatRelative(item.published_at)}</span>
-        {item.is_saved ? <Bookmark className="size-3 ml-auto text-primary" /> : null}
-      </div>
-      <p className={cn("mt-1 font-medium leading-snug", !item.is_read && "text-foreground")}>{item.title}</p>
-      <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
-    </button>
+      <Checkbox
+        className="mt-1"
+        checked={selected}
+        aria-label={`Select ${item.title}`}
+        onClick={(event) => event.stopPropagation()}
+        onCheckedChange={() => onToggleSelect()}
+      />
+      <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <span className="truncate">{item.feed_title || "Feed"}</span>
+          <span>·</span>
+          <span>{formatRelative(item.published_at)}</span>
+          {item.is_saved ? <Bookmark className="size-3 ml-auto text-primary" /> : null}
+        </div>
+        <p className={cn("mt-1 font-medium leading-snug", !item.is_read && "text-foreground")}>{item.title}</p>
+        <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
+      </button>
+    </div>
   );
 }
 

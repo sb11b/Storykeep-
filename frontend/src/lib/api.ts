@@ -91,6 +91,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  bulkArticles: (ids: string[], body: { is_read?: boolean; is_saved?: boolean }) =>
+    request<{ updated: number }>("/api/v1/articles/bulk", {
+      method: "POST",
+      body: JSON.stringify({ ids, ...body }),
+    }),
+  markFeedRead: (id: string) =>
+    request<{ updated: number }>(`/api/v1/feeds/${id}/mark-read`, { method: "POST" }),
   extract: (id: string) =>
     request<Article>(`/api/v1/articles/${id}/extract`, { method: "POST" }),
   attachTag: (id: string, name: string) =>

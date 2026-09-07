@@ -190,6 +190,12 @@ class MarkReadIn(BaseModel):
     is_read: bool = True
 
 
+class ArticleBulkIn(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    is_read: bool | None = None
+    is_saved: bool | None = None
+
+
 class TagIdsIn(BaseModel):
     tag_ids: list[uuid.UUID]
 

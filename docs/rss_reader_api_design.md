@@ -179,6 +179,18 @@ Setting `is_saved=true` stamps `saved_at` and triggers a readability archive if 
 { "ids": ["…"], "is_read": true }
 ```
 
+### `POST /articles/bulk`
+
+```json
+{ "ids": ["…"], "is_read": true, "is_saved": true }
+```
+
+Updates owned articles. At least one of `is_read` or `is_saved` is required.
+
+### `POST /feeds/{id}/mark-read`
+
+Marks every unread article in that feed as read. `{ "updated": 12 }`
+
 ---
 
 ## 5. Tags

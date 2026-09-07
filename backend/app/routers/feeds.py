@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -143,6 +144,26 @@ def delete_feed(
     db.delete(feed)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/feeds/{feed_id}/mark-read")
+def mark_feed_read(
+    feed_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, int]:
+    feed = db.get(Feed, feed_id)
+    if not feed or feed.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    now = datetime.now(timezone.utc)
+    unread = db.scalars(select(Article).where(Article.feed_id == feed.id, Article.is_read.is_(False))).all()
+    for article in unread:
+        article.is_read = True
+        article.read_at = now
+        db.add(article)
+    changelog.record(db, user.id, "feed", feed.id, "upsert", {"mark_read": len(unread)})
+    db.commit()
+    return {"updated": len(unread)}
 
 
 @router.post("/feeds/{feed_id}/refresh", response_model=FeedOut)

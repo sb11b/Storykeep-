@@ -14,6 +14,7 @@ from app.schemas import (
     AnnotationOut,
     ArchiveCreate,
     ArchiveOut,
+    ArticleBulkIn,
     ArticleListItem,
     ArticleOut,
     ArticlePatch,
@@ -146,6 +147,36 @@ def extract_article(
     extractor.fill_article(db, article, force=True)
     db.commit()
     return article_out(_owned_article(db, user, article_id))
+
+
+@router.post("/articles/bulk")
+def bulk_update(
+    payload: ArticleBulkIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, int]:
+    if payload.is_read is None and payload.is_saved is None:
+        raise HTTPException(status_code=400, detail="Choose mark read, unread, or save.")
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for article_id in payload.ids:
+        article = db.scalar(select(Article).join(Feed).where(Article.id == article_id, Feed.user_id == user.id))
+        if not article:
+            continue
+        changes: dict = {}
+        if payload.is_read is not None:
+            article.is_read = payload.is_read
+            article.read_at = now if payload.is_read else None
+            changes["is_read"] = payload.is_read
+        if payload.is_saved is not None:
+            article.is_saved = payload.is_saved
+            article.saved_at = now if payload.is_saved else None
+            changes["is_saved"] = payload.is_saved
+        changelog.record(db, user.id, "article", article.id, "upsert", changes)
+        db.add(article)
+        updated += 1
+    db.commit()
+    return {"updated": updated}
 
 
 @router.post("/articles/mark-read")
