@@ -1,0 +1,251 @@
+from datetime import datetime, timezone
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session, selectinload
+
+from app.database import get_db
+from app.deps import get_current_user
+from app.models import Annotation, Archive, Article, Feed, Tag, User
+from app.presenters import annotation_out, archive_out, article_list_item, article_out, tag_out
+from app.schemas import (
+    AnnotationIn,
+    AnnotationOut,
+    ArchiveCreate,
+    ArchiveOut,
+    ArticleListItem,
+    ArticleOut,
+    ArticlePatch,
+    MarkReadIn,
+    Page,
+    TagIdsIn,
+    TagIn,
+    TagOut,
+)
+from app.services import archive as archive_service
+from app.services import changelog, extractor
+
+router = APIRouter(tags=["articles"])
+
+
+def _owned_article(db: Session, user: User, article_id: UUID) -> Article:
+    article = db.scalar(
+        select(Article)
+        .join(Feed)
+        .where(Article.id == article_id, Feed.user_id == user.id)
+        .options(
+            selectinload(Article.feed),
+            selectinload(Article.tags),
+            selectinload(Article.annotations),
+            selectinload(Article.archives),
+        )
+    )
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return article
+
+
+@router.get("/articles", response_model=Page[ArticleListItem])
+def list_articles(
+    feed_id: UUID | None = None,
+    category_id: UUID | None = None,
+    tag_id: UUID | None = None,
+    saved: bool | None = None,
+    starred: bool | None = None,
+    read: bool | None = None,
+    q: str | None = None,
+    since: datetime | None = None,
+    limit: int = Query(default=40, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    sort: str = "published_desc",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Page[ArticleListItem]:
+    stmt = (
+        select(Article)
+        .join(Feed)
+        .where(Feed.user_id == user.id)
+        .options(selectinload(Article.feed), selectinload(Article.tags))
+    )
+    if feed_id:
+        stmt = stmt.where(Article.feed_id == feed_id)
+    if category_id:
+        stmt = stmt.where(Feed.category_id == category_id)
+    if tag_id:
+        stmt = stmt.join(Article.tags).where(Tag.id == tag_id, Tag.user_id == user.id)
+    if saved is not None:
+        stmt = stmt.where(Article.is_saved.is_(saved))
+    if starred is not None:
+        stmt = stmt.where(Article.is_starred.is_(starred))
+    if read is not None:
+        stmt = stmt.where(Article.is_read.is_(read))
+    if since:
+        stmt = stmt.where(Article.updated_at >= since)
+    if q:
+        stmt = stmt.where(
+            or_(
+                Article.search_vector.bool_op("@@")(func.plainto_tsquery("english", q)),
+                Article.title.ilike(f"%{q}%"),
+            )
+        )
+    if sort == "published_asc":
+        stmt = stmt.order_by(Article.published_at.asc().nulls_last(), Article.created_at.asc())
+    elif sort == "saved_desc":
+        stmt = stmt.order_by(Article.saved_at.desc().nulls_last(), Article.published_at.desc().nulls_last())
+    else:
+        stmt = stmt.order_by(Article.published_at.desc().nulls_last(), Article.created_at.desc())
+
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    items = db.scalars(stmt.offset(offset).limit(limit)).unique().all()
+    return Page(items=[article_list_item(article) for article in items], total=total, limit=limit, offset=offset)
+
+
+@router.get("/articles/{article_id}", response_model=ArticleOut)
+def get_article(article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ArticleOut:
+    return article_out(_owned_article(db, user, article_id))
+
+
+@router.patch("/articles/{article_id}", response_model=ArticleOut)
+def patch_article(
+    article_id: UUID,
+    payload: ArticlePatch,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    now = datetime.now(timezone.utc)
+    if payload.is_read is not None:
+        article.is_read = payload.is_read
+        article.read_at = now if payload.is_read else None
+    if payload.is_starred is not None:
+        article.is_starred = payload.is_starred
+    if payload.is_saved is not None:
+        article.is_saved = payload.is_saved
+        article.saved_at = now if payload.is_saved else None
+        if payload.is_saved:
+            archive_service.snapshot_article(db, article, "html")
+    changelog.record(
+        db,
+        user.id,
+        "article",
+        article.id,
+        "upsert",
+        payload.model_dump(exclude_unset=True),
+    )
+    db.add(article)
+    db.commit()
+    return article_out(_owned_article(db, user, article_id))
+
+
+@router.post("/articles/{article_id}/extract", response_model=ArticleOut)
+def extract_article(
+    article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    extractor.fill_article(db, article, force=True)
+    db.commit()
+    return article_out(_owned_article(db, user, article_id))
+
+
+@router.post("/articles/mark-read")
+def mark_read(payload: MarkReadIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, int]:
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for article_id in payload.ids:
+        article = db.scalar(select(Article).join(Feed).where(Article.id == article_id, Feed.user_id == user.id))
+        if not article:
+            continue
+        article.is_read = payload.is_read
+        article.read_at = now if payload.is_read else None
+        changelog.record(db, user.id, "article", article.id, "upsert", {"is_read": payload.is_read})
+        db.add(article)
+        updated += 1
+    db.commit()
+    return {"updated": updated}
+
+
+@router.put("/articles/{article_id}/tags", response_model=list[TagOut])
+def replace_tags(
+    article_id: UUID,
+    payload: TagIdsIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[TagOut]:
+    article = _owned_article(db, user, article_id)
+    tags = db.scalars(select(Tag).where(Tag.user_id == user.id, Tag.id.in_(payload.tag_ids))).all()
+    article.tags = list(tags)
+    changelog.record(db, user.id, "article", article.id, "upsert", {"tag_ids": [str(t.id) for t in tags]})
+    db.add(article)
+    db.commit()
+    return [tag_out(tag) for tag in article.tags]
+
+
+@router.post("/articles/{article_id}/tags", response_model=TagOut)
+def attach_tag(
+    article_id: UUID,
+    payload: TagIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TagOut:
+    article = _owned_article(db, user, article_id)
+    name = payload.name.strip()
+    tag = db.scalar(select(Tag).where(Tag.user_id == user.id, func.lower(Tag.name) == name.lower()))
+    if not tag:
+        tag = Tag(user_id=user.id, name=name, color=payload.color)
+        db.add(tag)
+        db.flush()
+    if tag not in article.tags:
+        article.tags.append(tag)
+    changelog.record(db, user.id, "article", article.id, "upsert", {"tag": tag.name})
+    db.add(article)
+    db.commit()
+    return tag_out(tag)
+
+
+@router.get("/articles/{article_id}/annotations", response_model=list[AnnotationOut])
+def list_article_notes(
+    article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[AnnotationOut]:
+    article = _owned_article(db, user, article_id)
+    return [annotation_out(note, article.title) for note in article.annotations]
+
+
+@router.post("/articles/{article_id}/annotations", response_model=AnnotationOut, status_code=201)
+def create_note(
+    article_id: UUID,
+    payload: AnnotationIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AnnotationOut:
+    article = _owned_article(db, user, article_id)
+    note = Annotation(user_id=user.id, article_id=article.id, body=payload.body, quote=payload.quote)
+    db.add(note)
+    db.flush()
+    changelog.record(db, user.id, "annotation", note.id, "upsert", {"article_id": str(article.id)})
+    db.commit()
+    db.refresh(note)
+    return annotation_out(note, article.title)
+
+
+@router.post("/articles/{article_id}/archive", response_model=ArchiveOut)
+def archive_article(
+    article_id: UUID,
+    payload: ArchiveCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArchiveOut:
+    article = _owned_article(db, user, article_id)
+    row = archive_service.snapshot_article(db, article, payload.type)
+    changelog.record(db, user.id, "archive", row.id, "upsert", {"article_id": str(article.id)})
+    db.commit()
+    db.refresh(row)
+    return archive_out(row)
+
+
+@router.get("/articles/{article_id}/archives", response_model=list[ArchiveOut])
+def list_archives(
+    article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[ArchiveOut]:
+    article = _owned_article(db, user, article_id)
+    return [archive_out(row) for row in article.archives]

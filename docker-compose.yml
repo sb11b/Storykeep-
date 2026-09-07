@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: storykeep
+      POSTGRES_PASSWORD: storykeep
+      POSTGRES_DB: storykeep
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storykeep"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://storykeep:storykeep@db:5432/storykeep
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-storykeep}
+      CORS_ORIGINS: http://127.0.0.1:43123,http://localhost:43123
+      SEED_DEMO: "1"
+      S3_BUCKET: ${S3_BUCKET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "18741:18741"
+    volumes:
+      - backups:/app/var
+
+  web:
+    build: ./frontend
+    environment:
+      API_ORIGIN: http://api:18741
+    depends_on:
+      - api
+    ports:
+      - "43123:43123"
+
+volumes:
+  pgdata:
+  backups:

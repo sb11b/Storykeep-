@@ -1,0 +1,12 @@
+agent-tools/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+backend/var/
+.env
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+*.log
+.DS_Store

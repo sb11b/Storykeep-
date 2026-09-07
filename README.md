@@ -1,0 +1,85 @@
+# Storykeep
+
+A personal RSS reader and lifelong article archive. Subscribe to feeds, store the full text of stories (not just links), search across years of reading, tag and annotate what you keep, and export backups so the collection survives a dead laptop.
+
+This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library you can use every day. The API already includes delta-sync endpoints for a later Android client.
+
+## What you can do
+
+- Add RSS/Atom feeds, grouped into categories
+- Read extracted article text in a dedicated reader
+- Save stories for later / for life, star them, mark read
+- Tag articles and write notes
+- Snapshot HTML so a dead original URL still has a copy
+- Full-text search across titles, authors, summaries, and stored bodies
+- Export JSON or dump the database; optional S3 upload when configured
+
+## Stack
+
+| Layer | Choice |
+| --- | --- |
+| API | Python, FastAPI, SQLAlchemy |
+| Database | PostgreSQL 16 with `tsvector` search |
+| Extraction | Trafilatura, with Readability as fallback |
+| Web | Next.js, Tailwind, shadcn/ui |
+| Backup | Local files; Amazon S3 if `S3_BUCKET` is set |
+
+Planning documents live in `docs/`:
+
+- `docs/rss_reader_schema.sql` — 11-table schema
+- `docs/rss_reader_api_design.md` — endpoint contract
+- `docs/rss_reader_architecture.md` — why these decisions
+
+## Local setup
+
+PostgreSQL 16, Python 3.12, and Node 22.
+
+```bash
+# database
+createdb storykeep   # or use the docker-compose db service
+
+# api
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export DATABASE_URL=postgresql+psycopg2://storykeep:storykeep@127.0.0.1:5432/storykeep
+uvicorn app.main:app --reload --host 0.0.0.0 --port 18741
+
+# web (second terminal)
+cd frontend
+npm install
+API_ORIGIN=http://127.0.0.1:18741 npm run dev -- --port 43123
+```
+
+Open [http://127.0.0.1:43123](http://127.0.0.1:43123). A demo account is created on first boot:
+
+- email: `steve@storykeep.local`
+- password: `commonplace`
+
+Or run everything with Docker:
+
+```bash
+docker compose up --build
+```
+
+## Environment
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | SQLAlchemy URL |
+| `SECRET_KEY` | JWT signing key |
+| `SEED_DEMO` | Create the demo user and sample feeds (`1` by default) |
+| `S3_BUCKET` | Optional backup destination |
+| `S3_PREFIX` | Object prefix, default `storykeep` |
+| `API_ORIGIN` | Next.js rewrite target for the API |
+
+S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
+
+## Android later
+
+`POST /api/v1/sync/delta` and `POST /api/v1/sync/push` are the contract for an offline reader. Saved articles include `content_html` so a phone can keep the text without hitting the original site.
+
+## Deploy
+
+A $5–10 Amazon Lightsail instance running `docker compose` is enough for a personal archive. Point a domain at it when you want one. Regular JSON exports or `pg_dump` files should be copied off-box (S3 or a disk you already back up).

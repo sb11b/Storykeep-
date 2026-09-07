@@ -1,0 +1,123 @@
+import type {
+  Annotation,
+  Article,
+  Backup,
+  Category,
+  Feed,
+  Page,
+  SearchHit,
+  Stats,
+  Tag,
+  User,
+} from "./types";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(path, {
+    ...init,
+    headers,
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const data = (await response.json()) as { detail?: string };
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(response.status, detail);
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export const api = {
+  me: () => request<User>("/api/v1/auth/me"),
+  login: (email: string, password: string) =>
+    request<{ user: User }>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  register: (email: string, password: string, display_name?: string) =>
+    request<{ user: User }>("/api/v1/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, display_name }),
+    }),
+  logout: () => request<{ ok: boolean }>("/api/v1/auth/logout", { method: "POST" }),
+  stats: () => request<Stats>("/api/v1/stats"),
+  feeds: () => request<Feed[]>("/api/v1/feeds"),
+  addFeed: (url: string, category_id?: string | null) =>
+    request<Feed>("/api/v1/feeds", {
+      method: "POST",
+      body: JSON.stringify({ url, category_id: category_id || null }),
+    }),
+  refreshFeed: (id: string) =>
+    request<Feed>(`/api/v1/feeds/${id}/refresh`, { method: "POST" }),
+  refreshAll: () => request<{ created: number }>("/api/v1/feeds/refresh", { method: "POST" }),
+  deleteFeed: (id: string, force = false) =>
+    request<{ ok: boolean }>(`/api/v1/feeds/${id}?force=${force}`, { method: "DELETE" }),
+  categories: () => request<Category[]>("/api/v1/categories"),
+  createCategory: (name: string, color?: string) =>
+    request<Category>("/api/v1/categories", {
+      method: "POST",
+      body: JSON.stringify({ name, color }),
+    }),
+  tags: () => request<Tag[]>("/api/v1/tags"),
+  articles: (params: Record<string, string | number | boolean | undefined>) => {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") search.set(key, String(value));
+    }
+    return request<Page<Article>>(`/api/v1/articles?${search.toString()}`);
+  },
+  article: (id: string) => request<Article>(`/api/v1/articles/${id}`),
+  patchArticle: (id: string, body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred">>) =>
+    request<Article>(`/api/v1/articles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  extract: (id: string) =>
+    request<Article>(`/api/v1/articles/${id}/extract`, { method: "POST" }),
+  attachTag: (id: string, name: string) =>
+    request<Tag>(`/api/v1/articles/${id}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  addNote: (id: string, body: string, quote?: string) =>
+    request<Annotation>(`/api/v1/articles/${id}/annotations`, {
+      method: "POST",
+      body: JSON.stringify({ body, quote }),
+    }),
+  deleteNote: (id: string) =>
+    request<{ ok: boolean }>(`/api/v1/annotations/${id}`, { method: "DELETE" }),
+  notes: () => request<Annotation[]>("/api/v1/annotations"),
+  archive: (id: string) =>
+    request(`/api/v1/articles/${id}/archive`, {
+      method: "POST",
+      body: JSON.stringify({ type: "html" }),
+    }),
+  search: (q: string, saved?: boolean) => {
+    const search = new URLSearchParams({ q });
+    if (saved) search.set("saved", "true");
+    return request<Page<SearchHit>>(`/api/v1/search?${search.toString()}`);
+  },
+  backups: () => request<Backup[]>("/api/v1/backups"),
+  createBackup: (backup_type: string) =>
+    request<Backup>("/api/v1/backups", {
+      method: "POST",
+      body: JSON.stringify({ backup_type, destination: "local" }),
+    }),
+};

@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from time import mktime
+from typing import Any
+from uuid import UUID
+
+import feedparser
+import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import Article, Feed
+from app.services import changelog, extractor
+
+logger = logging.getLogger(__name__)
+
+HEADERS = {
+    "User-Agent": "Storykeep/1.0 (+https://localhost; personal archive reader)"
+}
+
+
+def _entry_datetime(entry: Any) -> datetime | None:
+    for key in ("published_parsed", "updated_parsed"):
+        parsed = entry.get(key)
+        if parsed:
+            try:
+                return datetime.fromtimestamp(mktime(parsed), tz=timezone.utc)
+            except Exception:
+                pass
+    for key in ("published", "updated"):
+        raw = entry.get(key)
+        if not raw:
+            continue
+        try:
+            dt = parsedate_to_datetime(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            continue
+    return None
+
+
+def _entry_image(entry: Any) -> str | None:
+    if entry.get("image", {}).get("href"):
+        return entry["image"]["href"]
+    for media in entry.get("media_content", []) or []:
+        if media.get("url") and str(media.get("type", "")).startswith("image"):
+            return media["url"]
+    for link in entry.get("links", []) or []:
+        if str(link.get("type", "")).startswith("image") and link.get("href"):
+            return link["href"]
+    return None
+
+
+def _entry_html(entry: Any) -> str | None:
+    for content in entry.get("content", []) or []:
+        if content.get("value"):
+            return content["value"]
+    return entry.get("summary")
+
+
+def fetch_feed_document(url: str, etag: str | None = None, last_modified: str | None = None) -> tuple[Any, str | None, str | None]:
+    headers = dict(HEADERS)
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    with httpx.Client(timeout=25.0, follow_redirects=True, headers=headers) as client:
+        response = client.get(url)
+        if response.status_code == 304:
+            return None, etag, last_modified
+        response.raise_for_status()
+        parsed = feedparser.parse(response.content)
+        return parsed, response.headers.get("ETag"), response.headers.get("Last-Modified")
+
+
+def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50) -> int:
+    try:
+        parsed, etag, last_modified = fetch_feed_document(feed.url, feed.etag, feed.last_modified)
+    except Exception as exc:
+        feed.last_error = str(exc)[:500]
+        feed.last_fetched_at = datetime.now(timezone.utc)
+        db.add(feed)
+        db.commit()
+        logger.info("feed fetch failed %s: %s", feed.url, exc)
+        return 0
+
+    if parsed is None:
+        feed.last_fetched_at = datetime.now(timezone.utc)
+        feed.last_error = None
+        db.add(feed)
+        db.commit()
+        return 0
+
+    if getattr(parsed, "bozo", False) and not parsed.entries:
+        feed.last_error = str(getattr(parsed, "bozo_exception", "Could not parse feed"))[:500]
+        feed.last_fetched_at = datetime.now(timezone.utc)
+        db.add(feed)
+        db.commit()
+        return 0
+
+    feed.etag = etag
+    feed.last_modified = last_modified
+    feed.last_error = None
+    feed.last_fetched_at = datetime.now(timezone.utc)
+    if parsed.feed.get("title"):
+        feed.title = parsed.feed.get("title")
+    if parsed.feed.get("subtitle"):
+        feed.description = parsed.feed.get("subtitle")
+    if parsed.feed.get("link"):
+        feed.site_url = parsed.feed.get("link")
+    icon = parsed.feed.get("icon") or parsed.feed.get("logo")
+    if icon:
+        feed.favicon_url = icon
+
+    created = 0
+    for entry in parsed.entries[:limit]:
+        guid = str(entry.get("id") or entry.get("link") or entry.get("title") or "")
+        url = str(entry.get("link") or "")
+        title = (entry.get("title") or "Untitled").strip()
+        if not guid or not url:
+            continue
+        existing = db.scalar(select(Article).where(Article.feed_id == feed.id, Article.guid == guid))
+        if existing:
+            continue
+        html = _entry_html(entry)
+        article = Article(
+            feed_id=feed.id,
+            guid=guid[:2000],
+            url=url[:4000],
+            title=title[:500],
+            author=entry.get("author"),
+            published_at=_entry_datetime(entry),
+            summary=entry.get("summary"),
+            content_html=html,
+            image_url=_entry_image(entry),
+        )
+        db.add(article)
+        db.flush()
+        if extract:
+            extractor.fill_article(db, article, force=False)
+        changelog.record(db, feed.user_id, "article", article.id, "upsert", {"title": article.title})
+        created += 1
+
+    db.add(feed)
+    db.commit()
+    return created
+
+
+def refresh_user_feeds(db: Session, user_id: UUID, extract: bool = True) -> int:
+    feeds = db.scalars(select(Feed).where(Feed.user_id == user_id, Feed.is_active.is_(True))).all()
+    total = 0
+    for feed in feeds:
+        total += refresh_feed(db, feed, extract=extract)
+    return total
