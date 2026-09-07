@@ -7,7 +7,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy import select, text
 
 from app.config import settings
@@ -103,6 +103,26 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-_frontend = Path(settings.frontend_dir) if settings.frontend_dir else None
-if _frontend and _frontend.is_dir():
-    app.mount("/", StaticFiles(directory=str(_frontend), html=True), name="frontend")
+def _register_frontend(app: FastAPI) -> None:
+    directory = Path(settings.frontend_dir) if settings.frontend_dir else None
+    if not directory or not directory.is_dir():
+        return
+
+    @app.get("/{full_path:path}")
+    def frontend_page(full_path: str):
+        if full_path in {"api", "health"} or full_path.startswith("api/"):
+            return {"detail": "Not found"}
+        direct = directory / full_path
+        if direct.is_file():
+            return FileResponse(direct)
+        nested = directory / full_path / "index.html"
+        if nested.is_file():
+            return FileResponse(nested)
+        html = directory / f"{full_path}.html"
+        if html.is_file():
+            return FileResponse(html)
+        index = directory / "index.html"
+        return FileResponse(index)
+
+
+_register_frontend(app)
