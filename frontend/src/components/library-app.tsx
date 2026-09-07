@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
+import { GrokBubble } from "@/components/grok-bubble";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -766,6 +767,17 @@ export function LibraryApp({ user }: { user: User }) {
         onOpenChange={setBackupOpen}
         onCreated={async () => {
           setBackups(await api.backups());
+        }}
+      />
+      <GrokBubble
+        articleId={article?.id ?? null}
+        articleTitle={article?.title ?? null}
+        onSavedNote={async () => {
+          if (article?.id) {
+            const next = await api.article(article.id);
+            setArticle(next);
+          }
+          await loadNav();
         }}
       />
     </div>

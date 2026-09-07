@@ -73,7 +73,8 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `S3_BUCKET` | Optional backup destination |
 | `S3_PREFIX` | Object prefix, default `storykeep` |
 | `API_ORIGIN` | Next.js rewrite target for the API |
-| `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen in the reader. |
+| `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen and the Grok chat bubble. Server only. |
+| `XAI_CHAT_MODEL` | Optional chat model, default `grok-4` |
 
 S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 

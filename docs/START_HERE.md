@@ -105,5 +105,7 @@ To add a **new** complete note or paper, use Collect → Vault, type the title, 
 
 To add a **PDF, Word, PowerPoint, or other document**, use Collect → File. StoryKeep extracts the text into the archive. It does not overwrite Steve's Surface Vault.
 
+The orange Grok bubble (bottom-right, draggable) asks about the open article. **Add to StoryKeep notes** writes an overlay addition, never an original vault file. Chat uses `XAI_API_KEY` on Railway only.
+
 uCertify is not integrated. There is no login, scrape, or stored password. If you already have a page open, use **Save URL**.
 

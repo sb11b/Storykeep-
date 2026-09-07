@@ -38,7 +38,8 @@ Railway’s URL looks like `postgresql://…`. Storykeep rewrites that to SQLAlc
 | `SECRET_KEY` | Recommended | Any long random string. If you skip it, a stable key is derived from the database URL. |
 | `SEED_DEMO` | No | Defaults on. Creates `steve@storykeep.local` / `commonplace` and sample feeds on first boot. Set `0` after you have your own account. |
 | `S3_BUCKET` | No | Optional off-site backup target |
-| `XAI_API_KEY` | No | xAI API key (`xai-…`) so Listen can read articles aloud |
+| `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen and the Grok chat bubble. Server only — never in the browser. |
+| `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 

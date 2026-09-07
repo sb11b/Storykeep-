@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     extract_on_import: bool = True
     secure_cookies: bool = False
     xai_api_key: str = ""
+    xai_chat_model: str = "grok-4"
+    xai_chat_max_tokens: int = 2048
+    chat_requests_per_hour: int = 30
 
     @field_validator("database_url", mode="before")
     @classmethod

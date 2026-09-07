@@ -14,6 +14,7 @@ import type {
   TtsWord,
   User,
   VaultImportResult,
+  ChatStatus,
 } from "./types";
 
 export class ApiError extends Error {
@@ -267,6 +268,53 @@ export const api = {
       body: JSON.stringify({ backup_type, destination: "local" }),
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
+  chatStatus: () => request<ChatStatus>("/api/v1/chat"),
+  streamChat: async (
+    body: { messages: { role: "user" | "assistant"; content: string }[]; article_id: string | null; include_article: boolean },
+    onDelta: (text: string) => void,
+  ) => {
+    const response = await fetch("/api/v1/chat", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    if (!response.body) throw new ApiError(502, "Chat stream was empty");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        const line = part.split("\n").find((item) => item.startsWith("data:"));
+        if (!line) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") return;
+        try {
+          const parsed = JSON.parse(data) as { delta?: string; error?: string };
+          if (parsed.error) throw new ApiError(502, parsed.error);
+          if (parsed.delta) onDelta(parsed.delta);
+        } catch (error) {
+          if (error instanceof ApiError) throw error;
+        }
+      }
+    }
+  },
   articleSpeech: async (id: string, voiceId: string, chunk = 0) => {
     const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
     const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {

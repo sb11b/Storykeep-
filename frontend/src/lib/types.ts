@@ -173,6 +173,13 @@ export type TtsWord = {
   end: number;
 };
 
+export type ChatStatus = {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  requests_per_hour: number;
+};
+
 export type TtsStatus = {
   enabled: boolean;
   provider: string;
