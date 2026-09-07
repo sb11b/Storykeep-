@@ -191,8 +191,9 @@ class OverlayHighlightOut(BaseModel):
 
 
 class OverlayAdditionIn(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
     markdown: str = Field(min_length=1)
+    tags: list[str] = []
 
 
 class OverlayAdditionOut(BaseModel):

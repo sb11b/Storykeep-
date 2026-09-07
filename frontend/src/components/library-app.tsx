@@ -12,7 +12,9 @@ import {
   ChevronUp,
   Inbox,
   LoaderCircle,
+  Maximize2,
   Menu,
+  Minimize2,
   NotebookPen,
   Plus,
   RefreshCw,
@@ -98,6 +100,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [mobileNav, setMobileNav] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [readerFull, setReaderFull] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const noteFocusRef = useRef<(() => void) | null>(null);
   const listenRef = useRef<ListenControlsHandle>(null);
@@ -200,6 +203,11 @@ export function LibraryApp({ user }: { user: User }) {
         }
         return;
       }
+      if (event.key === "Escape" && readerFull) {
+        event.preventDefault();
+        setReaderFull(false);
+        return;
+      }
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "j" || event.key === "k") {
         event.preventDefault();
@@ -223,6 +231,12 @@ export function LibraryApp({ user }: { user: User }) {
         noteFocusRef.current?.();
         return;
       }
+      if (event.key === "f") {
+        if (!article) return;
+        event.preventDefault();
+        setReaderFull((current) => !current);
+        return;
+      }
       if (event.key === "l") {
         event.preventDefault();
         const caret = caretWordRef.current?.();
@@ -232,7 +246,7 @@ export function LibraryApp({ user }: { user: User }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [article, items, selectedId, selectRelative]);
+  }, [article, items, readerFull, selectedId, selectRelative]);
 
   useEffect(() => {
     void loadList();
@@ -242,6 +256,7 @@ export function LibraryApp({ user }: { user: User }) {
   useEffect(() => {
     if (!selectedId) {
       setArticle(null);
+      setReaderFull(false);
       return;
     }
     let cancelled = false;
@@ -379,7 +394,7 @@ export function LibraryApp({ user }: { user: User }) {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-background">
-      <aside className="hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex">{nav}</aside>
+      <aside className={cn("hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex", readerFull && "!hidden")}>{nav}</aside>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetContent side="left" className="w-80 overflow-hidden bg-sidebar p-0 text-sidebar-foreground">
           <SheetHeader className="sr-only">
@@ -486,11 +501,22 @@ export function LibraryApp({ user }: { user: User }) {
               Listen
               <kbd className="text-[10px] text-muted-foreground">l</kbd>
             </Button>
+            <Button
+              size="xs"
+              variant={readerFull ? "default" : "outline"}
+              disabled={!article}
+              title="Read this article full screen with every option still available"
+              onClick={() => setReaderFull((current) => !current)}
+            >
+              {readerFull ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+              {readerFull ? "Exit" : "Full screen"}
+              <kbd className="text-[10px] text-muted-foreground">f</kbd>
+            </Button>
           </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
-          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex")}>
+        <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
+          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -610,7 +636,7 @@ export function LibraryApp({ user }: { user: User }) {
             </div>
           </section>
 
-          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex")}>
+          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex", readerFull && "flex")}>
             {loadingArticle ? (
               <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
             ) : article ? (
@@ -620,7 +646,12 @@ export function LibraryApp({ user }: { user: User }) {
                 listenRef={listenRef}
                 noteFocusRef={noteFocusRef}
                 caretWordRef={caretWordRef}
-                onBack={() => setSelectedId(null)}
+                readerFull={readerFull}
+                onToggleFull={() => setReaderFull((current) => !current)}
+                onBack={() => {
+                  setReaderFull(false);
+                  setSelectedId(null);
+                }}
                 onToggleRead={() => void patchSelected({ is_read: !article.is_read })}
                 onToggleSaved={() => void patchSelected({ is_saved: !article.is_saved })}
                 onToggleStar={() => void patchSelected({ is_starred: !article.is_starred })}
@@ -705,6 +736,12 @@ export function LibraryApp({ user }: { user: User }) {
         onSavedPage={async (articleId) => {
           setSelectedId(articleId);
           setShelf({ kind: "saved" });
+          await Promise.all([loadNav(), loadList()]);
+        }}
+        onCreatedNote={async (articleId) => {
+          setSelectedId(articleId);
+          setShelf({ kind: "saved" });
+          setReaderFull(true);
           await Promise.all([loadNav(), loadList()]);
         }}
       />
@@ -1041,6 +1078,8 @@ function Reader({
   listenRef,
   noteFocusRef,
   caretWordRef,
+  readerFull,
+  onToggleFull,
   onBack,
   onToggleRead,
   onToggleSaved,
@@ -1060,6 +1099,8 @@ function Reader({
   listenRef: React.RefObject<ListenControlsHandle | null>;
   noteFocusRef: React.MutableRefObject<(() => void) | null>;
   caretWordRef: React.MutableRefObject<(() => number | null) | null>;
+  readerFull: boolean;
+  onToggleFull: () => void;
   onBack: () => void;
   onToggleRead: () => void;
   onToggleSaved: () => void;
@@ -1186,7 +1227,7 @@ function Reader({
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <article
         ref={articleRef}
-        className="max-w-3xl mx-auto px-5 py-6"
+        className={cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl")}
         onClick={(event) => {
           const word = (event.target as HTMLElement).closest("[data-tts-word]");
           if (word instanceof HTMLElement) {
@@ -1195,9 +1236,22 @@ function Reader({
           }
         }}
       >
-        <Button variant="ghost" className="lg:hidden mb-3 -ml-2" onClick={onBack}>
-          Back to list
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <Button variant="ghost" className="lg:hidden -ml-2" onClick={onBack}>
+            Back to list
+          </Button>
+          {readerFull ? (
+            <Button variant="outline" size="sm" className="hidden lg:inline-flex" onClick={onToggleFull}>
+              <Minimize2 className="size-3.5" />
+              Exit full screen
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" className="hidden lg:inline-flex" onClick={onToggleFull}>
+              <Maximize2 className="size-3.5" />
+              Full screen
+            </Button>
+          )}
+        </div>
         <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
           {article.source_kind === "obsidian" || article.source_kind === "textbook"
             ? "Vault"
@@ -1582,12 +1636,14 @@ function AddFeedDialog({
   categories,
   onAdded,
   onSavedPage,
+  onCreatedNote,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   categories: Category[];
   onAdded: () => Promise<void>;
   onSavedPage: (articleId: string) => Promise<void>;
+  onCreatedNote: (articleId: string) => Promise<void>;
 }) {
   const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault">("feed");
   const [url, setUrl] = useState("");
@@ -1596,6 +1652,7 @@ function AddFeedDialog({
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<{ url: string; title: string | null }[]>([]);
   const [additionTitle, setAdditionTitle] = useState("");
+  const [additionSubject, setAdditionSubject] = useState("");
   const [additionBody, setAdditionBody] = useState("");
   const bookmarklet =
     typeof window === "undefined"
@@ -1604,11 +1661,11 @@ function AddFeedDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className={cn("max-h-[90vh] overflow-y-auto", tab === "vault" && "sm:max-w-3xl")}>
         <DialogHeader>
           <DialogTitle>Collect</DialogTitle>
           <DialogDescription>
-            Subscribe to a site, save a page, import OPML, or zip in Steve's Surface Vault.
+            Subscribe to a site, save a page, import OPML, import the vault zip, or type a new complete note for the overlay pack.
           </DialogDescription>
         </DialogHeader>
         <div className="flex gap-1 rounded-lg bg-muted p-1">
@@ -1816,31 +1873,49 @@ function AddFeedDialog({
                 if (!additionTitle.trim() || !additionBody.trim()) return;
                 setBusy(true);
                 try {
-                  await api.addStandaloneAddition(additionTitle.trim(), additionBody.trim());
-                  toast.success("Addition stored for the next Obsidian pack");
+                  const tags = additionSubject
+                    .split(/[,#]/)
+                    .map((part) => part.trim())
+                    .filter(Boolean);
+                  const article = await api.composeVaultNote(additionTitle.trim(), additionBody.trim(), tags);
+                  toast.success("Note saved in StoryKeep. It will land in StoryKeep/Additions of the pack.");
                   setAdditionTitle("");
+                  setAdditionSubject("");
                   setAdditionBody("");
+                  onOpenChange(false);
+                  await onCreatedNote(article.id);
                 } catch (error) {
-                  toast.error(error instanceof ApiError ? error.message : "Could not save addition");
+                  toast.error(error instanceof ApiError ? error.message : "Could not save the note");
                 } finally {
                   setBusy(false);
                 }
               }}
             >
-              <Label>New overlay note (Additions/ — not a vault original)</Label>
+              <Label>Type a new article or paper</Label>
+              <p className="text-xs text-muted-foreground">
+                This is a StoryKeep overlay note, not an overwrite of Steve&apos;s Surface Vault. Unzip the pack to add it under
+                StoryKeep/Additions.
+              </p>
               <Input
                 value={additionTitle}
                 onChange={(event) => setAdditionTitle(event.target.value)}
                 placeholder="Title"
+                required
+              />
+              <Input
+                value={additionSubject}
+                onChange={(event) => setAdditionSubject(event.target.value)}
+                placeholder="Subjects / tags, comma-separated (e.g. calculus, DAT-200)"
               />
               <Textarea
                 value={additionBody}
                 onChange={(event) => setAdditionBody(event.target.value)}
-                placeholder="Markdown that lives only in StoryKeep/Additions"
-                rows={4}
+                placeholder="Paste or write the full markdown: lecture notes, a paper, a chapter…"
+                rows={14}
+                required
               />
-              <Button type="submit" variant="secondary" disabled={busy}>
-                Save addition
+              <Button type="submit" disabled={busy}>
+                {busy ? "Saving…" : "Save complete note"}
               </Button>
             </form>
           </div>

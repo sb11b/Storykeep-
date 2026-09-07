@@ -101,5 +101,7 @@ Steve's Surface Vault\
 4. `Index.md` lists overlay files and article ids. It does not list original vault notes as modified.
 5. Merge **Corrections** by hand if you want those edits in the source note. Do not replace the original file with a StoryKeep export of the article body.
 
+To add a **new** complete note or paper, use Collect → Vault, type the title, subjects, and markdown, then **Save complete note**. That file only appears in `StoryKeep\Additions`. It never overwrites an original vault path.
+
 uCertify is not integrated. There is no login, scrape, or stored password. If you already have a page open, use **Save URL**.
 

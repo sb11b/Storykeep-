@@ -9,10 +9,10 @@ from app.deps import get_current_user
 from app.models import Correction, OverlayAddition, User
 from app.presenters import article_out
 from app.routers.articles import _owned_article
-from app.schemas import CorrectionIn, CorrectionOut, OverlayAdditionIn, OverlayAdditionOut, VaultImportOut
+from app.schemas import ArticleOut, CorrectionIn, CorrectionOut, OverlayAdditionIn, OverlayAdditionOut, VaultImportOut
 from app.services import changelog
 from app.services.overlay_pack import build_obsidian_pack
-from app.services.vault_import import MAX_VAULT_ZIP_BYTES, import_obsidian_zip
+from app.services.vault_import import MAX_VAULT_ZIP_BYTES, create_composed_note, import_obsidian_zip
 
 router = APIRouter(tags=["overlay"])
 
@@ -43,23 +43,34 @@ def download_obsidian_pack(db: Session = Depends(get_db), user: User = Depends(g
     )
 
 
+@router.post("/sources/obsidian/notes", response_model=ArticleOut, status_code=201)
+def compose_vault_note(
+    payload: OverlayAdditionIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    try:
+        article = create_composed_note(db, user, payload.title, payload.markdown, payload.tags)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    loaded = _owned_article(db, user, article.id)
+    return article_out(loaded)
+
+
 @router.post("/storykeep-notes", response_model=OverlayAdditionOut, status_code=201)
 def create_standalone_addition(
     payload: OverlayAdditionIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> OverlayAdditionOut:
-    row = OverlayAddition(
-        user_id=user.id,
-        article_id=None,
-        title=payload.title.strip(),
-        markdown=payload.markdown,
-    )
-    db.add(row)
-    db.flush()
-    changelog.record(db, user.id, "addition", row.id, "upsert", {"standalone": True})
-    db.commit()
-    db.refresh(row)
+    try:
+        article = create_composed_note(db, user, payload.title, payload.markdown, payload.tags)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    loaded = _owned_article(db, user, article.id)
+    row = loaded.overlay_additions[-1] if loaded.overlay_additions else None
+    if row is None:
+        raise HTTPException(status_code=500, detail="Note was saved without an overlay copy.")
     return OverlayAdditionOut.model_validate(row)
 
 

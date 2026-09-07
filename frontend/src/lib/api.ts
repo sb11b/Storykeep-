@@ -107,10 +107,15 @@ export const api = {
     link.remove();
     URL.revokeObjectURL(url);
   },
-  addStandaloneAddition: (title: string, markdown: string) =>
+  addStandaloneAddition: (title: string, markdown: string, tags: string[] = []) =>
     request(`/api/v1/storykeep-notes`, {
       method: "POST",
-      body: JSON.stringify({ title, markdown }),
+      body: JSON.stringify({ title, markdown, tags }),
+    }),
+  composeVaultNote: (title: string, markdown: string, tags: string[] = []) =>
+    request<Article>("/api/v1/sources/obsidian/notes", {
+      method: "POST",
+      body: JSON.stringify({ title, markdown, tags }),
     }),
   addAddition: (articleId: string, title: string, markdown: string) =>
     request(`/api/v1/articles/${articleId}/additions`, {

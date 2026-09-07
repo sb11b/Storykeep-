@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from io import BytesIO
+from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Article, Feed, Tag, User
+from app.models import Article, Feed, OverlayAddition, Tag, User
 from app.services import changelog
 from app.services.markdown_html import markdown_to_html
 from app.services.vault_paths import (
     classify_zip_entry,
     import_tags_for_path,
+    overlay_relpath,
     parse_hashtags,
     source_kind_for_path,
     title_from_path,
@@ -156,3 +158,57 @@ def _title_from_markdown(text: str) -> str | None:
         if stripped:
             return None
     return None
+
+
+def create_composed_note(db: Session, user: User, title: str, markdown: str, tags: list[str] | None = None) -> Article:
+    """StoryKeep-owned note: readable article + overlay addition. Never writes vault originals."""
+    heading = (title or "").strip()
+    body = (markdown or "").strip()
+    if not heading or not body:
+        raise ValueError("Title and body are required.")
+    if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
+        raise ValueError("That note is larger than 1.5 MB.")
+    now = datetime.now(timezone.utc)
+    feed = vault_feed(db, user)
+    kind = "textbook" if heading.startswith("_book_") or any((tag or "").lower() == "book" for tag in tags or []) else "obsidian"
+    note_id = uuid4()
+    article = Article(
+        id=note_id,
+        feed_id=feed.id,
+        guid=f"storykeep-note:{note_id}",
+        url="storykeep://pending",
+        title=heading[:500],
+        summary=body[:280],
+        content_text=body,
+        content_html=markdown_to_html(body),
+        published_at=now,
+        fetched_at=now,
+        is_saved=True,
+        saved_at=now,
+        source_kind=kind,
+    )
+    db.add(article)
+    db.flush()
+    article.source_ref = overlay_relpath("addition", None, f"{heading}-{str(article.id)[:8]}")
+    article.url = f"storykeep://{article.source_ref}"[:4000]
+    addition = OverlayAddition(
+        user_id=user.id,
+        article_id=article.id,
+        title=heading[:200],
+        markdown=body,
+    )
+    db.add(addition)
+    db.flush()
+    names = set(parse_hashtags(body))
+    for raw in tags or []:
+        label = raw.strip()[:40]
+        if label:
+            names.add(label)
+    for name in names:
+        tag = ensure_tag(db, user, name)
+        if tag not in article.tags:
+            article.tags.append(tag)
+    changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "source_ref": article.source_ref})
+    changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "composed": True})
+    db.commit()
+    return article
