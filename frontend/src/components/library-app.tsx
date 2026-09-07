@@ -15,6 +15,7 @@ import {
   Search,
   Star,
   StarOff,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ListenControls } from "@/components/listen-controls";
@@ -85,6 +86,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [listError, setListError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [feedToRemove, setFeedToRemove] = useState<Feed | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -202,6 +204,22 @@ export function LibraryApp({ user }: { user: User }) {
     void loadNav();
   }
 
+  async function onRemoveFeed(feed: Feed, force: boolean) {
+    await api.deleteFeed(feed.id, force);
+    toast.success(feed.title ? `Removed ${feed.title}` : "Feed removed");
+    setFeedToRemove(null);
+    if (article?.feed_id === feed.id) {
+      setSelectedId(null);
+      setArticle(null);
+    }
+    if (shelf.kind === "feed" && shelf.id === feed.id) {
+      setShelf({ kind: "unread" });
+      await loadNav();
+      return;
+    }
+    await Promise.all([loadNav(), loadList()]);
+  }
+
   const nav = (
     <Sidebar
       user={user}
@@ -216,6 +234,10 @@ export function LibraryApp({ user }: { user: User }) {
         setMobileNav(false);
       }}
       onAdd={() => setAddOpen(true)}
+      onRemoveFeed={(feed) => {
+        setFeedToRemove(feed);
+        setMobileNav(false);
+      }}
       onBackup={() => setBackupOpen(true)}
       onRefresh={() => void onRefresh()}
       refreshing={refreshing}
@@ -271,8 +293,26 @@ export function LibraryApp({ user }: { user: User }) {
         <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
           <section className={cn("flex h-full min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex")}>
             <div className="shrink-0 px-4 py-3">
-              <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
-              <p className="text-xs text-muted-foreground">{total} {shelf.kind === "notes" ? "notes" : "articles"}</p>
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
+                  <p className="text-xs text-muted-foreground">{total} {shelf.kind === "notes" ? "notes" : "articles"}</p>
+                </div>
+                {shelf.kind === "feed" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={() => {
+                      const feed = feeds.find((item) => item.id === shelf.id);
+                      if (feed) setFeedToRemove(feed);
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                    Remove
+                  </Button>
+                ) : null}
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {loadingList ? (
@@ -370,6 +410,13 @@ export function LibraryApp({ user }: { user: User }) {
           await Promise.all([loadNav(), loadList()]);
         }}
       />
+      <RemoveFeedDialog
+        feed={feedToRemove}
+        onOpenChange={(open) => {
+          if (!open) setFeedToRemove(null);
+        }}
+        onConfirm={onRemoveFeed}
+      />
       <BackupDialog
         open={backupOpen}
         backups={backups}
@@ -391,6 +438,7 @@ function Sidebar({
   tags,
   onShelf,
   onAdd,
+  onRemoveFeed,
   onBackup,
   onRefresh,
   refreshing,
@@ -404,6 +452,7 @@ function Sidebar({
   tags: Tag[];
   onShelf: (shelf: Shelf) => void;
   onAdd: () => void;
+  onRemoveFeed: (feed: Feed) => void;
   onBackup: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -461,27 +510,25 @@ function Sidebar({
                     {category.name}
                   </button>
                   {group.map((feed) => (
-                    <NavButton
+                    <FeedNavItem
                       key={feed.id}
+                      feed={feed}
                       active={shelf.kind === "feed" && shelf.id === feed.id}
-                      onClick={() => onShelf({ kind: "feed", id: feed.id })}
-                      count={feed.unread_count}
-                    >
-                      {feed.title || feed.url}
-                    </NavButton>
+                      onSelect={() => onShelf({ kind: "feed", id: feed.id })}
+                      onRemove={() => onRemoveFeed(feed)}
+                    />
                   ))}
                 </div>
               ) : null,
             )}
             {groupedFeeds.uncategorized.map((feed) => (
-              <NavButton
+              <FeedNavItem
                 key={feed.id}
+                feed={feed}
                 active={shelf.kind === "feed" && shelf.id === feed.id}
-                onClick={() => onShelf({ kind: "feed", id: feed.id })}
-                count={feed.unread_count}
-              >
-                {feed.title || feed.url}
-              </NavButton>
+                onSelect={() => onShelf({ kind: "feed", id: feed.id })}
+                onRemove={() => onRemoveFeed(feed)}
+              />
             ))}
           </>
         )}
@@ -509,6 +556,42 @@ function Sidebar({
           Sign out
         </Button>
       </div>
+    </div>
+  );
+}
+
+function FeedNavItem({
+  feed,
+  active,
+  onSelect,
+  onRemove,
+}: {
+  feed: Feed;
+  active?: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-0.5">
+      <div className="min-w-0 flex-1">
+        <NavButton active={active} onClick={onSelect} count={feed.unread_count}>
+          {feed.title || feed.url}
+        </NavButton>
+      </div>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="shrink-0 text-sidebar-foreground/45 hover:text-destructive"
+        aria-label={`Remove ${feed.title || "feed"}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onRemove();
+        }}
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
     </div>
   );
 }
@@ -806,6 +889,83 @@ function EmptyState({
       <p className="font-[family-name:var(--font-serif)] text-xl mt-3">{title}</p>
       <p className="text-sm text-muted-foreground mt-2 max-w-sm">{body}</p>
     </div>
+  );
+}
+
+function RemoveFeedDialog({
+  feed,
+  onOpenChange,
+  onConfirm,
+}: {
+  feed: Feed | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (feed: Feed, force: boolean) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [force, setForce] = useState(false);
+
+  useEffect(() => {
+    setForce(false);
+  }, [feed?.id]);
+
+  const saved = feed?.saved_count ?? 0;
+
+  return (
+    <Dialog open={Boolean(feed)} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Remove this feed?</DialogTitle>
+          <DialogDescription>
+            {feed
+              ? `Storykeep will stop importing ${feed.title || feed.url}. Unread copies of its articles will be deleted.`
+              : "Storykeep will stop importing this feed."}
+          </DialogDescription>
+        </DialogHeader>
+        {saved > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            This feed has {saved} saved {saved === 1 ? "article" : "articles"}. Removing it can delete those kept copies too.
+          </p>
+        ) : null}
+        {force || saved > 0 ? (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={force}
+              onChange={(event) => setForce(event.target.checked)}
+            />
+            <span>Also delete saved articles from this feed</span>
+          </label>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Keep feed
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={busy || (saved > 0 && !force)}
+            onClick={async () => {
+              if (!feed) return;
+              setBusy(true);
+              try {
+                await onConfirm(feed, force || saved > 0);
+              } catch (error) {
+                if (error instanceof ApiError && error.status === 409) {
+                  setForce(true);
+                  toast.error("This feed has saved articles. Confirm deletion of those copies to continue.");
+                } else {
+                  toast.error(error instanceof ApiError ? error.message : "Could not remove feed");
+                }
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Removing…" : "Remove feed"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
