@@ -1255,7 +1255,9 @@ function Reader({
         <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
           {article.source_kind === "obsidian" || article.source_kind === "textbook"
             ? "Vault"
-            : article.feed_title}{" "}
+            : article.source_kind === "file"
+              ? "File"
+              : article.feed_title}{" "}
           · {formatRelative(article.published_at)}
           {article.source_ref ? ` · ${article.source_ref}` : ""}
         </p>
@@ -1304,6 +1306,14 @@ function Reader({
           >
             Download Obsidian pack
           </Button>
+          {article.source_kind === "file" ? (
+            <a
+              href={`/api/v1/articles/${article.id}/file`}
+              className="inline-flex h-7 items-center rounded-md border px-2.5 text-[0.8rem] hover:bg-muted"
+            >
+              Download original
+            </a>
+          ) : null}
           <a
             href={article.url}
             target="_blank"
@@ -1645,7 +1655,7 @@ function AddFeedDialog({
   onSavedPage: (articleId: string) => Promise<void>;
   onCreatedNote: (articleId: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault">("feed");
+  const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault" | "file">("feed");
   const [url, setUrl] = useState("");
   const [pageUrl, setPageUrl] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -1654,6 +1664,8 @@ function AddFeedDialog({
   const [additionTitle, setAdditionTitle] = useState("");
   const [additionSubject, setAdditionSubject] = useState("");
   const [additionBody, setAdditionBody] = useState("");
+  const [fileTitle, setFileTitle] = useState("");
+  const [fileTags, setFileTags] = useState("");
   const bookmarklet =
     typeof window === "undefined"
       ? ""
@@ -1665,14 +1677,15 @@ function AddFeedDialog({
         <DialogHeader>
           <DialogTitle>Collect</DialogTitle>
           <DialogDescription>
-            Subscribe to a site, save a page, import OPML, import the vault zip, or type a new complete note for the overlay pack.
+            Subscribe to a site, save a page, upload a file, import OPML, or add vault notes.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
+        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
           {(
             [
               ["feed", "Feed"],
               ["page", "Save URL"],
+              ["file", "File"],
               ["opml", "OPML"],
               ["vault", "Vault"],
             ] as const
@@ -1826,6 +1839,71 @@ function AddFeedDialog({
                 Save to Storykeep
               </a>
             </div>
+          </form>
+        ) : null}
+        {tab === "file" ? (
+          <form
+            className="space-y-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const input = event.currentTarget.elements.namedItem("upload-file") as HTMLInputElement | null;
+              const chosen = input?.files?.[0];
+              if (!chosen) {
+                toast.error("Choose a PDF, Word, PowerPoint, or text file.");
+                return;
+              }
+              setBusy(true);
+              try {
+                const article = await api.uploadDocument(chosen, fileTitle, fileTags);
+                toast.success("File extracted into the archive");
+                setFileTitle("");
+                setFileTags("");
+                if (input) input.value = "";
+                onOpenChange(false);
+                await onSavedPage(article.id);
+              } catch (error) {
+                toast.error(error instanceof ApiError ? error.message : "Could not upload that file");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <p className="text-sm text-muted-foreground">
+              Upload a PDF, Word (.docx), PowerPoint (.pptx), markdown, HTML, CSV, RTF, ODT, or EPUB. StoryKeep stores the
+              extracted text so you can read, search, tag, listen, and highlight. The original file stays downloadable. This does
+              not write into Steve&apos;s Surface Vault.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="upload-file">File</Label>
+              <Input
+                id="upload-file"
+                name="upload-file"
+                type="file"
+                accept=".pdf,.docx,.pptx,.txt,.md,.markdown,.html,.htm,.csv,.rtf,.odt,.epub,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown,text/html,text/csv"
+                required
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="file-title">Title (optional)</Label>
+              <Input
+                id="file-title"
+                value={fileTitle}
+                onChange={(event) => setFileTitle(event.target.value)}
+                placeholder="Defaults to the filename"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="file-tags">Subjects / tags (optional)</Label>
+              <Input
+                id="file-tags"
+                value={fileTags}
+                onChange={(event) => setFileTags(event.target.value)}
+                placeholder="e.g. DAT-200, syllabus"
+              />
+            </div>
+            <Button type="submit" disabled={busy}>
+              {busy ? "Extracting…" : "Upload file"}
+            </Button>
           </form>
         ) : null}
         {tab === "vault" ? (

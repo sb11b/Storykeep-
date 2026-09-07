@@ -117,6 +117,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ title, markdown, tags }),
     }),
+  uploadDocument: async (file: File, title?: string, tags?: string) => {
+    const body = new FormData();
+    body.append("file", file);
+    if (title?.trim()) body.append("title", title.trim());
+    if (tags?.trim()) body.append("tags", tags.trim());
+    const response = await fetch("/api/v1/sources/upload", {
+      method: "POST",
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return (await response.json()) as Article;
+  },
   addAddition: (articleId: string, title: string, markdown: string) =>
     request(`/api/v1/articles/${articleId}/additions`, {
       method: "POST",

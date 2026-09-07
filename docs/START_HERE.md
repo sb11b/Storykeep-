@@ -103,5 +103,7 @@ Steve's Surface Vault\
 
 To add a **new** complete note or paper, use Collect → Vault, type the title, subjects, and markdown, then **Save complete note**. That file only appears in `StoryKeep\Additions`. It never overwrites an original vault path.
 
+To add a **PDF, Word, PowerPoint, or other document**, use Collect → File. StoryKeep extracts the text into the archive. It does not overwrite Steve's Surface Vault.
+
 uCertify is not integrated. There is no login, scrape, or stored password. If you already have a page open, use **Save URL**.
 

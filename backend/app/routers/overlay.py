@@ -1,7 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,6 +12,7 @@ from app.routers.articles import _owned_article
 from app.schemas import ArticleOut, CorrectionIn, CorrectionOut, OverlayAdditionIn, OverlayAdditionOut, VaultImportOut
 from app.services import changelog
 from app.services.overlay_pack import build_obsidian_pack
+from app.services.file_ingest import MAX_UPLOAD_BYTES, ingest_upload, original_file_path
 from app.services.vault_import import MAX_VAULT_ZIP_BYTES, create_composed_note, import_obsidian_zip
 
 router = APIRouter(tags=["overlay"])
@@ -31,6 +32,38 @@ async def import_obsidian_vault(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return VaultImportOut(**result)
+
+
+@router.post("/sources/upload", response_model=ArticleOut, status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    title: str | None = Form(None),
+    tags: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    payload = await file.read()
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="That file is larger than 40 MB.")
+    labels = [part.strip() for part in (tags or "").replace("#", ",").split(",") if part.strip()]
+    try:
+        article = ingest_upload(db, user, file.filename or "upload", payload, title, labels)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return article_out(_owned_article(db, user, article.id))
+
+
+@router.get("/articles/{article_id}/file")
+def download_original_file(
+    article_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FileResponse:
+    article = _owned_article(db, user, article_id)
+    path = original_file_path(article)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Original file is not stored for this article.")
+    return FileResponse(path, filename=article.source_ref or path.name)
 
 
 @router.get("/export/obsidian-pack")
