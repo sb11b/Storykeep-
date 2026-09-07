@@ -30,6 +30,8 @@ Planning documents live in `docs/`:
 - `docs/rss_reader_api_design.md` — endpoint contract
 - `docs/rss_reader_architecture.md` — why these decisions
 
+**Stuck on Windows?** Do not start with Railway or GitHub. Follow [`docs/START_HERE.md`](docs/START_HERE.md) in order: get the code → Docker Desktop → `docker compose up --build` → http://127.0.0.1:8080
+
 ## Local setup
 
 PostgreSQL 16, Python 3.12, and Node 22.
