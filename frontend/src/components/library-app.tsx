@@ -22,7 +22,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -226,10 +225,10 @@ export function LibraryApp({ user }: { user: User }) {
   );
 
   return (
-    <div className="h-svh flex bg-background overflow-hidden">
-      <aside className="hidden md:flex w-72 shrink-0 bg-sidebar text-sidebar-foreground">{nav}</aside>
+    <div className="flex h-full min-h-0 overflow-hidden bg-background">
+      <aside className="hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex">{nav}</aside>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
-        <SheetContent side="left" className="p-0 bg-sidebar text-sidebar-foreground w-80">
+        <SheetContent side="left" className="w-80 overflow-hidden bg-sidebar p-0 text-sidebar-foreground">
           <SheetHeader className="sr-only">
             <SheetTitle>Library</SheetTitle>
           </SheetHeader>
@@ -237,8 +236,8 @@ export function LibraryApp({ user }: { user: User }) {
         </SheetContent>
       </Sheet>
 
-      <div className="flex-1 min-w-0 flex flex-col">
-        <header className="h-14 border-b flex items-center gap-2 px-3">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
           </Button>
@@ -267,13 +266,13 @@ export function LibraryApp({ user }: { user: User }) {
           </div>
         </header>
 
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(280px,380px)_1fr]">
-          <section className={cn("border-r min-h-0 flex flex-col", selectedId && "hidden lg:flex")}>
-            <div className="px-4 py-3">
+        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
+          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex")}>
+            <div className="shrink-0 px-4 py-3">
               <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
               <p className="text-xs text-muted-foreground">{total} {shelf.kind === "notes" ? "notes" : "articles"}</p>
             </div>
-            <ScrollArea className="flex-1">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {loadingList ? (
                 <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening the shelf" body="Fetching the latest from your archive." />
               ) : listError ? (
@@ -313,10 +312,10 @@ export function LibraryApp({ user }: { user: User }) {
                   />
                 ))
               )}
-            </ScrollArea>
+            </div>
           </section>
 
-          <section className={cn("min-h-0 bg-card", !selectedId && "hidden lg:flex")}>
+          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex")}>
             {loadingArticle ? (
               <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
             ) : article ? (
@@ -409,12 +408,12 @@ function Sidebar({
   onLogout: () => void;
 }) {
   return (
-    <div className="flex flex-col w-full min-h-0">
-      <div className="px-4 pt-5 pb-3">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
+      <div className="shrink-0 px-4 pt-5 pb-3">
         <p className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">Storykeep</p>
         <p className="text-xs text-sidebar-foreground/70 mt-1">{user.display_name || user.email}</p>
       </div>
-      <div className="px-3 flex gap-2 pb-3">
+      <div className="flex shrink-0 gap-2 px-3 pb-3">
         <Button size="sm" className="flex-1" onClick={onAdd}>
           <Plus className="size-3.5" />
           Add feed
@@ -423,7 +422,7 @@ function Sidebar({
           <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
         </Button>
       </div>
-      <ScrollArea className="flex-1 px-2">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-2">
         <NavButton active={shelf.kind === "unread"} onClick={() => onShelf({ kind: "unread" })} icon={<Inbox className="size-4" />} count={stats?.unread_count}>
           Unread
         </NavButton>
@@ -499,8 +498,8 @@ function Sidebar({
             ))}
           </>
         ) : null}
-      </ScrollArea>
-      <div className="p-3 border-t border-sidebar-border space-y-1">
+      </div>
+      <div className="shrink-0 space-y-1 border-t border-sidebar-border p-3">
         <Button variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onBackup}>
           Backup & export
         </Button>
@@ -599,7 +598,7 @@ function Reader({
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
 
   return (
-    <ScrollArea className="h-full">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <article className="max-w-3xl mx-auto px-5 py-6">
         <Button variant="ghost" className="lg:hidden mb-3 -ml-2" onClick={onBack}>
           Back to list
@@ -719,7 +718,7 @@ function Reader({
           ) : null}
         </section>
       </article>
-    </ScrollArea>
+    </div>
   );
 }
 
