@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Archive,
@@ -28,6 +28,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
+import { countWords, spokenTitle, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
   Annotation,
   Article,
@@ -572,6 +573,26 @@ function ArticleRow({
   );
 }
 
+function SpokenWords({ text, offset }: { text: string; offset: number }) {
+  const parts = text.split(/(\s+)/);
+  let index = offset;
+  return (
+    <>
+      {parts.map((part, key) => {
+        if (!part) return null;
+        if (/^\s+$/.test(part)) return <span key={key}>{part}</span>;
+        const wordIndex = index;
+        index += 1;
+        return (
+          <span key={key} className="tts-word" data-tts-word={wordIndex}>
+            {part}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function Reader({
   article,
   onBack,
@@ -596,18 +617,60 @@ function Reader({
   const [note, setNote] = useState("");
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
+  const [activeWord, setActiveWord] = useState<number | null>(null);
+  const articleRef = useRef<HTMLElement>(null);
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
+  const titleSpoken = spokenTitle(article.title);
+  const titleWordCount = countWords(titleSpoken);
+  const fallbackBody = article.content_text || stripHtml(article.summary) || "";
+  const [bodyHtml, setBodyHtml] = useState(html || "");
+
+  useEffect(() => {
+    if (html) {
+      setBodyHtml(wrapHtmlWords(html, titleWordCount));
+      return;
+    }
+    if (fallbackBody) {
+      setBodyHtml(wrapPlainWords(fallbackBody, titleWordCount));
+      return;
+    }
+    setBodyHtml("");
+  }, [article.id, fallbackBody, html, titleWordCount]);
+
+  useEffect(() => {
+    setActiveWord(null);
+  }, [article.id]);
+
+  useEffect(() => {
+    const root = articleRef.current;
+    if (!root) return;
+    root.querySelectorAll(".tts-word-active").forEach((node) => node.classList.remove("tts-word-active"));
+    if (activeWord == null) return;
+    const current = root.querySelector(`[data-tts-word="${activeWord}"]`);
+    if (!(current instanceof HTMLElement)) return;
+    current.classList.add("tts-word-active");
+    const holder = current.closest(".overflow-y-auto");
+    if (holder instanceof HTMLElement) {
+      const wordBox = current.getBoundingClientRect();
+      const holdBox = holder.getBoundingClientRect();
+      if (wordBox.top < holdBox.top + 72 || wordBox.bottom > holdBox.bottom - 72) {
+        current.scrollIntoView({ block: "center", behavior: "auto" });
+      }
+    }
+  }, [activeWord]);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <article className="max-w-3xl mx-auto px-5 py-6">
+      <article ref={articleRef} className="max-w-3xl mx-auto px-5 py-6">
         <Button variant="ghost" className="lg:hidden mb-3 -ml-2" onClick={onBack}>
           Back to list
         </Button>
         <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
           {article.feed_title} · {formatRelative(article.published_at)}
         </p>
-        <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl leading-tight mt-2">{article.title}</h1>
+        <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl leading-tight mt-2">
+          <SpokenWords text={titleSpoken || article.title} offset={0} />
+        </h1>
         {article.author ? <p className="mt-2 text-sm text-muted-foreground">{article.author}</p> : null}
         <div className="flex flex-wrap gap-2 mt-4">
           <Button size="sm" variant={article.is_saved ? "default" : "outline"} onClick={onToggleSaved}>
@@ -656,6 +719,7 @@ function Reader({
           <ListenControls
             articleId={article.id}
             hasText={Boolean(article.content_text || article.content_html || article.summary)}
+            onCue={setActiveWord}
           />
         </div>
         {article.tags.length > 0 ? (
@@ -668,10 +732,8 @@ function Reader({
           </div>
         ) : null}
         <Separator className="my-6" />
-        {html ? (
-          <div className="article-body" dangerouslySetInnerHTML={{ __html: html }} />
-        ) : article.content_text ? (
-          <div className="article-body whitespace-pre-wrap">{article.content_text}</div>
+        {bodyHtml ? (
+          <div className="article-body" dangerouslySetInnerHTML={{ __html: bodyHtml }} />
         ) : (
           <EmptyState
             title="Only the feed snippet is stored"

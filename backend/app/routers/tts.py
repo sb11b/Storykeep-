@@ -1,6 +1,7 @@
 from uuid import UUID
+import base64
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -29,7 +30,7 @@ def speak_article(
     chunk: int = Query(default=0, ge=0, le=80),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Response:
+) -> dict:
     article = _owned_article(db, user, article_id)
     script = tts_service.article_script(article)
     chunks = tts_service.split_chunks(script)
@@ -40,11 +41,14 @@ def speak_article(
         )
     if chunk >= len(chunks):
         raise HTTPException(status_code=400, detail="That speech part does not exist.")
-    audio = tts_service.synthesize(chunks[chunk], voice_id)
-    headers = {
-        "X-TTS-Chunk": str(chunk),
-        "X-TTS-Chunks": str(len(chunks)),
-        "Cache-Control": "no-store",
-        "Access-Control-Expose-Headers": "X-TTS-Chunk, X-TTS-Chunks",
+    offset = sum(tts_service.word_count(part) for part in chunks[:chunk])
+    timed = tts_service.synthesize_timed(chunks[chunk], voice_id)
+    return {
+        "chunk": chunk,
+        "chunks": len(chunks),
+        "word_offset": offset,
+        "duration": timed.get("duration"),
+        "content_type": timed.get("content_type") or "audio/mpeg",
+        "audio": base64.b64encode(timed["audio"]).decode("ascii"),
+        "words": timed.get("words") or [],
     }
-    return Response(content=audio, media_type="audio/mpeg", headers=headers)

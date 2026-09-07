@@ -9,6 +9,7 @@ import type {
   Stats,
   Tag,
   TtsStatus,
+  TtsWord,
   User,
 } from "./types";
 
@@ -138,8 +139,23 @@ export const api = {
       }
       throw new ApiError(response.status, detail);
     }
-    const blob = await response.blob();
-    const chunks = Number(response.headers.get("X-TTS-Chunks") || "1");
-    return { blob, chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1 };
+    const data = (await response.json()) as {
+      audio: string;
+      content_type?: string;
+      chunks: number;
+      word_offset?: number;
+      duration?: number | null;
+      words?: TtsWord[];
+    };
+    const binary = Uint8Array.from(atob(data.audio), (char) => char.charCodeAt(0));
+    const blob = new Blob([binary], { type: data.content_type || "audio/mpeg" });
+    const chunks = Number(data.chunks || 1);
+    return {
+      blob,
+      chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1,
+      wordOffset: Number(data.word_offset || 0),
+      duration: data.duration ?? null,
+      words: Array.isArray(data.words) ? data.words : [],
+    };
   },
 };

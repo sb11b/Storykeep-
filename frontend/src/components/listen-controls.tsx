@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { TtsStatus } from "@/lib/types";
+import type { TtsStatus, TtsWord } from "@/lib/types";
 
 const SPEED_KEY = "storykeep-tts-speed";
 const SPEEDS = [0.7, 0.8, 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5, 2.8, 3] as const;
@@ -33,13 +33,19 @@ function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
 export function ListenControls({
   articleId,
   hasText,
+  onCue,
 }: {
   articleId: string;
   hasText: boolean;
+  onCue?: (wordIndex: number | null) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const generationRef = useRef(0);
+  const wordsRef = useRef<TtsWord[]>([]);
+  const wordOffsetRef = useRef(0);
+  const cueRafRef = useRef<number | null>(null);
+  const lastCueRef = useRef<number | null>(null);
   const [status, setStatus] = useState<TtsStatus | null>(null);
   const [voiceId, setVoiceId] = useState("eve");
   const [speed, setSpeed] = useState(1);
@@ -71,8 +77,51 @@ export function ListenControls({
     speedRef.current = next;
   }, []);
 
+  const stopCueLoop = useCallback(() => {
+    if (cueRafRef.current != null) {
+      cancelAnimationFrame(cueRafRef.current);
+      cueRafRef.current = null;
+    }
+  }, []);
+
+  const emitCue = useCallback(
+    (index: number | null) => {
+      onCue?.(index);
+    },
+    [onCue],
+  );
+
+  const startCueLoop = useCallback(() => {
+    stopCueLoop();
+    const tick = () => {
+      const audio = audioRef.current;
+      const words = wordsRef.current;
+      if (audio && words.length) {
+        const time = audio.currentTime;
+        let local = 0;
+        for (let i = 0; i < words.length; i += 1) {
+          if (time >= words[i].start) local = i;
+          if (time < words[i].end) {
+            local = i;
+            break;
+          }
+        }
+        const next = wordOffsetRef.current + local;
+        if (next !== lastCueRef.current) {
+          lastCueRef.current = next;
+          emitCue(next);
+        }
+      }
+      cueRafRef.current = requestAnimationFrame(tick);
+    };
+    cueRafRef.current = requestAnimationFrame(tick);
+  }, [emitCue, stopCueLoop]);
+
   const stop = useCallback(() => {
     generationRef.current += 1;
+    stopCueLoop();
+    lastCueRef.current = null;
+    emitCue(null);
     const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
@@ -84,10 +133,11 @@ export function ListenControls({
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    wordsRef.current = [];
     setPhase("idle");
     setChunk(0);
     setChunks(1);
-  }, []);
+  }, [emitCue, stopCueLoop]);
 
   useEffect(() => {
     generationRef.current += 1;
@@ -101,10 +151,12 @@ export function ListenControls({
       audio.pause();
       audio.onended = null;
       audioRef.current = null;
+      if (cueRafRef.current != null) cancelAnimationFrame(cueRafRef.current);
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
         objectUrlRef.current = null;
       }
+      onCue?.(null);
     };
   }, [articleId]);
 
@@ -114,10 +166,12 @@ export function ListenControls({
       generationRef.current = generation;
       setPhase("loading");
       try {
-        const { blob, chunks: total } = await api.articleSpeech(articleId, voice, index);
+        const { blob, chunks: total, words, wordOffset } = await api.articleSpeech(articleId, voice, index);
         if (generation !== generationRef.current) return;
         setChunks(total);
         setChunk(index);
+        wordsRef.current = words;
+        wordOffsetRef.current = wordOffset;
         if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
         const url = URL.createObjectURL(blob);
         objectUrlRef.current = url;
@@ -136,6 +190,7 @@ export function ListenControls({
         await audio.play();
         applyPlaybackRate(audio, speedRef.current);
         if (generation !== generationRef.current) return;
+        startCueLoop();
         setPhase("playing");
       } catch (err) {
         if (generation !== generationRef.current) return;
@@ -143,7 +198,7 @@ export function ListenControls({
         toast.error(err instanceof ApiError ? err.message : "Could not start speech");
       }
     },
-    [articleId, stop],
+    [articleId, startCueLoop, stop],
   );
 
   return (
@@ -173,6 +228,7 @@ export function ListenControls({
       {phase === "playing" ? (
         <Button size="sm" variant="outline" onClick={() => {
           audioRef.current?.pause();
+          stopCueLoop();
           setPhase("paused");
         }}>
           <Pause className="size-3.5" />
@@ -183,7 +239,10 @@ export function ListenControls({
         <Button size="sm" variant="outline" onClick={() => {
           const audio = audioRef.current;
           if (audio) applyPlaybackRate(audio, speedRef.current);
-          void audio?.play().then(() => setPhase("playing"));
+          void audio?.play().then(() => {
+            startCueLoop();
+            setPhase("playing");
+          });
         }}>
           <Volume2 className="size-3.5" />
           Resume

@@ -124,6 +124,12 @@ export type TtsVoice = {
   name: string;
 };
 
+export type TtsWord = {
+  text: string;
+  start: number;
+  end: number;
+};
+
 export type TtsStatus = {
   enabled: boolean;
   provider: string;

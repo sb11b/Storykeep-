@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from typing import Any
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 XAI_TTS_URL = "https://api.x.ai/v1/tts"
 XAI_VOICES_URL = "https://api.x.ai/v1/tts/voices"
-MAX_CHUNK_CHARS = 3500
+MAX_CHUNK_CHARS = 1400
 FALLBACK_VOICES = [
     {"voice_id": "eve", "name": "Eve"},
     {"voice_id": "ara", "name": "Ara"},
@@ -34,19 +35,29 @@ def require_key() -> str:
     return key
 
 
+def spoken_title(title: str | None) -> str:
+    text = (title or "").strip()
+    if not text:
+        return ""
+    if text[-1] in ".!?":
+        return text
+    return text + "."
+
+
+def word_count(text: str) -> int:
+    return len(re.findall(r"\S+", text or ""))
+
+
 def article_script(article: Article) -> str:
     parts: list[str] = []
-    title = (article.title or "").strip()
+    title = spoken_title(article.title)
     if title:
-        parts.append(title + ".")
-    if article.author:
-        parts.append(f"By {article.author.strip()}.")
-    feed_title = article.feed.title if article.feed and article.feed.title else None
-    if feed_title:
-        parts.append(f"From {feed_title}.")
-    body = (article.content_text or "").strip()
-    if not body and article.content_html:
+        parts.append(title)
+    body = ""
+    if article.content_html:
         body = _strip_markup(article.content_html)
+    if not body:
+        body = (article.content_text or "").strip()
     if not body and article.summary:
         body = _strip_markup(article.summary)
     if body:
@@ -86,14 +97,44 @@ def split_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
-def synthesize(text: str, voice_id: str, language: str = "en") -> bytes:
+def words_from_timestamps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    ts = payload.get("audio_timestamps") or {}
+    chars = ts.get("graph_chars") or []
+    times = ts.get("graph_times") or []
+    words: list[dict[str, Any]] = []
+    buf: list[str] = []
+    start: float | None = None
+    end = 0.0
+    count = min(len(chars), len(times))
+    for index in range(count):
+        char = str(chars[index])
+        pair = times[index] if isinstance(times[index], (list, tuple)) else [0, 0]
+        t0 = float(pair[0]) if pair else 0.0
+        t1 = float(pair[1]) if len(pair) > 1 else t0
+        if char.isspace():
+            if buf and start is not None:
+                words.append({"text": "".join(buf), "start": start, "end": end})
+            buf = []
+            start = None
+            continue
+        if start is None:
+            start = t0
+        buf.append(char)
+        end = t1
+    if buf and start is not None:
+        words.append({"text": "".join(buf), "start": start, "end": end})
+    return words
+
+
+def synthesize_timed(text: str, voice_id: str, language: str = "en") -> dict[str, Any]:
     key = require_key()
     voice = (voice_id or "eve").strip().lower() or "eve"
     payload = {
         "text": text,
         "voice_id": voice,
         "language": language,
-        "text_normalization": True,
+        "text_normalization": False,
+        "with_timestamps": True,
         "output_format": {"codec": "mp3", "sample_rate": 24000, "bit_rate": 128000},
     }
     try:
@@ -110,15 +151,39 @@ def synthesize(text: str, voice_id: str, language: str = "en") -> bytes:
         logger.warning("xAI TTS network error: %s", exc)
         raise HTTPException(status_code=502, detail="Could not reach the xAI speech service.") from exc
 
-    content_type = response.headers.get("content-type", "")
-    if response.status_code >= 400 or content_type.startswith("application/json"):
+    if response.status_code >= 400:
         detail = _xai_error_detail(response)
         code = 401 if response.status_code in {400, 401, 403} else 502
         raise HTTPException(status_code=code, detail=detail)
+
+    content_type = response.headers.get("content-type", "")
+    if "json" in content_type:
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="xAI returned unreadable speech data.") from exc
+        raw = data.get("audio")
+        if not raw:
+            raise HTTPException(status_code=502, detail="xAI returned empty audio.")
+        try:
+            audio = base64.b64decode(raw)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="xAI audio could not be decoded.") from exc
+        return {
+            "audio": audio,
+            "content_type": data.get("content_type") or "audio/mpeg",
+            "duration": data.get("duration"),
+            "words": words_from_timestamps(data),
+        }
+
     audio = response.content
     if not audio:
         raise HTTPException(status_code=502, detail="xAI returned empty audio.")
-    return audio
+    return {"audio": audio, "content_type": "audio/mpeg", "duration": None, "words": []}
+
+
+def synthesize(text: str, voice_id: str, language: str = "en") -> bytes:
+    return synthesize_timed(text, voice_id, language)["audio"]
 
 
 def list_voices() -> list[dict[str, str]]:
