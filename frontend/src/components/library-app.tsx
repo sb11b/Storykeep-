@@ -17,6 +17,7 @@ import {
   StarOff,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ListenControls } from "@/components/listen-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -650,6 +651,12 @@ function Reader({
           >
             Original
           </a>
+        </div>
+        <div className="mt-3">
+          <ListenControls
+            articleId={article.id}
+            hasText={Boolean(article.content_text || article.content_html || article.summary)}
+          />
         </div>
         {article.tags.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mt-4">

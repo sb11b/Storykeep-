@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, feeds, library, sync
+from app.routers import articles, auth, backups, feeds, library, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 
@@ -87,6 +87,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-TTS-Chunk", "X-TTS-Chunks"],
 )
 
 API = "/api/v1"
@@ -96,6 +97,7 @@ app.include_router(articles.router, prefix=API)
 app.include_router(library.router, prefix=API)
 app.include_router(sync.router, prefix=API)
 app.include_router(backups.router, prefix=API)
+app.include_router(tts.router, prefix=API)
 
 
 @app.get("/health")

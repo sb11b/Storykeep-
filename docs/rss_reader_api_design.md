@@ -236,6 +236,18 @@ Empty `q` returns 400.
 
 ---
 
+## 8b. Speech (xAI TTS)
+
+### `GET /tts`
+
+Returns `{ "enabled": true, "provider": "xai", "voices": [{ "voice_id": "eve", "name": "Eve" }] }`. Requires auth. `enabled` is false until `XAI_API_KEY` is set.
+
+### `GET /articles/{id}/tts?voice_id=eve&chunk=0`
+
+Returns `audio/mpeg` for one chunk of the stored article text (title, byline, body). Headers: `X-TTS-Chunk`, `X-TTS-Chunks`. Chunks are split under the xAI 15,000-character limit. 401/503 if the key is missing or rejected.
+
+---
+
 ## 9. Sync (web + Android)
 
 ### `POST /sync/delta`

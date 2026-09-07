@@ -119,6 +119,17 @@ export type Backup = {
   completed_at: string | null;
 };
 
+export type TtsVoice = {
+  voice_id: string;
+  name: string;
+};
+
+export type TtsStatus = {
+  enabled: boolean;
+  provider: string;
+  voices: TtsVoice[];
+};
+
 export type Shelf =
   | { kind: "inbox" }
   | { kind: "unread" }

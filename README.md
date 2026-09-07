@@ -7,7 +7,8 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 ## What you can do
 
 - Add RSS/Atom feeds, grouped into categories
-- Read extracted article text in a dedicated reader
+- Read extracted article text in a dedicated reader, or listen with xAI speech
+- Save stories for later / for life, star them, mark read
 - Save stories for later / for life, star them, mark read
 - Tag articles and write notes
 - Snapshot HTML so a dead original URL still has a copy
@@ -75,6 +76,7 @@ docker compose up --build
 | `S3_BUCKET` | Optional backup destination |
 | `S3_PREFIX` | Object prefix, default `storykeep` |
 | `API_ORIGIN` | Next.js rewrite target for the API |
+| `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen in the reader. |
 
 S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 

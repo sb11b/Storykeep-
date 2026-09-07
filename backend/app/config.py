@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     refresh_minutes: int = 15
     extract_on_import: bool = True
     secure_cookies: bool = False
+    xai_api_key: str = ""
 
     @field_validator("database_url", mode="before")
     @classmethod

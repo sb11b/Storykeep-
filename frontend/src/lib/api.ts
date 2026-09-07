@@ -8,6 +8,7 @@ import type {
   SearchHit,
   Stats,
   Tag,
+  TtsStatus,
   User,
 } from "./types";
 
@@ -116,8 +117,29 @@ export const api = {
   },
   backups: () => request<Backup[]>("/api/v1/backups"),
   createBackup: (backup_type: string) =>
-    request<Backup>("/api/v1/backups", {
+    request<Backup>(`/api/v1/backups`, {
       method: "POST",
       body: JSON.stringify({ backup_type, destination: "local" }),
     }),
+  tts: () => request<TtsStatus>("/api/v1/tts"),
+  articleSpeech: async (id: string, voiceId: string, chunk = 0) => {
+    const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
+    const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    const blob = await response.blob();
+    const chunks = Number(response.headers.get("X-TTS-Chunks") || "1");
+    return { blob, chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1 };
+  },
 };
