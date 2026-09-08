@@ -1505,8 +1505,8 @@ function Reader({
               onChange={setNote}
               placeholder="Markdown note to your future self… (n)"
               rows={4}
+              actions={<Button type="submit">Save note</Button>}
             />
-            <Button type="submit">Save note</Button>
           </form>
           <p className="text-xs text-muted-foreground">
             Select a passage, pick a color, optionally add a comment. Highlights land in StoryKeep/Highlights of the pack. They never rewrite the original vault file.
@@ -1536,20 +1536,26 @@ function Reader({
                 void onEditComposed(editTitle.trim(), editBody.trim());
               }}
             >
-              <Label>Edit this StoryKeep note</Label>
-              <p className="text-xs text-muted-foreground">
-                This is overlay markdown you wrote here. Imported vault files stay read-only.
-              </p>
-              <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="Title" />
               <NoteComposer
                 value={editBody}
                 onChange={setEditBody}
                 placeholder="Full note, with ==highlights== and images…"
                 rows={10}
+                header={
+                  <>
+                    <Label>Edit this StoryKeep note</Label>
+                    <p className="text-xs text-muted-foreground">
+                      This is overlay markdown you wrote here. Imported vault files stay read-only.
+                    </p>
+                    <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="Title" />
+                  </>
+                }
+                actions={
+                  <Button type="submit" variant="secondary">
+                    Update note
+                  </Button>
+                }
               />
-              <Button type="submit" variant="secondary">
-                Update note
-              </Button>
             </form>
           ) : null}
           <form
@@ -1563,17 +1569,27 @@ function Reader({
               });
             }}
           >
-            <Label>Addition (new note in StoryKeep/Additions)</Label>
-            <Input value={additionTitle} onChange={(event) => setAdditionTitle(event.target.value)} placeholder="Title for a new overlay note" />
             <NoteComposer
               value={additionBody}
               onChange={setAdditionBody}
               placeholder="Markdown that exists only in the overlay pack…"
               rows={6}
+              header={
+                <>
+                  <Label>Addition (new note in StoryKeep/Additions)</Label>
+                  <Input
+                    value={additionTitle}
+                    onChange={(event) => setAdditionTitle(event.target.value)}
+                    placeholder="Title for a new overlay note"
+                  />
+                </>
+              }
+              actions={
+                <Button type="submit" variant="secondary">
+                  Save addition
+                </Button>
+              }
             />
-            <Button type="submit" variant="secondary">
-              Save addition
-            </Button>
           </form>
           {(article.overlay_additions || []).length > 0 ? (
             <ul className="space-y-2">
@@ -1801,14 +1817,21 @@ function AddFeedDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("max-h-[90vh] overflow-y-auto", tab === "vault" && "sm:max-w-3xl")}>
-        <DialogHeader>
+      <DialogContent
+        className={cn(
+          "max-h-[90vh]",
+          tab === "vault"
+            ? "!flex h-[min(90vh,52rem)] w-[min(96vw,72rem)] sm:max-w-6xl flex-col overflow-hidden"
+            : "overflow-y-auto",
+        )}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>Collect</DialogTitle>
           <DialogDescription>
             Subscribe to a site, save a page, upload a file, import OPML, or add vault notes.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+        <div className="flex shrink-0 flex-wrap gap-1 rounded-lg bg-muted p-1">
           {(
             [
               ["feed", "Feed"],
@@ -2035,7 +2058,8 @@ function AddFeedDialog({
           </form>
         ) : null}
         {tab === "vault" ? (
-          <div className="space-y-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+            <div className="shrink-0 space-y-2">
             <p className="text-sm text-muted-foreground">
               Zip Steve&apos;s Surface Vault and import it here. StoryKeep never writes back into that folder. Highlights,
               additions, and corrections download as a separate overlay pack you unzip at the vault root on Windows.
@@ -2072,8 +2096,9 @@ function AddFeedDialog({
               Skips <code>.obsidian</code>, does not turn png/jpg into articles, and tags book / course / clipping / daily from
               the path. Merge Corrections by hand in Obsidian; do not let StoryKeep overwrite originals.
             </p>
+            </div>
             <form
-              className="space-y-2 rounded-md border p-3"
+              className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-md border p-3"
               onSubmit={async (event) => {
                 event.preventDefault();
                 if (!additionTitle.trim() || !additionBody.trim()) return;
@@ -2097,32 +2122,39 @@ function AddFeedDialog({
                 }
               }}
             >
-              <Label>Type a new article or paper</Label>
-              <p className="text-xs text-muted-foreground">
-                This is a StoryKeep overlay note, not an overwrite of Steve&apos;s Surface Vault. Unzip the pack to add it under
-                StoryKeep/Additions.
-              </p>
-              <Input
-                value={additionTitle}
-                onChange={(event) => setAdditionTitle(event.target.value)}
-                placeholder="Title"
-                required
-              />
-              <Input
-                value={additionSubject}
-                onChange={(event) => setAdditionSubject(event.target.value)}
-                placeholder="Subjects / tags, comma-separated (e.g. calculus, DAT-200)"
-              />
               <NoteComposer
                 value={additionBody}
                 onChange={setAdditionBody}
                 placeholder="Paste or write the full markdown: lecture notes, a paper, a chapter…"
-                rows={14}
+                rows={12}
                 required
+                fill
+                header={
+                  <>
+                    <Label>Type a new article or paper</Label>
+                    <p className="text-xs text-muted-foreground">
+                      This is a StoryKeep overlay note, not an overwrite of Steve&apos;s Surface Vault. Unzip the pack to add
+                      it under StoryKeep/Additions.
+                    </p>
+                    <Input
+                      value={additionTitle}
+                      onChange={(event) => setAdditionTitle(event.target.value)}
+                      placeholder="Title"
+                      required
+                    />
+                    <Input
+                      value={additionSubject}
+                      onChange={(event) => setAdditionSubject(event.target.value)}
+                      placeholder="Subjects / tags, comma-separated (e.g. calculus, DAT-200)"
+                    />
+                  </>
+                }
+                actions={
+                  <Button type="submit" disabled={busy}>
+                    {busy ? "Saving…" : "Save complete note"}
+                  </Button>
+                }
               />
-              <Button type="submit" disabled={busy}>
-                {busy ? "Saving…" : "Save complete note"}
-              </Button>
             </form>
           </div>
         ) : null}
