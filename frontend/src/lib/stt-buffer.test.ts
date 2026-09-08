@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { lastCommittedSentence, newFinalSegment, normalizeSpoken } from "./stt-buffer.ts";
+import { lastCommittedSentence, newFinalSegment, normalizeSpoken } from "./stt-buffer";
 
 test("normalizeSpoken collapses whitespace", () => {
   assert.equal(normalizeSpoken("  Hello   there\n"), "Hello there");
