@@ -169,7 +169,8 @@ export function DictationProvider({ children }: { children: ReactNode }) {
 
   const startFor = useCallback(
     (field: Field) => {
-      if (listeningRef.current || startingRef.current) {
+      const live = socketRef.current;
+      if (listeningRef.current || startingRef.current || (live && live.readyState <= WebSocket.OPEN)) {
         if (listeningRef.current && fieldRef.current === field) {
           requestStop();
           return;

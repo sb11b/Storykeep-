@@ -35,6 +35,48 @@ function foldWordOffsets(text: string): number[] {
   return offsets;
 }
 
+function foldedWords(text: string): string[] {
+  return foldSpeech(text).split(" ").filter(Boolean);
+}
+
+function indexOfWords(hay: string[], needle: string[]): number {
+  if (!needle.length || hay.length < needle.length) return -1;
+  for (let i = 0; i <= hay.length - needle.length; i += 1) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j += 1) {
+      if (hay[i + j] !== needle[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return i;
+  }
+  return -1;
+}
+
+function removeWordSpan(text: string, start: number, count: number): string {
+  const off = foldWordOffsets(text);
+  if (start < 0 || !count || start >= off.length) return text.trim();
+  const from = off[start];
+  const to = off[start + count] ?? text.length;
+  return `${text.slice(0, from)}${text.slice(to)}`
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([.,;:])/g, "$1")
+    .replace(/\s+\n/g, "\n")
+    .trim();
+}
+
+function peelFoldedPrefix(incoming: string, prefix: string): string {
+  const spoken = incoming.trim();
+  const pre = foldedWords(prefix);
+  const words = foldedWords(spoken);
+  if (!pre.length || words.length < pre.length) return spoken;
+  for (let i = 0; i < pre.length; i += 1) {
+    if (words[i] !== pre[i]) return spoken;
+  }
+  return removeWordSpan(spoken, 0, pre.length);
+}
+
 function splitOnRepeatedShingles(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -57,7 +99,6 @@ function splitOnRepeatedShingles(text: string): string[] {
     }
   }
 
-  // "That protection is…" vs "Data protection is…" — skip the first word of the window.
   for (const size of [8, 6]) {
     if (words.length < size * 2 + 1) continue;
     const seen = new Map<string, number>();
@@ -84,11 +125,17 @@ function splitOnRepeatedShingles(text: string): string[] {
 }
 
 function splitGluedCapitals(line: string): string[] {
-  return line
-    .split(/(?<=[.!?])\s+(?=[A-Z])/)
-    .flatMap((part) => part.split(/(?<=[a-z0-9,])\s+(?=[A-Z][a-z])/))
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const out: string[] = [];
+  for (const part of line.split(/(?<=[.!?])\s+(?=[A-Z])/)) {
+    const glued = part.match(/^([\s\S]*?[a-z0-9,])\s+([A-Z][a-z][\s\S]+)$/);
+    if (glued && foldedWords(glued[2]).length >= 8) {
+      out.push(glued[1].trim());
+      out.push(...splitGluedCapitals(glued[2].trim()));
+    } else if (part.trim()) {
+      out.push(part.trim());
+    }
+  }
+  return out;
 }
 
 export function splitUtterance(text: string): string[] {
@@ -156,48 +203,66 @@ export function isCommaRestatementOfBullets(chunk: string, source: string | stri
   return hits >= Math.min(3, bullets.length);
 }
 
+export function headingsFrom(text: string): string[] {
+  const items: string[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string) => {
+    const cleaned = raw.replace(/:+$/, "").trim();
+    const words = foldedWords(cleaned);
+    if (words.length < 3 || words.length > 8 || foldSpeech(cleaned).length < 10) return;
+    const key = words.join(" ");
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(cleaned);
+  };
+  for (const chunk of splitUtterance(text)) {
+    const trimmed = chunk.trim();
+    if (trimmed.endsWith(":")) add(trimmed);
+  }
+  const re = /([A-Za-z][A-Za-z0-9' ]{6,70}:)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text || ""))) add(match[1]);
+  return items;
+}
+
+export function stripEmbeddedHeadings(chunk: string, headings: string[]): string {
+  let text = chunk.trim();
+  for (const heading of headings) {
+    const hWords = foldedWords(heading);
+    if (hWords.length < 3) continue;
+    let guard = 0;
+    while (guard < 8) {
+      guard += 1;
+      const at = indexOfWords(foldedWords(text), hWords);
+      if (at <= 0) break;
+      text = removeWordSpan(text, at, hWords.length);
+    }
+  }
+  return text.replace(/\s{2,}/g, " ").trim();
+}
+
 function alreadyInField(piece: string, fieldValue: string): boolean {
   const spoken = normalizeSpoken(piece);
   const field = normalizeSpoken(fieldValue);
   if (!spoken) return true;
   if (!field) return false;
-  return field === spoken || field.endsWith(spoken);
+  return field === spoken || field.endsWith(spoken) || foldSpeech(field).endsWith(foldSpeech(spoken));
 }
 
-function peelPrefix(incoming: string, prefix: string): string {
-  let spoken = normalizeSpoken(incoming);
-  const have = normalizeSpoken(prefix);
-  if (!spoken || !have || have.length < 2) return spoken;
-  let guard = 0;
-  while (guard < 32 && spoken.startsWith(have)) {
-    guard += 1;
-    const rest = spoken.slice(have.length).replace(/^[\s.,;:]+/, "").trim();
-    if (!rest) return "";
-    if (rest === spoken) break;
-    spoken = rest;
+/** Drop the last 120+ folded chars of source if they reappear anywhere in incoming. */
+export function dropRepeatedTail(incoming: string, source: string): string {
+  const spoken = incoming.trim();
+  const src = foldedWords(source);
+  const words = foldedWords(spoken);
+  if (!spoken || src.length < 8 || !words.length) return spoken;
+  for (let len = src.length; len >= 8; len -= 1) {
+    const suffix = src.slice(-len);
+    if (suffix.join(" ").length < 120) break;
+    const at = indexOfWords(words, suffix);
+    if (at === -1) continue;
+    return removeWordSpan(spoken, at, suffix.length);
   }
   return spoken;
-}
-
-function dropFuzzyOverlap(incoming: string, committed: string): string {
-  const inf = foldSpeech(incoming);
-  const cf = foldSpeech(committed);
-  if (!inf) return "";
-  if (!cf) return incoming.trim();
-  for (let n = Math.min(inf.length, cf.length); n >= 120; n -= 1) {
-    if (!inf.startsWith(cf.slice(-n))) continue;
-    const parts = splitUtterance(incoming);
-    const kept: string[] = [];
-    let consumed = 0;
-    for (const part of parts) {
-      const next = foldSpeech(part);
-      consumed += next.length + 1;
-      if (consumed <= n + 8) continue;
-      kept.push(part);
-    }
-    return kept.join("\n").trim();
-  }
-  return incoming.trim();
 }
 
 function promoteRightsBullet(chunk: string, bullets: string[]): string {
@@ -222,9 +287,10 @@ function absorbNearDuplicate(kept: string[], chunk: string): boolean {
 export function collapseRestatedSpeech(text: string): string {
   const kept: string[] = [];
   const bullets: string[] = [];
+  const headings: string[] = [];
   let corpus = "";
   for (const raw of splitUtterance(text)) {
-    const chunk = promoteRightsBullet(raw, bullets);
+    const chunk = stripEmbeddedHeadings(promoteRightsBullet(raw, bullets), headings);
     const folded = foldSpeech(chunk);
     if (!folded) continue;
     if (isCommaRestatementOfBullets(chunk, bullets)) continue;
@@ -237,49 +303,60 @@ export function collapseRestatedSpeech(text: string): string {
     if (long && ratio >= 0.55) continue;
     if (!long && ratio >= 0.9) continue;
     if (/^[-*]\s+/.test(chunk)) bullets.push(foldSpeech(chunk.replace(/^[-*]\s+/, "")));
+    if (chunk.trim().endsWith(":")) {
+      for (const heading of headingsFrom(chunk)) headings.push(heading);
+    }
     kept.push(chunk);
     corpus = foldSpeech(kept.join(" "));
   }
   return kept.join("\n").trim();
 }
 
+function peelCommitted(incoming: string, committed: string): string {
+  let rest = peelFoldedPrefix(incoming, committed);
+  if (foldSpeech(rest) === foldSpeech(incoming)) {
+    rest = peelFoldedPrefix(rest, lastCommittedParagraph(committed));
+  }
+  if (foldSpeech(rest) === foldSpeech(incoming)) {
+    rest = peelFoldedPrefix(rest, lastCommittedSentence(committed));
+  }
+  return rest;
+}
+
 /** Append only text not already committed or sitting at the end of the field. */
 export function newFinalSegment(incoming: string, committed: string, fieldValue = ""): string {
   const spoken = normalizeSpoken(incoming);
   if (!spoken) return "";
-  const collapsed = collapseRestatedSpeech(incoming);
   const have = committed || "";
   const field = fieldValue || "";
+  const prior = `${have}\n${field}`;
+  const headings = headingsFrom(prior);
 
-  if (!normalizeSpoken(have)) {
-    if (alreadyInField(collapsed, field)) return "";
-    return collapsed;
-  }
+  let rest = collapseRestatedSpeech(incoming);
+  rest = stripEmbeddedHeadings(rest, headings);
+  rest = peelCommitted(rest, have);
+  rest = collapseRestatedSpeech(rest);
+  rest = dropRepeatedTail(rest, have);
+  rest = dropRepeatedTail(rest, field);
+  rest = stripEmbeddedHeadings(rest, headings);
 
-  let rest = peelPrefix(normalizeSpoken(collapsed), normalizeSpoken(have));
-  if (normalizeSpoken(rest) === normalizeSpoken(collapsed)) {
-    rest = peelPrefix(rest, lastCommittedParagraph(have));
-    if (normalizeSpoken(rest) === normalizeSpoken(collapsed)) {
-      rest = peelPrefix(rest, lastCommittedSentence(have));
-    }
-  }
-  rest = collapseRestatedSpeech(rest || collapsed);
-  rest = dropFuzzyOverlap(rest, have);
+  if (!normalizeSpoken(rest)) return "";
 
   const extra: string[] = [];
-  const haveFold = foldSpeech(have);
-  const bullets = bulletsFrom(have);
+  const haveFold = foldSpeech(`${have} ${field}`);
+  const bullets = bulletsFrom(prior);
   for (const chunk of splitUtterance(rest)) {
-    const folded = foldSpeech(chunk);
+    const cleaned = stripEmbeddedHeadings(chunk, headings);
+    const folded = foldSpeech(cleaned);
     if (!folded) continue;
-    if (isCommaRestatementOfBullets(chunk, bullets)) continue;
-    if (folded.length >= 80 && duplicateRatio(chunk, have) >= 0.55) continue;
-    if (folded.length < 80 && (haveFold.includes(folded) || duplicateRatio(chunk, have) >= 0.9)) continue;
-    extra.push(chunk);
+    if (isCommaRestatementOfBullets(cleaned, bullets)) continue;
+    if (folded.length >= 80 && duplicateRatio(cleaned, haveFold) >= 0.55) continue;
+    if (folded.length < 80 && (haveFold.includes(folded) || duplicateRatio(cleaned, haveFold) >= 0.9)) continue;
+    extra.push(cleaned);
   }
   const out = extra.join("\n").trim();
   if (!out) return "";
-  if (foldSpeech(out) === haveFold) return "";
+  if (foldSpeech(out) === foldSpeech(have)) return "";
   if (alreadyInField(out, field)) return "";
   return out;
 }

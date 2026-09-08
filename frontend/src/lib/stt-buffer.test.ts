@@ -83,3 +83,24 @@ test("GDPR session dump keeps one copy of each restated paragraph", () => {
   assert.equal(countFolded(delta, "protection is an important part of corporate social responsibility"), 1);
   assert.equal(countFolded(delta, "Data protection is an important part"), 0);
 });
+
+test("newFinalSegment keeps only new words after a punctuation-ignoring committed tail", () => {
+  const have = "The GDPR replaces the EU's Data Protection Directive established in 1995.";
+  const incoming =
+    "the gdpr replaces the eu s data protection directive established in 1995\nIt is based on recommendations proposed by the OECD.";
+  const out = newFinalSegment(incoming, have, have);
+  assert.equal(countFolded(out, "the gdpr replaces"), 0);
+  assert.match(foldSpeech(out), /it is based on recommendations proposed by the oecd/);
+});
+
+test("Data Protection Directive heading does not leak into the OECD sentence", () => {
+  const committed = `Here are a few:
+Data Protection Directive: A directive that regulates the processing of personal data within the EU. It is an important component of EU privacy and human rights law. The GDPR replaces the EU's Data Protection Directive established in 1995.`;
+  const incoming =
+    "It is based on recommendations proposed by the Organization for Economic Here are a few: Data Cooperation and development. OECD. The seven principles governing the OECD's recommendations for the protection of personal data were noticed, purpose, consent, security, disclosure, access and accountability.";
+  const out = newFinalSegment(incoming, committed, committed);
+  assert.equal(countFolded(out, "here are a few"), 0);
+  assert.doesNotMatch(out, /Here are a few:/i);
+  assert.match(foldSpeech(out), /organization for economic/);
+  assert.match(out, /noticed|notice/i);
+});
