@@ -43,9 +43,8 @@ function loadSize() {
   return DEFAULT_PANEL;
 }
 
-function isComposedNote(guid?: string | null, sourceRef?: string | null) {
-  const ref = (sourceRef || "").replaceAll("\\", "/");
-  return Boolean(guid?.startsWith("storykeep-note:") || ref.startsWith("StoryKeep/Additions/"));
+function isComposedNote(guid?: string | null) {
+  return Boolean(guid?.startsWith("storykeep-note:"));
 }
 
 function titleFromReply(reply: string) {
@@ -198,7 +197,7 @@ export function GrokBubble({
     const body = content.trim();
     if (!body) return;
     try {
-      if (articleId && isComposedNote(articleGuid, sourceRef)) {
+      if (articleId && isComposedNote(articleGuid)) {
         const existing = (articleBody || "").trim();
         const next = existing ? `${existing}\n\n## Grok\n\n${body}` : body;
         await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next);

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Article, Feed, OverlayAddition, Tag, User
+from app.services import changelog
 from app.services.destination import (
     DEFAULT_DESTINATION,
     apply_destination,
@@ -245,9 +246,7 @@ def create_composed_note(
 
 
 def is_composed_note(article: Article) -> bool:
-    guid = article.guid or ""
-    ref = (article.source_ref or "").replace("\\", "/")
-    return is_composed_guid(guid) or ref.startswith("StoryKeep/Additions/") or ref.startswith("StoryKeep/Corrections/")
+    return is_composed_guid(article.guid)
 
 
 def update_composed_note(db: Session, user: User, article: Article, title: str, markdown: str) -> Article:

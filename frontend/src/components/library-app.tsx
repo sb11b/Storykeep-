@@ -62,9 +62,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 function isStoryKeepNote(article: Article): boolean {
-  const guid = article.guid || "";
-  const ref = (article.source_ref || "").replaceAll("\\", "/");
-  return guid.startsWith("storykeep-note:") || ref.startsWith("StoryKeep/Additions/");
+  return (article.guid || "").startsWith("storykeep-note:");
 }
 
 function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: Tag[]): string {

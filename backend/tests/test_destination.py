@@ -23,6 +23,11 @@ class DestinationTests(unittest.TestCase):
         for shelf in ("vault", "additions", "books", "notes", "schoolwork"):
             self.assertIsNotNone(shelf_where(shelf))
 
+    def test_vault_import_has_changelog(self):
+        from app.services import vault_import
+
+        self.assertTrue(hasattr(vault_import, "changelog"))
+
     def test_apply_destination_sets_books_kind(self):
         article = type("Article", (), {"destination": None, "source_kind": "obsidian", "is_correction": False})()
         apply_destination(article, "books", True)
