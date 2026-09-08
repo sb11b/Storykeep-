@@ -627,7 +627,13 @@ export function LibraryApp({ user }: { user: User }) {
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
-                  <p className="text-xs text-muted-foreground">{total} {shelf.kind === "notes" ? "notes" : "articles"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {shelf.kind === "notes"
+                      ? `${total} notes`
+                      : items.length > 0 && items.length < total
+                        ? `${items.length} of ${total} articles`
+                        : `${total} articles`}
+                  </p>
                 </div>
                 {shelf.kind === "feed" ? (
                   <div className="flex shrink-0 gap-1">
@@ -693,6 +699,9 @@ export function LibraryApp({ user }: { user: User }) {
             <ShelfScroller
               shelfKey={shelfKey(shelf)}
               hasMore={shelf.kind !== "notes" && !loadingList && items.length > 0 && items.length < total}
+              loadingMore={loadingMore}
+              loaded={items.length}
+              total={total}
               onNearEnd={() => void loadMore()}
             >
               {loadingList ? (
@@ -759,13 +768,6 @@ export function LibraryApp({ user }: { user: User }) {
                   />
                 ))
               )}
-              {loadingMore ? (
-                <p className="px-4 py-2 text-xs text-muted-foreground">Loading more…</p>
-              ) : shelf.kind !== "notes" && items.length > 0 && items.length < total ? (
-                <p className="px-4 py-2 text-xs text-muted-foreground">
-                  {items.length} of {total}
-                </p>
-              ) : null}
             </ShelfScroller>
           </section>
 
