@@ -104,44 +104,47 @@ export function NoteComposer({
         expanded && "fixed inset-3 z-[70] rounded-xl border bg-background p-3 shadow-2xl md:inset-5",
       )}
     >
-      {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            const el = areaRef.current;
-            const start = el?.selectionStart ?? value.length;
-            const end = el?.selectionEnd ?? value.length;
-            const result = wrapHighlight(value, start, end);
-            applyWrap(result.text, result.selectionStart, result.selectionEnd);
-          }}
-        >
-          <Highlighter className="size-3.5" />
-          Highlight
-        </Button>
-        <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
-          {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
-          {uploading ? "Uploading…" : "Image"}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => setOpen(!expanded, true)}
-          aria-label={expanded ? "Shrink editor" : "Expand editor"}
-        >
-          {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-          {expanded ? "Shrink" : "Expand"}
-        </Button>
-        {expanded ? (
-          <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false, true)}>
-            Cancel
+      <div className="flex w-full shrink-0 flex-wrap items-center gap-2 bg-background">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const el = areaRef.current;
+              const start = el?.selectionStart ?? value.length;
+              const end = el?.selectionEnd ?? value.length;
+              const result = wrapHighlight(value, start, end);
+              applyWrap(result.text, result.selectionStart, result.selectionEnd);
+            }}
+          >
+            <Highlighter className="size-3.5" />
+            Highlight
           </Button>
-        ) : null}
-        {actions}
+          <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
+            {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+            {uploading ? "Uploading…" : "Image"}
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={() => setOpen(!expanded, true)}
+            aria-label={expanded ? "Shrink editor" : "Expand editor"}
+          >
+            {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            {expanded ? "Shrink" : "Expand"}
+          </Button>
+          {expanded ? (
+            <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false, true)}>
+              Cancel
+            </Button>
+          ) : null}
+          {actions}
+        </div>
         <input
           ref={fileRef}
           type="file"
@@ -173,6 +176,7 @@ export function NoteComposer({
           }}
         />
       </div>
+      {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
       <Textarea
         id={id}
         ref={(node) => {
