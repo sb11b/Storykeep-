@@ -140,35 +140,35 @@ export function LibraryApp({ user }: { user: User }) {
   const listenRef = useRef<ListenControlsHandle>(null);
   const caretWordRef = useRef<(() => number | null) | null>(null);
   const itemsRef = useRef<ArticleListItem[]>([]);
+  const notesRef = useRef<Annotation[]>([]);
   const totalRef = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   const listGenRef = useRef(0);
   const loadingMoreRef = useRef(false);
   itemsRef.current = items;
+  notesRef.current = notes;
   totalRef.current = total;
   selectedIdRef.current = selectedId;
 
   const loadNav = useCallback(async () => {
-    const [nextFeeds, nextCategories, nextTags, nextStats, nextNotes, nextBackups] = await Promise.all([
+    const [nextFeeds, nextCategories, nextTags, nextStats, nextBackups] = await Promise.all([
       api.feeds(),
       api.categories(),
       api.tags(),
       api.stats(),
-      api.notes(),
       api.backups(),
     ]);
     setFeeds(nextFeeds);
     setCategories(nextCategories);
     setTags(nextTags);
     setStats(nextStats);
-    setNotes(nextNotes);
     setBackups(nextBackups);
   }, []);
 
   const fetchShelfPage = useCallback(async (offset: number) => {
     if (shelf.kind === "notes") {
-      const nextNotes = await api.notes();
-      return { items: [] as ArticleListItem[], total: nextNotes.length, notes: nextNotes };
+      const page = await api.notes({ limit: LIST_PAGE, offset });
+      return { items: [] as ArticleListItem[], total: page.total, notes: page.items };
     }
     if (shelf.kind === "search") {
       const page = await api.search(shelf.q, { limit: LIST_PAGE, offset });
@@ -199,6 +199,7 @@ export function LibraryApp({ user }: { user: User }) {
     setLoadingList(true);
     setListError(null);
     setItems([]);
+    if (shelf.kind === "notes") setNotes([]);
     try {
       const page = await fetchShelfPage(0);
       if (gen !== listGenRef.current) return;
@@ -214,9 +215,8 @@ export function LibraryApp({ user }: { user: User }) {
   }, [fetchShelfPage]);
 
   const loadMore = useCallback(async () => {
-    if (shelf.kind === "notes") return;
     if (loadingMoreRef.current || loadingList) return;
-    const loaded = itemsRef.current.length;
+    const loaded = shelf.kind === "notes" ? notesRef.current.length : itemsRef.current.length;
     const tot = totalRef.current;
     if (tot > 0 && loaded >= tot) return;
     if (loaded === 0) return;
@@ -226,6 +226,18 @@ export function LibraryApp({ user }: { user: User }) {
     try {
       const page = await fetchShelfPage(loaded);
       if (gen !== listGenRef.current) return;
+      if (shelf.kind === "notes") {
+        if (!page.notes?.length) {
+          setTotal(loaded);
+          return;
+        }
+        setNotes((current) => {
+          const seen = new Set(current.map((item) => item.id));
+          return [...current, ...page.notes!.filter((item) => !seen.has(item.id))];
+        });
+        setTotal(page.total);
+        return;
+      }
       if (!page.items.length) {
         setTotal(loaded);
         return;
@@ -629,7 +641,9 @@ export function LibraryApp({ user }: { user: User }) {
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
                   <p className="text-xs text-muted-foreground">
                     {shelf.kind === "notes"
-                      ? `${total} notes`
+                      ? notes.length > 0 && notes.length < total
+                        ? `${notes.length} of ${total} notes`
+                        : `${total} notes`
                       : items.length > 0 && items.length < total
                         ? `${items.length} of ${total} articles`
                         : `${total} articles`}
@@ -698,9 +712,9 @@ export function LibraryApp({ user }: { user: User }) {
             </div>
             <ShelfScroller
               shelfKey={shelfKey(shelf)}
-              hasMore={shelf.kind !== "notes" && !loadingList && items.length > 0 && items.length < total}
+              hasMore={!loadingList && (shelf.kind === "notes" ? notes.length : items.length) > 0 && (shelf.kind === "notes" ? notes.length : items.length) < total}
               loadingMore={loadingMore}
-              loaded={items.length}
+              loaded={shelf.kind === "notes" ? notes.length : items.length}
               total={total}
               onNearEnd={() => void loadMore()}
             >
@@ -719,7 +733,13 @@ export function LibraryApp({ user }: { user: User }) {
                       onClick={() => setSelectedId(note.article_id)}
                       className="w-full text-left px-4 py-3 border-b hover:bg-accent/50"
                     >
-                      <p className="text-xs text-muted-foreground">{note.article_title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {note.kind === "highlight" ? "Highlight" : note.kind === "addition" ? "Addition" : "Note"}
+                        {note.article_title ? ` · ${note.article_title}` : ""}
+                      </p>
+                      {note.quote && note.kind !== "note" ? (
+                        <p className="text-sm italic text-muted-foreground mt-1">“{note.quote}”</p>
+                      ) : null}
                       <div className="text-sm mt-1 note-md line-clamp-3" dangerouslySetInnerHTML={{ __html: renderMarkdown(note.body) }} />
                       <p className="text-[11px] text-muted-foreground mt-1">
                         {formatRelative(note.updated_at || note.created_at)}
@@ -812,7 +832,7 @@ export function LibraryApp({ user }: { user: User }) {
                   await api.addNote(article.id, body);
                   const next = await api.article(article.id);
                   setArticle(next);
-                  void loadNav();
+                  void Promise.all([loadNav(), loadList()]);
                 }}
                 onHighlight={async (payload) => {
                   await api.addNote(article.id, payload.note || payload.quote, {
@@ -826,13 +846,14 @@ export function LibraryApp({ user }: { user: User }) {
                   setArticle(next);
                   setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
                   toast.success("Highlight saved in the overlay pack");
-                  void loadNav();
+                  void Promise.all([loadNav(), loadList()]);
                 }}
                 onAddition={async (title, markdown) => {
                   await api.addAddition(article.id, title, markdown);
                   const next = await api.article(article.id);
                   setArticle(next);
                   toast.success("Addition will be in the next Obsidian pack");
+                  void Promise.all([loadNav(), loadList()]);
                 }}
                 onEditComposed={async (title, markdown) => {
                   const next = await api.updateComposedNote(article.id, title, markdown);
@@ -854,7 +875,7 @@ export function LibraryApp({ user }: { user: User }) {
                   await api.deleteNote(id);
                   const next = await api.article(article.id);
                   setArticle(next);
-                  void loadNav();
+                  void Promise.all([loadNav(), loadList()]);
                 }}
               />
             ) : (
@@ -1331,7 +1352,7 @@ function Reader({
     .map((item) => `${item.id}:${item.color}:${item.quote}`)
     .join("|");
   const highlights = article.annotations.filter((item) => item.kind === "highlight" && item.quote);
-  const notesOnly = article.annotations.filter((item) => item.kind !== "highlight");
+  const listedNotes = article.annotations;
 
   useEffect(() => {
     const marks = article.annotations
@@ -1720,11 +1741,11 @@ function Reader({
               </p>
             ) : null}
           </form>
-          {notesOnly.length === 0 ? (
+          {listedNotes.length === 0 ? (
             <p className="text-sm text-muted-foreground">No notes on this story yet.</p>
           ) : (
             <ul className="space-y-3">
-              {notesOnly.map((item) => (
+              {listedNotes.map((item) => (
                 <li key={item.id} className="rounded-lg border bg-background px-3 py-2">
                   {item.quote ? <p className="text-sm italic text-muted-foreground">“{item.quote}”</p> : null}
                   <div className="text-sm mt-1 note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.body) }} />

@@ -9,6 +9,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Annotation, Archive, Article, Category, Feed, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, article_list_item
+from app.services.notes_feed import notes_feed_page, notes_feed_total
 from app.schemas import (
     AnnotationIn,
     AnnotationOut,
@@ -179,15 +180,15 @@ def delete_tag(tag_id: UUID, db: Session = Depends(get_db), user: User = Depends
     return {"ok": True}
 
 
-@router.get("/annotations", response_model=list[AnnotationOut])
-def list_notes(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[AnnotationOut]:
-    notes = db.scalars(
-        select(Annotation)
-        .where(Annotation.user_id == user.id, func.coalesce(Annotation.kind, "note") != "highlight")
-        .options(selectinload(Annotation.article))
-        .order_by(Annotation.updated_at.desc())
-    ).all()
-    return [annotation_out(note, note.article.title if note.article else None) for note in notes]
+@router.get("/annotations", response_model=Page[AnnotationOut])
+def list_notes(
+    limit: int = Query(default=40, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Page[AnnotationOut]:
+    items, total = notes_feed_page(db, user, limit, offset)
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.patch("/annotations/{note_id}", response_model=AnnotationOut)
@@ -324,8 +325,7 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
             select(func.count()).select_from(article_base.where(Article.is_saved.is_(True)).subquery())
         )
         or 0,
-        annotation_count=db.scalar(select(func.count()).select_from(Annotation).where(Annotation.user_id == user.id))
-        or 0,
+        annotation_count=notes_feed_total(db, user),
         vault_count=db.scalar(
             select(func.count()).select_from(
                 article_base.where(Article.guid.startswith("obsidian:"), Article.source_kind != "textbook").subquery()

@@ -277,7 +277,13 @@ export const api = {
     }),
   deleteNote: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/annotations/${id}`, { method: "DELETE" }),
-  notes: () => request<Annotation[]>("/api/v1/annotations"),
+  notes: (opts?: { limit?: number; offset?: number }) => {
+    const search = new URLSearchParams();
+    if (opts?.limit != null) search.set("limit", String(opts.limit));
+    if (opts?.offset != null) search.set("offset", String(opts.offset));
+    const query = search.toString();
+    return request<Page<Annotation>>(`/api/v1/annotations${query ? `?${query}` : ""}`);
+  },
   archive: (id: string) =>
     request(`/api/v1/articles/${id}/archive`, {
       method: "POST",
