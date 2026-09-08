@@ -183,19 +183,25 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
                         pass
                     return
 
-        tasks = [
-            asyncio.create_task(from_browser()),
-            asyncio.create_task(from_xai()),
-            asyncio.create_task(watchdog()),
-        ]
-        _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        for task in pending:
+        browser_task = asyncio.create_task(from_browser())
+        xai_task = asyncio.create_task(from_xai())
+        watchdog_task = asyncio.create_task(watchdog())
+        done, pending = await asyncio.wait(
+            {browser_task, xai_task, watchdog_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if browser_task in done and not xai_task.done():
             try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+                await asyncio.wait_for(asyncio.shield(xai_task), timeout=6)
+            except (asyncio.TimeoutError, Exception):
+                xai_task.cancel()
+        for task in (browser_task, xai_task, watchdog_task):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
     except WebSocketDisconnect:
         pass
     except Exception:

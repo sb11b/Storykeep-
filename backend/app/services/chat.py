@@ -53,7 +53,7 @@ def require_key() -> str:
 
 
 def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
-    limit = max(1, int(settings.chat_requests_per_hour or 30))
+    limit = max(1, int(settings.chat_requests_per_hour or 120))
     window = 3600.0
     stamp = now if now is not None else time.time()
     key = str(user_id)

@@ -32,13 +32,16 @@ class ChatGuardTests(unittest.TestCase):
         self.assertIn("Title: Long", excerpt)
         self.assertTrue(excerpt.endswith("…"))
 
-    def test_rate_limit_is_thirty_per_hour(self):
+    def test_rate_limit_caps_hourly_requests(self):
+        from app.config import settings
+
         user = uuid4()
         now = 1_700_000_000.0
-        for index in range(30):
+        limit = int(settings.chat_requests_per_hour or 120)
+        for index in range(limit):
             enforce_rate_limit(user, now=now + index)
         with self.assertRaises(HTTPException) as caught:
-            enforce_rate_limit(user, now=now + 31)
+            enforce_rate_limit(user, now=now + limit + 1)
         self.assertEqual(caught.exception.status_code, 429)
         enforce_rate_limit(user, now=now + 3601)
 

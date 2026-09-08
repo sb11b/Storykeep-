@@ -38,7 +38,7 @@ def chat_status(user: User = Depends(get_current_user)) -> dict:
         "enabled": chat_service.key_configured(),
         "provider": "xai",
         "model": (settings.xai_chat_model or "grok-4").strip(),
-        "requests_per_hour": int(settings.chat_requests_per_hour or 30),
+        "requests_per_hour": int(settings.chat_requests_per_hour or 120),
     }
 
 
