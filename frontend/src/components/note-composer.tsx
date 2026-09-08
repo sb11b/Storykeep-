@@ -176,35 +176,45 @@ export function NoteComposer({
           }}
         />
       </div>
-      <div
-        className="note-md composer-preview max-h-36 shrink-0 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm"
-        aria-label="Highlight preview"
-      >
-        {value.trim() ? (
-          <div dangerouslySetInnerHTML={{ __html: renderMarkdown(value) }} />
-        ) : (
-          <p className="m-0 text-[11px] text-muted-foreground">
-            Highlight preview: selected words turn yellow here as <mark>mark</mark>.
-          </p>
-        )}
-      </div>
       {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
-      <Textarea
-        id={id}
-        ref={(node) => {
-          areaRef.current = node;
-          assignRef(textareaRef, node);
-        }}
-        value={value}
-        required={required}
-        rows={rows}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
+      <div
         className={cn(
-          "min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
-          (expanded || fill) && "h-auto min-h-0 flex-1",
+          "flex min-h-0 flex-col gap-2",
+          (expanded || fill) && "min-h-0 flex-1 md:grid md:grid-cols-2",
         )}
-      />
+      >
+        <Textarea
+          id={id}
+          ref={(node) => {
+            areaRef.current = node;
+            assignRef(textareaRef, node);
+          }}
+          value={value}
+          required={required}
+          rows={rows}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className={cn(
+            "min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
+            (expanded || fill) && "h-auto min-h-0 flex-1",
+          )}
+        />
+        <div
+          className={cn(
+            "note-md composer-preview shrink-0 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm",
+            expanded || fill ? "max-h-none min-h-24 flex-1" : "max-h-36",
+          )}
+          aria-label="Highlight preview"
+        >
+          {value.trim() ? (
+            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(value) }} />
+          ) : (
+            <p className="m-0 text-[11px] text-muted-foreground">
+              Highlight preview: selected words turn yellow here as <mark>mark</mark>.
+            </p>
+          )}
+        </div>
+      </div>
       <p className="shrink-0 text-[11px] text-muted-foreground">
         Highlight wraps the selection in <code>==yellow marks==</code>. Images stay in StoryKeep and unzip under
         StoryKeep/Additions/media.
