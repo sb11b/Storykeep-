@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Mic } from "lucide-react";
 import { toast } from "sonner";
+import { newFinalSegment, normalizeSpoken } from "@/lib/stt-buffer";
 import { cn } from "@/lib/utils";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
@@ -74,6 +75,7 @@ function floatToPcm16(input: Float32Array) {
 export function DictationProvider({ children }: { children: ReactNode }) {
   const [listening, setListening] = useState(false);
   const [continuous, setContinuous] = useState(false);
+  const [interim, setInterim] = useState("");
   const fieldRef = useRef<Field | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioRef = useRef<{
@@ -81,17 +83,34 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     context: AudioContext;
     processor: ScriptProcessorNode;
   } | null>(null);
+  const committedRef = useRef("");
   const interimRef = useRef("");
-  const baseRef = useRef("");
+  const lastFinalRef = useRef("");
   const listeningRef = useRef(false);
   const continuousRef = useRef(false);
+  const stoppingRef = useRef(false);
+  const stopTimerRef = useRef<number | null>(null);
+  const startingRef = useRef(false);
   continuousRef.current = continuous;
   listeningRef.current = listening;
 
+  const clearStopTimer = () => {
+    if (stopTimerRef.current != null) {
+      window.clearTimeout(stopTimerRef.current);
+      stopTimerRef.current = null;
+    }
+  };
+
   const teardown = useCallback(() => {
+    clearStopTimer();
     listeningRef.current = false;
+    stoppingRef.current = false;
+    startingRef.current = false;
     setListening(false);
     interimRef.current = "";
+    committedRef.current = "";
+    lastFinalRef.current = "";
+    setInterim("");
     const audio = audioRef.current;
     audioRef.current = null;
     if (audio) {
@@ -102,44 +121,82 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     const socket = socketRef.current;
     socketRef.current = null;
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "stop" }));
+      try {
+        socket.send(JSON.stringify({ type: "stop" }));
+      } catch {
+        /* ignore */
+      }
       socket.close();
     } else {
       socket?.close();
     }
   }, []);
 
-  const applyPartial = useCallback((text: string, isFinal: boolean) => {
+  const commitFinal = useCallback((raw: string) => {
     const el = fieldRef.current;
-    if (!el) return;
-    if (isFinal) {
-      nativeSetValue(el, baseRef.current);
-      const at = baseRef.current.length;
-      el.setSelectionRange(at, at);
-      insertFinal(el, text);
-      baseRef.current = el.value;
-      interimRef.current = "";
+    const piece = newFinalSegment(raw, committedRef.current, el?.value ?? "");
+    interimRef.current = "";
+    setInterim("");
+    if (!piece) return;
+    if (el) insertFinal(el, piece);
+    committedRef.current = normalizeSpoken(`${committedRef.current} ${piece}`);
+    lastFinalRef.current = piece;
+  }, []);
+
+  const requestStop = useCallback(() => {
+    if (!listeningRef.current && !startingRef.current) {
+      teardown();
       return;
     }
-    if (!interimRef.current) baseRef.current = el.value;
-    interimRef.current = text;
-    const start = el.selectionStart ?? el.value.length;
-    void start;
-    nativeSetValue(el, `${baseRef.current}${baseRef.current && text ? " " : ""}${text}`);
-  }, []);
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify({ type: "stop" }));
+      } catch {
+        teardown();
+        return;
+      }
+      clearStopTimer();
+      stopTimerRef.current = window.setTimeout(() => {
+        if (lastFinalRef.current) commitFinal(lastFinalRef.current);
+        teardown();
+      }, 4000);
+      return;
+    }
+    teardown();
+  }, [commitFinal, teardown]);
 
   const startFor = useCallback(
     (field: Field) => {
-      if (listeningRef.current && fieldRef.current === field) {
-        teardown();
+      if (listeningRef.current || startingRef.current) {
+        if (fieldRef.current === field) {
+          requestStop();
+          return;
+        }
+        if (continuousRef.current && listeningRef.current && !stoppingRef.current) {
+          fieldRef.current = field;
+          field.focus();
+          return;
+        }
+        requestStop();
         return;
       }
       fieldRef.current = field;
       field.focus();
+      startingRef.current = true;
+      committedRef.current = "";
+      lastFinalRef.current = "";
+      interimRef.current = "";
+      setInterim("");
       void (async () => {
-        teardown();
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          if (!startingRef.current) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
           const protocol = window.location.protocol === "https:" ? "wss" : "ws";
           const params = new URLSearchParams();
           if (continuousRef.current) params.set("continuous", "true");
@@ -157,20 +214,28 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               };
               if (msg.type === "ready") {
                 listeningRef.current = true;
+                startingRef.current = false;
                 setListening(true);
                 return;
               }
-              if (msg.type === "partial" && msg.text) {
-                applyPartial(msg.text, Boolean(msg.is_final || msg.speech_final));
+              if (msg.type === "partial") {
+                const text = msg.text || "";
+                if (msg.is_final || msg.speech_final) {
+                  commitFinal(text);
+                  return;
+                }
+                interimRef.current = text;
+                setInterim(text);
                 return;
               }
-              if (msg.type === "done" && msg.text) {
-                applyPartial(msg.text, true);
+              if (msg.type === "done") {
+                if (msg.text) commitFinal(msg.text);
+                teardown();
                 return;
               }
               if (msg.type === "error" || msg.type === "timeout" || msg.type === "idle") {
                 if (msg.message) toast.error(msg.message);
-                teardown();
+                requestStop();
               }
             } catch {
               /* ignore */
@@ -181,7 +246,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
             teardown();
           };
           socket.onclose = () => {
-            if (listeningRef.current) teardown();
+            if (listeningRef.current || startingRef.current) teardown();
           };
           await new Promise<void>((resolve, reject) => {
             socket.onopen = () => resolve();
@@ -191,7 +256,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           const source = context.createMediaStreamSource(stream);
           const processor = context.createScriptProcessor(4096, 1, 1);
           processor.onaudioprocess = (event) => {
-            if (socket.readyState !== WebSocket.OPEN || !listeningRef.current) return;
+            if (socket.readyState !== WebSocket.OPEN || !listeningRef.current || stoppingRef.current) return;
             const pcm = floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context.sampleRate, 16000));
             socket.send(pcm);
           };
@@ -201,34 +266,51 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           processor.connect(mute);
           mute.connect(context.destination);
           audioRef.current = { stream, context, processor };
-          baseRef.current = field.value;
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "Microphone is not available");
           teardown();
         }
       })();
     },
-    [applyPartial, teardown],
+    [commitFinal, requestStop, teardown],
   );
 
   const attach = useCallback((field: Field | null) => {
-    if (field) fieldRef.current = field;
+    if (!field) return;
+    if (continuousRef.current && listeningRef.current) {
+      fieldRef.current = field;
+      return;
+    }
+    fieldRef.current = field;
+  }, []);
+
+  useEffect(() => {
+    function onFocusIn(event: FocusEvent) {
+      if (!continuousRef.current || !listeningRef.current) return;
+      const target = event.target;
+      if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+        if (target.type === "password" || target.type === "file") return;
+        fieldRef.current = target;
+      }
+    }
+    window.addEventListener("focusin", onFocusIn);
+    return () => window.removeEventListener("focusin", onFocusIn);
   }, []);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || !listeningRef.current) return;
+      if (event.key !== "Escape" || (!listeningRef.current && !startingRef.current)) return;
       event.preventDefault();
       event.stopPropagation();
-      teardown();
+      requestStop();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [teardown]);
+  }, [requestStop]);
 
   useEffect(() => {
     function onGone() {
-      if (listeningRef.current) teardown();
+      if (listeningRef.current || startingRef.current) requestStop();
     }
     window.addEventListener("pagehide", onGone);
     window.addEventListener("popstate", onGone);
@@ -237,14 +319,14 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("popstate", onGone);
       teardown();
     };
-  }, [teardown]);
+  }, [requestStop, teardown]);
 
   const api: DictationApi = {
     listening,
     continuous,
     setContinuous,
     startFor,
-    stop: teardown,
+    stop: requestStop,
     attach,
   };
 
@@ -252,10 +334,17 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     <DictationContext.Provider value={api}>
       {children}
       {listening ? (
-        <div className="fixed bottom-4 left-4 z-[75] flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs shadow-md">
-          <span className="size-2 rounded-full bg-red-600" />
-          <span className="font-medium">Listening</span>
-          <label className="flex items-center gap-1 text-muted-foreground">
+        <div className="fixed bottom-4 left-4 z-[75] flex max-w-[min(36rem,calc(100vw-2rem))] items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs shadow-md">
+          <span className="size-2 shrink-0 rounded-full bg-red-600" />
+          <span className="font-medium shrink-0">Listening</span>
+          {interim ? (
+            <span className="min-w-0 truncate text-muted-foreground" aria-live="polite">
+              {interim}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Waiting…</span>
+          )}
+          <label className="flex shrink-0 items-center gap-1 text-muted-foreground">
             <input
               type="checkbox"
               checked={continuous}
@@ -263,7 +352,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
             />
             Continuous
           </label>
-          <button type="button" className="rounded-md border px-2 py-0.5" onClick={teardown}>
+          <button type="button" className="shrink-0 rounded-md border px-2 py-0.5" onClick={requestStop}>
             Stop
           </button>
         </div>
