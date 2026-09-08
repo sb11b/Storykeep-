@@ -85,10 +85,13 @@ export function NoteComposer({
   };
 
   function setOpen(next: boolean) {
-    dictation?.stop();
     setExpanded(next);
     writeComposeFull(next);
     onExpandedChange?.(next);
+    requestAnimationFrame(() => {
+      const el = areaRef.current;
+      if (el) dictation?.attach(el);
+    });
   }
 
   useEffect(() => {

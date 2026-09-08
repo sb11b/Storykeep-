@@ -160,18 +160,17 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       }
       clearStopTimer();
       stopTimerRef.current = window.setTimeout(() => {
-        if (lastFinalRef.current) commitFinal(lastFinalRef.current);
         teardown();
       }, 4000);
       return;
     }
     teardown();
-  }, [commitFinal, teardown]);
+  }, [teardown]);
 
   const startFor = useCallback(
     (field: Field) => {
       if (listeningRef.current || startingRef.current) {
-        if (fieldRef.current === field) {
+        if (listeningRef.current && fieldRef.current === field) {
           requestStop();
           return;
         }
