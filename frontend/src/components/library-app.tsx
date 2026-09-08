@@ -1912,6 +1912,7 @@ function AddFeedDialog({
   const [additionBody, setAdditionBody] = useState("");
   const [composeDest, setComposeDest] = useState<NoteDestination>("vault");
   const [composeCorrection, setComposeCorrection] = useState(false);
+  const [composeFull, setComposeFull] = useState(false);
   const [fileTitle, setFileTitle] = useState("");
   const [fileTags, setFileTags] = useState("");
   const bookmarklet =
@@ -1920,15 +1921,27 @@ function AddFeedDialog({
       : `javascript:void(location='${window.location.origin}/?save='+encodeURIComponent(location.href))`;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setComposeFull(false);
+        onOpenChange(next);
+      }}
+    >
       <DialogContent
         className={cn(
           "max-h-[90vh]",
-          tab === "vault"
+          tab === "vault" && !composeFull
             ? "!flex h-[min(90vh,52rem)] w-[min(96vw,72rem)] sm:max-w-6xl flex-col overflow-hidden"
-            : "overflow-y-auto",
+            : tab !== "vault"
+              ? "overflow-y-auto"
+              : "",
+          composeFull &&
+            "!top-0 !left-0 !flex h-[100dvh] !max-h-none w-[100vw] !max-w-none sm:!max-w-none !translate-x-0 !translate-y-0 flex-col overflow-hidden rounded-none p-3",
         )}
       >
+        {composeFull ? null : (
+          <>
         <DialogHeader className="shrink-0">
           <DialogTitle>Collect</DialogTitle>
           <DialogDescription>
@@ -1958,6 +1971,8 @@ function AddFeedDialog({
             </button>
           ))}
         </div>
+          </>
+        )}
         {tab === "feed" ? (
           <form
             className="space-y-3"
@@ -2163,6 +2178,7 @@ function AddFeedDialog({
         ) : null}
         {tab === "vault" ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+            {composeFull ? null : (
             <div className="shrink-0 space-y-2">
             <p className="text-sm text-muted-foreground">
               Zip Steve&apos;s Surface Vault and import it here. StoryKeep never writes back into that folder. Highlights,
@@ -2201,8 +2217,12 @@ function AddFeedDialog({
               the path. Merge Corrections by hand in Obsidian; do not let StoryKeep overwrite originals.
             </p>
             </div>
+            )}
             <form
-              className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-md border p-3"
+              className={cn(
+                "flex min-h-0 flex-1 flex-col gap-2 overflow-hidden",
+                composeFull ? "p-0" : "rounded-md border p-3",
+              )}
               onSubmit={async (event) => {
                 event.preventDefault();
                 if (!additionTitle.trim() || !additionBody.trim()) return;
@@ -2224,6 +2244,7 @@ function AddFeedDialog({
                   setAdditionSubject("");
                   setAdditionBody("");
                   setComposeCorrection(false);
+                  setComposeFull(false);
                   onOpenChange(false);
                   await onCreatedNote(article.id, composeDest);
                 } catch (error) {
@@ -2240,6 +2261,7 @@ function AddFeedDialog({
                 rows={12}
                 required
                 fill
+                onExpandedChange={setComposeFull}
                 header={
                   <>
                     <Label>Type a new article or paper</Label>

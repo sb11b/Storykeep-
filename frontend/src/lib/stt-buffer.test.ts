@@ -37,3 +37,16 @@ test("lastCommittedSentence splits on punctuation", () => {
 test("newFinalSegment skips text already sitting at the end of the field", () => {
   assert.equal(newFinalSegment("curve", "", "The slope of the curve"), "");
 });
+
+test("newFinalSegment peels stacked copies of the same paragraph", () => {
+  const para =
+    "The GDPR requires a lawful basis for processing personal data of EU residents including consent contract legal obligation and legitimate interests.";
+  const stacked = `${para} ${para} ${para} And a new clause.`;
+  assert.equal(newFinalSegment(stacked, para, para), "And a new clause.");
+});
+
+test("newFinalSegment ignores an exact duplicate of the last paragraph", () => {
+  const para = "The GDPR requires a lawful basis for processing personal data.";
+  assert.equal(newFinalSegment(para, para, para), "");
+  assert.equal(newFinalSegment(`${para} ${para}`, para, para), "");
+});

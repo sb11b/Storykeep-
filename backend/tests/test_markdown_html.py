@@ -28,6 +28,16 @@ class MarkdownHtmlTests(unittest.TestCase):
         ids = media_ids_in_markdown(f"see ![](/api/v1/media/{media})")
         self.assertEqual([str(item) for item in ids], [media])
 
+    def test_bold_italic_underline_and_lists(self):
+        html = markdown_to_html("**bold** *italic*\n<u>under</u>\n- one\n- two\n1. first\n2. second")
+        self.assertIn("<strong>bold</strong>", html)
+        self.assertIn("<em>italic</em>", html)
+        self.assertIn("<u>under</u>", html)
+        self.assertIn("<ul>", html)
+        self.assertIn("<ol>", html)
+        self.assertIn("<li>one</li>", html)
+        self.assertIn("<li>first</li>", html)
+
 
 if __name__ == "__main__":
     unittest.main()

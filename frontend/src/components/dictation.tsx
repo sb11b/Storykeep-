@@ -175,12 +175,8 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           requestStop();
           return;
         }
-        if (continuousRef.current && listeningRef.current && !stoppingRef.current) {
-          fieldRef.current = field;
-          field.focus();
-          return;
-        }
-        requestStop();
+        fieldRef.current = field;
+        field.focus();
         return;
       }
       fieldRef.current = field;

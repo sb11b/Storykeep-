@@ -12,7 +12,8 @@ const MEDIA_LINE = /^!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)$/;
 function inline(value: string): string {
   const escaped = escapeHtml(value)
     .replace(MEDIA_IMAGE, '<img src="$2" alt="$1" />')
-    .replace(/==([^=]+)==/g, "<mark>$1</mark>");
+    .replace(/==([^=]+)==/g, "<mark>$1</mark>")
+    .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>");
   return escaped
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -30,11 +31,9 @@ function wordAroundCaret(source: string, caret: number): { from: number; to: num
   return { from, to };
 }
 
-export function wrapHighlight(
-  source: string,
-  start: number,
-  end: number,
-): { text: string; selectionStart: number; selectionEnd: number } {
+export type WrapResult = { text: string; selectionStart: number; selectionEnd: number };
+
+function selectionRange(source: string, start: number, end: number): { from: number; to: number } {
   let from = Math.max(0, Math.min(start, end, source.length));
   let to = Math.min(source.length, Math.max(start, end, from));
   if (from === to) {
@@ -42,22 +41,79 @@ export function wrapHighlight(
     from = word.from;
     to = word.to;
   }
+  return { from, to };
+}
+
+export function wrapHighlight(source: string, start: number, end: number): WrapResult {
+  return wrapInline(source, start, end, "==", "==");
+}
+
+export function wrapInline(source: string, start: number, end: number, open: string, close: string): WrapResult {
+  const { from, to } = selectionRange(source, start, end);
   const inner = source.slice(from, to);
   return {
-    text: `${source.slice(0, from)}==${inner}==${source.slice(to)}`,
-    selectionStart: from + 2,
-    selectionEnd: from + 2 + inner.length,
+    text: `${source.slice(0, from)}${open}${inner}${close}${source.slice(to)}`,
+    selectionStart: from + open.length,
+    selectionEnd: from + open.length + inner.length,
+  };
+}
+
+function lineBounds(source: string, start: number, end: number): { from: number; to: number } {
+  const from = source.lastIndexOf("\n", Math.max(0, Math.min(start, end) - 1)) + 1;
+  const max = Math.max(start, end);
+  const nl = source.indexOf("\n", max);
+  const to = nl === -1 ? source.length : nl;
+  return { from, to };
+}
+
+export function prefixSelectedLines(
+  source: string,
+  start: number,
+  end: number,
+  kind: "ul" | "ol",
+): WrapResult {
+  if (start === end) {
+    const { from, to } = lineBounds(source, start, end);
+    const line = source.slice(from, to).replace(/^\s*(?:[-*]\s+|\d+\.\s+)?/, "");
+    const prefix = kind === "ul" ? "- " : "1. ";
+    const nextLine = `${prefix}${line}`;
+    return {
+      text: `${source.slice(0, from)}${nextLine}${source.slice(to)}`,
+      selectionStart: from + prefix.length,
+      selectionEnd: from + nextLine.length,
+    };
+  }
+  const { from, to } = lineBounds(source, start, end);
+  const block = source.slice(from, to);
+  const lines = block.split("\n");
+  const next = lines
+    .map((line, index) => {
+      const body = line.replace(/^\s*(?:[-*]\s+|\d+\.\s+)?/, "");
+      return kind === "ul" ? `- ${body}` : `${index + 1}. ${body}`;
+    })
+    .join("\n");
+  return {
+    text: `${source.slice(0, from)}${next}${source.slice(to)}`,
+    selectionStart: from,
+    selectionEnd: from + next.length,
   };
 }
 
 export function renderMarkdown(source: string): string {
   const lines = (source || "").replace(/\r\n/g, "\n").split("\n");
   const html: string[] = [];
-  let inList = false;
+  let listKind: "ul" | "ol" | null = null;
   const flushList = () => {
-    if (inList) {
-      html.push("</ul>");
-      inList = false;
+    if (listKind) {
+      html.push(`</${listKind}>`);
+      listKind = null;
+    }
+  };
+  const openList = (kind: "ul" | "ol") => {
+    if (listKind !== kind) {
+      flushList();
+      html.push(`<${kind}>`);
+      listKind = kind;
     }
   };
   for (const raw of lines) {
@@ -78,12 +134,15 @@ export function renderMarkdown(source: string): string {
       html.push(inline(line.trim()));
       continue;
     }
+    const numbered = line.match(/^\d+\.\s+(.*)$/);
+    if (numbered) {
+      openList("ol");
+      html.push(`<li>${inline(numbered[1])}</li>`);
+      continue;
+    }
     const bullet = line.match(/^[-*]\s+(.*)$/);
     if (bullet) {
-      if (!inList) {
-        html.push("<ul>");
-        inList = true;
-      }
+      openList("ul");
       html.push(`<li>${inline(bullet[1])}</li>`);
       continue;
     }
