@@ -14,6 +14,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.routers.articles import _owned_article
 from app.services import chat as chat_service
+from app.services.demo_lock import reject_locked
 
 router = APIRouter(tags=["chat"])
 
@@ -31,6 +32,7 @@ class ChatIn(BaseModel):
 
 @router.get("/chat")
 def chat_status(user: User = Depends(get_current_user)) -> dict:
+    reject_locked(user)
     _ = user
     return {
         "enabled": chat_service.key_configured(),
@@ -47,6 +49,7 @@ def chat(
     user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     history = chat_service.validate_payload([item.model_dump() for item in payload.messages])
+    reject_locked(user)
     chat_service.require_key()
     chat_service.enforce_rate_limit(user.id)
     excerpt = None

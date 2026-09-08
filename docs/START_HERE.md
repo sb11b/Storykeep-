@@ -6,10 +6,7 @@ Railway reads **GitHub**, not Origin. The GitHub repo `sb11b/Storykeep-` is empt
 
 https://cursor.com/codebase/steve-bitsko/Storykeep
 
-Login after it is online:
-
-- email: `steve@storykeep.local`
-- password: `commonplace`
+Login after it is online with your own StoryKeep account (production: `stevebitsko@duck.com`). The public demo login is closed.
 
 ---
 
@@ -61,7 +58,7 @@ The Postgres plugin name might be `Postgres` or `PostgreSQL`. Railway’s variab
 
 5. That same service → **Settings → Networking → Generate domain**.
 6. Wait until the deploy is **Success**. Open the `*.up.railway.app` URL.
-7. Sign in with `steve@storykeep.local` / `commonplace`.
+7. Sign in with your own account. The public demo login is closed.
 
 The first deploy builds the Docker image and can take several minutes. Feeds keep importing for a minute after the site comes up.
 

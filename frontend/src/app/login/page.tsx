@@ -14,8 +14,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [busy, setBusy] = useState(false);
-  const [email, setEmail] = useState("steve@storykeep.local");
-  const [password, setPassword] = useState("commonplace");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -49,9 +49,7 @@ export default function LoginPage() {
         <Card className="shadow-none border-border/80">
           <CardHeader>
             <CardTitle className="font-[family-name:var(--font-serif)] text-2xl">Open your archive</CardTitle>
-            <CardDescription>
-              Demo account: <span className="font-medium text-foreground">steve@storykeep.local</span> / commonplace
-            </CardDescription>
+            <CardDescription>Sign in with your StoryKeep account.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 mb-4">

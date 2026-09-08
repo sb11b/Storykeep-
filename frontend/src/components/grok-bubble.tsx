@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Copy, LoaderCircle, Maximize2, NotebookPen, Send, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
@@ -316,7 +317,7 @@ export function GrokBubble({
           void send();
         }}
       >
-        <textarea
+        <Textarea
           className="min-h-12 max-h-28 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

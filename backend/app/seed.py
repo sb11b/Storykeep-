@@ -28,12 +28,15 @@ def seed_demo(db: Session) -> User | None:
         return None
     user = db.scalar(select(User).where(User.email == DEMO_EMAIL))
     if user:
+        user.is_demo_locked = True
+        db.commit()
         return user
     user = User(
         email=DEMO_EMAIL,
         password_hash=hash_password(DEMO_PASSWORD),
         display_name="Steve",
         preferences={"theme": "paper", "items_per_page": 40, "mark_read_on_open": True},
+        is_demo_locked=True,
     )
     db.add(user)
     db.flush()

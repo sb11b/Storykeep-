@@ -36,19 +36,16 @@ Railway’s URL looks like `postgresql://…`. Storykeep rewrites that to SQLAlc
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | From the Postgres plugin |
 | `SECRET_KEY` | Recommended | Any long random string. If you skip it, a stable key is derived from the database URL. |
-| `SEED_DEMO` | No | Defaults on. Creates `steve@storykeep.local` / `commonplace` and sample feeds on first boot. Set `0` after you have your own account. |
+| `SEED_DEMO` | No | Defaults on. May create a locked internal demo user and sample feeds. Password login for `steve@storykeep.local` is closed. |
 | `S3_BUCKET` | No | Optional off-site backup target |
-| `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen and the Grok chat bubble. Server only — never in the browser. |
+| `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 
 ## 4. First login
 
-Demo account (when `SEED_DEMO` is on):
-
-- email: `steve@storykeep.local`
-- password: `commonplace`
+The public demo account is closed. Create or use your own account on the sign-in screen. Production uses `stevebitsko@duck.com`.
 
 Create your own account from the same screen if you prefer. Feeds keep importing in the background for a minute after deploy.
 

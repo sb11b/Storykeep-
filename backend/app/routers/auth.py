@@ -8,6 +8,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.schemas import LoginIn, RegisterIn, TokenOut, UserOut
+from app.services.demo_lock import email_is_locked, is_locked
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -27,6 +28,8 @@ def _set_cookie(response: Response, token: str) -> None:
 @router.post("/register", response_model=TokenOut)
 def register(payload: RegisterIn, response: Response, db: Session = Depends(get_db)) -> TokenOut:
     email = payload.email.lower()
+    if email_is_locked(email):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     user = User(
@@ -46,6 +49,8 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
 @router.post("/login", response_model=TokenOut)
 def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)) -> TokenOut:
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    if user and is_locked(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     token = create_access_token(user.id)

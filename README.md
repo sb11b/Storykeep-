@@ -56,10 +56,7 @@ npm install
 API_ORIGIN=http://127.0.0.1:18741 npm run dev -- --port 43123
 ```
 
-Open [http://127.0.0.1:43123](http://127.0.0.1:43123). A demo account is created on first boot:
-
-- email: `steve@storykeep.local`
-- password: `commonplace`
+Open [http://127.0.0.1:43123](http://127.0.0.1:43123). The published demo login is closed. Sign in with your own account.
 
 Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export npm --prefix frontend run build`. Hard-refresh the browser. Do not run local Docker, WSL, or Ubuntu for this project.
 
@@ -73,7 +70,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `S3_BUCKET` | Optional backup destination |
 | `S3_PREFIX` | Object prefix, default `storykeep` |
 | `API_ORIGIN` | Next.js rewrite target for the API |
-| `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen and the Grok chat bubble. Server only — never in git or the browser. |
+| `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen, dictation, and the Grok chat bubble. Server only — never in git or the browser. |
 | `XAI_CHAT_MODEL` | Optional chat model, default `grok-4` |
 
 The Grok bubble is a movable panel. Replies stay in the session until **Add to notes**, which creates or updates a StoryKeep addition (`guid storykeep-note:` / `StoryKeep/Additions/`). It never overwrites `Steve's Surface Vault/**`. Chat is capped at 30 requests per hour per user.
@@ -93,7 +90,7 @@ One service plus Railway PostgreSQL. The image serves the API and the web UI on 
 3. On the web service, set `DATABASE_URL=${{Postgres.DATABASE_URL}}`
 4. Generate a public domain
 
-Demo login after first boot: `steve@storykeep.local` / `commonplace`
+Demo login after first boot is closed. Use your own account (`stevebitsko@duck.com` on production).
 
 Step-by-step notes, optional `SECRET_KEY`, and backup caveats: [`docs/railway.md`](docs/railway.md).
 

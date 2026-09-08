@@ -81,12 +81,15 @@ def transfer_library(db: Session, source_email: str, dest_email: str) -> dict[st
 def ensure_demo_user(db: Session) -> User:
     user = db.scalar(select(User).where(User.email == DEMO_EMAIL))
     if user:
+        user.is_demo_locked = True
+        db.commit()
         return user
     user = User(
         email=DEMO_EMAIL,
         password_hash=hash_password(DEMO_PASSWORD),
         display_name="Steve",
         preferences={"theme": "paper", "items_per_page": 40, "mark_read_on_open": True},
+        is_demo_locked=True,
     )
     db.add(user)
     db.commit()

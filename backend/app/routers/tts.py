@@ -9,12 +9,14 @@ from app.deps import get_current_user
 from app.models import User
 from app.routers.articles import _owned_article
 from app.services import tts as tts_service
+from app.services.demo_lock import reject_locked
 
 router = APIRouter(tags=["tts"])
 
 
 @router.get("/tts")
 def tts_status(user: User = Depends(get_current_user)) -> dict:
+    reject_locked(user)
     _ = user
     return {
         "enabled": tts_service.key_configured(),
@@ -30,6 +32,7 @@ def speech_plan(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
+    reject_locked(user)
     article = _owned_article(db, user, article_id)
     script = tts_service.article_script(article)
     chunks = tts_service.split_chunks(script)
@@ -63,6 +66,7 @@ def release_speech_audio(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
+    reject_locked(user)
     article = _owned_article(db, user, article_id)
     dropped = tts_service.release_article_audio(article.id, voice_id)
     return {"ok": True, "dropped": dropped}
@@ -78,6 +82,7 @@ def speak_article(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
+    reject_locked(user)
     article = _owned_article(db, user, article_id)
     script = tts_service.article_script(article, section_id=section)
     if len(script) > tts_service.LONG_SCRIPT_CHARS and not confirm and not section:
