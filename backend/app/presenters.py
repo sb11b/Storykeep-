@@ -8,10 +8,12 @@ from app.schemas import (
     ArticleOut,
     CorrectionOut,
     FeedOut,
+    FiledNoteOut,
     OverlayAdditionOut,
     OverlayHighlightOut,
     TagOut,
 )
+from app.services.destination import DEFAULT_DESTINATION, effective_destination
 
 
 def tag_out(tag: Tag, article_count: int = 0) -> TagOut:
@@ -62,11 +64,25 @@ def article_list_item(article: Article) -> ArticleListItem:
         is_starred=article.is_starred,
         has_full_text=bool(article.content_text),
         source_kind=getattr(article, "source_kind", None) or "rss",
+        destination=effective_destination(article),
         tags=[tag_out(tag) for tag in article.tags],
     )
 
 
-def article_out(article: Article) -> ArticleOut:
+def filed_note_out(article: Article) -> FiledNoteOut:
+    return FiledNoteOut(
+        id=article.id,
+        title=article.title,
+        markdown=article.content_text or "",
+        destination=effective_destination(article) or DEFAULT_DESTINATION,
+        is_correction=bool(getattr(article, "is_correction", False)),
+        parent_id=article.parent_id,
+        created_at=article.created_at,
+        updated_at=article.updated_at,
+    )
+
+
+def article_out(article: Article, filed_notes: list[Article] | None = None) -> ArticleOut:
     return ArticleOut(
         id=article.id,
         feed_id=article.feed_id,
@@ -111,6 +127,8 @@ def article_out(article: Article) -> ArticleOut:
                 article_id=row.article_id,
                 title=row.title,
                 markdown=row.markdown,
+                destination=getattr(row, "destination", None) or DEFAULT_DESTINATION,
+                is_correction=bool(getattr(row, "is_correction", False)),
                 created_at=row.created_at,
                 updated_at=row.updated_at,
             )
@@ -125,6 +143,10 @@ def article_out(article: Article) -> ArticleOut:
             )
             for row in getattr(article, "corrections", []) or []
         ],
+        destination=effective_destination(article),
+        is_correction=bool(getattr(article, "is_correction", False)),
+        parent_id=article.parent_id,
+        filed_notes=[filed_note_out(row) for row in filed_notes or []],
     )
 
 

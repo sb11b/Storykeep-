@@ -75,6 +75,19 @@ export type OverlayAddition = {
   article_id: string | null;
   title: string;
   markdown: string;
+  destination?: string;
+  is_correction?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FiledNote = {
+  id: string;
+  title: string;
+  markdown: string;
+  destination: string;
+  is_correction?: boolean;
+  parent_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -109,6 +122,7 @@ export type ArticleListItem = {
   is_starred: boolean;
   has_full_text: boolean;
   source_kind?: string;
+  destination?: string | null;
   tags: Tag[];
 };
 
@@ -127,6 +141,10 @@ export type Article = ArticleListItem & {
   overlay_highlights?: OverlayHighlight[];
   overlay_additions?: OverlayAddition[];
   corrections?: Correction[];
+  destination?: string | null;
+  is_correction?: boolean;
+  parent_id?: string | null;
+  filed_notes?: FiledNote[];
 };
 
 export type Page<T> = {
@@ -151,6 +169,7 @@ export type Stats = {
   vault_count?: number;
   additions_count?: number;
   books_count?: number;
+  schoolwork_count?: number;
   oldest_saved_at: string | null;
 };
 
@@ -222,6 +241,7 @@ export type Shelf =
   | { kind: "vault" }
   | { kind: "additions" }
   | { kind: "books" }
+  | { kind: "schoolwork" }
   | { kind: "feed"; id: string }
   | { kind: "category"; id: string }
   | { kind: "tag"; id: string }

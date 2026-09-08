@@ -207,7 +207,7 @@ export function GrokBubble({
         return;
       }
       const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
-      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"]);
+      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"], "additions");
       toast.success("Saved in StoryKeep/Additions. It will be in the next Obsidian pack.");
       await onSavedNote(article.id);
     } catch (error) {

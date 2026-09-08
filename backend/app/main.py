@@ -62,6 +62,19 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS source_ref TEXT")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS parent_id UUID")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS obsidian_path TEXT")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS destination VARCHAR(16)")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_correction BOOLEAN DEFAULT FALSE")
+    _try_sql("ALTER TABLE storykeep_notes ADD COLUMN IF NOT EXISTS destination VARCHAR(16) DEFAULT 'additions'")
+    _try_sql("ALTER TABLE storykeep_notes ADD COLUMN IF NOT EXISTS is_correction BOOLEAN DEFAULT FALSE")
+    _try_sql(
+        "UPDATE articles SET destination = 'additions' WHERE guid LIKE 'storykeep-note:%' AND (destination IS NULL OR destination = '')"
+    )
+    _try_sql(
+        "UPDATE articles SET destination = 'books' WHERE guid LIKE 'storykeep-note:%' AND source_kind = 'textbook' AND (destination IS NULL OR destination = 'additions')"
+    )
+    _try_sql("UPDATE articles SET is_correction = FALSE WHERE is_correction IS NULL")
+    _try_sql("UPDATE storykeep_notes SET destination = 'additions' WHERE destination IS NULL OR destination = ''")
+    _try_sql("UPDATE storykeep_notes SET is_correction = FALSE WHERE is_correction IS NULL")
     _try_sql("UPDATE articles SET source_kind = 'rss' WHERE source_kind IS NULL")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_locked BOOLEAN DEFAULT FALSE")
     _try_sql("UPDATE users SET is_demo_locked = TRUE WHERE lower(email) = 'steve@storykeep.local'")

@@ -9,7 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Article, Feed, OverlayAddition, Tag, User
-from app.services import changelog
+from app.services.destination import (
+    DEFAULT_DESTINATION,
+    apply_destination,
+    is_composed_guid,
+    normalize_destination,
+    source_kind_for_destination,
+)
 from app.services.markdown_html import markdown_to_html
 from app.services.vault_paths import (
     classify_zip_entry,
@@ -165,7 +171,16 @@ def _title_from_markdown(text: str) -> str | None:
     return None
 
 
-def create_composed_note(db: Session, user: User, title: str, markdown: str, tags: list[str] | None = None) -> Article:
+def create_composed_note(
+    db: Session,
+    user: User,
+    title: str,
+    markdown: str,
+    tags: list[str] | None = None,
+    destination: str | None = None,
+    parent_id=None,
+    is_correction: bool = False,
+) -> Article:
     """StoryKeep-owned note: readable article + overlay addition. Never writes vault originals."""
     heading = (title or "").strip()
     body = (markdown or "").strip()
@@ -173,9 +188,13 @@ def create_composed_note(db: Session, user: User, title: str, markdown: str, tag
         raise ValueError("Title and body are required.")
     if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
         raise ValueError("That note is larger than 1.5 MB.")
+    dest = normalize_destination(destination)
+    tags_l = [(tag or "").lower() for tag in tags or []]
+    if dest == DEFAULT_DESTINATION and (heading.startswith("_book_") or "book" in tags_l):
+        dest = "books"
     now = datetime.now(timezone.utc)
     feed = vault_feed(db, user)
-    kind = "textbook" if heading.startswith("_book_") or any((tag or "").lower() == "book" for tag in tags or []) else "obsidian"
+    kind = source_kind_for_destination(dest)
     note_id = uuid4()
     article = Article(
         id=note_id,
@@ -191,16 +210,22 @@ def create_composed_note(db: Session, user: User, title: str, markdown: str, tag
         is_saved=True,
         saved_at=now,
         source_kind=kind,
+        parent_id=parent_id,
+        destination=dest,
+        is_correction=bool(is_correction),
     )
     db.add(article)
     db.flush()
-    article.source_ref = overlay_relpath("addition", None, f"{heading}-{str(article.id)[:8]}")
+    pack_kind = "correction" if article.is_correction else "addition"
+    article.source_ref = overlay_relpath(pack_kind, None, f"{heading}-{str(article.id)[:8]}")
     article.url = f"storykeep://{article.source_ref}"[:4000]
     addition = OverlayAddition(
         user_id=user.id,
         article_id=article.id,
         title=heading[:200],
         markdown=body,
+        destination=dest,
+        is_correction=bool(is_correction),
     )
     db.add(addition)
     db.flush()
@@ -213,8 +238,8 @@ def create_composed_note(db: Session, user: User, title: str, markdown: str, tag
         tag = ensure_tag(db, user, name)
         if tag not in article.tags:
             article.tags.append(tag)
-    changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "source_ref": article.source_ref})
-    changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "composed": True})
+    changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "source_ref": article.source_ref, "destination": dest})
+    changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "composed": True, "destination": dest})
     db.commit()
     return article
 
@@ -222,7 +247,7 @@ def create_composed_note(db: Session, user: User, title: str, markdown: str, tag
 def is_composed_note(article: Article) -> bool:
     guid = article.guid or ""
     ref = (article.source_ref or "").replace("\\", "/")
-    return guid.startswith("storykeep-note:") or ref.startswith("StoryKeep/Additions/")
+    return is_composed_guid(guid) or ref.startswith("StoryKeep/Additions/") or ref.startswith("StoryKeep/Corrections/")
 
 
 def update_composed_note(db: Session, user: User, article: Article, title: str, markdown: str) -> Article:
@@ -249,12 +274,16 @@ def update_composed_note(db: Session, user: User, article: Article, title: str, 
         addition.title = heading[:200]
         addition.markdown = body
         addition.updated_at = now
+        addition.destination = getattr(article, "destination", None) or DEFAULT_DESTINATION
+        addition.is_correction = bool(getattr(article, "is_correction", False))
     else:
         addition = OverlayAddition(
             user_id=user.id,
             article_id=article.id,
             title=heading[:200],
             markdown=body,
+            destination=getattr(article, "destination", None) or DEFAULT_DESTINATION,
+            is_correction=bool(getattr(article, "is_correction", False)),
         )
         db.add(addition)
         db.flush()
@@ -262,3 +291,42 @@ def update_composed_note(db: Session, user: User, article: Article, title: str, 
     changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "edited": True})
     db.commit()
     return article
+
+
+def set_composed_destination(
+    db: Session,
+    user: User,
+    article: Article,
+    destination: str,
+    is_correction: bool | None = None,
+) -> Article:
+    """Move a StoryKeep note to another shelf. Does not duplicate or write vault originals."""
+    if not is_composed_note(article):
+        raise ValueError("Imported vault notes stay on Vault. File a StoryKeep note instead.")
+    dest = normalize_destination(destination)
+    flag = article.is_correction if is_correction is None else bool(is_correction)
+    apply_destination(article, dest, flag)
+    pack_kind = "correction" if article.is_correction else "addition"
+    article.source_ref = overlay_relpath(pack_kind, None, f"{article.title}-{str(article.id)[:8]}")
+    article.url = f"storykeep://{article.source_ref}"[:4000]
+    article.updated_at = datetime.now(timezone.utc)
+    addition = db.scalar(
+        select(OverlayAddition)
+        .where(OverlayAddition.user_id == user.id, OverlayAddition.article_id == article.id)
+        .order_by(OverlayAddition.created_at.asc())
+    )
+    if addition:
+        addition.destination = dest
+        addition.is_correction = article.is_correction
+        addition.updated_at = article.updated_at
+    changelog.record(
+        db,
+        user.id,
+        "article",
+        article.id,
+        "upsert",
+        {"destination": dest, "is_correction": article.is_correction, "moved": True},
+    )
+    db.commit()
+    return article
+

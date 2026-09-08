@@ -194,6 +194,9 @@ class OverlayAdditionIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     markdown: str = Field(min_length=1)
     tags: list[str] = []
+    destination: str | None = None
+    is_correction: bool = False
+    parent_id: uuid.UUID | None = None
 
 
 class OverlayAdditionOut(BaseModel):
@@ -201,10 +204,17 @@ class OverlayAdditionOut(BaseModel):
     article_id: uuid.UUID | None
     title: str
     markdown: str
+    destination: str = "additions"
+    is_correction: bool = False
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DestinationIn(BaseModel):
+    destination: str
+    is_correction: bool | None = None
 
 
 class CorrectionIn(BaseModel):
@@ -240,6 +250,19 @@ class ArchiveOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FiledNoteOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    markdown: str
+    destination: str
+    is_correction: bool = False
+    parent_id: uuid.UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ArticleOut(BaseModel):
     id: uuid.UUID
     feed_id: uuid.UUID
@@ -270,6 +293,10 @@ class ArticleOut(BaseModel):
     overlay_highlights: list[OverlayHighlightOut] = []
     overlay_additions: list[OverlayAdditionOut] = []
     corrections: list[CorrectionOut] = []
+    destination: str | None = None
+    is_correction: bool = False
+    parent_id: uuid.UUID | None = None
+    filed_notes: list[FiledNoteOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -289,6 +316,7 @@ class ArticleListItem(BaseModel):
     is_starred: bool
     has_full_text: bool = False
     source_kind: str = "rss"
+    destination: str | None = None
     tags: list[TagOut] = []
 
     model_config = {"from_attributes": True}
@@ -392,4 +420,5 @@ class StatsOut(BaseModel):
     vault_count: int = 0
     additions_count: int = 0
     books_count: int = 0
+    schoolwork_count: int = 0
     oldest_saved_at: datetime | None

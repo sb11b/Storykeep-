@@ -118,6 +118,8 @@ class Article(Base):
         UUID(as_uuid=True), ForeignKey("articles.id", ondelete="SET NULL")
     )
     obsidian_path: Mapped[str | None] = mapped_column(Text)
+    destination: Mapped[str | None] = mapped_column(String(16))
+    is_correction: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     search_vector: Mapped[str | None] = mapped_column(
@@ -236,6 +238,8 @@ class OverlayAddition(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    destination: Mapped[str] = mapped_column(String(16), default="additions", server_default="additions")
+    is_correction: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

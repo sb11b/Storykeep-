@@ -9,6 +9,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Annotation, Archive, Article, Feed, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, archive_out, article_list_item, article_out, tag_out
+from app.services.destination import apply_shelf_filter
 from app.schemas import (
     AnnotationIn,
     AnnotationOut,
@@ -70,6 +71,14 @@ def _owned_article(db: Session, user: User, article_id: UUID) -> Article:
     return article
 
 
+def _article_payload(db: Session, user: User, article_id: UUID) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    children = db.scalars(
+        select(Article).where(Article.parent_id == article.id).order_by(Article.updated_at.desc())
+    ).all()
+    return article_out(article, children)
+
+
 @router.get("/articles", response_model=Page[ArticleListItem])
 def list_articles(
     feed_id: UUID | None = None,
@@ -107,12 +116,7 @@ def list_articles(
         stmt = stmt.where(Article.is_read.is_(read))
     if since:
         stmt = stmt.where(Article.updated_at >= since)
-    if shelf == "vault":
-        stmt = stmt.where(Article.guid.startswith("obsidian:"), Article.source_kind != "textbook")
-    elif shelf == "additions":
-        stmt = stmt.where(Article.guid.startswith("storykeep-note:"))
-    elif shelf == "books":
-        stmt = stmt.where(Article.source_kind == "textbook")
+    stmt = apply_shelf_filter(stmt, shelf)
     if q:
         tsquery = func.plainto_tsquery("english", q)
         stmt = stmt.where(article_search_match(user.id, tsquery, q))
@@ -173,7 +177,7 @@ def save_url(
 
 @router.get("/articles/{article_id}", response_model=ArticleOut)
 def get_article(article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ArticleOut:
-    return article_out(_owned_article(db, user, article_id))
+    return _article_payload(db, user, article_id)
 
 
 @router.patch("/articles/{article_id}", response_model=ArticleOut)
@@ -205,7 +209,7 @@ def patch_article(
     )
     db.add(article)
     db.commit()
-    return article_out(_owned_article(db, user, article_id))
+    return _article_payload(db, user, article_id)
 
 
 @router.post("/articles/{article_id}/extract", response_model=ArticleOut)
@@ -215,7 +219,7 @@ def extract_article(
     article = _owned_article(db, user, article_id)
     extractor.fill_article(db, article, force=True)
     db.commit()
-    return article_out(_owned_article(db, user, article_id))
+    return _article_payload(db, user, article_id)
 
 
 @router.post("/articles/bulk")

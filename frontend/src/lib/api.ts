@@ -114,15 +114,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ title, markdown, tags }),
     }),
-  composeVaultNote: (title: string, markdown: string, tags: string[] = []) =>
+  composeVaultNote: (
+    title: string,
+    markdown: string,
+    tags: string[] = [],
+    destination?: string,
+    isCorrection?: boolean,
+  ) =>
     request<Article>("/api/v1/sources/obsidian/notes", {
       method: "POST",
-      body: JSON.stringify({ title, markdown, tags }),
+      body: JSON.stringify({ title, markdown, tags, destination, is_correction: Boolean(isCorrection) }),
     }),
-  updateComposedNote: (articleId: string, title: string, markdown: string) =>
+  updateComposedNote: (articleId: string, title: string, markdown: string, destination?: string, isCorrection?: boolean) =>
     request<Article>(`/api/v1/articles/${articleId}/storykeep-note`, {
       method: "PATCH",
-      body: JSON.stringify({ title, markdown }),
+      body: JSON.stringify({ title, markdown, destination, is_correction: Boolean(isCorrection) }),
+    }),
+  setNoteDestination: (articleId: string, destination: string, isCorrection?: boolean) =>
+    request<Article>(`/api/v1/articles/${articleId}/destination`, {
+      method: "PATCH",
+      body: JSON.stringify({ destination, is_correction: isCorrection }),
     }),
   uploadNoteImage: async (file: File) => {
     const body = new FormData();
@@ -168,10 +179,10 @@ export const api = {
     }
     return (await response.json()) as Article;
   },
-  addAddition: (articleId: string, title: string, markdown: string) =>
+  addAddition: (articleId: string, title: string, markdown: string, destination?: string, isCorrection?: boolean) =>
     request(`/api/v1/articles/${articleId}/additions`, {
       method: "POST",
-      body: JSON.stringify({ title, markdown }),
+      body: JSON.stringify({ title, markdown, destination: destination || "notes", is_correction: Boolean(isCorrection) }),
     }),
   addCorrection: (articleId: string, markdown: string) =>
     request(`/api/v1/articles/${articleId}/corrections`, {

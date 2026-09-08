@@ -9,13 +9,27 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Correction, OverlayAddition, User
 from app.presenters import article_out
-from app.routers.articles import _owned_article
-from app.schemas import ArticleOut, CorrectionIn, CorrectionOut, OverlayAdditionIn, OverlayAdditionOut, VaultImportOut
+from app.routers.articles import _article_payload, _owned_article
+from app.schemas import (
+    ArticleOut,
+    CorrectionIn,
+    CorrectionOut,
+    DestinationIn,
+    OverlayAdditionIn,
+    OverlayAdditionOut,
+    VaultImportOut,
+)
 from app.services import changelog
 from app.services.note_media import markdown_image, owned_media, save_note_image
 from app.services.overlay_pack import build_obsidian_pack
 from app.services.file_ingest import MAX_UPLOAD_BYTES, ingest_upload, original_file_path
-from app.services.vault_import import MAX_VAULT_ZIP_BYTES, create_composed_note, import_obsidian_zip, update_composed_note
+from app.services.vault_import import (
+    MAX_VAULT_ZIP_BYTES,
+    create_composed_note,
+    import_obsidian_zip,
+    set_composed_destination,
+    update_composed_note,
+)
 
 router = APIRouter(tags=["overlay"])
 
@@ -85,11 +99,19 @@ def compose_vault_note(
     user: User = Depends(get_current_user),
 ) -> ArticleOut:
     try:
-        article = create_composed_note(db, user, payload.title, payload.markdown, payload.tags)
+        article = create_composed_note(
+            db,
+            user,
+            payload.title,
+            payload.markdown,
+            payload.tags,
+            destination=payload.destination,
+            parent_id=payload.parent_id,
+            is_correction=payload.is_correction,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    loaded = _owned_article(db, user, article.id)
-    return article_out(loaded)
+    return _article_payload(db, user, article.id)
 
 
 @router.patch("/articles/{article_id}/storykeep-note", response_model=ArticleOut)
@@ -102,9 +124,26 @@ def edit_composed_note(
     article = _owned_article(db, user, article_id)
     try:
         update_composed_note(db, user, article, payload.title, payload.markdown)
+        dest = payload.destination or getattr(article, "destination", None) or "additions"
+        set_composed_destination(db, user, article, dest, payload.is_correction)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return article_out(_owned_article(db, user, article.id))
+    return _article_payload(db, user, article.id)
+
+
+@router.patch("/articles/{article_id}/destination", response_model=ArticleOut)
+def move_composed_note(
+    article_id: UUID,
+    payload: DestinationIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    try:
+        set_composed_destination(db, user, article, payload.destination, payload.is_correction)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _article_payload(db, user, article.id)
 
 
 @router.post("/media", status_code=201)
@@ -146,7 +185,16 @@ def create_standalone_addition(
     user: User = Depends(get_current_user),
 ) -> OverlayAdditionOut:
     try:
-        article = create_composed_note(db, user, payload.title, payload.markdown, payload.tags)
+        article = create_composed_note(
+            db,
+            user,
+            payload.title,
+            payload.markdown,
+            payload.tags,
+            destination=payload.destination,
+            parent_id=payload.parent_id,
+            is_correction=payload.is_correction,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     loaded = _owned_article(db, user, article.id)
@@ -164,17 +212,23 @@ def create_addition(
     user: User = Depends(get_current_user),
 ) -> OverlayAdditionOut:
     article = _owned_article(db, user, article_id)
-    row = OverlayAddition(
-        user_id=user.id,
-        article_id=article.id,
-        title=payload.title.strip(),
-        markdown=payload.markdown,
-    )
-    db.add(row)
-    db.flush()
-    changelog.record(db, user.id, "addition", row.id, "upsert", {"article_id": str(article.id)})
-    db.commit()
-    db.refresh(row)
+    try:
+        child = create_composed_note(
+            db,
+            user,
+            payload.title.strip(),
+            payload.markdown,
+            payload.tags,
+            destination=payload.destination or "notes",
+            parent_id=article.id,
+            is_correction=payload.is_correction,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    loaded = _owned_article(db, user, child.id)
+    row = loaded.overlay_additions[-1] if loaded.overlay_additions else None
+    if row is None:
+        raise HTTPException(status_code=500, detail="Note was saved without an overlay copy.")
     return OverlayAdditionOut.model_validate(row)
 
 

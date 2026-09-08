@@ -9,7 +9,8 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Annotation, Archive, Article, Category, Feed, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, article_list_item
-from app.services.notes_feed import notes_feed_page, notes_feed_total
+from app.services.notes_feed import notes_feed_page
+from app.services.destination import shelf_count
 from app.schemas import (
     AnnotationIn,
     AnnotationOut,
@@ -325,21 +326,11 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
             select(func.count()).select_from(article_base.where(Article.is_saved.is_(True)).subquery())
         )
         or 0,
-        annotation_count=notes_feed_total(db, user),
-        vault_count=db.scalar(
-            select(func.count()).select_from(
-                article_base.where(Article.guid.startswith("obsidian:"), Article.source_kind != "textbook").subquery()
-            )
-        )
-        or 0,
-        additions_count=db.scalar(
-            select(func.count()).select_from(article_base.where(Article.guid.startswith("storykeep-note:")).subquery())
-        )
-        or 0,
-        books_count=db.scalar(
-            select(func.count()).select_from(article_base.where(Article.source_kind == "textbook").subquery())
-        )
-        or 0,
+        annotation_count=shelf_count(db, user, "notes"),
+        vault_count=shelf_count(db, user, "vault"),
+        additions_count=shelf_count(db, user, "additions"),
+        books_count=shelf_count(db, user, "books"),
+        schoolwork_count=shelf_count(db, user, "schoolwork"),
         oldest_saved_at=db.scalar(
             select(func.min(Article.saved_at)).where(Article.feed_id.in_(feed_ids), Article.is_saved.is_(True))
         ),

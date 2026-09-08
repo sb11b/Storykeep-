@@ -83,11 +83,12 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
             listed += 1
 
         for row in additions:
-            path = overlay_relpath("addition", None, f"{row.title}-{str(row.id)[:8]}")
+            pack_kind = "correction" if getattr(row, "is_correction", False) else "addition"
+            path = overlay_relpath(pack_kind, None, f"{row.title}-{str(row.id)[:8]}")
             source_ref = _source_ref(row.article) if row.article else None
             packed_body = _pack_addition_markdown(zf, db, user, row.markdown, packed_media)
             text = [
-                _frontmatter(row.id, "addition", source_ref, row.updated_at or row.created_at),
+                _frontmatter(row.id, pack_kind, source_ref, row.updated_at or row.created_at),
                 "",
                 f"# {row.title}",
                 "",
@@ -95,7 +96,7 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
                 "",
             ]
             zf.writestr(path, "\n".join(text))
-            index_lines.append(f"- `{path}` · addition · `{row.id}` · {_iso(row.created_at)}")
+            index_lines.append(f"- `{path}` · {pack_kind} · `{row.id}` · {_iso(row.created_at)}")
             listed += 1
 
         for article_id, row in latest_correction.items():

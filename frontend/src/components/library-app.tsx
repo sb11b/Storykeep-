@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   FilePlus,
+  GraduationCap,
   Inbox,
   Library,
   LoaderCircle,
@@ -30,6 +31,7 @@ import {
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
+import { CorrectionCheck, DestinationSelect } from "@/components/destination-controls";
 import { NoteComposer } from "@/components/note-composer";
 import { ShelfScroller } from "@/components/shelf-scroller";
 import { Badge } from "@/components/ui/badge";
@@ -44,9 +46,9 @@ import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { renderMarkdown } from "@/lib/markdown";
+import { asDestination, type NoteDestination } from "@/lib/destinations";
 import { countWords, spokenTitle, wordIndexFromSelection, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
-  Annotation,
   Article,
   ArticleListItem,
   Backup,
@@ -83,6 +85,8 @@ function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: T
       return "Additions";
     case "books":
       return "Books";
+    case "schoolwork":
+      return "Schoolwork";
     case "search":
       return `Search: ${shelf.q}`;
     case "feed":
@@ -115,7 +119,6 @@ export function LibraryApp({ user }: { user: User }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [notes, setNotes] = useState<Annotation[]>([]);
   const [backups, setBackups] = useState<Backup[]>([]);
   const [items, setItems] = useState<ArticleListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -140,13 +143,11 @@ export function LibraryApp({ user }: { user: User }) {
   const listenRef = useRef<ListenControlsHandle>(null);
   const caretWordRef = useRef<(() => number | null) | null>(null);
   const itemsRef = useRef<ArticleListItem[]>([]);
-  const notesRef = useRef<Annotation[]>([]);
   const totalRef = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   const listGenRef = useRef(0);
   const loadingMoreRef = useRef(false);
   itemsRef.current = items;
-  notesRef.current = notes;
   totalRef.current = total;
   selectedIdRef.current = selectedId;
 
@@ -166,16 +167,11 @@ export function LibraryApp({ user }: { user: User }) {
   }, []);
 
   const fetchShelfPage = useCallback(async (offset: number) => {
-    if (shelf.kind === "notes") {
-      const page = await api.notes({ limit: LIST_PAGE, offset });
-      return { items: [] as ArticleListItem[], total: page.total, notes: page.items };
-    }
     if (shelf.kind === "search") {
       const page = await api.search(shelf.q, { limit: LIST_PAGE, offset });
       return {
         items: page.items.map((hit) => ({ ...hit.article, summary: hit.headline ?? hit.article.summary })),
         total: page.total,
-        notes: null as Annotation[] | null,
       };
     }
     const params: Record<string, string | number | boolean> = { limit: LIST_PAGE, offset };
@@ -185,11 +181,13 @@ export function LibraryApp({ user }: { user: User }) {
     if (shelf.kind === "vault") params.shelf = "vault";
     if (shelf.kind === "additions") params.shelf = "additions";
     if (shelf.kind === "books") params.shelf = "books";
+    if (shelf.kind === "notes") params.shelf = "notes";
+    if (shelf.kind === "schoolwork") params.shelf = "schoolwork";
     if (shelf.kind === "feed") params.feed_id = shelf.id;
     if (shelf.kind === "category") params.category_id = shelf.id;
     if (shelf.kind === "tag") params.tag_id = shelf.id;
     const page = await api.articles(params);
-    return { items: page.items, total: page.total, notes: null as Annotation[] | null };
+    return { items: page.items, total: page.total };
   }, [shelf]);
 
   const loadList = useCallback(async () => {
@@ -199,11 +197,9 @@ export function LibraryApp({ user }: { user: User }) {
     setLoadingList(true);
     setListError(null);
     setItems([]);
-    if (shelf.kind === "notes") setNotes([]);
     try {
       const page = await fetchShelfPage(0);
       if (gen !== listGenRef.current) return;
-      if (page.notes) setNotes(page.notes);
       setItems(page.items);
       setTotal(page.total);
     } catch (error) {
@@ -216,7 +212,7 @@ export function LibraryApp({ user }: { user: User }) {
 
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current || loadingList) return;
-    const loaded = shelf.kind === "notes" ? notesRef.current.length : itemsRef.current.length;
+    const loaded = itemsRef.current.length;
     const tot = totalRef.current;
     if (tot > 0 && loaded >= tot) return;
     if (loaded === 0) return;
@@ -226,18 +222,6 @@ export function LibraryApp({ user }: { user: User }) {
     try {
       const page = await fetchShelfPage(loaded);
       if (gen !== listGenRef.current) return;
-      if (shelf.kind === "notes") {
-        if (!page.notes?.length) {
-          setTotal(loaded);
-          return;
-        }
-        setNotes((current) => {
-          const seen = new Set(current.map((item) => item.id));
-          return [...current, ...page.notes!.filter((item) => !seen.has(item.id))];
-        });
-        setTotal(page.total);
-        return;
-      }
       if (!page.items.length) {
         setTotal(loaded);
         return;
@@ -640,13 +624,9 @@ export function LibraryApp({ user }: { user: User }) {
                 <div className="min-w-0 flex-1">
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
                   <p className="text-xs text-muted-foreground">
-                    {shelf.kind === "notes"
-                      ? notes.length > 0 && notes.length < total
-                        ? `${notes.length} of ${total} notes`
-                        : `${total} notes`
-                      : items.length > 0 && items.length < total
-                        ? `${items.length} of ${total} articles`
-                        : `${total} articles`}
+                    {items.length > 0 && items.length < total
+                      ? `${items.length} of ${total} ${shelf.kind === "notes" ? "notes" : "articles"}`
+                      : `${total} ${shelf.kind === "notes" ? "notes" : "articles"}`}
                   </p>
                 </div>
                 {shelf.kind === "feed" ? (
@@ -712,9 +692,9 @@ export function LibraryApp({ user }: { user: User }) {
             </div>
             <ShelfScroller
               shelfKey={shelfKey(shelf)}
-              hasMore={!loadingList && (shelf.kind === "notes" ? notes.length : items.length) > 0 && (shelf.kind === "notes" ? notes.length : items.length) < total}
+              hasMore={!loadingList && items.length > 0 && items.length < total}
               loadingMore={loadingMore}
-              loaded={shelf.kind === "notes" ? notes.length : items.length}
+              loaded={items.length}
               total={total}
               onNearEnd={() => void loadMore()}
             >
@@ -722,31 +702,6 @@ export function LibraryApp({ user }: { user: User }) {
                 <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening the shelf" body="Fetching the latest from your archive." />
               ) : listError ? (
                 <EmptyState title="Could not load this shelf" body={listError} />
-              ) : shelf.kind === "notes" ? (
-                notes.length === 0 ? (
-                  <EmptyState title="No notes yet" body="Open an article and write a margin note. Those thoughts stay with the story." />
-                ) : (
-                  notes.map((note) => (
-                    <button
-                      key={note.id}
-                      type="button"
-                      onClick={() => setSelectedId(note.article_id)}
-                      className="w-full text-left px-4 py-3 border-b hover:bg-accent/50"
-                    >
-                      <p className="text-xs text-muted-foreground">
-                        {note.kind === "highlight" ? "Highlight" : note.kind === "addition" ? "Addition" : "Note"}
-                        {note.article_title ? ` · ${note.article_title}` : ""}
-                      </p>
-                      {note.quote && note.kind !== "note" ? (
-                        <p className="text-sm italic text-muted-foreground mt-1">“{note.quote}”</p>
-                      ) : null}
-                      <div className="text-sm mt-1 note-md line-clamp-3" dangerouslySetInnerHTML={{ __html: renderMarkdown(note.body) }} />
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        {formatRelative(note.updated_at || note.created_at)}
-                      </p>
-                    </button>
-                  ))
-                )
               ) : items.length === 0 ? (
                 <EmptyState
                   title={
@@ -758,18 +713,26 @@ export function LibraryApp({ user }: { user: User }) {
                           ? "No StoryKeep additions yet"
                           : shelf.kind === "books"
                             ? "No books imported yet"
-                            : "This shelf is empty"
+                            : shelf.kind === "notes"
+                              ? "No notes filed here yet"
+                              : shelf.kind === "schoolwork"
+                                ? "No schoolwork yet"
+                                : "This shelf is empty"
                   }
                   body={
                     shelf.kind === "inbox" || shelf.kind === "unread"
                       ? "Add a feed to start collecting stories you want to keep."
                       : shelf.kind === "vault"
-                        ? "Collect → Vault and zip Steve's Surface Vault. Originals stay in Obsidian."
+                        ? "Collect → Vault and zip Steve's Surface Vault, or file a StoryKeep note to Vault. Originals stay in Obsidian."
                         : shelf.kind === "additions"
-                          ? "Type a complete note in Collect → Vault. It lands here and in StoryKeep/Additions of the pack."
+                          ? "File a note to Additions from Collect → Vault or from an article's Notes section."
                           : shelf.kind === "books"
-                            ? "Import _book_ notes from the vault. They stay read-only in StoryKeep."
-                            : "Try another shelf, or search the full text of saved articles."
+                            ? "Import _book_ notes from the vault, or file a StoryKeep note to Books."
+                            : shelf.kind === "notes"
+                              ? "Open an article and save a note with destination Notes."
+                              : shelf.kind === "schoolwork"
+                                ? "File a StoryKeep note to Schoolwork from Collect or from an article."
+                                : "Try another shelf, or search the full text of saved articles."
                   }
                 />
               ) : (
@@ -828,10 +791,11 @@ export function LibraryApp({ user }: { user: User }) {
                   setArticle(next);
                   void loadNav();
                 }}
-                onNote={async (body) => {
-                  await api.addNote(article.id, body);
+                onNote={async (title, markdown, destination, isCorrection) => {
+                  await api.addAddition(article.id, title, markdown, destination, isCorrection);
                   const next = await api.article(article.id);
                   setArticle(next);
+                  toast.success("Note saved on that shelf. The vault original was not touched.");
                   void Promise.all([loadNav(), loadList()]);
                 }}
                 onHighlight={async (payload) => {
@@ -848,24 +812,23 @@ export function LibraryApp({ user }: { user: User }) {
                   toast.success("Highlight saved in the overlay pack");
                   void Promise.all([loadNav(), loadList()]);
                 }}
-                onAddition={async (title, markdown) => {
-                  await api.addAddition(article.id, title, markdown);
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  toast.success("Addition will be in the next Obsidian pack");
+                onMoveNote={async (noteId, destination, isCorrection) => {
+                  const next = await api.setNoteDestination(noteId, destination, isCorrection);
+                  if (noteId === article.id) {
+                    setArticle(next);
+                  } else {
+                    const parent = await api.article(article.id);
+                    setArticle(parent);
+                  }
+                  toast.success("Note moved. It is not duplicated.");
                   void Promise.all([loadNav(), loadList()]);
                 }}
-                onEditComposed={async (title, markdown) => {
-                  const next = await api.updateComposedNote(article.id, title, markdown);
+                onEditComposed={async (title, markdown, destination, isCorrection) => {
+                  const next = await api.updateComposedNote(article.id, title, markdown, destination, isCorrection);
                   setArticle(next);
                   setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
                   toast.success("StoryKeep note updated");
-                }}
-                onCorrection={async (markdown) => {
-                  await api.addCorrection(article.id, markdown);
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  toast.success("Correction stored. The original imported note was not changed.");
+                  void Promise.all([loadNav(), loadList()]);
                 }}
                 onDownloadPack={async () => {
                   await api.downloadObsidianPack();
@@ -900,11 +863,11 @@ export function LibraryApp({ user }: { user: User }) {
           setShelf({ kind: "saved" });
           await Promise.all([loadNav(), loadList()]);
         }}
-        onCreatedNote={async (articleId) => {
+        onCreatedNote={async (articleId, destination) => {
           setSelectedId(articleId);
-          setShelf({ kind: "additions" });
+          setShelf({ kind: destination });
           setReaderFull(true);
-          await Promise.all([loadNav(), loadList()]);
+          await loadNav();
         }}
         onImportedVault={async () => {
           setShelf({ kind: "vault" });
@@ -1024,11 +987,14 @@ function Sidebar({
         <NavButton active={shelf.kind === "books"} onClick={() => onShelf({ kind: "books" })} icon={<BookOpen className="size-4" />} count={stats?.books_count}>
           Books
         </NavButton>
-        <NavButton active={shelf.kind === "starred"} onClick={() => onShelf({ kind: "starred" })} icon={<Star className="size-4" />}>
-          Starred
-        </NavButton>
         <NavButton active={shelf.kind === "notes"} onClick={() => onShelf({ kind: "notes" })} icon={<NotebookPen className="size-4" />} count={stats?.annotation_count}>
           Notes
+        </NavButton>
+        <NavButton active={shelf.kind === "schoolwork"} onClick={() => onShelf({ kind: "schoolwork" })} icon={<GraduationCap className="size-4" />} count={stats?.schoolwork_count}>
+          Schoolwork
+        </NavButton>
+        <NavButton active={shelf.kind === "starred"} onClick={() => onShelf({ kind: "starred" })} icon={<Star className="size-4" />}>
+          Starred
         </NavButton>
         <p className="px-2 pt-5 pb-1 text-[11px] uppercase tracking-[0.14em] text-sidebar-foreground/50">Feeds</p>
         {feeds.length === 0 ? (
@@ -1284,9 +1250,8 @@ function Reader({
   onNote,
   onHighlight,
   onDeleteAnnotation,
-  onAddition,
+  onMoveNote,
   onEditComposed,
-  onCorrection,
   onDownloadPack,
 }: {
   article: Article;
@@ -1303,20 +1268,21 @@ function Reader({
   onExtract: () => Promise<void>;
   onArchive: () => Promise<void>;
   onTag: (name: string) => Promise<void>;
-  onNote: (body: string) => Promise<void>;
+  onNote: (title: string, markdown: string, destination: NoteDestination, isCorrection: boolean) => Promise<void>;
   onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string; note?: string }) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
-  onAddition: (title: string, markdown: string) => Promise<void>;
-  onEditComposed: (title: string, markdown: string) => Promise<void>;
-  onCorrection: (markdown: string) => Promise<void>;
+  onMoveNote: (noteId: string, destination: NoteDestination, isCorrection: boolean) => Promise<void>;
+  onEditComposed: (title: string, markdown: string, destination: NoteDestination, isCorrection: boolean) => Promise<void>;
   onDownloadPack: () => Promise<void>;
 }) {
   const [note, setNote] = useState("");
-  const [additionTitle, setAdditionTitle] = useState("");
-  const [additionBody, setAdditionBody] = useState("");
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteDest, setNoteDest] = useState<NoteDestination>("notes");
+  const [noteCorrection, setNoteCorrection] = useState(false);
   const [editTitle, setEditTitle] = useState(article.title);
   const [editBody, setEditBody] = useState(article.content_text || "");
-  const [correction, setCorrection] = useState("");
+  const [editDest, setEditDest] = useState<NoteDestination>(asDestination(article.destination, "additions"));
+  const [editCorrection, setEditCorrection] = useState(Boolean(article.is_correction));
   const [highlightNote, setHighlightNote] = useState("");
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1352,7 +1318,7 @@ function Reader({
     .map((item) => `${item.id}:${item.color}:${item.quote}`)
     .join("|");
   const highlights = article.annotations.filter((item) => item.kind === "highlight" && item.quote);
-  const listedNotes = article.annotations;
+  const filedNotes = article.filed_notes || [];
 
   useEffect(() => {
     const marks = article.annotations
@@ -1379,12 +1345,14 @@ function Reader({
     setActiveWord(null);
     clickedWordRef.current = null;
     setNote("");
+    setNoteTitle("");
+    setNoteDest("notes");
+    setNoteCorrection(false);
     setTag("");
-    setAdditionTitle("");
-    setAdditionBody("");
     setEditTitle(article.title);
     setEditBody(article.content_text || "");
-    setCorrection(article.content_text || "");
+    setEditDest(asDestination(article.destination, "additions"));
+    setEditCorrection(Boolean(article.is_correction));
     setHighlightNote("");
   }, [article.id]);
 
@@ -1574,7 +1542,7 @@ function Reader({
         )}
         <Separator className="my-8" />
         <section className="space-y-4 pb-10">
-          <h2 className="font-[family-name:var(--font-serif)] text-xl">Keep it findable</h2>
+          <h2 className="font-[family-name:var(--font-serif)] text-xl">Notes</h2>
           <form
             className="flex gap-2 relative"
             onSubmit={(event) => {
@@ -1610,24 +1578,43 @@ function Reader({
               </ul>
             ) : null}
           </form>
+          {isStoryKeepNote(article) ? null : (
           <form
             className="space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
               if (!note.trim()) return;
-              void onNote(note.trim()).then(() => setNote(""));
+              const title = noteTitle.trim() || note.trim().split("\n")[0]?.slice(0, 80) || "Note";
+              void onNote(title, note.trim(), noteDest, noteCorrection).then(() => {
+                setNote("");
+                setNoteTitle("");
+                setNoteCorrection(false);
+              });
             }}
           >
-            <Label>Margin note</Label>
+            <Label>Notes</Label>
+            <p className="text-xs text-muted-foreground">
+              One workspace. Destination files the note to that sidebar shelf. Vault here is a StoryKeep shelf, not a write into Steve&apos;s Surface Vault.
+            </p>
             <NoteComposer
               textareaRef={noteRef}
               value={note}
               onChange={setNote}
-              placeholder="Markdown note to your future self… (n)"
+              placeholder="Markdown note…"
               rows={4}
+              header={
+                <Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Title (optional)" />
+              }
+              toolbarExtra={
+                <>
+                  <DestinationSelect value={noteDest} onChange={setNoteDest} />
+                  <CorrectionCheck checked={noteCorrection} onChange={setNoteCorrection} />
+                </>
+              }
               actions={<Button type="submit">Save note</Button>}
             />
           </form>
+          )}
           <p className="text-xs text-muted-foreground">
             Select a passage, pick a color, optionally add a comment. Highlights land in StoryKeep/Highlights of the pack. They never rewrite the original vault file.
           </p>
@@ -1653,7 +1640,7 @@ function Reader({
               onSubmit={(event) => {
                 event.preventDefault();
                 if (!editTitle.trim() || !editBody.trim()) return;
-                void onEditComposed(editTitle.trim(), editBody.trim());
+                void onEditComposed(editTitle.trim(), editBody.trim(), editDest, editCorrection);
               }}
             >
               <NoteComposer
@@ -1663,11 +1650,29 @@ function Reader({
                 rows={10}
                 header={
                   <>
-                    <Label>Edit this StoryKeep note</Label>
+                    <Label>This StoryKeep note</Label>
                     <p className="text-xs text-muted-foreground">
-                      This is overlay markdown you wrote here. Imported vault files stay read-only.
+                      Changing destination moves this note to that shelf. Imported vault files stay read-only.
                     </p>
                     <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="Title" />
+                  </>
+                }
+                toolbarExtra={
+                  <>
+                    <DestinationSelect
+                      value={editDest}
+                      onChange={(next) => {
+                        setEditDest(next);
+                        void onMoveNote(article.id, next, editCorrection);
+                      }}
+                    />
+                    <CorrectionCheck
+                      checked={editCorrection}
+                      onChange={(next) => {
+                        setEditCorrection(next);
+                        void onMoveNote(article.id, editDest, next);
+                      }}
+                    />
                   </>
                 }
                 actions={
@@ -1678,81 +1683,27 @@ function Reader({
               />
             </form>
           ) : null}
-          <form
-            className="space-y-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!additionTitle.trim() || !additionBody.trim()) return;
-              void onAddition(additionTitle.trim(), additionBody.trim()).then(() => {
-                setAdditionTitle("");
-                setAdditionBody("");
-              });
-            }}
-          >
-            <NoteComposer
-              value={additionBody}
-              onChange={setAdditionBody}
-              placeholder="Markdown that exists only in the overlay pack…"
-              rows={6}
-              header={
-                <>
-                  <Label>Addition (new note in StoryKeep/Additions)</Label>
-                  <Input
-                    value={additionTitle}
-                    onChange={(event) => setAdditionTitle(event.target.value)}
-                    placeholder="Title for a new overlay note"
-                  />
-                </>
-              }
-              actions={
-                <Button type="submit" variant="secondary">
-                  Save addition
-                </Button>
-              }
-            />
-          </form>
-          {(article.overlay_additions || []).length > 0 ? (
-            <ul className="space-y-2">
-              {(article.overlay_additions || []).map((item) => (
-                <li key={item.id} className="rounded-md border px-3 py-2 text-sm">
-                  <p className="font-medium">{item.title}</p>
-                  <div className="note-md mt-1" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.markdown) }} />
-                  <p className="text-[11px] text-muted-foreground">{formatRelative(item.created_at)}</p>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <form
-            className="space-y-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!correction.trim()) return;
-              void onCorrection(correction.trim());
-            }}
-          >
-            <Label>Correction (StoryKeep-owned copy; original body stays)</Label>
-            <Textarea value={correction} onChange={(event) => setCorrection(event.target.value)} rows={8} />
-            <Button type="submit" variant="outline">
-              Save correction
-            </Button>
-            {(article.corrections || []).length > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Latest correction stored {formatRelative(article.corrections![article.corrections!.length - 1].created_at)}.
-              </p>
-            ) : null}
-          </form>
-          {listedNotes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No notes on this story yet.</p>
+          {filedNotes.length === 0 ? (
+            isStoryKeepNote(article) ? null : (
+              <p className="text-sm text-muted-foreground">No filed notes on this story yet.</p>
+            )
           ) : (
             <ul className="space-y-3">
-              {listedNotes.map((item) => (
+              {filedNotes.map((item) => (
                 <li key={item.id} className="rounded-lg border bg-background px-3 py-2">
-                  {item.quote ? <p className="text-sm italic text-muted-foreground">“{item.quote}”</p> : null}
-                  <div className="text-sm mt-1 note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.body) }} />
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    Added {formatRelative(item.created_at)}
-                    {item.updated_at && item.updated_at !== item.created_at ? ` · edited ${formatRelative(item.updated_at)}` : ""}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium min-w-0 flex-1">{item.title}</p>
+                    <DestinationSelect
+                      value={asDestination(item.destination, "notes")}
+                      onChange={(next) => void onMoveNote(item.id, next, Boolean(item.is_correction))}
+                    />
+                    <CorrectionCheck
+                      checked={Boolean(item.is_correction)}
+                      onChange={(next) => void onMoveNote(item.id, asDestination(item.destination, "notes"), next)}
+                    />
+                  </div>
+                  <div className="text-sm mt-1 note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.markdown) }} />
+                  <p className="text-[11px] text-muted-foreground mt-1">{formatRelative(item.updated_at || item.created_at)}</p>
                 </li>
               ))}
             </ul>
@@ -1916,7 +1867,7 @@ function AddFeedDialog({
   categories: Category[];
   onAdded: () => Promise<void>;
   onSavedPage: (articleId: string) => Promise<void>;
-  onCreatedNote: (articleId: string) => Promise<void>;
+  onCreatedNote: (articleId: string, destination: NoteDestination) => Promise<void>;
   onImportedVault: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault" | "file">("feed");
@@ -1928,6 +1879,8 @@ function AddFeedDialog({
   const [additionTitle, setAdditionTitle] = useState("");
   const [additionSubject, setAdditionSubject] = useState("");
   const [additionBody, setAdditionBody] = useState("");
+  const [composeDest, setComposeDest] = useState<NoteDestination>("vault");
+  const [composeCorrection, setComposeCorrection] = useState(false);
   const [fileTitle, setFileTitle] = useState("");
   const [fileTags, setFileTags] = useState("");
   const bookmarklet =
@@ -2228,13 +2181,20 @@ function AddFeedDialog({
                     .split(/[,#]/)
                     .map((part) => part.trim())
                     .filter(Boolean);
-                  const article = await api.composeVaultNote(additionTitle.trim(), additionBody.trim(), tags);
-                  toast.success("Note saved in StoryKeep. It will land in StoryKeep/Additions of the pack.");
+                  const article = await api.composeVaultNote(
+                    additionTitle.trim(),
+                    additionBody.trim(),
+                    tags,
+                    composeDest,
+                    composeCorrection,
+                  );
+                  toast.success("Note saved on that StoryKeep shelf. Steve's Surface Vault was not overwritten.");
                   setAdditionTitle("");
                   setAdditionSubject("");
                   setAdditionBody("");
+                  setComposeCorrection(false);
                   onOpenChange(false);
-                  await onCreatedNote(article.id);
+                  await onCreatedNote(article.id, composeDest);
                 } catch (error) {
                   toast.error(error instanceof ApiError ? error.message : "Could not save the note");
                 } finally {
@@ -2253,8 +2213,8 @@ function AddFeedDialog({
                   <>
                     <Label>Type a new article or paper</Label>
                     <p className="text-xs text-muted-foreground">
-                      This is a StoryKeep overlay note, not an overwrite of Steve&apos;s Surface Vault. Unzip the pack to add
-                      it under StoryKeep/Additions.
+                      StoryKeep overlay note. Destination chooses the sidebar shelf. This never writes Steve&apos;s Surface Vault.
+                      Pack path is StoryKeep/Additions unless you mark it a correction.
                     </p>
                     <Input
                       value={additionTitle}
@@ -2267,6 +2227,12 @@ function AddFeedDialog({
                       onChange={(event) => setAdditionSubject(event.target.value)}
                       placeholder="Subjects / tags, comma-separated (e.g. calculus, DAT-200)"
                     />
+                  </>
+                }
+                toolbarExtra={
+                  <>
+                    <DestinationSelect value={composeDest} onChange={setComposeDest} />
+                    <CorrectionCheck checked={composeCorrection} onChange={setComposeCorrection} />
                   </>
                 }
                 actions={

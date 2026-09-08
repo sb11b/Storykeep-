@@ -28,6 +28,7 @@ export function NoteComposer({
   textareaRef,
   header,
   actions,
+  toolbarExtra,
   fill = false,
 }: {
   value: string;
@@ -39,6 +40,7 @@ export function NoteComposer({
   textareaRef?: Ref<HTMLTextAreaElement>;
   header?: ReactNode;
   actions?: ReactNode;
+  toolbarExtra?: ReactNode;
   fill?: boolean;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -143,6 +145,7 @@ export function NoteComposer({
               Cancel
             </Button>
           ) : null}
+          {toolbarExtra}
           {actions}
         </div>
         <input
