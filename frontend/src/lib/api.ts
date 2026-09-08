@@ -283,9 +283,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ type: "html" }),
     }),
-  search: (q: string, saved?: boolean) => {
+  search: (q: string, opts?: { saved?: boolean; limit?: number; offset?: number }) => {
     const search = new URLSearchParams({ q });
-    if (saved) search.set("saved", "true");
+    if (opts?.saved) search.set("saved", "true");
+    if (opts?.limit != null) search.set("limit", String(opts.limit));
+    if (opts?.offset != null) search.set("offset", String(opts.offset));
     return request<Page<SearchHit>>(`/api/v1/search?${search.toString()}`);
   },
   backups: () => request<Backup[]>("/api/v1/backups"),

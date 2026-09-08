@@ -31,6 +31,7 @@ import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
 import { NoteComposer } from "@/components/note-composer";
+import { ShelfScroller } from "@/components/shelf-scroller";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -93,6 +94,21 @@ function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: T
   }
 }
 
+function shelfKey(shelf: Shelf): string {
+  switch (shelf.kind) {
+    case "feed":
+    case "category":
+    case "tag":
+      return `${shelf.kind}:${shelf.id}`;
+    case "search":
+      return `search:${shelf.q}`;
+    default:
+      return shelf.kind;
+  }
+}
+
+const LIST_PAGE = 40;
+
 export function LibraryApp({ user }: { user: User }) {
   const router = useRouter();
   const [feeds, setFeeds] = useState<Feed[]>([]);
@@ -108,6 +124,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [article, setArticle] = useState<Article | null>(null);
   const [query, setQuery] = useState("");
   const [loadingList, setLoadingList] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loadingArticle, setLoadingArticle] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -122,6 +139,14 @@ export function LibraryApp({ user }: { user: User }) {
   const noteFocusRef = useRef<(() => void) | null>(null);
   const listenRef = useRef<ListenControlsHandle>(null);
   const caretWordRef = useRef<(() => number | null) | null>(null);
+  const itemsRef = useRef<ArticleListItem[]>([]);
+  const totalRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
+  const listGenRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  itemsRef.current = items;
+  totalRef.current = total;
+  selectedIdRef.current = selectedId;
 
   const loadNav = useCallback(async () => {
     const [nextFeeds, nextCategories, nextTags, nextStats, nextNotes, nextBackups] = await Promise.all([
@@ -140,42 +165,86 @@ export function LibraryApp({ user }: { user: User }) {
     setBackups(nextBackups);
   }, []);
 
+  const fetchShelfPage = useCallback(async (offset: number) => {
+    if (shelf.kind === "notes") {
+      const nextNotes = await api.notes();
+      return { items: [] as ArticleListItem[], total: nextNotes.length, notes: nextNotes };
+    }
+    if (shelf.kind === "search") {
+      const page = await api.search(shelf.q, { limit: LIST_PAGE, offset });
+      return {
+        items: page.items.map((hit) => ({ ...hit.article, summary: hit.headline ?? hit.article.summary })),
+        total: page.total,
+        notes: null as Annotation[] | null,
+      };
+    }
+    const params: Record<string, string | number | boolean> = { limit: LIST_PAGE, offset };
+    if (shelf.kind === "unread") params.read = false;
+    if (shelf.kind === "saved") params.saved = true;
+    if (shelf.kind === "starred") params.starred = true;
+    if (shelf.kind === "vault") params.shelf = "vault";
+    if (shelf.kind === "additions") params.shelf = "additions";
+    if (shelf.kind === "books") params.shelf = "books";
+    if (shelf.kind === "feed") params.feed_id = shelf.id;
+    if (shelf.kind === "category") params.category_id = shelf.id;
+    if (shelf.kind === "tag") params.tag_id = shelf.id;
+    const page = await api.articles(params);
+    return { items: page.items, total: page.total, notes: null as Annotation[] | null };
+  }, [shelf]);
+
   const loadList = useCallback(async () => {
+    const gen = ++listGenRef.current;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
     setLoadingList(true);
     setListError(null);
+    setItems([]);
     try {
-      if (shelf.kind === "notes") {
-        const nextNotes = await api.notes();
-        setNotes(nextNotes);
-        setItems([]);
-        setTotal(nextNotes.length);
-        return;
-      }
-      if (shelf.kind === "search") {
-        const page = await api.search(shelf.q);
-        setItems(page.items.map((hit) => ({ ...hit.article, summary: hit.headline ?? hit.article.summary })));
-        setTotal(page.total);
-        return;
-      }
-      const params: Record<string, string | number | boolean> = { limit: 50 };
-      if (shelf.kind === "unread") params.read = false;
-      if (shelf.kind === "saved") params.saved = true;
-      if (shelf.kind === "starred") params.starred = true;
-      if (shelf.kind === "vault") params.shelf = "vault";
-      if (shelf.kind === "additions") params.shelf = "additions";
-      if (shelf.kind === "books") params.shelf = "books";
-      if (shelf.kind === "feed") params.feed_id = shelf.id;
-      if (shelf.kind === "category") params.category_id = shelf.id;
-      if (shelf.kind === "tag") params.tag_id = shelf.id;
-      const page = await api.articles(params);
+      const page = await fetchShelfPage(0);
+      if (gen !== listGenRef.current) return;
+      if (page.notes) setNotes(page.notes);
       setItems(page.items);
       setTotal(page.total);
     } catch (error) {
+      if (gen !== listGenRef.current) return;
       setListError(error instanceof ApiError ? error.message : "Could not load articles");
     } finally {
-      setLoadingList(false);
+      if (gen === listGenRef.current) setLoadingList(false);
     }
-  }, [shelf]);
+  }, [fetchShelfPage]);
+
+  const loadMore = useCallback(async () => {
+    if (shelf.kind === "notes") return;
+    if (loadingMoreRef.current || loadingList) return;
+    const loaded = itemsRef.current.length;
+    const tot = totalRef.current;
+    if (tot > 0 && loaded >= tot) return;
+    if (loaded === 0) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const gen = listGenRef.current;
+    try {
+      const page = await fetchShelfPage(loaded);
+      if (gen !== listGenRef.current) return;
+      if (!page.items.length) {
+        setTotal(loaded);
+        return;
+      }
+      setItems((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !seen.has(item.id))];
+      });
+      setTotal(page.total);
+    } catch (error) {
+      if (gen !== listGenRef.current) return;
+      toast.error(error instanceof ApiError ? error.message : "Could not load more articles");
+    } finally {
+      if (gen === listGenRef.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }, [fetchShelfPage, loadingList, shelf.kind]);
 
   useEffect(() => {
     void loadNav().catch((error) => {
@@ -202,13 +271,21 @@ export function LibraryApp({ user }: { user: User }) {
 
   const selectRelative = useCallback(
     (delta: number) => {
-      if (!items.length) return;
-      const index = selectedId ? items.findIndex((item) => item.id === selectedId) : -1;
-      const nextIndex = index < 0 ? 0 : Math.min(items.length - 1, Math.max(0, index + delta));
-      const next = items[nextIndex];
-      if (next) setSelectedId(next.id);
+      void (async () => {
+        let list = itemsRef.current;
+        if (!list.length) return;
+        const index = selectedIdRef.current ? list.findIndex((item) => item.id === selectedIdRef.current) : -1;
+        let nextIndex = index < 0 ? 0 : Math.min(list.length - 1, Math.max(0, index + delta));
+        if (delta > 0 && index >= list.length - 1 && list.length < totalRef.current) {
+          await loadMore();
+          list = itemsRef.current;
+          nextIndex = Math.min(list.length - 1, (index < 0 ? 0 : index) + 1);
+        }
+        const next = list[nextIndex];
+        if (next) setSelectedId(next.id);
+      })();
     },
-    [items, selectedId],
+    [loadMore],
   );
 
   useEffect(() => {
@@ -544,8 +621,8 @@ export function LibraryApp({ user }: { user: User }) {
           </div>
         </header>
 
-        <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
-          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
+        <div className={cn("grid min-h-0 flex-1 grid-cols-1 overflow-hidden [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
+          <section className={cn("flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -613,7 +690,11 @@ export function LibraryApp({ user }: { user: User }) {
                 </div>
               ) : null}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <ShelfScroller
+              shelfKey={shelfKey(shelf)}
+              hasMore={shelf.kind !== "notes" && !loadingList && items.length > 0 && items.length < total}
+              onNearEnd={() => void loadMore()}
+            >
               {loadingList ? (
                 <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening the shelf" body="Fetching the latest from your archive." />
               ) : listError ? (
@@ -678,10 +759,17 @@ export function LibraryApp({ user }: { user: User }) {
                   />
                 ))
               )}
-            </div>
+              {loadingMore ? (
+                <p className="px-4 py-2 text-xs text-muted-foreground">Loading more…</p>
+              ) : shelf.kind !== "notes" && items.length > 0 && items.length < total ? (
+                <p className="px-4 py-2 text-xs text-muted-foreground">
+                  {items.length} of {total}
+                </p>
+              ) : null}
+            </ShelfScroller>
           </section>
 
-          <section className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex", readerFull && "flex")}>
+          <section className={cn("flex min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex", readerFull && "flex")}>
             {loadingArticle ? (
               <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
             ) : article ? (
