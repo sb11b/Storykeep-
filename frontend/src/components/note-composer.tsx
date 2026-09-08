@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import { wrapHighlight } from "@/lib/markdown";
+import { renderMarkdown, wrapHighlight } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
@@ -175,6 +175,18 @@ export function NoteComposer({
             }
           }}
         />
+      </div>
+      <div
+        className="note-md composer-preview max-h-36 shrink-0 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm"
+        aria-label="Highlight preview"
+      >
+        {value.trim() ? (
+          <div dangerouslySetInnerHTML={{ __html: renderMarkdown(value) }} />
+        ) : (
+          <p className="m-0 text-[11px] text-muted-foreground">
+            Highlight preview: selected words turn yellow here as <mark>mark</mark>.
+          </p>
+        )}
       </div>
       {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
       <Textarea

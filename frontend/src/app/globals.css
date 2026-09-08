@@ -122,6 +122,11 @@
   html {
     @apply font-sans;
   }
+  mark {
+    background: #fde68a;
+    color: inherit;
+    padding: 0 0.1em;
+  }
 }
 
 .article-body {
@@ -152,9 +157,12 @@
   margin: 1.25rem 0;
 }
 .article-body mark,
-.article-body mark.hl {
+.article-body mark.hl,
+.note-md mark,
+.composer-preview mark {
+  background: #fde68a;
   color: inherit;
-  padding: 0 0.12em;
+  padding: 0 0.1em;
   border-radius: 0.15em;
 }
 .hl-yellow { background: oklch(0.93 0.12 95); }
@@ -183,10 +191,4 @@
   height: auto;
   border-radius: 0.4rem;
   margin: 0.6em 0;
-}
-.note-md mark {
-  background: oklch(0.93 0.12 95);
-  color: inherit;
-  padding: 0 0.12em;
-  border-radius: 0.15em;
 }

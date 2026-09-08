@@ -22,20 +22,25 @@ function inline(value: string): string {
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
 }
 
+function wordAroundCaret(source: string, caret: number): { from: number; to: number } {
+  let from = caret;
+  let to = caret;
+  while (from > 0 && /[^\s]/.test(source[from - 1]!)) from -= 1;
+  while (to < source.length && /[^\s]/.test(source[to]!)) to += 1;
+  return { from, to };
+}
+
 export function wrapHighlight(
   source: string,
   start: number,
   end: number,
 ): { text: string; selectionStart: number; selectionEnd: number } {
-  const from = Math.max(0, Math.min(start, end, source.length));
-  const to = Math.min(source.length, Math.max(start, end, from));
+  let from = Math.max(0, Math.min(start, end, source.length));
+  let to = Math.min(source.length, Math.max(start, end, from));
   if (from === to) {
-    const insert = "==highlighted==";
-    return {
-      text: source.slice(0, from) + insert + source.slice(to),
-      selectionStart: from + 2,
-      selectionEnd: from + insert.length - 2,
-    };
+    const word = wordAroundCaret(source, from);
+    from = word.from;
+    to = word.to;
   }
   const inner = source.slice(from, to);
   return {

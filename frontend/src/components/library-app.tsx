@@ -1308,7 +1308,16 @@ function Reader({
     null,
   );
   const bodyRef = useRef<HTMLDivElement>(null);
-  const html = article.content_html ? sanitizeHtml(article.content_html) : "";
+  const composed = isStoryKeepNote(article);
+  const html = composed
+    ? article.content_text
+      ? sanitizeHtml(renderMarkdown(article.content_text))
+      : article.content_html
+        ? sanitizeHtml(article.content_html)
+        : ""
+    : article.content_html
+      ? sanitizeHtml(article.content_html)
+      : "";
   const titleSpoken = spokenTitle(article.title);
   const titleWordCount = countWords(titleSpoken);
   const fallbackBody = article.content_text || stripHtml(article.summary) || "";

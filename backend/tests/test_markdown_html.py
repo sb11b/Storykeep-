@@ -13,6 +13,11 @@ class MarkdownHtmlTests(unittest.TestCase):
         self.assertIn("<mark>keep this</mark>", html)
         self.assertIn(f'<img src="/api/v1/media/{media}" alt="diagram" />', html)
 
+    def test_equals_signs_are_not_stripped(self):
+        html = markdown_to_html("Keep ==the slope== of y.")
+        self.assertIn("<mark>the slope</mark>", html)
+        self.assertNotIn("==the slope==", html)
+
     def test_rejects_remote_image_urls(self):
         html = markdown_to_html("![x](https://evil.example/x.png)")
         self.assertNotIn("<img", html)
