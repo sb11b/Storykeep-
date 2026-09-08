@@ -826,12 +826,20 @@ export function LibraryApp({ user }: { user: User }) {
       <GrokBubble
         articleId={article?.id ?? null}
         articleTitle={article?.title ?? null}
-        onSavedNote={async () => {
+        articleGuid={article?.guid ?? null}
+        sourceRef={article?.source_ref ?? null}
+        articleBody={article?.content_text ?? null}
+        onSavedNote={async (noteId) => {
+          await loadNav();
+          if (noteId && noteId !== article?.id) {
+            setSelectedId(noteId);
+            setShelf({ kind: "additions" });
+            return;
+          }
           if (article?.id) {
             const next = await api.article(article.id);
             setArticle(next);
           }
-          await loadNav();
         }}
       />
     </div>

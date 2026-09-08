@@ -22,7 +22,17 @@ class ChatGuardTests(unittest.TestCase):
         cleaned = validate_payload([{"role": "user", "content": "What is this about?"}])
         self.assertEqual(cleaned[0]["role"], "user")
 
-    def test_rate_limit(self):
+    def test_excerpt_is_capped(self):
+        from types import SimpleNamespace
+        from app.services.chat import article_excerpt
+
+        article = SimpleNamespace(title="Long", content_text="word " * 8000, content_html=None, summary=None)
+        excerpt = article_excerpt(article)
+        self.assertLessEqual(len(excerpt), 12_000 + 80)
+        self.assertIn("Title: Long", excerpt)
+        self.assertTrue(excerpt.endswith("…"))
+
+    def test_rate_limit_is_thirty_per_hour(self):
         user = uuid4()
         now = 1_700_000_000.0
         for index in range(30):

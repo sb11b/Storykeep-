@@ -42,19 +42,37 @@ function loadSize() {
   return DEFAULT_PANEL;
 }
 
-function titleFromReply(markdown: string) {
-  const line = (markdown || "").split("\n").map((item) => item.trim()).find(Boolean) || "Grok note";
-  return line.replace(/^#+\s*/, "").slice(0, 80);
+function isComposedNote(guid?: string | null, sourceRef?: string | null) {
+  const ref = (sourceRef || "").replaceAll("\\", "/");
+  return Boolean(guid?.startsWith("storykeep-note:") || ref.startsWith("StoryKeep/Additions/"));
+}
+
+function titleFromReply(reply: string) {
+  const line = reply.trim().split("\n").find((item) => item.trim()) || "Grok note";
+  return line.replace(/^#+\s*/, "").replace(/^["“]+|["”]+$/g, "").slice(0, 80) || "Grok note";
+}
+
+function noteMarkdown(reply: string, articleTitle: string | null, sourceRef: string | null) {
+  const heading = titleFromReply(reply);
+  const source = articleTitle || sourceRef;
+  if (!source) return `# ${heading}\n\n${reply.trim()}`;
+  return `# ${heading}\n\nAbout: ${source}${sourceRef ? `\nPath: ${sourceRef}` : ""}\n\n${reply.trim()}`;
 }
 
 export function GrokBubble({
   articleId,
   articleTitle,
+  articleGuid,
+  sourceRef,
+  articleBody,
   onSavedNote,
 }: {
   articleId: string | null;
   articleTitle: string | null;
-  onSavedNote: () => Promise<void>;
+  articleGuid?: string | null;
+  sourceRef?: string | null;
+  articleBody?: string | null;
+  onSavedNote: (noteId?: string) => Promise<void>;
 }) {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
@@ -97,6 +115,10 @@ export function GrokBubble({
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages, open]);
+
+  useEffect(() => {
+    if (articleId) setIncludeArticle(true);
+  }, [articleId]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -151,7 +173,7 @@ export function GrokBubble({
       await api.streamChat(
         {
           messages: nextMessages.map((item) => ({ role: item.role, content: item.content })),
-          article_id: includeArticle ? articleId : null,
+          article_id: articleId,
           include_article: Boolean(includeArticle && articleId),
         },
         (delta) => {
@@ -175,14 +197,18 @@ export function GrokBubble({
     const body = content.trim();
     if (!body) return;
     try {
-      if (articleId) {
-        await api.addAddition(articleId, titleFromReply(body), body);
-        toast.success("Saved to StoryKeep/Additions for this article");
-      } else {
-        await api.composeVaultNote(titleFromReply(body), body, ["grok"]);
-        toast.success("Saved as a StoryKeep overlay note");
+      if (articleId && isComposedNote(articleGuid, sourceRef)) {
+        const existing = (articleBody || "").trim();
+        const next = existing ? `${existing}\n\n## Grok\n\n${body}` : body;
+        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next);
+        toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
+        await onSavedNote(articleId);
+        return;
       }
-      await onSavedNote();
+      const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
+      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"]);
+      toast.success("Saved in StoryKeep/Additions. It will be in the next Obsidian pack.");
+      await onSavedNote(article.id);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");
     }
@@ -270,7 +296,7 @@ export function GrokBubble({
                   </Button>
                   <Button size="xs" variant="outline" onClick={() => void addToNotes(item.content)}>
                     <NotebookPen className="size-3" />
-                    Add to StoryKeep notes
+                    Add to notes
                   </Button>
                 </div>
               ) : null}
