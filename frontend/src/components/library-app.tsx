@@ -621,7 +621,7 @@ export function LibraryApp({ user }: { user: User }) {
           </div>
         </header>
 
-        <div className={cn("grid min-h-0 flex-1 grid-cols-1 overflow-hidden [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
+        <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
           <section className={cn("flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
