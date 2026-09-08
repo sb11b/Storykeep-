@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { Highlighter, ImagePlus, LoaderCircle, Maximize2, Minimize2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,8 +16,24 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   else (ref as MutableRefObject<T | null>).current = value;
 }
 
-const LONG_NOTE_CHARS = 1400;
-const LONG_NOTE_LINES = 18;
+const COMPOSE_FULL_KEY = "storykeep-compose-fullscreen";
+
+function readComposeFull() {
+  if (typeof window === "undefined") return false;
+  try {
+    return sessionStorage.getItem(COMPOSE_FULL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeComposeFull(next: boolean) {
+  try {
+    sessionStorage.setItem(COMPOSE_FULL_KEY, next ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
 
 export function NoteComposer({
   value,
@@ -45,9 +62,15 @@ export function NoteComposer({
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const skipAutoExpand = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    if (readComposeFull()) setExpanded(true);
+  }, []);
 
   const applyWrap = (next: string, start: number, end: number) => {
     onChange(next);
@@ -59,17 +82,10 @@ export function NoteComposer({
     });
   };
 
-  function setOpen(next: boolean, fromUser = false) {
-    if (fromUser && !next) skipAutoExpand.current = true;
-    if (fromUser && next) skipAutoExpand.current = false;
+  function setOpen(next: boolean) {
     setExpanded(next);
+    writeComposeFull(next);
   }
-
-  useEffect(() => {
-    if (expanded || skipAutoExpand.current) return;
-    const lines = value.split("\n").length;
-    if (value.length >= LONG_NOTE_CHARS || lines >= LONG_NOTE_LINES) setExpanded(true);
-  }, [value, expanded]);
 
   useEffect(() => {
     const el = areaRef.current;
@@ -92,137 +108,154 @@ export function NoteComposer({
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      setOpen(false, true);
+      setOpen(false);
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [expanded]);
 
-  return (
-    <div
-      className={cn(
-        "flex min-h-0 flex-col gap-2",
-        fill && !expanded && "h-full min-h-0 flex-1",
-        expanded && "fixed inset-3 z-[70] rounded-xl border bg-background p-3 shadow-2xl md:inset-5",
-      )}
-    >
-      <div className="flex w-full shrink-0 flex-wrap items-center gap-2 bg-background">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const el = areaRef.current;
-              const start = el?.selectionStart ?? value.length;
-              const end = el?.selectionEnd ?? value.length;
-              const result = wrapHighlight(value, start, end);
-              applyWrap(result.text, result.selectionStart, result.selectionEnd);
-            }}
-          >
-            <Highlighter className="size-3.5" />
-            Highlight
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
-            {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
-            {uploading ? "Uploading…" : "Image"}
-          </Button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={() => setOpen(!expanded, true)}
-            aria-label={expanded ? "Shrink editor" : "Expand editor"}
-          >
-            {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-            {expanded ? "Shrink" : "Expand"}
-          </Button>
-          {expanded ? (
-            <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false, true)}>
-              Cancel
-            </Button>
-          ) : null}
-          {toolbarExtra}
-          {actions}
-        </div>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp"
-          className="hidden"
-          onChange={async (event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            if (!file) return;
-            setUploading(true);
-            try {
-              const uploaded = await api.uploadNoteImage(file);
-              const el = areaRef.current;
-              const start = el?.selectionStart ?? value.length;
-              const end = el?.selectionEnd ?? value.length;
-              const insert = uploaded.markdown;
-              const prefix = start > 0 && value[start - 1] !== "\n" ? "\n" : "";
-              const suffix = value[end] !== "\n" ? "\n" : "";
-              const chunk = `${prefix}${insert}${suffix}`;
-              const next = value.slice(0, start) + chunk + value.slice(end);
-              const cursor = start + chunk.length;
-              applyWrap(next, cursor, cursor);
-              toast.success("Image added to the note");
-            } catch (error) {
-              toast.error(error instanceof ApiError ? error.message : "Could not add that image");
-            } finally {
-              setUploading(false);
-            }
+  const toolbar = (
+    <div className="flex w-full shrink-0 flex-wrap items-center gap-2 bg-background">
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const el = areaRef.current;
+            const start = el?.selectionStart ?? value.length;
+            const end = el?.selectionEnd ?? value.length;
+            const result = wrapHighlight(value, start, end);
+            applyWrap(result.text, result.selectionStart, result.selectionEnd);
           }}
-        />
-      </div>
-      {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
-      <div
-        className={cn(
-          "flex min-h-0 flex-col gap-2",
-          (expanded || fill) && "min-h-0 flex-1 md:grid md:grid-cols-2",
-        )}
-      >
-        <Textarea
-          id={id}
-          ref={(node) => {
-            areaRef.current = node;
-            assignRef(textareaRef, node);
-          }}
-          value={value}
-          required={required}
-          rows={rows}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          className={cn(
-            "min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
-            (expanded || fill) && "h-auto min-h-0 flex-1",
-          )}
-        />
-        <div
-          className={cn(
-            "note-md composer-preview shrink-0 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm",
-            expanded || fill ? "max-h-none min-h-24 flex-1" : "max-h-36",
-          )}
-          aria-label="Highlight preview"
         >
-          {value.trim() ? (
-            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(value) }} />
-          ) : (
-            <p className="m-0 text-[11px] text-muted-foreground">
-              Highlight preview: selected words turn yellow here as <mark>mark</mark>.
-            </p>
-          )}
+          <Highlighter className="size-3.5" />
+          Highlight
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+          {uploading ? "Uploading…" : "Image"}
+        </Button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          onClick={() => setOpen(!expanded)}
+          aria-label={expanded ? "Shrink editor" : "Expand editor"}
+        >
+          {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+          {expanded ? "Shrink" : "Expand"}
+        </Button>
+        {expanded ? (
+          <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        ) : null}
+        {toolbarExtra}
+        {actions}
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp"
+        className="hidden"
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (!file) return;
+          setUploading(true);
+          try {
+            const uploaded = await api.uploadNoteImage(file);
+            const el = areaRef.current;
+            const start = el?.selectionStart ?? value.length;
+            const end = el?.selectionEnd ?? value.length;
+            const insert = uploaded.markdown;
+            const prefix = start > 0 && value[start - 1] !== "\n" ? "\n" : "";
+            const suffix = value[end] !== "\n" ? "\n" : "";
+            const chunk = `${prefix}${insert}${suffix}`;
+            const next = value.slice(0, start) + chunk + value.slice(end);
+            const cursor = start + chunk.length;
+            applyWrap(next, cursor, cursor);
+            toast.success("Image added to the note");
+          } catch (error) {
+            toast.error(error instanceof ApiError ? error.message : "Could not add that image");
+          } finally {
+            setUploading(false);
+          }
+        }}
+      />
+    </div>
+  );
+
+  const editor = (
+    <>
+      <Textarea
+        id={id}
+        ref={(node) => {
+          areaRef.current = node;
+          assignRef(textareaRef, node);
+        }}
+        value={value}
+        required={required}
+        rows={rows}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className={cn(
+          "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
+          (expanded || fill) && "h-auto min-h-0 flex-1",
+        )}
+      />
+      <div className="shrink-0 space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] font-medium text-muted-foreground">Highlight preview</p>
+          <Button type="button" size="xs" variant="ghost" onClick={() => setShowPreview((current) => !current)}>
+            {showPreview ? "Hide preview" : "Show preview"}
+          </Button>
         </div>
+        {showPreview ? (
+          <div
+            className="note-md composer-preview h-40 max-h-48 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm"
+            aria-label="Highlight preview"
+          >
+            {value.trim() ? (
+              <div dangerouslySetInnerHTML={{ __html: renderMarkdown(value) }} />
+            ) : (
+              <p className="m-0 text-[11px] text-muted-foreground">
+                Selected words turn yellow here as <mark>mark</mark>.
+              </p>
+            )}
+          </div>
+        ) : null}
       </div>
       <p className="shrink-0 text-[11px] text-muted-foreground">
         Highlight wraps the selection in <code>==yellow marks==</code>. Images stay in StoryKeep and unzip under
         StoryKeep/Additions/media.
-        {expanded ? " Esc or Shrink returns to the list." : null}
+        {expanded ? " Esc or Shrink returns to the card." : null}
       </p>
+    </>
+  );
+
+  const surface = (
+    <div
+      className={cn(
+        "flex min-h-0 flex-col gap-2",
+        fill && !expanded && "h-full min-h-0 flex-1",
+        expanded && "fixed inset-0 z-[80] h-[100dvh] w-[100vw] bg-background p-3 shadow-none",
+      )}
+    >
+      {toolbar}
+      {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
+      {editor}
     </div>
+  );
+
+  return (
+    <>
+      {expanded && mounted ? <div className="min-h-48 flex-1" aria-hidden /> : null}
+      {expanded && mounted ? createPortal(surface, document.body) : surface}
+    </>
   );
 }

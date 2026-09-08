@@ -164,6 +164,32 @@ export function LibraryApp({ user }: { user: User }) {
     setBackups(nextBackups);
   }, []);
 
+  const openArticle = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      const row = itemsRef.current.find((item) => item.id === id);
+      if (row?.is_read) return;
+      if (row) {
+        setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: true } : item)));
+      }
+      void api
+        .patchArticle(id, { is_read: true })
+        .then((next) => {
+          setArticle((current) =>
+            current && current.id === id ? { ...current, is_read: next.is_read, read_at: next.read_at } : current,
+          );
+          setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: next.is_read } : item)));
+          void loadNav();
+        })
+        .catch(() => {
+          if (row && !row.is_read) {
+            setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: false } : item)));
+          }
+        });
+    },
+    [loadNav],
+  );
+
   const fetchShelfPage = useCallback(async (offset: number) => {
     if (shelf.kind === "search") {
       const page = await api.search(shelf.q, { limit: LIST_PAGE, offset });
@@ -254,14 +280,14 @@ export function LibraryApp({ user }: { user: User }) {
       .saveUrl(save)
       .then((next) => {
         toast.success("Page extracted and snapshotted");
-        setSelectedId(next.id);
+        openArticle(next.id);
         setShelf({ kind: "saved" });
         void loadNav();
       })
       .catch((error) => {
         toast.error(error instanceof ApiError ? error.message : "Could not save that URL");
       });
-  }, [loadNav]);
+  }, [loadNav, openArticle]);
 
   const selectRelative = useCallback(
     (delta: number) => {
@@ -276,10 +302,10 @@ export function LibraryApp({ user }: { user: User }) {
           nextIndex = Math.min(list.length - 1, (index < 0 ? 0 : index) + 1);
         }
         const next = list[nextIndex];
-        if (next) setSelectedId(next.id);
+        if (next) openArticle(next.id);
       })();
     },
-    [loadMore],
+    [loadMore, openArticle],
   );
 
   useEffect(() => {
@@ -358,7 +384,9 @@ export function LibraryApp({ user }: { user: User }) {
     api
       .article(selectedId)
       .then((next) => {
-        if (!cancelled) setArticle(next);
+        if (cancelled) return;
+        const listed = itemsRef.current.find((item) => item.id === next.id);
+        setArticle(listed?.is_read && !next.is_read ? { ...next, is_read: true } : next);
       })
       .catch((error) => {
         if (!cancelled) toast.error(error instanceof ApiError ? error.message : "Could not open article");
@@ -745,7 +773,7 @@ export function LibraryApp({ user }: { user: User }) {
                         current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id],
                       );
                     }}
-                    onClick={() => setSelectedId(item.id)}
+                    onClick={() => openArticle(item.id)}
                   />
                 ))
               )}
@@ -857,12 +885,12 @@ export function LibraryApp({ user }: { user: User }) {
           await Promise.all([loadNav(), loadList()]);
         }}
         onSavedPage={async (articleId) => {
-          setSelectedId(articleId);
+          openArticle(articleId);
           setShelf({ kind: "saved" });
           await Promise.all([loadNav(), loadList()]);
         }}
         onCreatedNote={async (articleId, destination) => {
-          setSelectedId(articleId);
+          openArticle(articleId);
           setShelf({ kind: destination });
           setReaderFull(true);
           await loadNav();
@@ -904,8 +932,8 @@ export function LibraryApp({ user }: { user: User }) {
         onSavedNote={async (noteId) => {
           await loadNav();
           if (noteId && noteId !== article?.id) {
-            setSelectedId(noteId);
             setShelf({ kind: "additions" });
+            openArticle(noteId);
             return;
           }
           if (article?.id) {
@@ -1198,12 +1226,17 @@ function ArticleRow({
       </button>
       <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+          {!item.is_read ? (
+            <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+          ) : (
+            <span className="size-1.5 shrink-0" aria-hidden />
+          )}
           <span className="truncate">{item.feed_title || "Feed"}</span>
           <span>·</span>
           <span>{formatRelative(item.published_at)}</span>
           {item.is_saved ? <Bookmark className="size-3 ml-auto text-primary" /> : null}
         </div>
-        <p className={cn("mt-1 font-medium leading-snug", !item.is_read && "text-foreground")}>{item.title}</p>
+        <p className={cn("mt-1 leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>{item.title}</p>
         <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
       </button>
     </div>
