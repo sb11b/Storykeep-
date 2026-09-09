@@ -23,8 +23,11 @@ export function ShelfScroller({
   const rootRef = useRef<HTMLDivElement>(null);
   const onNearEndRef = useRef(onNearEnd);
   const hasMoreRef = useRef(hasMore);
-  onNearEndRef.current = onNearEnd;
-  hasMoreRef.current = hasMore;
+
+  useEffect(() => {
+    onNearEndRef.current = onNearEnd;
+    hasMoreRef.current = hasMore;
+  }, [onNearEnd, hasMore]);
 
   useEffect(() => {
     rootRef.current?.scrollTo({ top: 0 });

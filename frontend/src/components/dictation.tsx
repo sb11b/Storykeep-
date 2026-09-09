@@ -85,7 +85,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const committedRef = useRef("");
   const interimRef = useRef("");
-  const lastFinalRef = useRef("");
+  const lastRawFinalRef = useRef("");
   const listeningRef = useRef(false);
   const continuousRef = useRef(false);
   const stoppingRef = useRef(false);
@@ -109,7 +109,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     setListening(false);
     interimRef.current = "";
     committedRef.current = "";
-    lastFinalRef.current = "";
+    lastRawFinalRef.current = "";
     setInterim("");
     const audio = audioRef.current;
     audioRef.current = null;
@@ -140,7 +140,6 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     if (!piece) return;
     if (el) insertFinal(el, piece);
     committedRef.current = normalizeSpoken(`${committedRef.current} ${piece}`);
-    lastFinalRef.current = piece;
   }, []);
 
   const requestStop = useCallback(() => {
@@ -160,12 +159,14 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       }
       clearStopTimer();
       stopTimerRef.current = window.setTimeout(() => {
+        const pending = lastRawFinalRef.current || interimRef.current;
+        if (pending) commitFinal(pending);
         teardown();
       }, 4000);
       return;
     }
     teardown();
-  }, [teardown]);
+  }, [commitFinal, teardown]);
 
   const startFor = useCallback(
     (field: Field) => {
@@ -183,7 +184,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       field.focus();
       startingRef.current = true;
       committedRef.current = "";
-      lastFinalRef.current = "";
+      lastRawFinalRef.current = "";
       interimRef.current = "";
       setInterim("");
       void (async () => {
@@ -217,6 +218,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               if (msg.type === "partial") {
                 const text = msg.text || "";
                 if (msg.is_final || msg.speech_final) {
+                  lastRawFinalRef.current = text;
                   commitFinal(text);
                   return;
                 }
@@ -225,7 +227,10 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "done") {
-                if (msg.text) commitFinal(msg.text);
+                if (msg.text) {
+                  lastRawFinalRef.current = msg.text;
+                  commitFinal(msg.text);
+                }
                 teardown();
                 return;
               }

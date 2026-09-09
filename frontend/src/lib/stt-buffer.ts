@@ -125,17 +125,46 @@ function splitOnRepeatedShingles(text: string): string[] {
 }
 
 function splitGluedCapitals(line: string): string[] {
-  const out: string[] = [];
-  for (const part of line.split(/(?<=[.!?])\s+(?=[A-Z])/)) {
-    const glued = part.match(/^([\s\S]*?[a-z0-9,])\s+([A-Z][a-z][\s\S]+)$/);
-    if (glued && foldedWords(glued[2]).length >= 8) {
-      out.push(glued[1].trim());
-      out.push(...splitGluedCapitals(glued[2].trim()));
-    } else if (part.trim()) {
-      out.push(part.trim());
-    }
+  return line
+    .split(/(?<=[.!?])\s+(?=[A-Z])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function splitAtWord(text: string, wordIndex: number): [string, string] {
+  const offsets = foldWordOffsets(text);
+  if (wordIndex <= 0) return ["", text.trim()];
+  if (wordIndex >= offsets.length) return [text.trim(), ""];
+  const cut = offsets[wordIndex];
+  return [text.slice(0, cut).trim(), text.slice(cut).trim()];
+}
+
+/** Split when a later span of the chunk already restates committed corpus (e.g. glued replay). */
+function splitIfTailRestatesCorpus(chunk: string, corpus: string): string[] {
+  const words = foldedWords(chunk);
+  if (words.length < 6 || !foldSpeech(corpus)) return [chunk];
+  for (let start = 1; start < words.length; start += 1) {
+    if (words.slice(start).join(" ").length < 40) continue;
+    const [head, tail] = splitAtWord(chunk, start);
+    if (!tail || duplicateRatio(tail, corpus) < 0.55) continue;
+    const rest = splitIfTailRestatesCorpus(tail, corpus);
+    if (head && /[.!?]$/.test(head.trim())) return [head, ...rest];
+    return rest;
   }
-  return out;
+  return [chunk];
+}
+
+export function joinSpeechChunks(chunks: string[]): string {
+  if (!chunks.length) return "";
+  let out = chunks[0];
+  for (let i = 1; i < chunks.length; i += 1) {
+    const chunk = chunks[i];
+    const prev = chunks[i - 1];
+    const newline =
+      /^[-*]\s+/.test(chunk) || /^[-*]\s+/.test(prev) || prev.trim().endsWith(":") || chunk.trim().endsWith(":");
+    out = `${out}${newline ? "\n" : " "}${chunk}`;
+  }
+  return out.trim();
 }
 
 export function splitUtterance(text: string): string[] {
@@ -290,7 +319,8 @@ export function collapseRestatedSpeech(text: string): string {
   const headings: string[] = [];
   let corpus = "";
   for (const raw of splitUtterance(text)) {
-    const chunk = stripEmbeddedHeadings(promoteRightsBullet(raw, bullets), headings);
+    for (const piece of splitIfTailRestatesCorpus(raw, corpus)) {
+    const chunk = stripEmbeddedHeadings(promoteRightsBullet(piece, bullets), headings);
     const folded = foldSpeech(chunk);
     if (!folded) continue;
     if (isCommaRestatementOfBullets(chunk, bullets)) continue;
@@ -308,8 +338,9 @@ export function collapseRestatedSpeech(text: string): string {
     }
     kept.push(chunk);
     corpus = foldSpeech(kept.join(" "));
+    }
   }
-  return kept.join("\n").trim();
+  return joinSpeechChunks(kept);
 }
 
 function peelCommitted(incoming: string, committed: string): string {
@@ -354,7 +385,7 @@ export function newFinalSegment(incoming: string, committed: string, fieldValue 
     if (folded.length < 80 && (haveFold.includes(folded) || duplicateRatio(cleaned, haveFold) >= 0.9)) continue;
     extra.push(cleaned);
   }
-  const out = extra.join("\n").trim();
+  const out = joinSpeechChunks(extra);
   if (!out) return "";
   if (foldSpeech(out) === foldSpeech(have)) return "";
   if (alreadyInField(out, field)) return "";
