@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.services.chat import enforce_rate_limit, validate_payload, _rate_hits
+from app.services.chat import build_xai_messages, enforce_rate_limit, validate_payload, _rate_hits
 
 
 class ChatGuardTests(unittest.TestCase):
@@ -31,6 +31,20 @@ class ChatGuardTests(unittest.TestCase):
         self.assertLessEqual(len(excerpt), 12_000 + 80)
         self.assertIn("Title: Long", excerpt)
         self.assertTrue(excerpt.endswith("…"))
+
+    def test_general_mode_prompt_allows_outside_knowledge(self):
+        messages = build_xai_messages([{"role": "user", "content": "Explain GDP"}], None, include_article=False)
+        system = messages[0]["content"]
+        self.assertIn("general-knowledge mode", system)
+        self.assertIn("Do not refuse questions because no article is attached", system)
+        self.assertNotIn("Current article excerpt", system)
+
+    def test_article_mode_includes_excerpt(self):
+        excerpt = "Title: Demo\n\nBody text"
+        messages = build_xai_messages([{"role": "user", "content": "Summarize"}], excerpt, include_article=True)
+        system = messages[0]["content"]
+        self.assertIn("Current article excerpt", system)
+        self.assertIn("Body text", system)
 
     def test_rate_limit_caps_hourly_requests(self):
         from app.config import settings

@@ -23,15 +23,29 @@ MAX_MESSAGES = 24
 TOTAL_CHAR_CAP = 48_000
 MAX_TOKENS_CAP = 2048
 
-SYSTEM_PROMPT = """You are StoryKeep's reader assistant. You help Steve think about articles, papers, and notes in his personal archive.
+SYSTEM_PROMPT = """You are StoryKeep's assistant for Steve — a personal RSS reader and archive.
 
 Rules:
 - You cannot overwrite Obsidian originals (Steve's Surface Vault). Saves go to StoryKeep notes and the downloadable overlay pack (StoryKeep/Additions).
 - You cannot log into uCertify, scrape sites, or browse the live web.
 - You cannot run tools, search X, generate images, or speak.
 - If Steve wants a reply kept, tell him to use Add to notes. That creates a StoryKeep overlay addition (StoryKeep/Additions), never a vault overwrite.
-- Be concise and useful. Use the article excerpt when it is provided; do not invent quotes that are not in it.
-- If no article is attached, answer from general knowledge and the conversation, and say when you lack archive context.
+- Be concise, accurate, and useful.
+"""
+
+ARTICLE_MODE_APPEND = """
+Steve connected the current article. An excerpt is below.
+- Ground answers in that excerpt when the question is about this article.
+- Do not invent quotes or facts that are not supported by the excerpt.
+- If Steve asks something outside the excerpt, you may use general knowledge and say clearly what is from the article vs general knowledge.
+"""
+
+GENERAL_MODE_APPEND = """
+Steve disconnected the current article (or has no article open). You are in general-knowledge mode.
+- Answer freely from your training: explain concepts, summarize topics, compare ideas, help with study questions, and give practical information.
+- Do not refuse questions because no article is attached. Do not say you can only discuss the open article.
+- You are not browsing the live web; if something needs up-to-the-minute data, say so briefly and still share what you know.
+- If Steve later reconnects the article, you may use that excerpt when provided.
 """
 
 _rate_lock = threading.Lock()
@@ -106,20 +120,21 @@ def article_excerpt(article: Article, limit: int = ARTICLE_CHAR_CAP) -> str:
     return f"Title: {title}\n\n{body}"
 
 
-def build_xai_messages(history: list[dict[str, str]], excerpt: str | None) -> list[dict[str, str]]:
-    system = SYSTEM_PROMPT
-    if excerpt:
-        system += "\n\nCurrent article excerpt (truncated):\n" + excerpt
+def build_xai_messages(history: list[dict[str, str]], excerpt: str | None, *, include_article: bool) -> list[dict[str, str]]:
+    if include_article and excerpt:
+        system = SYSTEM_PROMPT + ARTICLE_MODE_APPEND + "\n\nCurrent article excerpt (truncated):\n" + excerpt
+    else:
+        system = SYSTEM_PROMPT + GENERAL_MODE_APPEND
     return [{"role": "system", "content": system}, *history]
 
 
-def stream_completion(history: list[dict[str, str]], excerpt: str | None) -> Iterator[str]:
+def stream_completion(history: list[dict[str, str]], excerpt: str | None, *, include_article: bool) -> Iterator[str]:
     key = require_key()
     model = (settings.xai_chat_model or "grok-4").strip()
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
     payload = {
         "model": model,
-        "messages": build_xai_messages(history, excerpt),
+        "messages": build_xai_messages(history, excerpt, include_article=include_article),
         "stream": True,
         "max_tokens": max_tokens,
         "temperature": 0.6,

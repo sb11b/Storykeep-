@@ -53,7 +53,8 @@ def chat(
     chat_service.require_key()
     chat_service.enforce_rate_limit(user.id)
     excerpt = None
-    if payload.include_article:
+    include_article = bool(payload.include_article)
+    if include_article:
         if not payload.article_id:
             raise HTTPException(status_code=400, detail="Open an article before attaching it to chat.")
         article = _owned_article(db, user, payload.article_id)
@@ -61,7 +62,7 @@ def chat(
 
     def events():
         try:
-            for piece in chat_service.stream_completion(history, excerpt):
+            for piece in chat_service.stream_completion(history, excerpt, include_article=include_article):
                 yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         except HTTPException as exc:

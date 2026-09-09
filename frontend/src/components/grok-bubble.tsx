@@ -117,7 +117,7 @@ export function GrokBubble({
   }, [messages, open]);
 
   useEffect(() => {
-    if (articleId) setIncludeArticle(true);
+    setIncludeArticle(Boolean(articleId));
   }, [articleId]);
 
   useEffect(() => {
@@ -251,25 +251,45 @@ export function GrokBubble({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium leading-none">Grok</p>
           <p className="truncate text-[11px] text-muted-foreground">
-            {includeArticle && articleTitle ? `Reading: ${articleTitle}` : "Archive assistant"}
+            {includeArticle && articleTitle
+              ? `Connected: ${articleTitle}`
+              : articleTitle
+                ? "General knowledge (article disconnected)"
+                : "General knowledge"}
           </p>
         </div>
         <Button size="icon-xs" variant="ghost" onClick={() => setOpen(false)} aria-label="Close chat">
           <X className="size-3.5" />
         </Button>
       </div>
-      <label className="flex items-center gap-2 border-b px-3 py-2 text-xs">
+      <label className="flex items-start gap-2 border-b px-3 py-2 text-xs leading-snug">
         <input
           type="checkbox"
+          className="mt-0.5"
           checked={includeArticle}
           disabled={!articleId}
           onChange={(event) => setIncludeArticle(event.target.checked)}
         />
-        Include current article
+        <span>
+          Connect to current article
+          {!articleId ? (
+            <span className="block text-[11px] text-muted-foreground">Open an article to connect Grok to it.</span>
+          ) : includeArticle ? (
+            <span className="block text-[11px] text-muted-foreground">Grok uses the article text for this chat.</span>
+          ) : (
+            <span className="block text-[11px] text-muted-foreground">
+              Unchecked — Grok answers from general knowledge, not the article.
+            </span>
+          )}
+        </span>
       </label>
       <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
         {messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Ask about this article or anything in your archive context.</p>
+          <p className="text-sm text-muted-foreground">
+            {includeArticle && articleId
+              ? "Ask about this article. Uncheck Connect above for general questions."
+              : "Ask anything — explanations, study help, comparisons, or general information."}
+          </p>
         ) : (
           messages.map((item) => (
             <div key={item.id} className={cn("rounded-lg px-2.5 py-2 text-sm", item.role === "user" ? "ml-6 bg-primary/10" : "mr-4 bg-muted/60")}>
@@ -320,7 +340,9 @@ export function GrokBubble({
           className="min-h-12 max-h-28 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={articleId ? "Ask about this article…" : "Ask Grok…"}
+          placeholder={
+            includeArticle && articleId ? "Ask about this article…" : "Ask Grok anything…"
+          }
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
