@@ -31,6 +31,7 @@ import {
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
+import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect } from "@/components/destination-controls";
 import { NoteComposer } from "@/components/note-composer";
 import { ShelfScroller } from "@/components/shelf-scroller";
@@ -294,6 +295,14 @@ export function LibraryApp({ user }: { user: User }) {
       toast.error(error instanceof ApiError ? error.message : "Could not load library");
     });
   }, [loadNav]);
+
+  useEffect(() => {
+    const articleId = new URLSearchParams(window.location.search).get("article");
+    if (articleId) {
+      window.history.replaceState({}, "", window.location.pathname);
+      setSelectedId(articleId);
+    }
+  }, []);
 
   useEffect(() => {
     const save = new URLSearchParams(window.location.search).get("save");
@@ -1606,6 +1615,7 @@ function Reader({
           >
             Download Obsidian pack
           </Button>
+          <ArticleShareMenu article={{ id: article.id, title: article.title, url: article.url }} />
           {article.source_kind === "file" ? (
             <a
               href={`/api/v1/articles/${article.id}/file`}
