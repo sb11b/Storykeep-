@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useDictation } from "@/components/dictation";
 import { ApiError, api } from "@/lib/api";
-import { prefixSelectedLines, renderMarkdown, wrapHighlight, wrapInline } from "@/lib/markdown";
+import { noteMarkdownHtml, prefixSelectedLines, wrapHighlight, wrapInline } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
@@ -284,7 +284,7 @@ export function NoteComposer({
             aria-label="Highlight preview"
           >
             {value.trim() ? (
-              <div dangerouslySetInnerHTML={{ __html: renderMarkdown(value) }} />
+              <div dangerouslySetInnerHTML={{ __html: noteMarkdownHtml(value) }} />
             ) : (
               <p className="m-0 text-[11px] text-muted-foreground">
                 Selected words turn yellow here as <mark>mark</mark>. Bold, italic, underline, and lists render here too.

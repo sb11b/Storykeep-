@@ -99,6 +99,11 @@ export function prefixSelectedLines(
   };
 }
 
+/** Render StoryKeep note markdown for reader, filed notes, and preview. */
+export function noteMarkdownHtml(source: string): string {
+  return renderMarkdown(source);
+}
+
 export function renderMarkdown(source: string): string {
   const lines = (source || "").replace(/\r\n/g, "\n").split("\n");
   const html: string[] = [];

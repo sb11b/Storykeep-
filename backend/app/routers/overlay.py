@@ -123,7 +123,7 @@ def edit_composed_note(
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
     try:
-        update_composed_note(db, user, article, payload.title, payload.markdown)
+        update_composed_note(db, user, article, payload.title, payload.markdown, payload.is_correction)
         dest = payload.destination or getattr(article, "destination", None) or "additions"
         set_composed_destination(db, user, article, dest, payload.is_correction)
     except ValueError as exc:

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prefixSelectedLines, renderMarkdown, wrapHighlight, wrapInline } from "./markdown";
+import { noteMarkdownHtml, prefixSelectedLines, renderMarkdown, wrapHighlight, wrapInline } from "./markdown";
 
 test("wrapHighlight wraps a textarea selection", () => {
   const result = wrapHighlight("The slope of y", 4, 9);
@@ -20,6 +20,15 @@ test("renderMarkdown turns ==text== into mark", () => {
   const html = renderMarkdown("Keep ==the slope== of y.");
   assert.match(html, /<mark>the slope<\/mark>/);
   assert.equal(html.includes("==the slope=="), false);
+});
+
+test("noteMarkdownHtml keeps composer formatting on correction notes", () => {
+  const html = noteMarkdownHtml("Intro\n- **bold** bullet\n==mark== and *italic* and <u>under</u>");
+  assert.match(html, /<strong>bold<\/strong>/);
+  assert.match(html, /<mark>mark<\/mark>/);
+  assert.match(html, /<em>italic<\/em>/);
+  assert.match(html, /<u>under<\/u>/);
+  assert.match(html, /<ul>/);
 });
 
 test("wrapInline and lists", () => {

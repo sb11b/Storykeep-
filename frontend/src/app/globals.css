@@ -145,6 +145,31 @@
 .article-body li {
   margin-bottom: 0.9em;
 }
+.article-body strong,
+.note-md strong,
+.composer-preview strong {
+  font-weight: 700;
+}
+.article-body em,
+.note-md em,
+.composer-preview em {
+  font-style: italic;
+}
+.article-body u,
+.note-md u,
+.composer-preview u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.article-body code,
+.note-md code,
+.composer-preview code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.92em;
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  padding: 0.1em 0.35em;
+}
 .article-body a {
   color: var(--primary);
   text-decoration: underline;

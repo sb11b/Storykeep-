@@ -249,7 +249,14 @@ def is_composed_note(article: Article) -> bool:
     return is_composed_guid(article.guid)
 
 
-def update_composed_note(db: Session, user: User, article: Article, title: str, markdown: str) -> Article:
+def update_composed_note(
+    db: Session,
+    user: User,
+    article: Article,
+    title: str,
+    markdown: str,
+    is_correction: bool | None = None,
+) -> Article:
     """Edit a StoryKeep-authored note. Imported vault files stay read-only."""
     if not is_composed_note(article):
         raise ValueError("Imported vault notes stay read-only. Save a correction or an addition instead.")
@@ -260,6 +267,8 @@ def update_composed_note(db: Session, user: User, article: Article, title: str, 
     if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
         raise ValueError("That note is larger than 1.5 MB.")
     now = datetime.now(timezone.utc)
+    if is_correction is not None:
+        article.is_correction = bool(is_correction)
     article.title = heading[:500]
     article.summary = body[:280]
     article.content_text = body

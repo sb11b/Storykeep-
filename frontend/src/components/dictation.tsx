@@ -91,8 +91,10 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const stoppingRef = useRef(false);
   const stopTimerRef = useRef<number | null>(null);
   const startingRef = useRef(false);
-  continuousRef.current = continuous;
-  listeningRef.current = listening;
+  useEffect(() => {
+    continuousRef.current = continuous;
+    listeningRef.current = listening;
+  }, [continuous, listening]);
 
   const clearStopTimer = () => {
     if (stopTimerRef.current != null) {

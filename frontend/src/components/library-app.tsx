@@ -45,7 +45,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
-import { renderMarkdown } from "@/lib/markdown";
+import { noteMarkdownHtml } from "@/lib/markdown";
 import { asDestination, type NoteDestination } from "@/lib/destinations";
 import { countWords, spokenTitle, wordIndexFromSelection, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
@@ -63,6 +63,21 @@ import { cn } from "@/lib/utils";
 
 function isStoryKeepNote(article: Article): boolean {
   return (article.guid || "").startsWith("storykeep-note:");
+}
+
+function composedNoteMarkdown(article: Article): string {
+  const fromArticle = (article.content_text || "").trim();
+  if (fromArticle) return fromArticle;
+  const fromOverlay = (article.overlay_additions?.[0]?.markdown || "").trim();
+  if (fromOverlay) return fromOverlay;
+  return "";
+}
+
+function composedNoteHtml(article: Article): string {
+  const markdown = composedNoteMarkdown(article);
+  if (markdown) return sanitizeHtml(noteMarkdownHtml(markdown));
+  if (article.content_html) return sanitizeHtml(article.content_html);
+  return "";
 }
 
 function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: Tag[]): string {
@@ -1327,18 +1342,12 @@ function Reader({
   );
   const bodyRef = useRef<HTMLDivElement>(null);
   const composed = isStoryKeepNote(article);
-  const html = composed
-    ? article.content_text
-      ? sanitizeHtml(renderMarkdown(article.content_text))
-      : article.content_html
-        ? sanitizeHtml(article.content_html)
-        : ""
-    : article.content_html
-      ? sanitizeHtml(article.content_html)
-      : "";
+  const html = composed ? composedNoteHtml(article) : article.content_html ? sanitizeHtml(article.content_html) : "";
   const titleSpoken = spokenTitle(article.title);
   const titleWordCount = countWords(titleSpoken);
-  const fallbackBody = article.content_text || stripHtml(article.summary) || "";
+  const fallbackBody = composed
+    ? composedNoteMarkdown(article)
+    : article.content_text || stripHtml(article.summary) || "";
   const [bodyHtml, setBodyHtml] = useState(html || "");
   const suggestions = tags
     .filter((item) => !article.tags.some((attached) => attached.id === item.id))
@@ -1366,11 +1375,14 @@ function Reader({
       return;
     }
     if (fallbackBody) {
-      setBodyHtml(applyHighlights(wrapPlainWords(fallbackBody, titleWordCount), marks));
+      const rendered = composed
+        ? sanitizeHtml(noteMarkdownHtml(fallbackBody))
+        : wrapPlainWords(fallbackBody, titleWordCount);
+      setBodyHtml(applyHighlights(wrapHtmlWords(rendered, titleWordCount), marks));
       return;
     }
     setBodyHtml("");
-  }, [article.id, fallbackBody, html, highlightKey, titleWordCount]);
+  }, [article.id, composed, fallbackBody, html, highlightKey, titleWordCount]);
 
   useEffect(() => {
     setActiveWord(null);
@@ -1381,7 +1393,7 @@ function Reader({
     setNoteCorrection(false);
     setTag("");
     setEditTitle(article.title);
-    setEditBody(article.content_text || "");
+    setEditBody(composedNoteMarkdown(article) || article.content_text || "");
     setEditDest(asDestination(article.destination, "additions"));
     setEditCorrection(Boolean(article.is_correction));
     setHighlightNote("");
@@ -1558,7 +1570,7 @@ function Reader({
         {bodyHtml ? (
           <div
             ref={bodyRef}
-            className="article-body"
+            className={cn("article-body", composed && "note-md")}
             dangerouslySetInnerHTML={{ __html: bodyHtml }}
             onMouseUp={() => {
               const next = selectionInRoot(bodyRef.current);
@@ -1733,7 +1745,10 @@ function Reader({
                       onChange={(next) => void onMoveNote(item.id, asDestination(item.destination, "notes"), next)}
                     />
                   </div>
-                  <div className="text-sm mt-1 note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.markdown) }} />
+                  <div
+                    className="text-sm mt-1 note-md"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(noteMarkdownHtml(item.markdown)) }}
+                  />
                   <p className="text-[11px] text-muted-foreground mt-1">{formatRelative(item.updated_at || item.created_at)}</p>
                 </li>
               ))}
