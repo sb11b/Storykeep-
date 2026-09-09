@@ -156,6 +156,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [backupOpen, setBackupOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedToRemove, setFeedToRemove] = useState<Feed | null>(null);
+  const [articleToDelete, setArticleToDelete] = useState<ArticleListItem | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -458,11 +459,44 @@ export function LibraryApp({ user }: { user: User }) {
   }
 
   async function patchSelected(body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred">>) {
-    if (!selectedId) return;
-    const next = await api.patchArticle(selectedId, body);
-    setArticle(next);
-    setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
-    void loadNav();
+    if (!selectedId || !article) return;
+    const previous = article;
+    const optimistic = { ...previous, ...body };
+    setArticle(optimistic);
+    setItems((current) => current.map((item) => (item.id === previous.id ? { ...item, ...body } : item)));
+    try {
+      const next = await api.patchArticle(selectedId, body);
+      setArticle(next);
+      setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+      if (body.is_saved !== undefined) {
+        toast.success(next.is_saved ? "Saved for life" : "Removed from saved");
+      } else if (body.is_starred !== undefined) {
+        toast.success(next.is_starred ? "Starred" : "Unstarred");
+      } else if (body.is_read !== undefined) {
+        toast.success(next.is_read ? "Marked read" : "Marked unread");
+      }
+      void loadNav();
+    } catch (error) {
+      setArticle(previous);
+      setItems((current) => current.map((item) => (item.id === previous.id ? { ...item, ...previous } : item)));
+      toast.error(error instanceof ApiError ? error.message : "Could not update that article");
+    }
+  }
+
+  async function deleteArticleItem(item: ArticleListItem) {
+    try {
+      await api.deleteArticle(item.id);
+      setItems((current) => current.filter((row) => row.id !== item.id));
+      setSelectedIds((current) => current.filter((id) => id !== item.id));
+      if (selectedId === item.id) {
+        setSelectedId(null);
+        setArticle(null);
+      }
+      toast.success("Removed from StoryKeep");
+      await Promise.all([loadNav(), loadList()]);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not delete that item");
+    }
   }
 
   async function onBulk(body: { is_read?: boolean; is_saved?: boolean }) {
@@ -805,6 +839,7 @@ export function LibraryApp({ user }: { user: User }) {
                         current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id],
                       );
                     }}
+                    onDelete={() => setArticleToDelete(item)}
                     onClick={() => openArticle(item.id)}
                   />
                 ))
@@ -938,6 +973,16 @@ export function LibraryApp({ user }: { user: User }) {
         onOpenChange={setTagsOpen}
         onChanged={async () => {
           await Promise.all([loadNav(), loadList()]);
+        }}
+      />
+      <DeleteArticleDialog
+        item={articleToDelete}
+        onOpenChange={(open) => {
+          if (!open) setArticleToDelete(null);
+        }}
+        onConfirm={async (item) => {
+          await deleteArticleItem(item);
+          setArticleToDelete(null);
         }}
       />
       <RemoveFeedDialog
@@ -1224,12 +1269,14 @@ function ArticleRow({
   active,
   selected,
   onToggleSelect,
+  onDelete,
   onClick,
 }: {
   item: ArticleListItem;
   active: boolean;
   selected: boolean;
   onToggleSelect: () => void;
+  onDelete: () => void;
   onClick: () => void;
 }) {
   return (
@@ -1271,6 +1318,20 @@ function ArticleRow({
         <p className={cn("mt-1 leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>{item.title}</p>
         <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
       </button>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        className="mt-0.5 shrink-0 text-muted-foreground hover:text-destructive"
+        aria-label={`Delete ${item.title}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onDelete();
+        }}
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
     </div>
   );
 }
@@ -1969,6 +2030,53 @@ function EmptyState({
       <p className="font-[family-name:var(--font-serif)] text-xl mt-3">{title}</p>
       <p className="text-sm text-muted-foreground mt-2 max-w-sm">{body}</p>
     </div>
+  );
+}
+
+function DeleteArticleDialog({
+  item,
+  onOpenChange,
+  onConfirm,
+}: {
+  item: ArticleListItem | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (item: ArticleListItem) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete this from StoryKeep?</DialogTitle>
+          <DialogDescription>
+            {item
+              ? `"${item.title}" will be removed from your library shelves. Steve's Surface Vault originals are never changed.`
+              : "This item will be removed from your library shelves."}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Keep
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={busy}
+            onClick={async () => {
+              if (!item) return;
+              setBusy(true);
+              try {
+                await onConfirm(item);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

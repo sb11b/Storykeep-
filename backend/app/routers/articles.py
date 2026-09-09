@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Annotation, Archive, Article, Feed, OverlayHighlight, Tag, User
+from app.models import Annotation, Archive, Article, Feed, OverlayAddition, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, archive_out, article_list_item, article_out, tag_out
 from app.services.destination import apply_shelf_filter
 from app.schemas import (
@@ -27,9 +28,10 @@ from app.schemas import (
     TagOut,
 )
 from app.services.overlay_search import article_search_match
-from app.services import changelog, extractor
+from app.services import archive as archive_service, changelog, extractor
 
 router = APIRouter(tags=["articles"])
+logger = logging.getLogger(__name__)
 
 SAVED_PAGES_URL = "https://storykeep.local/saved-pages"
 
@@ -198,7 +200,10 @@ def patch_article(
         article.is_saved = payload.is_saved
         article.saved_at = now if payload.is_saved else None
         if payload.is_saved:
-            archive_service.snapshot_article(db, article, "html")
+            try:
+                archive_service.snapshot_article(db, article, "html")
+            except Exception as exc:
+                logger.warning("snapshot failed for article %s: %s", article.id, exc)
     changelog.record(
         db,
         user.id,
@@ -210,6 +215,29 @@ def patch_article(
     db.add(article)
     db.commit()
     return _article_payload(db, user, article_id)
+
+
+@router.delete("/articles/{article_id}")
+def delete_article(
+    article_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, bool]:
+    article = _owned_article(db, user, article_id)
+    for row in db.scalars(select(OverlayAddition).where(OverlayAddition.article_id == article.id)):
+        changelog.record(db, user.id, "addition", row.id, "delete", {"article_id": str(article.id)})
+        db.delete(row)
+    changelog.record(
+        db,
+        user.id,
+        "article",
+        article.id,
+        "delete",
+        {"title": (article.title or "")[:120], "source_kind": getattr(article, "source_kind", None)},
+    )
+    db.delete(article)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/articles/{article_id}/extract", response_model=ArticleOut)
@@ -365,6 +393,8 @@ def archive_article(
 ) -> ArchiveOut:
     article = _owned_article(db, user, article_id)
     row = archive_service.snapshot_article(db, article, payload.type)
+    if row is None:
+        raise HTTPException(status_code=400, detail="Nothing stored yet to snapshot.")
     changelog.record(db, user.id, "archive", row.id, "upsert", {"article_id": str(article.id)})
     db.commit()
     db.refresh(row)

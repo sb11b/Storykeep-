@@ -263,6 +263,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  deleteArticle: (id: string) =>
+    request<{ ok: boolean }>(`/api/v1/articles/${id}`, {
+      method: "DELETE",
+    }),
   bulkArticles: (ids: string[], body: { is_read?: boolean; is_saved?: boolean }) =>
     request<{ updated: number }>("/api/v1/articles/bulk", {
       method: "POST",
