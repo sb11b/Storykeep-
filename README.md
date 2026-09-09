@@ -65,7 +65,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Postgres URL. Parsed into host/user/password; remote hosts use TLS without verifying Railway’s proxy cert. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`. |
+| `DATABASE_URL` | SQLAlchemy URL |
 | `SECRET_KEY` | JWT signing key |
 | `SEED_DEMO` | Create the demo user and sample feeds (`1` by default) |
 | `S3_BUCKET` | Optional backup destination |
