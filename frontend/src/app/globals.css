@@ -134,6 +134,15 @@
   font-size: 1.125rem;
   line-height: 1.75;
 }
+.article-body.article-size-sm {
+  font-size: 1rem;
+}
+.article-body.article-size-lg {
+  font-size: 1.3125rem;
+}
+.article-body.article-size-xl {
+  font-size: 1.5rem;
+}
 .article-body h1,
 .article-body h2,
 .article-body h3 {
@@ -169,6 +178,16 @@
   border-radius: 0.25rem;
   background: color-mix(in oklab, var(--muted) 70%, transparent);
   padding: 0.1em 0.35em;
+}
+.sk-size-sm,
+.note-md .sk-size-sm,
+.composer-preview .sk-size-sm {
+  font-size: 0.875em;
+}
+.sk-size-lg,
+.note-md .sk-size-lg,
+.composer-preview .sk-size-lg {
+  font-size: 1.125em;
 }
 .article-body a {
   color: var(--primary);

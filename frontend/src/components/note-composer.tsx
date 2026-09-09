@@ -8,6 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDictation } from "@/components/dictation";
 import { ApiError, api } from "@/lib/api";
 import { noteMarkdownHtml, prefixSelectedLines, wrapHighlight, wrapInline } from "@/lib/markdown";
+import {
+  applyComposerStyle,
+  COMPOSER_STYLE_OPTIONS,
+  detectComposerStyle,
+  type ComposerStyle,
+} from "@/lib/note-style";
 import { cn } from "@/lib/utils";
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
@@ -68,6 +74,7 @@ export function NoteComposer({
   const [uploading, setUploading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [composerStyle, setComposerStyle] = useState<ComposerStyle>("body");
 
   useEffect(() => {
     if (readComposeFull()) setOpen(true);
@@ -126,6 +133,22 @@ export function NoteComposer({
     const start = el?.selectionStart ?? value.length;
     const end = el?.selectionEnd ?? value.length;
     const result = maker(value, start, end);
+    applyWrap(result.text, result.selectionStart, result.selectionEnd);
+  }
+
+  function syncComposerStyle() {
+    const el = areaRef.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    setComposerStyle(detectComposerStyle(value, start, end));
+  }
+
+  function applyStyle(style: ComposerStyle) {
+    const el = areaRef.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    const result = applyComposerStyle(value, start, end, style);
+    setComposerStyle(style);
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
   }
 
@@ -203,6 +226,20 @@ export function NoteComposer({
             {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
             {uploading ? "Uploading…" : "Image"}
           </Button>
+          <select
+            aria-label="Text style"
+            value={composerStyle}
+            onMouseDown={(event) => event.preventDefault()}
+            onFocus={syncComposerStyle}
+            onChange={(event) => applyStyle(event.target.value as ComposerStyle)}
+            className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {COMPOSER_STYLE_OPTIONS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -266,6 +303,9 @@ export function NoteComposer({
         rows={rows}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
+        onSelect={syncComposerStyle}
+        onKeyUp={syncComposerStyle}
+        onClick={syncComposerStyle}
         className={cn(
           "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
           (expanded || fill) && "h-auto min-h-0 flex-1",
@@ -287,14 +327,15 @@ export function NoteComposer({
               <div dangerouslySetInnerHTML={{ __html: noteMarkdownHtml(value) }} />
             ) : (
               <p className="m-0 text-[11px] text-muted-foreground">
-                Selected words turn yellow here as <mark>mark</mark>. Bold, italic, underline, and lists render here too.
+                Selected words turn yellow here as <mark>mark</mark>. Bold, italic, underline, sizes, headings, and lists render here too.
               </p>
             )}
           </div>
         ) : null}
       </div>
       <p className="shrink-0 text-[11px] text-muted-foreground">
-        Highlight uses <code>==yellow==</code>. Underline uses <code>&lt;u&gt;</code> so marks stay yellow. Images stay in
+        Highlight uses <code>==yellow==</code>. Underline uses <code>&lt;u&gt;</code>. Use the Style menu for headings and
+        small/large text. Images stay in
         StoryKeep and unzip under StoryKeep/Additions/media.
         {expanded ? " Esc or Shrink returns to the card." : null}
       </p>

@@ -82,6 +82,18 @@ def _inline(value: str) -> str:
     )
     escaped = re.sub(r"==([^=]+)==", r"<mark>\1</mark>", escaped)
     escaped = re.sub(r"&lt;u&gt;([\s\S]*?)&lt;/u&gt;", r"<u>\1</u>", escaped, flags=re.I)
+    escaped = re.sub(
+        r'&lt;span class=&quot;sk-size-sm&quot;&gt;([\s\S]*?)&lt;/span&gt;',
+        r'<span class="sk-size-sm">\1</span>',
+        escaped,
+        flags=re.I,
+    )
+    escaped = re.sub(
+        r'&lt;span class=&quot;sk-size-lg&quot;&gt;([\s\S]*?)&lt;/span&gt;',
+        r'<span class="sk-size-lg">\1</span>',
+        escaped,
+        flags=re.I,
+    )
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
     escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", escaped)

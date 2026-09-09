@@ -38,6 +38,10 @@ class MarkdownHtmlTests(unittest.TestCase):
         self.assertIn("<li>one</li>", html)
         self.assertIn("<li>first</li>", html)
 
+    def test_inline_text_sizes(self):
+        html = markdown_to_html('Intro with <span class="sk-size-lg">big</span> word')
+        self.assertIn('<span class="sk-size-lg">big</span>', html)
+
 
 if __name__ == "__main__":
     unittest.main()

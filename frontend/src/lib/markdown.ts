@@ -13,7 +13,15 @@ function inline(value: string): string {
   const escaped = escapeHtml(value)
     .replace(MEDIA_IMAGE, '<img src="$2" alt="$1" />')
     .replace(/==([^=]+)==/g, "<mark>$1</mark>")
-    .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>");
+    .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>")
+    .replace(
+      /&lt;span class=&quot;sk-size-sm&quot;&gt;([\s\S]*?)&lt;\/span&gt;/gi,
+      '<span class="sk-size-sm">$1</span>',
+    )
+    .replace(
+      /&lt;span class=&quot;sk-size-lg&quot;&gt;([\s\S]*?)&lt;\/span&gt;/gi,
+      '<span class="sk-size-lg">$1</span>',
+    );
   return escaped
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")

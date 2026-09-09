@@ -46,6 +46,13 @@ import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { noteMarkdownHtml } from "@/lib/markdown";
+import {
+  ARTICLE_TEXT_SIZE_OPTIONS,
+  articleTextSizeClass,
+  readArticleTextSize,
+  writeArticleTextSize,
+  type ArticleTextSize,
+} from "@/lib/reader-text-size";
 import { asDestination, type NoteDestination } from "@/lib/destinations";
 import { countWords, spokenTitle, wordIndexFromSelection, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
 import type {
@@ -1349,6 +1356,7 @@ function Reader({
     ? composedNoteMarkdown(article)
     : article.content_text || stripHtml(article.summary) || "";
   const [bodyHtml, setBodyHtml] = useState(html || "");
+  const [articleTextSize, setArticleTextSize] = useState<ArticleTextSize>("md");
   const suggestions = tags
     .filter((item) => !article.tags.some((attached) => attached.id === item.id))
     .filter((item) => !tag.trim() || item.name.toLowerCase().includes(tag.trim().toLowerCase()))
@@ -1407,6 +1415,10 @@ function Reader({
       caretWordRef.current = null;
     };
   }, [caretWordRef, noteFocusRef]);
+
+  useEffect(() => {
+    setArticleTextSize(readArticleTextSize());
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -1567,10 +1579,31 @@ function Reader({
           </div>
         ) : null}
         <Separator className="my-6" />
+        <div className="mb-4 flex justify-end">
+          <label className="inline-flex items-center gap-2 text-[0.8rem] text-muted-foreground">
+            <span>Text size</span>
+            <select
+              aria-label="Article text size"
+              value={articleTextSize}
+              onChange={(event) => {
+                const next = event.target.value as ArticleTextSize;
+                setArticleTextSize(next);
+                writeArticleTextSize(next);
+              }}
+              className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {ARTICLE_TEXT_SIZE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         {bodyHtml ? (
           <div
             ref={bodyRef}
-            className={cn("article-body", composed && "note-md")}
+            className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
             dangerouslySetInnerHTML={{ __html: bodyHtml }}
             onMouseUp={() => {
               const next = selectionInRoot(bodyRef.current);
