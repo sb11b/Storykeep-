@@ -209,6 +209,18 @@
   padding: 0 0.1em;
   border-radius: 0.15em;
 }
+.sk-highlight-block {
+  display: block;
+  padding: 0.35em 0.45em;
+  margin: 0.75em 0;
+  border-radius: 0.35em;
+}
+.sk-highlight-block > :first-child {
+  margin-top: 0;
+}
+.sk-highlight-block > :last-child {
+  margin-bottom: 0;
+}
 .hl-yellow { background: oklch(0.93 0.12 95); }
 .hl-green { background: oklch(0.9 0.12 145); }
 .hl-blue { background: oklch(0.9 0.08 240); }

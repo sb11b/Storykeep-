@@ -18,6 +18,14 @@ class MarkdownHtmlTests(unittest.TestCase):
         self.assertIn("<mark>the slope</mark>", html)
         self.assertNotIn("==the slope==", html)
 
+    def test_multiline_highlight_block(self):
+        source = "==Line one\n\n• bullet one\n\n• bullet two=="
+        html = markdown_to_html(source)
+        self.assertIn('<mark class="sk-highlight-block">', html)
+        self.assertIn("Line one", html)
+        self.assertIn("<li>bullet one</li>", html)
+        self.assertNotIn("==", html)
+
     def test_rejects_remote_image_urls(self):
         html = markdown_to_html("![x](https://evil.example/x.png)")
         self.assertNotIn("<img", html)

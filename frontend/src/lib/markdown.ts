@@ -112,8 +112,29 @@ export function noteMarkdownHtml(source: string): string {
   return renderMarkdown(source);
 }
 
-export function renderMarkdown(source: string): string {
-  const lines = (source || "").replace(/\r\n/g, "\n").split("\n");
+type MarkdownSegment = { kind: "raw"; text: string } | { kind: "highlight"; text: string };
+
+function splitHighlightSegments(source: string): MarkdownSegment[] {
+  const segments: MarkdownSegment[] = [];
+  const re = /==([\s\S]+?)==/g;
+  let last = 0;
+  for (const match of source.matchAll(re)) {
+    const index = match.index ?? 0;
+    if (index > last) segments.push({ kind: "raw", text: source.slice(last, index) });
+    const inner = match[1] ?? "";
+    if (inner.includes("\n")) {
+      segments.push({ kind: "highlight", text: inner });
+    } else {
+      segments.push({ kind: "raw", text: match[0] ?? "" });
+    }
+    last = index + (match[0]?.length ?? 0);
+  }
+  if (last < source.length) segments.push({ kind: "raw", text: source.slice(last) });
+  return segments.length ? segments : [{ kind: "raw", text: source }];
+}
+
+function renderMarkdownBlocks(source: string): string {
+  const lines = source.split("\n");
   const html: string[] = [];
   let listKind: "ul" | "ol" | null = null;
   const flushList = () => {
@@ -153,7 +174,7 @@ export function renderMarkdown(source: string): string {
       html.push(`<li>${inline(numbered[1])}</li>`);
       continue;
     }
-    const bullet = line.match(/^[-*]\s+(.*)$/);
+    const bullet = line.match(/^[-*•]\s+(.*)$/);
     if (bullet) {
       openList("ul");
       html.push(`<li>${inline(bullet[1])}</li>`);
@@ -164,4 +185,17 @@ export function renderMarkdown(source: string): string {
   }
   flushList();
   return html.join("");
+}
+
+export function renderMarkdown(source: string): string {
+  const normalized = (source || "").replace(/\r\n/g, "\n");
+  return splitHighlightSegments(normalized)
+    .map((segment) => {
+      if (segment.kind === "highlight") {
+        const inner = renderMarkdownBlocks(segment.text);
+        return inner ? `<mark class="sk-highlight-block">${inner}</mark>` : "";
+      }
+      return renderMarkdownBlocks(segment.text);
+    })
+    .join("");
 }

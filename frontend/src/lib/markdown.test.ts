@@ -22,6 +22,24 @@ test("renderMarkdown turns ==text== into mark", () => {
   assert.equal(html.includes("==the slope=="), false);
 });
 
+test("renderMarkdown highlights multi-line selections", () => {
+  const source = [
+    "==As you interpret the results of your data, ask yourself the following key questions:",
+    "",
+    "• Do the data answer the question you asked originally? How?",
+    "",
+    "• Does the data help you protect yourself against any objections? How?",
+    "",
+    "• Are there any restriction on your conclusions, any angles that you didn’t consider?==",
+  ].join("\n");
+  const html = renderMarkdown(source);
+  assert.match(html, /<mark class="sk-highlight-block">/);
+  assert.match(html, /Do the data answer the question/);
+  assert.match(html, /restriction on your conclusions/);
+  assert.equal(html.includes("=="), false);
+  assert.match(html, /<li>Do the data answer/);
+});
+
 test("noteMarkdownHtml keeps composer formatting on correction notes", () => {
   const html = noteMarkdownHtml("Intro\n- **bold** bullet\n==mark== and *italic* and <u>under</u>");
   assert.match(html, /<strong>bold<\/strong>/);

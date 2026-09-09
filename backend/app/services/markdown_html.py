@@ -6,6 +6,27 @@ import re
 
 def markdown_to_html(source: str) -> str:
     text = (source or "").replace("\r\n", "\n")
+    if not text.strip():
+        return ""
+    parts: list[str] = []
+    last = 0
+    for match in re.finditer(r"==([\s\S]+?)==", text):
+        if match.start() > last:
+            parts.append(_render_markdown_blocks(text[last : match.start()]))
+        inner = match.group(1)
+        if "\n" in inner:
+            rendered = _render_markdown_blocks(inner)
+            if rendered:
+                parts.append(f'<mark class="sk-highlight-block">{rendered}</mark>')
+        else:
+            parts.append(_render_markdown_blocks(match.group(0)))
+        last = match.end()
+    if last < len(text):
+        parts.append(_render_markdown_blocks(text[last:]))
+    return "".join(parts) or f"<p>{_inline(text)}</p>"
+
+
+def _render_markdown_blocks(source: str) -> str:
     blocks: list[str] = []
     list_kind: str | None = None
 
@@ -22,7 +43,7 @@ def markdown_to_html(source: str) -> str:
             blocks.append(f"<{kind}>")
             list_kind = kind
 
-    for raw in text.split("\n"):
+    for raw in source.split("\n"):
         line = raw.rstrip()
         if not line.strip():
             flush_list()
@@ -42,7 +63,7 @@ def markdown_to_html(source: str) -> str:
             open_list("ol")
             blocks.append(f"<li>{_inline(numbered.group(1))}</li>")
             continue
-        bullet = re.match(r"^[-*]\s+(.*)$", line)
+        bullet = re.match(r"^[-*•]\s+(.*)$", line)
         if bullet:
             open_list("ul")
             blocks.append(f"<li>{_inline(bullet.group(1))}</li>")
@@ -50,7 +71,7 @@ def markdown_to_html(source: str) -> str:
         flush_list()
         blocks.append(f"<p>{_inline(line)}</p>")
     flush_list()
-    return "".join(blocks) or f"<p>{_inline(text)}</p>"
+    return "".join(blocks)
 
 
 IMAGE_SRC = re.compile(r"^/api/v1/media/[0-9a-fA-F-]{36}$")
