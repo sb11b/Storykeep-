@@ -71,6 +71,7 @@ export function NoteComposer({
   const dictation = useDictation();
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const selectionRef = useRef({ start: 0, end: 0 });
   const [uploading, setUploading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -136,17 +137,20 @@ export function NoteComposer({
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
   }
 
-  function syncComposerStyle() {
+  function captureSelection() {
     const el = areaRef.current;
-    const start = el?.selectionStart ?? value.length;
-    const end = el?.selectionEnd ?? value.length;
+    if (!el) return;
+    selectionRef.current = { start: el.selectionStart, end: el.selectionEnd };
+  }
+
+  function syncComposerStyle() {
+    captureSelection();
+    const { start, end } = selectionRef.current;
     setComposerStyle(detectComposerStyle(value, start, end));
   }
 
   function applyStyle(style: ComposerStyle) {
-    const el = areaRef.current;
-    const start = el?.selectionStart ?? value.length;
-    const end = el?.selectionEnd ?? value.length;
+    const { start, end } = selectionRef.current;
     const result = applyComposerStyle(value, start, end, style);
     setComposerStyle(style);
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
@@ -229,7 +233,7 @@ export function NoteComposer({
           <select
             aria-label="Text style"
             value={composerStyle}
-            onMouseDown={(event) => event.preventDefault()}
+            onPointerDown={captureSelection}
             onFocus={syncComposerStyle}
             onChange={(event) => applyStyle(event.target.value as ComposerStyle)}
             className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -306,6 +310,7 @@ export function NoteComposer({
         onSelect={syncComposerStyle}
         onKeyUp={syncComposerStyle}
         onClick={syncComposerStyle}
+        onFocus={captureSelection}
         className={cn(
           "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
           (expanded || fill) && "h-auto min-h-0 flex-1",

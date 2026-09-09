@@ -26,6 +26,13 @@ test("applyComposerStyle routes headings and inline sizes", () => {
   assert.match(sized.text, /sk-size-lg/);
 });
 
+test("applyComposerStyle body clears headings and inline sizes", () => {
+  const fromHeading = applyComposerStyle("## Section", 3, 3, "body");
+  assert.equal(fromHeading.text, "Section");
+  const fromLarge = applyComposerStyle('Keep <span class="sk-size-lg">big</span> here', 0, 47, "body");
+  assert.equal(fromLarge.text, "Keep big here");
+});
+
 test("detectComposerStyle reads headings and inline sizes", () => {
   assert.equal(detectComposerStyle("## Section", 3, 3), "h2");
   assert.equal(detectComposerStyle('<span class="sk-size-sm">tiny</span>', 10, 10), "small");

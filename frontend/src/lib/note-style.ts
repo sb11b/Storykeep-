@@ -100,6 +100,10 @@ export function applyComposerStyle(source: string, start: number, end: number, s
   if (style === "small" || style === "large" || style === "normal") {
     return applyInlineSize(source, start, end, style);
   }
+  if (style === "body") {
+    const block = applyBlockStyle(source, start, end, "body");
+    return applyInlineSize(block.text, block.selectionStart, block.selectionEnd, "normal");
+  }
   return applyBlockStyle(source, start, end, style);
 }
 
