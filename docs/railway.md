@@ -28,7 +28,9 @@ On the Storykeep service, add a variable that points at the database:
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 ```
 
-Railway’s URL looks like `postgresql://…`. Storykeep rewrites that to SQLAlchemy’s `postgresql+psycopg2://` form automatically.
+Railway’s URL looks like `postgresql://…`. Storykeep parses host, port, user, password, and database from that URL and connects with those fields. It does **not** pass the raw URL (or its `sslmode` query) into the engine.
+
+The public Postgres proxy uses a cert that is not in the default CA store. Remote connections encrypt with `sslmode=require` (no CA verify). You do **not** need `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS checks for the whole process and is a last-resort workaround only.
 
 ## 3. Variables
 
@@ -40,6 +42,7 @@ Railway’s URL looks like `postgresql://…`. Storykeep rewrites that to SQLAlc
 | `S3_BUCKET` | No | Optional off-site backup target |
 | `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
+| `CHAT_REQUESTS_PER_HOUR` | No | Grok chat cap per user, default `120` |
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 
