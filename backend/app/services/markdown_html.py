@@ -101,7 +101,7 @@ def _inline(value: str) -> str:
         lambda match: f'<img src="{match.group(2)}" alt="{html.escape(match.group(1))}" />',
         escaped,
     )
-    escaped = re.sub(r"==([^=]+)==", r"<mark>\1</mark>", escaped)
+    escaped = re.sub(r"==([\s\S]+?)==", r"<mark>\1</mark>", escaped)
     escaped = re.sub(r"&lt;u&gt;([\s\S]*?)&lt;/u&gt;", r"<u>\1</u>", escaped, flags=re.I)
     escaped = re.sub(
         r'&lt;span class=&quot;sk-size-sm&quot;&gt;([\s\S]*?)&lt;/span&gt;',

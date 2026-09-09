@@ -12,7 +12,7 @@ const MEDIA_LINE = /^!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)$/;
 function inline(value: string): string {
   const escaped = escapeHtml(value)
     .replace(MEDIA_IMAGE, '<img src="$2" alt="$1" />')
-    .replace(/==([^=]+)==/g, "<mark>$1</mark>")
+    .replace(/==([\s\S]+?)==/g, "<mark>$1</mark>")
     .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>")
     .replace(
       /&lt;span class=&quot;sk-size-sm&quot;&gt;([\s\S]*?)&lt;\/span&gt;/gi,

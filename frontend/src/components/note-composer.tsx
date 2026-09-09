@@ -226,7 +226,17 @@ export function NoteComposer({
             <ListOrdered className="size-3.5" />
             Outline
           </Button>
-          <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={uploading}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              captureSelection();
+            }}
+            onClick={() => fileRef.current?.click()}
+          >
             {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
             {uploading ? "Uploading…" : "Image"}
           </Button>
@@ -280,14 +290,15 @@ export function NoteComposer({
             try {
               const uploaded = await api.uploadNoteImage(file);
               const el = areaRef.current;
-              const start = el?.selectionStart ?? value.length;
-              const end = el?.selectionEnd ?? value.length;
+              const { start, end } = selectionRef.current;
+              const insertAt = el && start !== end ? start : el?.selectionStart ?? value.length;
+              const insertEnd = el && start !== end ? end : el?.selectionEnd ?? value.length;
               const insert = uploaded.markdown;
-              const prefix = start > 0 && value[start - 1] !== "\n" ? "\n" : "";
-              const suffix = value[end] !== "\n" ? "\n" : "";
+              const prefix = insertAt > 0 && value[insertAt - 1] !== "\n" ? "\n" : "";
+              const suffix = value[insertEnd] !== "\n" ? "\n" : "";
               const chunk = `${prefix}${insert}${suffix}`;
-              const next = value.slice(0, start) + chunk + value.slice(end);
-              const cursor = start + chunk.length;
+              const next = value.slice(0, insertAt) + chunk + value.slice(insertEnd);
+              const cursor = insertAt + chunk.length;
               applyWrap(next, cursor, cursor);
               toast.success("Image added to the note");
             } catch (error) {

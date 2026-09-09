@@ -123,10 +123,20 @@ def edit_composed_note(
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
     try:
-        update_composed_note(db, user, article, payload.title, payload.markdown, payload.is_correction)
+        update_composed_note(
+            db,
+            user,
+            article,
+            payload.title,
+            payload.markdown,
+            payload.is_correction,
+            commit=False,
+        )
         dest = payload.destination or getattr(article, "destination", None) or "additions"
-        set_composed_destination(db, user, article, dest, payload.is_correction)
+        set_composed_destination(db, user, article, dest, payload.is_correction, commit=False)
+        db.commit()
     except ValueError as exc:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _article_payload(db, user, article.id)
 

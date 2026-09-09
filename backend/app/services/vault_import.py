@@ -256,6 +256,8 @@ def update_composed_note(
     title: str,
     markdown: str,
     is_correction: bool | None = None,
+    *,
+    commit: bool = True,
 ) -> Article:
     """Edit a StoryKeep-authored note. Imported vault files stay read-only."""
     if not is_composed_note(article):
@@ -297,7 +299,10 @@ def update_composed_note(
         db.flush()
     changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "edited": True})
     changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "edited": True})
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return article
 
 
@@ -307,6 +312,8 @@ def set_composed_destination(
     article: Article,
     destination: str,
     is_correction: bool | None = None,
+    *,
+    commit: bool = True,
 ) -> Article:
     """Move a StoryKeep note to another shelf. Does not duplicate or write vault originals."""
     if not is_composed_note(article):
@@ -335,6 +342,9 @@ def set_composed_destination(
         "upsert",
         {"destination": dest, "is_correction": article.is_correction, "moved": True},
     )
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return article
 

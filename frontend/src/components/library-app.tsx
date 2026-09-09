@@ -74,6 +74,11 @@ function isStoryKeepNote(article: Article): boolean {
   return (article.guid || "").startsWith("storykeep-note:");
 }
 
+function readerActionError(error: unknown, fallback: string): never {
+  toast.error(error instanceof ApiError ? error.message : fallback);
+  throw error;
+}
+
 function composedNoteMarkdown(article: Article): string {
   const fromArticle = (article.content_text || "").trim();
   if (fromArticle) return fromArticle;
@@ -867,71 +872,124 @@ export function LibraryApp({ user }: { user: User }) {
                 onToggleSaved={() => void patchSelected({ is_saved: !article.is_saved })}
                 onToggleStar={() => void patchSelected({ is_starred: !article.is_starred })}
                 onExtract={async () => {
-                  const next = await api.extract(article.id);
-                  setArticle(next);
-                  toast.success("Full text refreshed");
+                  const id = article.id;
+                  try {
+                    const next = await api.extract(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    toast.success("Full text refreshed");
+                  } catch (error) {
+                    readerActionError(error, "Could not refresh the article text");
+                  }
                 }}
                 onArchive={async () => {
-                  await api.archive(article.id);
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  toast.success("Snapshot stored in the archive");
-                  void loadNav();
+                  const id = article.id;
+                  try {
+                    await api.archive(id);
+                    const next = await api.article(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    toast.success("Snapshot stored in the archive");
+                    void loadNav();
+                  } catch (error) {
+                    readerActionError(error, "Could not store a snapshot");
+                  }
                 }}
                 onTag={async (name) => {
-                  await api.attachTag(article.id, name);
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  void loadNav();
+                  const id = article.id;
+                  try {
+                    await api.attachTag(id, name);
+                    const next = await api.article(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    void loadNav();
+                  } catch (error) {
+                    readerActionError(error, "Could not add that tag");
+                  }
                 }}
                 onNote={async (title, markdown, destination, isCorrection) => {
-                  await api.addAddition(article.id, title, markdown, destination, isCorrection);
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  toast.success("Note saved on that shelf. The vault original was not touched.");
-                  void Promise.all([loadNav(), loadList()]);
+                  const id = article.id;
+                  try {
+                    await api.addAddition(id, title, markdown, destination, isCorrection);
+                    const next = await api.article(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    toast.success("Note saved on that shelf. The vault original was not touched.");
+                    void Promise.all([loadNav(), loadList()]);
+                  } catch (error) {
+                    readerActionError(error, "Could not save that note");
+                  }
                 }}
                 onHighlight={async (payload) => {
-                  await api.addNote(article.id, payload.note || payload.quote, {
-                    kind: "highlight",
-                    quote: payload.quote,
-                    color: payload.color,
-                    prefix: payload.prefix,
-                    suffix: payload.suffix,
-                  });
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
-                  toast.success("Highlight saved in the overlay pack");
-                  void Promise.all([loadNav(), loadList()]);
+                  const id = article.id;
+                  try {
+                    await api.addNote(id, payload.note || payload.quote, {
+                      kind: "highlight",
+                      quote: payload.quote,
+                      color: payload.color,
+                      prefix: payload.prefix,
+                      suffix: payload.suffix,
+                    });
+                    const next = await api.article(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                    toast.success("Highlight saved in the overlay pack");
+                    void Promise.all([loadNav(), loadList()]);
+                  } catch (error) {
+                    readerActionError(error, "Could not save that highlight");
+                  }
                 }}
                 onMoveNote={async (noteId, destination, isCorrection) => {
-                  const next = await api.setNoteDestination(noteId, destination, isCorrection);
-                  if (noteId === article.id) {
-                    setArticle(next);
-                  } else {
-                    const parent = await api.article(article.id);
-                    setArticle(parent);
+                  const id = article.id;
+                  try {
+                    const next = await api.setNoteDestination(noteId, destination, isCorrection);
+                    if (selectedIdRef.current !== id) return;
+                    if (noteId === id) {
+                      setArticle(next);
+                    } else {
+                      const parent = await api.article(id);
+                      if (selectedIdRef.current !== id) return;
+                      setArticle(parent);
+                    }
+                    toast.success("Note moved. It is not duplicated.");
+                    void Promise.all([loadNav(), loadList()]);
+                  } catch (error) {
+                    readerActionError(error, "Could not move that note");
                   }
-                  toast.success("Note moved. It is not duplicated.");
-                  void Promise.all([loadNav(), loadList()]);
                 }}
                 onEditComposed={async (title, markdown, destination, isCorrection) => {
-                  const next = await api.updateComposedNote(article.id, title, markdown, destination, isCorrection);
-                  setArticle(next);
-                  setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
-                  toast.success("StoryKeep note updated");
-                  void Promise.all([loadNav(), loadList()]);
+                  const id = article.id;
+                  try {
+                    const next = await api.updateComposedNote(id, title, markdown, destination, isCorrection);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                    toast.success("StoryKeep note updated");
+                    void Promise.all([loadNav(), loadList()]);
+                  } catch (error) {
+                    readerActionError(error, "Could not update that note");
+                  }
                 }}
                 onDownloadPack={async () => {
-                  await api.downloadObsidianPack();
-                  toast.success("Obsidian pack downloaded");
+                  try {
+                    await api.downloadObsidianPack();
+                    toast.success("Obsidian pack downloaded");
+                  } catch (error) {
+                    readerActionError(error, "Could not download the Obsidian pack");
+                  }
                 }}
                 onDeleteAnnotation={async (id) => {
-                  await api.deleteNote(id);
-                  const next = await api.article(article.id);
-                  setArticle(next);
-                  void Promise.all([loadNav(), loadList()]);
+                  const articleId = article.id;
+                  try {
+                    await api.deleteNote(id);
+                    const next = await api.article(articleId);
+                    if (selectedIdRef.current !== articleId) return;
+                    setArticle(next);
+                    void Promise.all([loadNav(), loadList()]);
+                  } catch (error) {
+                    readerActionError(error, "Could not remove that highlight");
+                  }
                 }}
               />
             ) : (
@@ -1460,9 +1518,9 @@ function Reader({
     }
     if (fallbackBody) {
       const rendered = composed
-        ? sanitizeHtml(noteMarkdownHtml(fallbackBody))
-        : wrapPlainWords(fallbackBody, titleWordCount);
-      setBodyHtml(applyHighlights(wrapHtmlWords(rendered, titleWordCount), marks));
+        ? applyHighlights(wrapHtmlWords(sanitizeHtml(noteMarkdownHtml(fallbackBody)), titleWordCount), marks)
+        : applyHighlights(wrapPlainWords(fallbackBody, titleWordCount), marks);
+      setBodyHtml(rendered);
       return;
     }
     setBodyHtml("");
@@ -1485,7 +1543,12 @@ function Reader({
     setFindIndex(0);
     setFindCount(0);
     findMarksRef.current = [];
-  }, [article.id, article.content_text, article.destination, article.is_correction, article.title]);
+  }, [article.id]);
+
+  useEffect(() => {
+    setEditDest(asDestination(article.destination, "additions"));
+    setEditCorrection(Boolean(article.is_correction));
+  }, [article.destination, article.is_correction]);
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -1513,7 +1576,7 @@ function Reader({
       const target = event.target as HTMLElement | null;
       const typing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        if (!bodyHtml) return;
+        if (typing || !bodyHtml) return;
         event.preventDefault();
         findRef.current?.focus();
         findRef.current?.select();
@@ -1571,6 +1634,19 @@ function Reader({
       window.localStorage.setItem(key, String(el.scrollTop));
     };
   }, [article.id]);
+
+  async function moveComposedShelf(nextDest: NoteDestination, nextCorrection: boolean) {
+    const prevDest = editDest;
+    const prevCorrection = editCorrection;
+    setEditDest(nextDest);
+    setEditCorrection(nextCorrection);
+    try {
+      await onMoveNote(article.id, nextDest, nextCorrection);
+    } catch {
+      setEditDest(prevDest);
+      setEditCorrection(prevCorrection);
+    }
+  }
 
   useEffect(() => {
     const root = articleRef.current;
@@ -1916,15 +1992,13 @@ function Reader({
                     <DestinationSelect
                       value={editDest}
                       onChange={(next) => {
-                        setEditDest(next);
-                        void onMoveNote(article.id, next, editCorrection);
+                        void moveComposedShelf(next, editCorrection);
                       }}
                     />
                     <CorrectionCheck
                       checked={editCorrection}
                       onChange={(next) => {
-                        setEditCorrection(next);
-                        void onMoveNote(article.id, editDest, next);
+                        void moveComposedShelf(editDest, next);
                       }}
                     />
                   </>
@@ -1993,11 +2067,15 @@ function Reader({
                     prefix: picker.prefix,
                     suffix: picker.suffix,
                     note: highlightNote.trim() || undefined,
-                  }).finally(() => {
-                    setPicker(null);
-                    setHighlightNote("");
-                    window.getSelection()?.removeAllRanges();
-                  });
+                  })
+                    .then(() => {
+                      setPicker(null);
+                      setHighlightNote("");
+                      window.getSelection()?.removeAllRanges();
+                    })
+                    .catch(() => {
+                      /* parent shows the error toast */
+                    });
                 }}
               />
             ))}

@@ -11,7 +11,7 @@ export function countWords(text: string | null | undefined): number {
 export function visibleSpeechText(text: string | null | undefined): string {
   return (text || "")
     .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
-    .replace(/==([^=]+)==/g, "$1")
+    .replace(/==([\s\S]+?)==/g, "$1")
     .replace(/<img\b[^>]*>/gi, " ");
 }
 

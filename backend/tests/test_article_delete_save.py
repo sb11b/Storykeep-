@@ -61,7 +61,9 @@ class ArticleDeleteSaveTests(unittest.TestCase):
         )
         db = MagicMock()
         db.scalar.return_value = article
-        db.scalars.return_value = iter([addition])
+        child_rows = MagicMock()
+        child_rows.all.return_value = []
+        db.scalars.side_effect = [child_rows, iter([addition])]
 
         result = delete_article(article.id, db=db, user=user)
 

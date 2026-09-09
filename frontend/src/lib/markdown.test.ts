@@ -22,6 +22,11 @@ test("renderMarkdown turns ==text== into mark", () => {
   assert.equal(html.includes("==the slope=="), false);
 });
 
+test("renderMarkdown highlights text that contains equals signs", () => {
+  const html = renderMarkdown("Keep ==a=b== in the formula.");
+  assert.match(html, /<mark>a=b<\/mark>/);
+});
+
 test("renderMarkdown highlights multi-line selections", () => {
   const source = [
     "==As you interpret the results of your data, ask yourself the following key questions:",

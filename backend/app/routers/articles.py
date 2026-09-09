@@ -224,6 +224,23 @@ def delete_article(
     user: User = Depends(get_current_user),
 ) -> dict[str, bool]:
     article = _owned_article(db, user, article_id)
+    child_ids = db.scalars(select(Article.id).where(Article.parent_id == article.id)).all()
+    for child_id in child_ids:
+        child = db.get(Article, child_id)
+        if not child:
+            continue
+        for row in db.scalars(select(OverlayAddition).where(OverlayAddition.article_id == child.id)):
+            changelog.record(db, user.id, "addition", row.id, "delete", {"article_id": str(child.id)})
+            db.delete(row)
+        changelog.record(
+            db,
+            user.id,
+            "article",
+            child.id,
+            "delete",
+            {"title": (child.title or "")[:120], "parent_id": str(article.id)},
+        )
+        db.delete(child)
     for row in db.scalars(select(OverlayAddition).where(OverlayAddition.article_id == article.id)):
         changelog.record(db, user.id, "addition", row.id, "delete", {"article_id": str(article.id)})
         db.delete(row)

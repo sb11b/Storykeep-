@@ -215,15 +215,18 @@ def delete_note(note_id: UUID, db: Session = Depends(get_db), user: User = Depen
     if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")
     if note.kind == "highlight" and note.quote:
-        extras = db.scalars(
-            select(OverlayHighlight).where(
+        overlay = db.scalar(
+            select(OverlayHighlight)
+            .where(
                 OverlayHighlight.user_id == user.id,
                 OverlayHighlight.article_id == note.article_id,
                 OverlayHighlight.quote == note.quote,
             )
-        ).all()
-        for row in extras:
-            db.delete(row)
+            .order_by(OverlayHighlight.created_at.desc())
+            .limit(1)
+        )
+        if overlay:
+            db.delete(overlay)
     changelog.record(db, user.id, "annotation", note.id, "delete")
     db.delete(note)
     db.commit()
