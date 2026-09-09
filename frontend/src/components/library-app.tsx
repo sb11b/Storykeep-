@@ -1385,7 +1385,7 @@ function Reader({
     setEditDest(asDestination(article.destination, "additions"));
     setEditCorrection(Boolean(article.is_correction));
     setHighlightNote("");
-  }, [article.id]);
+  }, [article.id, article.content_text, article.destination, article.is_correction, article.title]);
 
   useEffect(() => {
     noteFocusRef.current = () => noteRef.current?.focus();
