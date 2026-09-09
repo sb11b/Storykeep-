@@ -44,6 +44,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
+import { clearFindMarks, findMarksInArticle, focusFindMark } from "@/lib/article-find";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { noteMarkdownHtml } from "@/lib/markdown";
 import {
@@ -1337,12 +1338,17 @@ function Reader({
   const [editDest, setEditDest] = useState<NoteDestination>(asDestination(article.destination, "additions"));
   const [editCorrection, setEditCorrection] = useState(Boolean(article.is_correction));
   const [highlightNote, setHighlightNote] = useState("");
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const [findCount, setFindCount] = useState(0);
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const articleRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const findRef = useRef<HTMLInputElement>(null);
+  const findMarksRef = useRef<HTMLElement[]>([]);
   const clickedWordRef = useRef<number | null>(null);
   const [picker, setPicker] = useState<{ quote: string; prefix: string; suffix: string; top: number; left: number } | null>(
     null,
@@ -1405,7 +1411,64 @@ function Reader({
     setEditDest(asDestination(article.destination, "additions"));
     setEditCorrection(Boolean(article.is_correction));
     setHighlightNote("");
+    setFindQuery("");
+    setFindIndex(0);
+    setFindCount(0);
+    findMarksRef.current = [];
   }, [article.id, article.content_text, article.destination, article.is_correction, article.title]);
+
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root) return;
+    root.innerHTML = bodyHtml;
+    if (!findQuery.trim()) {
+      findMarksRef.current = [];
+      setFindCount(0);
+      return;
+    }
+    findMarksRef.current = findMarksInArticle(root, findQuery);
+    setFindCount(findMarksRef.current.length);
+    if (findMarksRef.current.length) {
+      focusFindMark(findMarksRef.current, findIndex);
+    }
+  }, [bodyHtml, findQuery, article.id]);
+
+  useEffect(() => {
+    if (!findMarksRef.current.length) return;
+    focusFindMark(findMarksRef.current, findIndex);
+  }, [findIndex]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        if (!bodyHtml) return;
+        event.preventDefault();
+        findRef.current?.focus();
+        findRef.current?.select();
+        return;
+      }
+      if (event.key === "Escape" && findQuery.trim()) {
+        event.preventDefault();
+        setFindQuery("");
+        setFindIndex(0);
+        const root = bodyRef.current;
+        if (root) clearFindMarks(root);
+        findMarksRef.current = [];
+        setFindCount(0);
+        if (target === findRef.current) findRef.current?.blur();
+        return;
+      }
+      if (target !== findRef.current) return;
+      if (event.key === "Enter" && findCount > 0) {
+        event.preventDefault();
+        setFindIndex((current) => current + (event.shiftKey ? -1 : 1));
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bodyHtml, findCount, findQuery]);
 
   useEffect(() => {
     noteFocusRef.current = () => noteRef.current?.focus();
@@ -1579,32 +1642,76 @@ function Reader({
           </div>
         ) : null}
         <Separator className="my-6" />
-        <div className="mb-4 flex justify-end">
-          <label className="inline-flex items-center gap-2 text-[0.8rem] text-muted-foreground">
-            <span>Text size</span>
-            <select
-              aria-label="Article text size"
-              value={articleTextSize}
-              onChange={(event) => {
-                const next = event.target.value as ArticleTextSize;
-                setArticleTextSize(next);
-                writeArticleTextSize(next);
-              }}
-              className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              {ARTICLE_TEXT_SIZE_OPTIONS.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        {bodyHtml ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-[12rem] flex-1 max-w-lg items-center gap-1.5">
+              <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <Input
+                ref={findRef}
+                value={findQuery}
+                onChange={(event) => {
+                  setFindQuery(event.target.value);
+                  setFindIndex(0);
+                }}
+                placeholder="Find in article…"
+                aria-label="Find in article"
+                className="h-8"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <span className="w-11 shrink-0 text-center text-[11px] tabular-nums text-muted-foreground">
+                {findQuery.trim()
+                  ? findCount
+                    ? `${(((findIndex % findCount) + findCount) % findCount) + 1}/${findCount}`
+                    : "0"
+                  : ""}
+              </span>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="outline"
+                disabled={!findCount}
+                aria-label="Previous match"
+                onClick={() => setFindIndex((current) => current - 1)}
+              >
+                <ChevronUp className="size-3.5" />
+              </Button>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="outline"
+                disabled={!findCount}
+                aria-label="Next match"
+                onClick={() => setFindIndex((current) => current + 1)}
+              >
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </div>
+            <label className="inline-flex items-center gap-2 text-[0.8rem] text-muted-foreground">
+              <span>Text size</span>
+              <select
+                aria-label="Article text size"
+                value={articleTextSize}
+                onChange={(event) => {
+                  const next = event.target.value as ArticleTextSize;
+                  setArticleTextSize(next);
+                  writeArticleTextSize(next);
+                }}
+                className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {ARTICLE_TEXT_SIZE_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
         {bodyHtml ? (
           <div
             ref={bodyRef}
             className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
             onMouseUp={() => {
               const next = selectionInRoot(bodyRef.current);
               setPicker(next);
