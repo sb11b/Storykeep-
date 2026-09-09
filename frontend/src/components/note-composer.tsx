@@ -230,20 +230,23 @@ export function NoteComposer({
             {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
             {uploading ? "Uploading…" : "Image"}
           </Button>
-          <select
-            aria-label="Text style"
-            value={composerStyle}
-            onPointerDown={captureSelection}
-            onFocus={syncComposerStyle}
-            onChange={(event) => applyStyle(event.target.value as ComposerStyle)}
-            className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            {COMPOSER_STYLE_OPTIONS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+          <label className="inline-flex items-center gap-1.5 text-[0.8rem] text-muted-foreground">
+            <span className="whitespace-nowrap">Style</span>
+            <select
+              aria-label="Text style"
+              value={composerStyle}
+              onPointerDown={captureSelection}
+              onFocus={syncComposerStyle}
+              onChange={(event) => applyStyle(event.target.value as ComposerStyle)}
+              className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {COMPOSER_STYLE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
