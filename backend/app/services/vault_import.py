@@ -275,6 +275,7 @@ def update_composed_note(
     article.summary = body[:280]
     article.content_text = body
     article.content_html = markdown_to_html(body)
+    article.updated_at = now
     addition = db.scalar(
         select(OverlayAddition)
         .where(OverlayAddition.user_id == user.id, OverlayAddition.article_id == article.id)

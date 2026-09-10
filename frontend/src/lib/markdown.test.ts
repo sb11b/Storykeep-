@@ -70,3 +70,10 @@ test("wrapInline and lists", () => {
   assert.match(html, /<ul>/);
   assert.match(html, /<ol>/);
 });
+
+test("underscore italics do not wrap snake_case names", () => {
+  const html = renderMarkdown("See my_file_name and _emphasis_ here.");
+  assert.match(html, /my_file_name/);
+  assert.equal(html.includes("<em>file</em>"), false);
+  assert.match(html, /<em>emphasis<\/em>/);
+});

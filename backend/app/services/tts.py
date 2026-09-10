@@ -396,7 +396,7 @@ def _strip_markup(value: str) -> str:
 
 
 IMAGE_MD = re.compile(r"!\[[^\]]*\]\([^)]+\)")
-HIGHLIGHT_MD = re.compile(r"==([^=]+)==")
+HIGHLIGHT_MD = re.compile(r"==([\s\S]+?)==")
 HTML_IMG = re.compile(r"(?is)<img\b[^>]*>")
 
 

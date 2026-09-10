@@ -13,6 +13,10 @@ class SpeechPlainTests(unittest.TestCase):
         self.assertEqual(speech_plain(md), "The derivative is the slope.")
         self.assertNotIn("==", speech_plain(md))
         self.assertNotIn("plot", speech_plain(md))
+        self.assertEqual(
+            speech_plain("==Line one\n\n• bullet== leftover"),
+            "Line one • bullet leftover",
+        )
 
     def test_title_word_count_matches_spoken_title(self):
         self.assertEqual(word_count(spoken_title("Note highlights demo")), 3)

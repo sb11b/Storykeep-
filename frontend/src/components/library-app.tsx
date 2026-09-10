@@ -465,13 +465,16 @@ export function LibraryApp({ user }: { user: User }) {
 
   async function patchSelected(body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred">>) {
     if (!selectedId || !article) return;
+    const id = selectedId;
     const previous = article;
     const optimistic = { ...previous, ...body };
     setArticle(optimistic);
     setItems((current) => current.map((item) => (item.id === previous.id ? { ...item, ...body } : item)));
     try {
-      const next = await api.patchArticle(selectedId, body);
-      setArticle(next);
+      const next = await api.patchArticle(id, body);
+      if (selectedIdRef.current === id) {
+        setArticle(next);
+      }
       setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
       if (body.is_saved !== undefined) {
         toast.success(next.is_saved ? "Saved for life" : "Removed from saved");
@@ -482,7 +485,9 @@ export function LibraryApp({ user }: { user: User }) {
       }
       void loadNav();
     } catch (error) {
-      setArticle(previous);
+      if (selectedIdRef.current === id) {
+        setArticle(previous);
+      }
       setItems((current) => current.map((item) => (item.id === previous.id ? { ...item, ...previous } : item)));
       toast.error(error instanceof ApiError ? error.message : "Could not update that article");
     }
@@ -1066,15 +1071,16 @@ export function LibraryApp({ user }: { user: User }) {
         articleBody={article?.content_text ?? null}
         onSavedNote={async (noteId) => {
           await loadNav();
-          if (noteId && noteId !== article?.id) {
+          const currentId = selectedIdRef.current;
+          if (noteId && noteId !== currentId) {
             setShelf({ kind: "additions" });
             openArticle(noteId);
             return;
           }
-          if (article?.id) {
-            const next = await api.article(article.id);
-            setArticle(next);
-          }
+          if (!currentId) return;
+          const next = await api.article(currentId);
+          if (selectedIdRef.current !== currentId) return;
+          setArticle(next);
         }}
       />
     </div>

@@ -289,10 +289,9 @@ export function NoteComposer({
             setUploading(true);
             try {
               const uploaded = await api.uploadNoteImage(file);
-              const el = areaRef.current;
               const { start, end } = selectionRef.current;
-              const insertAt = el && start !== end ? start : el?.selectionStart ?? value.length;
-              const insertEnd = el && start !== end ? end : el?.selectionEnd ?? value.length;
+              const insertAt = Math.max(0, Math.min(start, value.length));
+              const insertEnd = Math.max(insertAt, Math.min(end, value.length));
               const insert = uploaded.markdown;
               const prefix = insertAt > 0 && value[insertAt - 1] !== "\n" ? "\n" : "";
               const suffix = value[insertEnd] !== "\n" ? "\n" : "";
