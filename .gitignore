@@ -8,6 +8,6 @@ backend/var/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
-frontend/out/
+build-info.json
 *.log
 .DS_Store

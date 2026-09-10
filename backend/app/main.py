@@ -127,9 +127,25 @@ app.include_router(chat.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 
 
+def _build_info() -> dict[str, str]:
+    path = Path(__file__).resolve().parents[1] / "build-info.json"
+    if path.is_file():
+        try:
+            import json
+
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return {
+                "build": str(data.get("sha") or "unknown"),
+                "built_at": str(data.get("time") or ""),
+            }
+        except (OSError, ValueError, TypeError):
+            pass
+    return {"build": "unknown", "built_at": ""}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", **_build_info()}
 
 
 def _static_headers(path: Path) -> dict[str, str]:

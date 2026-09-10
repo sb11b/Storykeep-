@@ -167,6 +167,9 @@ export function LibraryApp({ user }: { user: User }) {
   const [refreshing, setRefreshing] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [readerFull, setReaderFull] = useState(false);
+  const [deployBuild, setDeployBuild] = useState<string | null>(
+    process.env.NEXT_PUBLIC_BUILD_SHA?.trim() || null,
+  );
   const searchRef = useRef<HTMLInputElement>(null);
   const noteFocusRef = useRef<(() => void) | null>(null);
   const listenRef = useRef<ListenControlsHandle>(null);
@@ -314,6 +317,17 @@ export function LibraryApp({ user }: { user: User }) {
       toast.error(error instanceof ApiError ? error.message : "Could not load library");
     });
   }, [loadNav]);
+
+  useEffect(() => {
+    void api
+      .health()
+      .then((info) => {
+        if (info.build && info.build !== "unknown") setDeployBuild(info.build);
+      })
+      .catch(() => {
+        /* ignore */
+      });
+  }, []);
 
   useEffect(() => {
     const articleId = new URLSearchParams(window.location.search).get("article");
@@ -608,6 +622,7 @@ export function LibraryApp({ user }: { user: User }) {
         await api.logout();
         router.replace("/login");
       }}
+      deployBuild={deployBuild}
     />
   );
 
@@ -1146,6 +1161,7 @@ function Sidebar({
   onRefresh,
   refreshing,
   onLogout,
+  deployBuild,
 }: {
   user: User;
   stats: Stats | null;
@@ -1162,6 +1178,7 @@ function Sidebar({
   onRefresh: () => void;
   refreshing: boolean;
   onLogout: () => void;
+  deployBuild: string | null;
 }) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
@@ -1280,6 +1297,11 @@ function Sidebar({
         <Button variant="ghost" className="w-full justify-start text-sidebar-foreground/70" onClick={onLogout}>
           Sign out
         </Button>
+        {deployBuild ? (
+          <p className="px-2 pt-1 text-[0.65rem] text-sidebar-foreground/45" title="Deployed build">
+            Build {deployBuild}
+          </p>
+        ) : null}
       </div>
     </div>
   );

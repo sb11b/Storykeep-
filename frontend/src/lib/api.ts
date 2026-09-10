@@ -51,7 +51,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export type HealthInfo = { status: string; build: string; built_at: string };
+
 export const api = {
+  health: () => request<HealthInfo>("/health"),
   me: () => request<User>("/api/v1/auth/me"),
   login: (email: string, password: string) =>
     request<{ user: User }>("/api/v1/auth/login", {
