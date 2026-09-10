@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlencode
 
 import websockets
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.auth import decode_access_token
@@ -15,7 +15,8 @@ from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.services.demo_lock import is_locked, reject_locked
+from app.services.demo_lock import is_locked
+from app.services.stt_limits import enforce_stt_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,14 @@ def _user_from_socket(websocket: WebSocket, db: Session) -> User:
 
 @router.get("/stt")
 def stt_status(user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
+    locked = is_locked(user)
     return {
-        "enabled": key_configured(),
+        "enabled": key_configured() and not locked,
+        "locked": locked,
         "provider": "xai",
         "mode": "streaming",
         "price": "$0.20/hr",
+        "sessions_per_hour": int(settings.stt_sessions_per_hour or 60),
     }
 
 
@@ -67,6 +70,13 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
     if is_locked(user):
         await websocket.send_json({"type": "error", "message": "Demo account closed"})
         await websocket.close(code=4403)
+        return
+    try:
+        enforce_stt_rate_limit(user.id)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Dictation limit reached."
+        await websocket.send_json({"type": "error", "message": detail})
+        await websocket.close(code=4429)
         return
     key = (settings.xai_api_key or "").strip()
     if not key:

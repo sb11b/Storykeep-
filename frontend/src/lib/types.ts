@@ -198,6 +198,7 @@ export type TtsWord = {
 
 export type ChatStatus = {
   enabled: boolean;
+  locked?: boolean;
   provider: string;
   model: string;
   requests_per_hour: number;

@@ -39,6 +39,13 @@ class ChatGuardTests(unittest.TestCase):
         self.assertIn("Do not refuse questions because no article is attached", system)
         self.assertNotIn("Current article excerpt", system)
 
+    def test_system_prompt_steers_school_coding_and_fenced_code(self):
+        messages = build_xai_messages([{"role": "user", "content": "python average"}], None, include_article=False)
+        system = messages[0]["content"].lower()
+        self.assertIn("school coding", system)
+        self.assertIn("fenced markdown", system)
+        self.assertIn("```python", messages[0]["content"])
+
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"
         messages = build_xai_messages([{"role": "user", "content": "Summarize"}], excerpt, include_article=True)

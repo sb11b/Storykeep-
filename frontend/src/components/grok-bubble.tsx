@@ -7,12 +7,17 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
+import { onCodeCopyClick } from "@/lib/code-copy";
+import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
+import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 
 type ChatRole = "user" | "assistant";
 type ChatLine = { id: string; role: ChatRole; content: string };
+type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
+const GROK_NOTE_DESTINATIONS: GrokNoteDestination[] = ["notes", "schoolwork"];
 const BUBBLE_KEY = "storykeep-grok-bubble";
 const PANEL_KEY = "storykeep-grok-panel";
 const DEFAULT_PANEL = { w: 380, h: 520 };
@@ -72,7 +77,7 @@ export function GrokBubble({
   articleGuid?: string | null;
   sourceRef?: string | null;
   articleBody?: string | null;
-  onSavedNote: (noteId?: string) => Promise<void>;
+  onSavedNote: (noteId?: string, destination?: GrokNoteDestination) => Promise<void>;
 }) {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
@@ -81,8 +86,10 @@ export function GrokBubble({
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
   const [includeArticle, setIncludeArticle] = useState(true);
+  const [noteDest, setNoteDest] = useState<GrokNoteDestination>("notes");
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [locked, setLocked] = useState(false);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
   const movedRef = useRef(false);
   const resizeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -98,8 +105,14 @@ export function GrokBubble({
     setSize(loadSize());
     api
       .chatStatus()
-      .then((row) => setEnabled(row.enabled))
-      .catch(() => setEnabled(false));
+      .then((row) => {
+        setEnabled(row.enabled);
+        setLocked(Boolean(row.locked));
+      })
+      .catch(() => {
+        setEnabled(false);
+        setLocked(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -162,7 +175,7 @@ export function GrokBubble({
 
   async function send() {
     const content = draft.trim();
-    if (!content || busy) return;
+    if (!content || busy || !enabled) return;
     const userLine: ChatLine = { id: crypto.randomUUID(), role: "user", content };
     const assistantId = crypto.randomUUID();
     const nextMessages = [...messages, userLine];
@@ -202,13 +215,13 @@ export function GrokBubble({
         const next = existing ? `${existing}\n\n## Grok\n\n${body}` : body;
         await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next);
         toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
-        await onSavedNote(articleId);
+        await onSavedNote(articleId, noteDest);
         return;
       }
       const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
-      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"], "additions");
-      toast.success("Saved in StoryKeep/Additions. It will be in the next Obsidian pack.");
-      await onSavedNote(article.id);
+      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"], noteDest);
+      toast.success(`Saved to StoryKeep/${DESTINATION_LABEL[noteDest]}. It will be in the next Obsidian pack.`);
+      await onSavedNote(article.id, noteDest);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");
     }
@@ -255,7 +268,7 @@ export function GrokBubble({
               ? `Connected: ${articleTitle}`
               : articleTitle
                 ? "General knowledge (article disconnected)"
-                : "General knowledge"}
+                : "School coding help"}
           </p>
         </div>
         <Button size="icon-xs" variant="ghost" onClick={() => setOpen(false)} aria-label="Close chat">
@@ -275,7 +288,7 @@ export function GrokBubble({
           {!articleId ? (
             <span className="block text-[11px] text-muted-foreground">Open an article to connect Grok to it.</span>
           ) : includeArticle ? (
-            <span className="block text-[11px] text-muted-foreground">Grok uses the article text for this chat.</span>
+            <span className="block text-[11px] text-muted-foreground">Grok uses up to ~12k characters from this article.</span>
           ) : (
             <span className="block text-[11px] text-muted-foreground">
               Unchecked — Grok answers from general knowledge, not the article.
@@ -287,8 +300,8 @@ export function GrokBubble({
         {messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {includeArticle && articleId
-              ? "Ask about this article. Uncheck Connect above for general questions."
-              : "Ask anything — explanations, study help, comparisons, or general information."}
+              ? "Ask about this article or school coding. Try dictating a Python question."
+              : "Ask for school coding help — explanations, debugging, or fenced code examples."}
           </p>
         ) : (
           messages.map((item) => (
@@ -297,34 +310,58 @@ export function GrokBubble({
                 {item.role === "user" ? "You" : "Grok"}
               </p>
               {item.content ? (
-                <div className="note-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.content) }} />
+                item.role === "assistant" ? (
+                  <div
+                    className="note-md"
+                    onClick={onCodeCopyClick}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(renderMarkdown(item.content)) }}
+                  />
+                ) : (
+                  <p className="whitespace-pre-wrap">{item.content}</p>
+                )
               ) : (
                 <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
               )}
               {item.role === "assistant" && item.content ? (
-                <div className="mt-2 flex flex-wrap gap-1">
+                <div className="mt-2 flex flex-wrap items-center gap-1">
                   <Button
                     size="xs"
                     variant="outline"
                     onClick={() => {
                       void navigator.clipboard.writeText(item.content);
-                      toast.success("Copied");
+                      toast.success("Copied full reply");
                     }}
                   >
                     <Copy className="size-3" />
-                    Copy
+                    Copy all
                   </Button>
                   <Button size="xs" variant="outline" onClick={() => void addToNotes(item.content)}>
                     <NotebookPen className="size-3" />
                     Add to notes
                   </Button>
+                  {!(articleId && isComposedNote(articleGuid)) ? (
+                    <select
+                      aria-label="Save destination"
+                      value={noteDest}
+                      onChange={(event) => setNoteDest(event.target.value as GrokNoteDestination)}
+                      className="h-7 rounded-md border border-input bg-background px-2 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      {GROK_NOTE_DESTINATIONS.map((dest) => (
+                        <option key={dest} value={dest}>
+                          {DESTINATION_LABEL[dest]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
                 </div>
               ) : null}
             </div>
           ))
         )}
       </div>
-      {enabled === false ? (
+      {locked ? (
+        <p className="border-t px-3 py-2 text-xs text-muted-foreground">Demo accounts cannot use chat or dictation.</p>
+      ) : enabled === false ? (
         <p className="border-t px-3 py-2 text-xs text-muted-foreground">
           Chat is off until XAI_API_KEY is set on Railway. It never lives in the browser.
         </p>
@@ -341,8 +378,9 @@ export function GrokBubble({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder={
-            includeArticle && articleId ? "Ask about this article…" : "Ask Grok anything…"
+            includeArticle && articleId ? "Ask about this article or school coding…" : "Ask Grok for school coding help…"
           }
+          disabled={!enabled}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -350,7 +388,7 @@ export function GrokBubble({
             }
           }}
         />
-        <Button type="submit" size="icon" disabled={busy || !draft.trim() || enabled === false} aria-label="Send">
+        <Button type="submit" size="icon" disabled={busy || !draft.trim() || !enabled} aria-label="Send">
           {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
         </Button>
       </form>

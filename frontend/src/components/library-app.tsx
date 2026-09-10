@@ -1070,11 +1070,11 @@ export function LibraryApp({ user }: { user: User }) {
         articleGuid={article?.guid ?? null}
         sourceRef={article?.source_ref ?? null}
         articleBody={article?.content_text ?? null}
-        onSavedNote={async (noteId) => {
+        onSavedNote={async (noteId, destination) => {
           await loadNav();
           const currentId = selectedIdRef.current;
           if (noteId && noteId !== currentId) {
-            setShelf({ kind: "additions" });
+            setShelf({ kind: destination || "notes" });
             openArticle(noteId);
             return;
           }
@@ -1791,6 +1791,7 @@ function Reader({
               composedNoteMarkdown(article) || article.content_text || article.content_html || article.summary,
             )}
             includeNotes={includeNotesInListen}
+            noteMode={composed}
             onCue={setActiveWord}
             getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
           />

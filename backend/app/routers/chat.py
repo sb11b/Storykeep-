@@ -14,7 +14,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.routers.articles import _owned_article
 from app.services import chat as chat_service
-from app.services.demo_lock import reject_locked
+from app.services.demo_lock import is_locked, reject_locked
 
 router = APIRouter(tags=["chat"])
 
@@ -32,10 +32,10 @@ class ChatIn(BaseModel):
 
 @router.get("/chat")
 def chat_status(user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
-    _ = user
+    locked = is_locked(user)
     return {
-        "enabled": chat_service.key_configured(),
+        "enabled": chat_service.key_configured() and not locked,
+        "locked": locked,
         "provider": "xai",
         "model": (settings.xai_chat_model or "grok-4").strip(),
         "requests_per_hour": int(settings.chat_requests_per_hour or 120),

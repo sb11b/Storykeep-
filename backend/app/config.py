@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     xai_chat_model: str = "grok-4"
     xai_chat_max_tokens: int = 2048
     chat_requests_per_hour: int = 120
+    stt_sessions_per_hour: int = 60
 
     @field_validator("database_url", mode="before")
     @classmethod
