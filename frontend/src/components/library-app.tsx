@@ -228,33 +228,69 @@ export function LibraryApp({ user }: { user: User }) {
     setBackups(nextBackups);
   }, []);
 
-  const openArticle = useCallback(
-    (id: string) => {
-      const row = itemsRef.current.find((item) => item.id === id);
+  const loadArticleById = useCallback(async (id: string, preview?: Article) => {
+    if (preview) {
+      setArticle(preview);
+    }
+    setLoadingArticle(true);
+    try {
+      const next = await api.article(id);
+      if (selectedIdRef.current !== id) return;
+      const listed = itemsRef.current.find((item) => item.id === next.id);
+      setArticle(listed?.is_read && !next.is_read ? { ...next, is_read: true } : next);
+      setReaderScrollToken((current) => current + 1);
+    } catch (error) {
+      if (selectedIdRef.current === id) {
+        toast.error(error instanceof ApiError ? error.message : "Could not open article");
+      }
+    } finally {
+      if (selectedIdRef.current === id) {
+        setLoadingArticle(false);
+      }
+    }
+  }, []);
+
+  const selectArticle = useCallback(
+    (item: ArticleListItem) => {
+      const id = item.id;
+      const preview = articlePreviewFromListItem(item);
+      selectedIdRef.current = id;
       setSelectedId(id);
-      if (row) {
-        setArticle((current) => (current?.id === id ? current : articlePreviewFromListItem(row)));
-      }
-      if (row?.is_read) return;
-      if (row) {
-        setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: true } : item)));
-      }
+      setArticle(preview);
+      void loadArticleById(id, preview);
+      if (item.is_read) return;
+      setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: true } : row)));
       void api
         .patchArticle(id, { is_read: true })
         .then((next) => {
+          if (selectedIdRef.current !== id) return;
           setArticle((current) =>
             current && current.id === id ? { ...current, is_read: next.is_read, read_at: next.read_at } : current,
           );
-          setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: next.is_read } : item)));
+          setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: next.is_read } : row)));
           void loadNav();
         })
         .catch(() => {
-          if (row && !row.is_read) {
-            setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: false } : item)));
+          if (!item.is_read) {
+            setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: false } : row)));
           }
         });
     },
-    [loadNav],
+    [loadArticleById, loadNav],
+  );
+
+  const openArticle = useCallback(
+    (id: string) => {
+      const row = itemsRef.current.find((item) => item.id === id);
+      if (row) {
+        selectArticle(row);
+        return;
+      }
+      selectedIdRef.current = id;
+      setSelectedId(id);
+      void loadArticleById(id);
+    },
+    [loadArticleById, selectArticle],
   );
 
   const fetchShelfPage = useCallback(async (offset: number, firstPage = false) => {
@@ -388,9 +424,11 @@ export function LibraryApp({ user }: { user: User }) {
     const articleId = new URLSearchParams(window.location.search).get("article");
     if (articleId) {
       window.history.replaceState({}, "", window.location.pathname);
+      selectedIdRef.current = articleId;
       setSelectedId(articleId);
+      void loadArticleById(articleId);
     }
-  }, []);
+  }, [loadArticleById]);
 
   useEffect(() => {
     const save = new URLSearchParams(window.location.search).get("save");
@@ -502,39 +540,16 @@ export function LibraryApp({ user }: { user: User }) {
 
   useEffect(() => {
     if (!selectedId) {
+      selectedIdRef.current = null;
       setArticle(null);
       setReaderFull(false);
       setLoadingArticle(false);
-      return;
     }
-    const row = itemsRef.current.find((item) => item.id === selectedId);
-    if (row) {
-      setArticle((current) => (current?.id === selectedId ? current : articlePreviewFromListItem(row)));
-    }
-    let cancelled = false;
-    setLoadingArticle(true);
-    api
-      .article(selectedId)
-      .then((next) => {
-        if (cancelled) return;
-        const listed = itemsRef.current.find((item) => item.id === next.id);
-        setArticle(listed?.is_read && !next.is_read ? { ...next, is_read: true } : next);
-        setReaderScrollToken((current) => current + 1);
-      })
-      .catch((error) => {
-        if (!cancelled) toast.error(error instanceof ApiError ? error.message : "Could not open article");
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingArticle(false);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [selectedId]);
 
   const autoExtractRef = useRef<string | null>(null);
   useEffect(() => {
-    if (loadingArticle || !selectedId || !article || article.id !== selectedId) return;
+    if (!selectedId || !article) return;
     if (isStoryKeepNote(article)) return;
     if (!isDekOnlyArticleBody(article.content_html, article.content_text)) {
       autoExtractRef.current = null;
@@ -569,7 +584,7 @@ export function LibraryApp({ user }: { user: User }) {
     return () => {
       cancelled = true;
     };
-  }, [article, loadingArticle, selectedId]);
+  }, [article, selectedId]);
 
   const groupedFeeds = useMemo(() => {
     const groups = categories.map((category) => ({
@@ -1001,7 +1016,7 @@ export function LibraryApp({ user }: { user: User }) {
                       );
                     }}
                     onDelete={() => setArticleToDelete(item)}
-                    onClick={() => openArticle(item.id)}
+                    onClick={() => selectArticle(item)}
                   />
                 ))
               )}
@@ -1009,9 +1024,7 @@ export function LibraryApp({ user }: { user: User }) {
           </section>
 
           <section className={cn("flex min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex", readerFull && "flex")}>
-            {loadingArticle && !article ? (
-              <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
-            ) : article && selectedId === article.id ? (
+            {selectedId && article ? (
               <Reader
                 article={article}
                 tags={tags}
@@ -1587,9 +1600,10 @@ function ArticleRow({
         type="button"
         onClick={(event) => {
           event.preventDefault();
+          event.stopPropagation();
           onClick();
         }}
-        className="min-w-0 flex-1 text-left"
+        className="min-w-0 flex-1 cursor-pointer text-left"
       >
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
           {!item.is_read ? (

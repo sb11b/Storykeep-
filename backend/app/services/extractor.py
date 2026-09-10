@@ -401,14 +401,31 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
 
 
 def _fetch_html(url: str) -> str | None:
+    last_error: Exception | None = None
+    request_headers = dict(HEADERS)
     try:
-        with httpx.Client(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            return response.text
-    except Exception as exc:
-        logger.info("extract fetch failed %s: %s", url, exc)
-        return None
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            request_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+    except Exception:
+        pass
+    for attempt in range(3):
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True, headers=request_headers) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                text = response.text or ""
+                if len(text) >= 500:
+                    return text
+                last_error = ValueError(f"short response ({len(text)} bytes)")
+        except Exception as exc:
+            last_error = exc
+            logger.info("extract fetch attempt %s failed %s: %s", attempt + 1, url, exc)
+    if last_error:
+        logger.warning("extract fetch failed %s: %s", url, last_error)
+    return None
 
 
 def extract_url(url: str) -> tuple[str | None, str | None, str | None]:

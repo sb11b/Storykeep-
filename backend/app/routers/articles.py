@@ -187,18 +187,21 @@ def save_url(
 @router.get("/articles/{article_id}", response_model=ArticleOut)
 def get_article(article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ArticleOut:
     article = _owned_article(db, user, article_id)
-    children = db.scalars(
-        select(Article).where(Article.parent_id == article.id).order_by(Article.updated_at.desc())
-    ).all()
     if extractor.article_needs_page_extract(article):
         try:
             extractor.fill_article(db, article, force=False)
             db.commit()
+            db.refresh(article)
         except ExtractFailedError:
             db.rollback()
+            article = _owned_article(db, user, article_id)
         except Exception as exc:
             logger.warning("auto extract failed for article %s: %s", article.id, exc)
             db.rollback()
+            article = _owned_article(db, user, article_id)
+    children = db.scalars(
+        select(Article).where(Article.parent_id == article.id).order_by(Article.updated_at.desc())
+    ).all()
     return article_out(article, children)
 
 
@@ -294,6 +297,7 @@ def extract_article(
     except Exception as exc:
         logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
     db.commit()
+    db.refresh(article)
     return ExtractOut(article=_article_payload(db, user, article_id_value), notice=notice)
 
 
