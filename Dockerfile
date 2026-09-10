@@ -1,14 +1,13 @@
 FROM node:22-alpine AS web
 WORKDIR /web
-ARG BUILD_SHA=unknown
-ARG BUILD_TIME=
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+COPY backend/app/build-info.json /build-info.json
 ENV NEXT_OUTPUT=export
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NEXT_PUBLIC_BUILD_SHA=$BUILD_SHA
-RUN printf '{"sha":"%s","time":"%s"}\n' "$BUILD_SHA" "${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" > /build-info.json \
+RUN SHA=$(node -p "JSON.parse(require('fs').readFileSync('/build-info.json','utf8')).sha") \
+    && export NEXT_PUBLIC_BUILD_SHA="$SHA" \
     && npm run build
 
 FROM python:3.12-slim
@@ -19,7 +18,6 @@ RUN apt-get update \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
-COPY --from=web /build-info.json ./build-info.json
 COPY --from=web /web/out ./frontend_out
 COPY start.sh /start.sh
 RUN chmod +x /start.sh

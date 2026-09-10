@@ -128,7 +128,7 @@ app.include_router(stt.router, prefix=API)
 
 
 def _build_info() -> dict[str, str]:
-    path = Path(__file__).resolve().parents[1] / "build-info.json"
+    path = Path(__file__).resolve().parent / "build-info.json"
     if path.is_file():
         try:
             import json
