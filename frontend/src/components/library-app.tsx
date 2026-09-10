@@ -50,6 +50,7 @@ import {
   articleReaderSource,
   formatRelative,
   isPollutedArticleHtml,
+  isPollutedArticleText,
   mergeExtractArticle,
   sanitizeHtml,
   stripHtml,
@@ -948,13 +949,15 @@ export function LibraryApp({ user }: { user: User }) {
                     const mergedBody = mergeExtractArticle(previous, next);
                     const merged = { ...next, ...mergedBody };
                     const hasBody =
-                      Boolean(merged.content_text?.trim()) ||
+                      Boolean(merged.content_text?.trim() && !isPollutedArticleText(merged.content_text)) ||
                       Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html));
                     if (!hasBody) {
                       toast.error("Extract failed");
                       return;
                     }
-                    setArticle(merged);
+                    setArticle((current) =>
+                      current && current.id === id ? { ...current, ...merged } : { ...previous, ...merged },
+                    );
                     setItems((current) =>
                       current.map((item) =>
                         item.id === id ? { ...item, has_full_text: Boolean(merged.content_text?.trim()) } : item,

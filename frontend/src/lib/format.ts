@@ -44,6 +44,18 @@ export function sanitizeHtml(html: string): string {
     .replace(/javascript:/gi, "");
 }
 
+export function isPollutedArticleText(text: string): boolean {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return false;
+  const cssish = lines.filter(
+    (line) => /^\s*[.#@][\w#.\[\](),\s%-]+\s*\{/.test(line) || (line.includes("{") && /box-sizing|\.widget|display\s*:/.test(line)),
+  ).length;
+  return cssish >= Math.max(2, Math.ceil(lines.length / 2));
+}
+
 export function isPollutedArticleHtml(html: string): boolean {
   const sample = html.slice(0, 12000).toLowerCase();
   if (/<style[\s>]/i.test(html)) return true;
@@ -112,11 +124,11 @@ export function articleReaderSource(article: {
 }): string {
   const text = article.content_text?.trim() || "";
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
-  if (text.length >= 40 && (!html || isPollutedArticleHtml(html))) {
+  if (text.length >= 40 && !isPollutedArticleText(text) && (!html || isPollutedArticleHtml(html))) {
     return plainTextToArticleHtml(text);
   }
   if (html && !isPollutedArticleHtml(html)) return html;
-  if (text) return plainTextToArticleHtml(text);
+  if (text && !isPollutedArticleText(text)) return plainTextToArticleHtml(text);
   const summaryText = stripHtml(article.summary);
   if (summaryText && !isPollutedArticleHtml(summaryText)) return plainTextToArticleHtml(summaryText);
   return "";

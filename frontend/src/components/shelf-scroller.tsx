@@ -60,8 +60,9 @@ export const ShelfScroller = forwardRef<
   const programmaticRef = useRef(false);
   const paginationReadyRef = useRef(false);
   const suppressNearEndRef = useRef(true);
+  const lastResetEpochRef = useRef(-1);
 
-  const forceTop = (notify: boolean) => {
+  const pinTop = (notify: boolean) => {
     const root = rootRef.current;
     if (!root) return;
     userScrolledRef.current = false;
@@ -69,20 +70,36 @@ export const ShelfScroller = forwardRef<
     suppressNearEndRef.current = true;
     programmaticRef.current = true;
     root.scrollTop = 0;
-    const startIndex = visibleStartIndex(root);
-    programmaticRef.current = false;
-    paginationReadyRef.current = true;
-    window.setTimeout(() => {
-      suppressNearEndRef.current = false;
-    }, 400);
-    if (notify) {
-      onListPaintRef.current?.({
-        feed: shelfKey,
-        offset: 0,
-        startIndex,
-        count: itemCount,
+    window.requestAnimationFrame(() => {
+      root.scrollTop = 0;
+      window.requestAnimationFrame(() => {
+        root.scrollTop = 0;
+        scrollToIndex(root, 0);
+        programmaticRef.current = false;
+        paginationReadyRef.current = true;
+        window.setTimeout(() => {
+          suppressNearEndRef.current = false;
+        }, 600);
+        if (notify) {
+          onListPaintRef.current?.({
+            feed: shelfKey,
+            offset: 0,
+            startIndex: visibleStartIndex(root),
+            count: root.querySelectorAll("[data-list-index]").length,
+          });
+        }
       });
+    });
+  };
+
+  const scrollToIndex = (root: HTMLDivElement, index: number) => {
+    if (index <= 0) {
+      root.scrollTop = 0;
+      return;
     }
+    const row = root.querySelector<HTMLElement>(`[data-list-index="${index}"]`);
+    if (row) row.scrollIntoView({ block: "start" });
+    else root.scrollTop = 0;
   };
 
   useImperativeHandle(
@@ -102,13 +119,7 @@ export const ShelfScroller = forwardRef<
         const root = rootRef.current;
         if (!root) return;
         programmaticRef.current = true;
-        if (index <= 0) {
-          root.scrollTop = 0;
-        } else {
-          const row = root.querySelector<HTMLElement>(`[data-list-index="${index}"]`);
-          if (row) row.scrollIntoView({ block: "start" });
-          else root.scrollTop = 0;
-        }
+        scrollToIndex(root, index);
         window.requestAnimationFrame(() => {
           programmaticRef.current = false;
         });
@@ -124,16 +135,24 @@ export const ShelfScroller = forwardRef<
   }, [onNearEnd, onListPaint, hasMore]);
 
   useLayoutEffect(() => {
-    forceTop(false);
+    userScrolledRef.current = false;
+    suppressNearEndRef.current = true;
+    const root = rootRef.current;
+    if (root) root.scrollTop = 0;
   }, [shelfKey]);
 
   useLayoutEffect(() => {
-    forceTop(true);
-  }, [listEpoch, itemCount]);
+    if (listEpoch === lastResetEpochRef.current) return;
+    lastResetEpochRef.current = listEpoch;
+    pinTop(true);
+  }, [listEpoch, shelfKey]);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+    const unlock = () => {
+      if (!programmaticRef.current) userScrolledRef.current = true;
+    };
     const onScroll = () => {
       if (!programmaticRef.current && root.scrollTop > 8) {
         userScrolledRef.current = true;
@@ -146,12 +165,22 @@ export const ShelfScroller = forwardRef<
       if (root.scrollHeight <= root.clientHeight + 24) return;
       if (root.scrollTop + root.clientHeight >= root.scrollHeight - 140) onNearEndRef.current();
     };
+    root.addEventListener("wheel", unlock, { passive: true });
+    root.addEventListener("touchmove", unlock, { passive: true });
     root.addEventListener("scroll", onScroll, { passive: true });
-    return () => root.removeEventListener("scroll", onScroll);
+    return () => {
+      root.removeEventListener("wheel", unlock);
+      root.removeEventListener("touchmove", unlock);
+      root.removeEventListener("scroll", onScroll);
+    };
   }, [shelfKey]);
 
   return (
-    <div ref={rootRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div
+      ref={rootRef}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]"
+      style={{ overflowAnchor: "none" }}
+    >
       {children}
       {hasMore ? (
         <button

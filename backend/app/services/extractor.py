@@ -294,6 +294,16 @@ def extract_page(url: str) -> tuple[str | None, str | None, str | None, str | No
     return html, text, title, image
 
 
+def _text_is_polluted(text: str | None) -> bool:
+    if not text or not text.strip():
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    cssish = sum(1 for line in lines if _CSS_LINE.match(line) or ("{" in line and _CSS_PROP_LINE.match(line)))
+    return cssish >= max(2, len(lines) // 2)
+
+
 def _html_is_polluted(html: str | None) -> bool:
     if not html or not html.strip():
         return False
@@ -324,9 +334,22 @@ def _text_to_html(text: str) -> str:
     return "".join(parts)
 
 
+def repair_display_body(content_html: str | None, content_text: str | None) -> tuple[str | None, str | None]:
+    text = _clean_text(content_text or "")
+    html = content_html
+    if text and len(text) >= 40 and not _text_is_polluted(text):
+        safe_html = html if html and not _html_is_polluted(html) else _text_to_html(text)
+        return text, safe_html
+    if html and _html_is_polluted(html):
+        stripped = _clean_text(_strip_tags(html))
+        if len(stripped) >= 80 and not _text_is_polluted(stripped):
+            return stripped, _text_to_html(stripped)
+    return content_text, content_html
+
+
 def _extract_usable(html: str | None, text: str | None) -> bool:
     cleaned = _clean_text(text or "")
-    if len(cleaned) < 80:
+    if len(cleaned) < 80 or _text_is_polluted(cleaned):
         return False
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if not lines:

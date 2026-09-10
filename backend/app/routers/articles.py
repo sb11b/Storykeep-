@@ -276,9 +276,6 @@ def extract_article(
         raise HTTPException(status_code=422, detail=exc.detail) from exc
     try:
         archive_service.snapshot_article(db, article, "html")
-    except ExtractFailedError:
-        db.rollback()
-        raise HTTPException(status_code=422, detail="Extract failed, original kept.") from None
     except Exception as exc:
         logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
     db.commit()

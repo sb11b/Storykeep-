@@ -14,6 +14,7 @@ from app.schemas import (
     TagOut,
 )
 from app.services.destination import DEFAULT_DESTINATION, effective_destination
+from app.services.extractor import repair_display_body
 
 
 def tag_out(tag: Tag, article_count: int = 0) -> TagOut:
@@ -83,6 +84,7 @@ def filed_note_out(article: Article) -> FiledNoteOut:
 
 
 def article_out(article: Article, filed_notes: list[Article] | None = None) -> ArticleOut:
+    content_text, content_html = repair_display_body(article.content_html, article.content_text)
     return ArticleOut(
         id=article.id,
         feed_id=article.feed_id,
@@ -92,8 +94,8 @@ def article_out(article: Article, filed_notes: list[Article] | None = None) -> A
         author=article.author,
         published_at=article.published_at,
         summary=article.summary,
-        content_text=article.content_text,
-        content_html=article.content_html,
+        content_text=content_text,
+        content_html=content_html,
         image_url=article.image_url,
         is_read=article.is_read,
         is_saved=article.is_saved,

@@ -82,6 +82,17 @@ class ExtractorTests(unittest.TestCase):
         image = _extract_image(html, "https://example.com/story")
         self.assertEqual(image, "https://cdn.example.com/hero.jpg")
 
+    def test_repair_display_body_strips_polluted_html(self):
+        from app.services.extractor import repair_display_body
+
+        html, text = extract_html(BLAZE_STYLE, "https://example.com/blaze-story")
+        assert text is not None
+        repaired_text, repaired_html = repair_display_body(html, None)
+        self.assertIsNotNone(repaired_text)
+        assert repaired_text is not None
+        self.assertIn("Congress moved Tuesday", repaired_text)
+        self.assertNotIn("box-sizing", (repaired_html or "").lower())
+
     def test_html_pollution_rejected(self):
         from app.services.extractor import _html_is_polluted
 
