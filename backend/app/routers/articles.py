@@ -53,7 +53,7 @@ def _extract_user_message(
         next_text or ""
     ).strip()
 
-    if next_usable and (not prev_usable or content_changed):
+    if next_usable:
         return True, EXTRACT_MSG_SUCCESS
     if had_previous and next_dek:
         return True, EXTRACT_MSG_DEK_KEPT

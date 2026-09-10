@@ -13,22 +13,14 @@ type ExtractToastInput = {
   keptPrevious: boolean;
 };
 
-export function showExtractToast({ message, ok, upgraded, keptPrevious }: ExtractToastInput) {
-  const resolved =
-    message?.trim() ||
-    (upgraded
-      ? EXTRACT_MESSAGES.success
-      : keptPrevious
-        ? EXTRACT_MESSAGES.dekKept
-        : EXTRACT_MESSAGES.failed);
-
+export function showExtractToast({ ok, upgraded, keptPrevious }: ExtractToastInput) {
   if (ok === false || (!upgraded && !keptPrevious)) {
-    toast.error(resolved);
+    toast.error(EXTRACT_MESSAGES.failed);
     return;
   }
   if (keptPrevious && !upgraded) {
-    toast.message(resolved);
+    toast.message(EXTRACT_MESSAGES.dekKept);
     return;
   }
-  toast.success(resolved);
+  toast.success(EXTRACT_MESSAGES.success);
 }
