@@ -17,6 +17,8 @@ export function Toaster({ ...props }: ToasterProps) {
     <Sonner
       theme={(theme as ToasterProps["theme"]) ?? "light"}
       className="toaster group"
+      closeButton
+      duration={6000}
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
@@ -26,15 +28,25 @@ export function Toaster({ ...props }: ToasterProps) {
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
+          zIndex: 100,
+          "--normal-bg": "oklch(0.985 0.01 88)",
+          "--normal-text": "oklch(0.24 0.02 55)",
+          "--normal-border": "oklch(0.86 0.025 80)",
+          "--success-bg": "var(--primary)",
+          "--success-text": "var(--primary-foreground)",
+          "--success-border": "color-mix(in oklab, var(--primary) 85%, black)",
+          "--error-bg": "var(--destructive)",
+          "--error-text": "oklch(0.98 0.01 88)",
+          "--error-border": "color-mix(in oklab, var(--destructive) 85%, black)",
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          toast: "cn-toast group-[.toaster]:shadow-lg",
+          success: "cn-toast-success",
+          error: "cn-toast-error",
+          closeButton: "cn-toast-close",
         },
       }}
       {...props}

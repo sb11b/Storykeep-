@@ -112,6 +112,35 @@
   --sidebar-ring: oklch(0.72 0.12 50);
 }
 
+[data-sonner-toaster] {
+  z-index: 100 !important;
+}
+
+.cn-toast {
+  background: oklch(0.985 0.01 88) !important;
+  color: oklch(0.24 0.02 55) !important;
+  border: 1px solid oklch(0.86 0.025 80) !important;
+  box-shadow: 0 10px 30px oklch(0.24 0.02 55 / 12%);
+}
+
+.cn-toast-success {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border-color: color-mix(in oklab, var(--primary) 85%, black) !important;
+}
+
+.cn-toast-error {
+  background: var(--destructive) !important;
+  color: oklch(0.98 0.01 88) !important;
+  border-color: color-mix(in oklab, var(--destructive) 85%, black) !important;
+}
+
+.cn-toast-close {
+  color: inherit !important;
+  background: color-mix(in oklab, currentColor 12%, transparent) !important;
+  border-color: color-mix(in oklab, currentColor 22%, transparent) !important;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

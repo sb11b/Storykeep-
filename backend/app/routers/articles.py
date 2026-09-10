@@ -30,9 +30,36 @@ from app.schemas import (
 )
 from app.services.overlay_search import article_search_match
 from app.services import archive as archive_service, changelog, extractor
-from app.services.extractor import ExtractFailedError
+from app.services.extractor import ExtractFailedError, _feed_body_valid, _is_dek_only
 
 router = APIRouter(tags=["articles"])
+
+EXTRACT_MSG_SUCCESS = "Updated from the page."
+EXTRACT_MSG_DEK_KEPT = "Page had no full article; kept the short feed text."
+EXTRACT_MSG_FAILED = "Extract failed; previous text kept."
+
+
+def _extract_user_message(
+    prev_html: str | None,
+    prev_text: str | None,
+    next_html: str | None,
+    next_text: str | None,
+) -> tuple[bool, str]:
+    had_previous = bool((prev_html or prev_text or "").strip())
+    prev_usable = _feed_body_valid(prev_html, prev_text)
+    next_usable = _feed_body_valid(next_html, next_text)
+    next_dek = _is_dek_only(next_html, next_text)
+    content_changed = (prev_html or "").strip() != (next_html or "").strip() or (prev_text or "").strip() != (
+        next_text or ""
+    ).strip()
+
+    if next_usable and (not prev_usable or content_changed):
+        return True, EXTRACT_MSG_SUCCESS
+    if had_previous and next_dek:
+        return True, EXTRACT_MSG_DEK_KEPT
+    if had_previous:
+        return False, EXTRACT_MSG_FAILED
+    return False, EXTRACT_MSG_FAILED
 logger = logging.getLogger(__name__)
 
 SAVED_PAGES_URL = "https://storykeep.local/saved-pages"
@@ -286,19 +313,29 @@ def extract_article(
 ) -> ExtractOut:
     article = _owned_article(db, user, article_id)
     article_id_value = article.id
+    prev_html = article.content_html
+    prev_text = article.content_text
     notice: str | None = None
     try:
         _, notice = extractor.fill_article(db, article, force=True)
     except ExtractFailedError as exc:
         db.rollback()
-        raise HTTPException(status_code=422, detail=exc.detail) from exc
+        raise HTTPException(status_code=422, detail=EXTRACT_MSG_FAILED) from exc
     try:
         archive_service.snapshot_article(db, article, "html")
     except Exception as exc:
         logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
     db.commit()
     db.refresh(article)
-    return ExtractOut(article=_article_payload(db, user, article_id_value), notice=notice)
+    ok, message = _extract_user_message(prev_html, prev_text, article.content_html, article.content_text)
+    if not message:
+        message = EXTRACT_MSG_SUCCESS if ok else EXTRACT_MSG_FAILED
+    return ExtractOut(
+        article=_article_payload(db, user, article_id_value),
+        notice=notice,
+        ok=ok,
+        message=message,
+    )
 
 
 @router.patch("/articles/{article_id}/use-feed-text", response_model=ArticleOut)

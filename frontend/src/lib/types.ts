@@ -129,6 +129,8 @@ export type ArticleListItem = {
 export type ExtractResult = {
   article: Article;
   notice: string | null;
+  ok: boolean;
+  message: string;
 };
 
 export type Article = ArticleListItem & {

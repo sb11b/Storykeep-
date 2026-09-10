@@ -82,6 +82,7 @@ import type {
   Tag,
   User,
 } from "@/lib/types";
+import { EXTRACT_MESSAGES, showExtractToast } from "@/lib/extract-toast";
 import { cn } from "@/lib/utils";
 
 function isStoryKeepNote(article: Article): boolean {
@@ -1054,7 +1055,7 @@ export function LibraryApp({ user }: { user: User }) {
                       Boolean(previous.content_text?.trim() || previous.content_html?.trim()) &&
                       isDekOnlyArticleBody(merged.content_html, merged.content_text);
                     if (!upgraded && !keptPrevious) {
-                      toast.error("Extract found no article text");
+                      showExtractToast({ message: result.message, ok: result.ok, upgraded, keptPrevious });
                       return;
                     }
                     setArticle((current) =>
@@ -1068,22 +1069,14 @@ export function LibraryApp({ user }: { user: User }) {
                       ),
                     );
                     setReaderScrollToken((current) => current + 1);
-                    if (result.notice?.startsWith("Updated from cbr.com")) {
-                      toast.success(result.notice);
-                    } else if (result.notice) {
-                      toast(result.notice);
-                    } else if (upgraded) {
-                      toast.success("Full text refreshed");
-                    } else if (keptPrevious) {
-                      toast("Full text unavailable");
-                    }
+                    showExtractToast({ message: result.message, ok: result.ok, upgraded, keptPrevious });
                   } catch (error) {
                     toast.error(
                       error instanceof ApiError && error.status === 422
-                        ? "Full text unavailable"
+                        ? EXTRACT_MESSAGES.failed
                         : error instanceof ApiError
-                          ? error.message
-                          : "Full text unavailable",
+                          ? error.message || EXTRACT_MESSAGES.failed
+                          : EXTRACT_MESSAGES.failed,
                     );
                   }
                 }}

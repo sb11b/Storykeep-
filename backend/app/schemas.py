@@ -266,6 +266,8 @@ class FiledNoteOut(BaseModel):
 class ExtractOut(BaseModel):
     article: "ArticleOut"
     notice: str | None = None
+    ok: bool = True
+    message: str = ""
 
 
 class ArticleOut(BaseModel):
