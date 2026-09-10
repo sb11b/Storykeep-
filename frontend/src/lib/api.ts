@@ -19,6 +19,8 @@ import type {
   ChatStatus,
 } from "./types";
 
+import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -39,14 +41,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
   if (!response.ok) {
-    let detail = response.statusText;
+    let detail: string | null = null;
     try {
-      const data = (await response.json()) as { detail?: string };
-      if (typeof data.detail === "string") detail = data.detail;
+      detail = parseErrorPayload(await response.json());
     } catch {
       /* ignore */
     }
-    throw new ApiError(response.status, detail);
+    if (!detail && response.statusText?.trim()) detail = response.statusText.trim();
+    throw new ApiError(response.status, detail || httpErrorFallback(response.status));
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

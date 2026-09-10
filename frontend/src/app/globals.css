@@ -130,9 +130,9 @@
 }
 
 .cn-toast-error {
-  background: var(--destructive) !important;
+  background: oklch(0.38 0.12 28) !important;
   color: oklch(0.98 0.01 88) !important;
-  border-color: color-mix(in oklab, var(--destructive) 85%, black) !important;
+  border-color: oklch(0.32 0.1 28) !important;
 }
 
 .cn-toast-close {

@@ -46,12 +46,8 @@ def _extract_user_message(
     next_text: str | None,
 ) -> tuple[bool, str]:
     had_previous = bool((prev_html or prev_text or "").strip())
-    prev_usable = _feed_body_valid(prev_html, prev_text)
     next_usable = _feed_body_valid(next_html, next_text)
     next_dek = _is_dek_only(next_html, next_text)
-    content_changed = (prev_html or "").strip() != (next_html or "").strip() or (prev_text or "").strip() != (
-        next_text or ""
-    ).strip()
 
     if next_usable:
         return True, EXTRACT_MSG_SUCCESS
@@ -320,7 +316,14 @@ def extract_article(
         _, notice = extractor.fill_article(db, article, force=True)
     except ExtractFailedError as exc:
         db.rollback()
-        raise HTTPException(status_code=422, detail=EXTRACT_MSG_FAILED) from exc
+        db.refresh(article)
+        failure_message = (exc.detail or EXTRACT_MSG_FAILED).strip() or EXTRACT_MSG_FAILED
+        return ExtractOut(
+            article=_article_payload(db, user, article_id_value),
+            notice=notice,
+            ok=False,
+            message=failure_message,
+        )
     try:
         archive_service.snapshot_article(db, article, "html")
     except Exception as exc:

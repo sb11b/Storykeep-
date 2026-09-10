@@ -508,8 +508,21 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _fetch_html_with_status(url: str) -> tuple[str | None, int | None]:
+def _fetch_error_message(url: str, status: int | None, exc: Exception | None = None) -> str | None:
+    if status is not None:
+        if _is_cbr_url(url):
+            return f"CBR returned {status}"
+        return f"Page returned {status}"
+    if exc is not None:
+        text = str(exc).strip()
+        return text or None
+    return None
+
+
+def _fetch_html_with_status(url: str) -> tuple[str | None, int | None, str | None]:
     last_error: Exception | None = None
+    last_status: int | None = None
+    last_message: str | None = None
     request_headers = dict(HEADERS)
     if _is_cbr_url(url):
         request_headers["Referer"] = CBR_REFERER
@@ -531,18 +544,26 @@ def _fetch_html_with_status(url: str) -> tuple[str | None, int | None]:
                 text = response.text or ""
                 logger.info("extract fetch url=%s status=%s bytes=%s attempt=%s", url, status, len(text), attempt + 1)
                 if len(text) >= 500:
-                    return text, status
+                    return text, status, None
                 last_error = ValueError(f"short response ({len(text)} bytes)")
+                last_status = status
+                last_message = _fetch_error_message(url, status, last_error)
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            last_status = exc.response.status_code
+            last_message = _fetch_error_message(url, last_status, exc)
+            logger.info("extract fetch attempt %s failed %s: %s", attempt + 1, url, last_message)
         except Exception as exc:
             last_error = exc
+            last_message = _fetch_error_message(url, last_status, exc)
             logger.info("extract fetch attempt %s failed %s: %s", attempt + 1, url, exc)
     if last_error:
-        logger.warning("extract fetch failed %s: %s", url, last_error)
-    return None, None
+        logger.warning("extract fetch failed %s: %s", url, last_message or last_error)
+    return None, last_status, last_message
 
 
 def _fetch_html(url: str) -> str | None:
-    raw, _status = _fetch_html_with_status(url)
+    raw, _status, _message = _fetch_html_with_status(url)
     return raw
 
 
@@ -908,11 +929,14 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     image: str | None = None
     raw: str | None = None
     fetch_status: int | None = None
+    fetch_error: str | None = None
     page_attempted = needs_page
     if needs_page:
-        raw, fetch_status = _fetch_html_with_status(article.url)
+        raw, fetch_status, fetch_error = _fetch_html_with_status(article.url)
     if needs_page and _is_cbr_url(article.url) and not raw:
-        return article, CBR_NO_COLUMN_NOTICE
+        if force and fetch_error:
+            raise ExtractFailedError(fetch_error)
+        return article, fetch_error or CBR_NO_COLUMN_NOTICE
     if raw and _is_cbr_url(article.url):
         page_html, page_text, cbr_char_count, _method = _extract_cbr_page(raw, article.url, status=fetch_status)
         page_html, page_text = _normalize_page_candidate(page_html, page_text)

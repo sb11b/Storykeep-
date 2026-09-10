@@ -35,9 +35,9 @@ export function Toaster({ ...props }: ToasterProps) {
           "--success-bg": "var(--primary)",
           "--success-text": "var(--primary-foreground)",
           "--success-border": "color-mix(in oklab, var(--primary) 85%, black)",
-          "--error-bg": "var(--destructive)",
+          "--error-bg": "oklch(0.38 0.12 28)",
           "--error-text": "oklch(0.98 0.01 88)",
-          "--error-border": "color-mix(in oklab, var(--destructive) 85%, black)",
+          "--error-border": "oklch(0.32 0.1 28)",
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }

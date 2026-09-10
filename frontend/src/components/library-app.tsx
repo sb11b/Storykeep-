@@ -82,7 +82,8 @@ import type {
   Tag,
   User,
 } from "@/lib/types";
-import { EXTRACT_MESSAGES, showExtractToast } from "@/lib/extract-toast";
+import { showExtractCaughtError, showExtractToast } from "@/lib/extract-toast";
+import { toastErrorFromUnknown } from "@/lib/toast-message";
 import { cn } from "@/lib/utils";
 
 function isStoryKeepNote(article: Article): boolean {
@@ -90,7 +91,7 @@ function isStoryKeepNote(article: Article): boolean {
 }
 
 function readerActionError(error: unknown, fallback: string): never {
-  toast.error(error instanceof ApiError ? error.message : fallback);
+  toastErrorFromUnknown(error, fallback);
   throw error;
 }
 
@@ -1070,8 +1071,8 @@ export function LibraryApp({ user }: { user: User }) {
                     );
                     setReaderScrollToken((current) => current + 1);
                     showExtractToast({ message: result.message, ok: result.ok, upgraded, keptPrevious });
-                  } catch {
-                    toast.error(EXTRACT_MESSAGES.failed);
+                  } catch (error) {
+                    showExtractCaughtError(error);
                   }
                 }}
                 onUseFeedText={async () => {

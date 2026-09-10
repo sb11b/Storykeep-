@@ -1,4 +1,6 @@
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
+import { messageFromApiError, nonEmptyMessage, toastError } from "@/lib/toast-message";
 
 export const EXTRACT_MESSAGES = {
   success: "Updated from the page.",
@@ -13,14 +15,36 @@ type ExtractToastInput = {
   keptPrevious: boolean;
 };
 
-export function showExtractToast({ ok, upgraded, keptPrevious }: ExtractToastInput) {
+export function extractFailureMessage(message?: string | null): string {
+  return nonEmptyMessage(message, EXTRACT_MESSAGES.failed);
+}
+
+export function logExtractFailed(error: unknown, message: string): void {
+  console.error("extract-failed:", message, error);
+}
+
+export function showExtractFailed(message?: string | null, error?: unknown): void {
+  const text = extractFailureMessage(message);
+  logExtractFailed(error ?? text, text);
+  toastError(text);
+}
+
+export function showExtractToast({ ok, upgraded, keptPrevious, message }: ExtractToastInput) {
   if (ok === false || (!upgraded && !keptPrevious)) {
-    toast.error(EXTRACT_MESSAGES.failed);
+    showExtractFailed(message);
     return;
   }
   if (keptPrevious && !upgraded) {
-    toast.message(EXTRACT_MESSAGES.dekKept);
+    toast.message(nonEmptyMessage(EXTRACT_MESSAGES.dekKept, EXTRACT_MESSAGES.dekKept));
     return;
   }
   toast.success(EXTRACT_MESSAGES.success);
+}
+
+export function showExtractCaughtError(error: unknown): void {
+  const text =
+    error instanceof ApiError
+      ? nonEmptyMessage(error.message, EXTRACT_MESSAGES.failed)
+      : messageFromApiError(error, EXTRACT_MESSAGES.failed);
+  showExtractFailed(text, error);
 }
