@@ -14,7 +14,7 @@ from app.schemas import (
     TagOut,
 )
 from app.services.destination import DEFAULT_DESTINATION, effective_destination
-from app.services.extractor import _feed_body_valid, _html_extract_candidate_valid, _is_dek_only, repair_display_body
+from app.services.extractor import _feed_body_valid, _is_dek_only, has_full_text, repair_display_body
 
 
 def tag_out(tag: Tag, article_count: int = 0) -> TagOut:
@@ -63,7 +63,7 @@ def article_list_item(article: Article) -> ArticleListItem:
         is_read=article.is_read,
         is_saved=article.is_saved,
         is_starred=article.is_starred,
-        has_full_text=bool(article.content_text),
+        has_full_text=has_full_text(article.content_html, article.content_text),
         source_kind=getattr(article, "source_kind", None) or "rss",
         destination=effective_destination(article),
         tags=[tag_out(tag) for tag in article.tags],
@@ -124,7 +124,7 @@ def article_out(article: Article, filed_notes: list[Article] | None = None) -> A
         tags=[tag_out(tag) for tag in article.tags],
         annotations=[annotation_out(note) for note in article.annotations],
         archives=[archive_out(row) for row in article.archives],
-        has_full_text=bool(content_text and content_text.strip()),
+        has_full_text=has_full_text(content_html, content_text),
         has_feed_text=has_feed_text,
         feed_html=article.feed_html,
         guid=article.guid,

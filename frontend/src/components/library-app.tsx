@@ -50,8 +50,10 @@ import {
   articleReaderSource,
   formatRelative,
   isCtaOnlyArticleText,
+  isDekOnlyArticleBody,
   isPollutedArticleHtml,
   isPollutedArticleText,
+  isUsableArticleBody,
   mergeExtractArticle,
   sanitizeHtml,
   stripHtml,
@@ -980,11 +982,11 @@ export function LibraryApp({ user }: { user: User }) {
                     if (selectedIdRef.current !== id) return;
                     const mergedBody = mergeExtractArticle(previous, next);
                     const merged = { ...next, ...mergedBody };
-                    const hasBody =
-                      Boolean(merged.content_text?.trim() && !isPollutedArticleText(merged.content_text) && !isCtaOnlyArticleText(merged.content_text)) ||
-                      Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html) && !isCtaOnlyArticleText(stripHtml(merged.content_html))) ||
-                      Boolean(merged.feed_html?.trim() && !isCtaOnlyArticleText(stripHtml(merged.feed_html)));
-                    if (!hasBody) {
+                    const upgraded = isUsableArticleBody(merged.content_html, merged.content_text);
+                    const keptPrevious =
+                      Boolean(previous.content_text?.trim() || previous.content_html?.trim()) &&
+                      isDekOnlyArticleBody(merged.content_html, merged.content_text);
+                    if (!upgraded && !keptPrevious) {
                       toast.error("Extract found no article text");
                       return;
                     }
@@ -993,22 +995,26 @@ export function LibraryApp({ user }: { user: User }) {
                     );
                     setItems((current) =>
                       current.map((item) =>
-                        item.id === id ? { ...item, has_full_text: Boolean(merged.content_text?.trim()) } : item,
+                        item.id === id
+                          ? { ...item, has_full_text: isUsableArticleBody(merged.content_html, merged.content_text) }
+                          : item,
                       ),
                     );
                     setReaderScrollToken((current) => current + 1);
                     if (result.notice) {
                       toast(result.notice);
-                    } else {
+                    } else if (upgraded) {
                       toast.success("Full text refreshed");
+                    } else if (keptPrevious) {
+                      toast("Full text unavailable");
                     }
                   } catch (error) {
                     toast.error(
                       error instanceof ApiError && error.status === 422
-                        ? "Extract found no article text"
+                        ? "Full text unavailable"
                         : error instanceof ApiError
                           ? error.message
-                          : "Extract found no article text",
+                          : "Full text unavailable",
                     );
                   }
                 }}

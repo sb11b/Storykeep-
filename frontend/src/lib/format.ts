@@ -188,6 +188,13 @@ export function articleReaderSource(article: {
   return "";
 }
 
+function articleBodyParagraphCount(content_html: string | null | undefined, content_text: string | null | undefined): number {
+  const htmlCount = (content_html?.match(/<p[\s>]/gi) || []).length;
+  if (htmlCount) return htmlCount;
+  const text = (content_text?.trim() || stripHtml(content_html)).trim();
+  return text.split(/\n{2,}/).filter((block) => block.trim().length >= 40).length;
+}
+
 export function mergeExtractArticle(previous: {
   content_html: string | null;
   content_text: string | null;
@@ -197,10 +204,16 @@ export function mergeExtractArticle(previous: {
   content_text: string | null;
   image_url?: string | null;
 }) {
-  const content_text = isUsableArticleBody(next.content_html, next.content_text)
-    ? next.content_text
-    : previous.content_text;
-  let content_html = next.content_html?.trim() ? next.content_html : previous.content_html;
+  const nextUsable = isUsableArticleBody(next.content_html, next.content_text);
+  const previousUsable = isUsableArticleBody(previous.content_html, previous.content_text);
+  const nextBetter =
+    nextUsable &&
+    (!previousUsable ||
+      articleBodyParagraphCount(next.content_html, next.content_text) >
+        articleBodyParagraphCount(previous.content_html, previous.content_text));
+
+  const content_text = nextBetter ? next.content_text : previous.content_text;
+  let content_html = nextBetter && next.content_html?.trim() ? next.content_html : previous.content_html;
   if (content_html && isCtaOnlyArticleText(stripHtml(content_html))) {
     content_html = previous.content_html;
   }

@@ -30,7 +30,12 @@ DEK_MIN_PARAGRAPHS = 3
 DEK_MIN_CHARS = 500
 
 HEADERS = {
-    "User-Agent": "Storykeep/1.0 (+https://localhost; personal archive reader)"
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; Storykeep/1.0; +https://storykeep.app) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 _KILL_TAGS = frozenset({"script", "style", "noscript", "svg", "nav", "footer", "aside", "iframe", "form"})
@@ -725,6 +730,16 @@ def _ensure_feed_body(db: Session, article: Article, refetch: bool = False) -> t
     return feed_html, feed_text
 
 
+def article_needs_page_extract(article: Article) -> bool:
+    return _is_dek_only(article.content_html, article.content_text) or not _html_extract_candidate_valid(
+        article.content_html, article.content_text
+    )
+
+
+def has_full_text(html: str | None, text: str | None) -> bool:
+    return _html_extract_candidate_valid(html, text) and not _is_dek_only(html, text)
+
+
 def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Article, str | None]:
     feed_html, feed_text = _ensure_feed_body(db, article, refetch=force)
     if feed_html and getattr(article, "feed_html", None) is None:
@@ -735,20 +750,16 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     previous_html = article.content_html
     previous_text = article.content_text
     previous_image = article.image_url
+    needs_page = force or article_needs_page_extract(article) or _is_dek_only(feed_html, feed_text)
 
-    if (
-        not force
-        and article.content_text
-        and _html_extract_candidate_valid(article.content_html, article.content_text)
-        and not _is_dek_only(article.content_html, article.content_text)
-    ):
+    if not needs_page and has_full_text(article.content_html, article.content_text):
         return article, None
 
     page_html: str | None = None
     page_text: str | None = None
     image: str | None = None
-    raw = _fetch_html(article.url)
-    page_attempted = force or bool(raw)
+    raw = _fetch_html(article.url) if needs_page else None
+    page_attempted = needs_page
     if raw:
         page_html, page_text = _extract_from_html(raw, article.url)
         page_html, page_text = _normalize_page_candidate(page_html, page_text)

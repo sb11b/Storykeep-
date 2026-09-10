@@ -200,6 +200,15 @@ class ExtractorTests(unittest.TestCase):
         dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
         self.assertTrue(_is_dek_only(f"<p>{dek}</p>", dek))
 
+    def test_article_needs_page_extract_for_dek_only(self):
+        from app.services.extractor import article_needs_page_extract, has_full_text
+        from types import SimpleNamespace
+
+        dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
+        article = SimpleNamespace(content_html=f"<p>{dek}</p>", content_text=dek)
+        self.assertTrue(article_needs_page_extract(article))
+        self.assertFalse(has_full_text(article.content_html, article.content_text))
+
     def test_pick_display_body_prefers_page_over_dek_feed(self):
         dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
         page_html = "<p>" + ("Full analysis paragraph with enough prose to count. " * 12) + "</p><p>" + ("Second section with more detail. " * 12) + "</p>"
