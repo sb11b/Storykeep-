@@ -25,9 +25,38 @@ class BackupB2ConfigTests(unittest.TestCase):
                 backup_service._b2_endpoint_url(),
                 "https://s3.us-east-005.backblazeb2.com",
             )
+
+    def test_s3_bucket_still_works_without_b2(self):
         settings = Settings(s3_bucket="legacy-bucket", b2_bucket=None, b2_region="")
         self.assertEqual(settings.object_bucket, "legacy-bucket")
         self.assertEqual(settings.object_region, "us-east-1")
+
+    def test_b2_without_keys_is_not_ready(self):
+        from app.services import backup as backup_service
+
+        with (
+            patch.object(backup_service.settings, "b2_bucket", "keep-archive"),
+            patch.object(backup_service.settings, "b2_key_id", ""),
+            patch.object(backup_service.settings, "b2_application_key", ""),
+            patch.object(backup_service.settings, "s3_bucket", None),
+        ):
+            self.assertFalse(backup_service.object_store_ready())
+
+    def test_failed_upload_does_not_look_like_success(self):
+        from app.services import backup as backup_service
+        from pathlib import Path
+
+        with (
+            patch.object(backup_service.settings, "b2_bucket", "keep-archive"),
+            patch.object(backup_service.settings, "s3_bucket", None),
+            patch.object(backup_service.settings, "s3_prefix", "storykeep"),
+            patch.object(backup_service.settings, "b2_key_id", "kid"),
+            patch.object(backup_service.settings, "b2_application_key", "super-secret-key"),
+            patch.object(backup_service, "_object_store_client", side_effect=RuntimeError("denied super-secret-key")),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                backup_service._upload_backup_file(Path("/tmp/storykeep-probe.json"))
+            self.assertNotIn("super-secret-key", backup_service._redact_backup_error(str(caught.exception)))
 
     def test_upload_uses_b2_endpoint_and_prefix(self):
         from app.services import backup as backup_service

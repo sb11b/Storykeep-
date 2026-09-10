@@ -315,7 +315,7 @@ export const api = {
   createBackup: (backup_type: string) =>
     request<Backup>(`/api/v1/backups`, {
       method: "POST",
-      body: JSON.stringify({ backup_type, destination: "local" }),
+      body: JSON.stringify({ backup_type }),
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
   ttsPlan: (id: string, voiceId: string) =>

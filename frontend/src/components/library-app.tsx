@@ -2855,8 +2855,14 @@ function BackupDialog({
             onClick={async () => {
               setBusy(true);
               try {
-                await api.createBackup("export_json");
-                toast.success("JSON export ready");
+                const row = await api.createBackup("export_json");
+                if (row.status !== "success") {
+                  toast.error(row.error || "JSON export failed");
+                } else if (row.destination === "s3") {
+                  toast.success("JSON export saved to Backblaze under storykeep/");
+                } else {
+                  toast.success("JSON export saved on this server");
+                }
                 await onCreated();
               } catch (error) {
                 toast.error(error instanceof ApiError ? error.message : "Export failed");
@@ -2875,7 +2881,11 @@ function BackupDialog({
               try {
                 const row = await api.createBackup("db_dump");
                 toast[row.status === "success" ? "success" : "error"](
-                  row.status === "success" ? "Database dump saved" : row.error || "Dump failed",
+                  row.status === "success"
+                    ? row.destination === "s3"
+                      ? "Database dump saved to Backblaze under storykeep/"
+                      : "Database dump saved on this server"
+                    : row.error || "Dump failed",
                 );
                 await onCreated();
               } catch (error) {

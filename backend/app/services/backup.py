@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -14,13 +15,19 @@ from app.config import settings
 from app.database import parse_database_url
 from app.models import Annotation, Article, Backup, Feed, Tag, User
 
+logger = logging.getLogger(__name__)
+
 
 def object_store_ready() -> bool:
-    return bool(settings.object_bucket)
+    if (settings.b2_bucket or "").strip():
+        return bool((settings.b2_key_id or "").strip() and (settings.b2_application_key or "").strip())
+    return bool((settings.s3_bucket or "").strip())
 
 
 def _b2_endpoint_url() -> str:
     endpoint = (settings.b2_endpoint or "").strip()
+    if not endpoint and (settings.b2_region or "").strip():
+        endpoint = f"s3.{settings.b2_region.strip()}.backblazeb2.com"
     if not endpoint:
         return ""
     if "://" not in endpoint:
@@ -48,16 +55,33 @@ def _object_store_client():
     return boto3.client("s3", **kwargs, **extra)
 
 
-def _maybe_upload_s3(path: Path) -> str | None:
+def _redact_backup_error(message: str) -> str:
+    text = message or "Backup failed"
+    for secret in (
+        settings.b2_application_key,
+        settings.b2_key_id,
+        settings.secret_key,
+        os.environ.get("B2_APPLICATION_KEY") or "",
+        os.environ.get("DATABASE_URL") or "",
+    ):
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    return text[:1000]
+
+
+def _upload_backup_file(path: Path) -> str:
     bucket = settings.object_bucket
     if not bucket:
+        raise RuntimeError("No object-store bucket is configured.")
+    key = f"{settings.s3_prefix.strip('/')}/{path.name}"
+    _object_store_client().upload_file(str(path), bucket, key)
+    return f"s3://{bucket}/{key}"
+
+
+def _maybe_upload_s3(path: Path) -> str | None:
+    if not object_store_ready():
         return None
-    try:
-        key = f"{settings.s3_prefix.strip('/')}/{path.name}"
-        _object_store_client().upload_file(str(path), bucket, key)
-        return f"s3://{bucket}/{key}"
-    except Exception:
-        return None
+    return _upload_backup_file(path)
 
 
 def create_json_export(db: Session, user: User) -> Backup:
@@ -123,12 +147,23 @@ def create_json_export(db: Session, user: User) -> Backup:
 
     filename = f"storykeep-{user.id}-{backup.id}.json"
     path = settings.backup_dir / filename
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    remote = _maybe_upload_s3(path)
-    backup.location = remote or str(path)
-    backup.destination = "s3" if remote else "local"
-    backup.size_bytes = path.stat().st_size
-    backup.status = "success"
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if object_store_ready():
+            backup.location = _upload_backup_file(path)
+            backup.destination = "s3"
+        else:
+            backup.location = str(path)
+            backup.destination = "local"
+        backup.size_bytes = path.stat().st_size
+        backup.status = "success"
+        backup.error = None
+    except Exception as exc:
+        logger.warning("JSON backup failed: %s", _redact_backup_error(str(exc)))
+        backup.status = "failed"
+        backup.error = _redact_backup_error(str(exc))
+        backup.destination = "s3" if object_store_ready() else "local"
+        backup.location = None
     backup.completed_at = datetime.now(timezone.utc)
     db.add(backup)
     db.commit()
@@ -172,18 +207,24 @@ def create_db_dump(db: Session, user_id: UUID | None) -> Backup:
             env=env,
         )
         if result.returncode != 0 or not path.exists():
-            raise RuntimeError(result.stderr or "pg_dump failed")
-        remote = _maybe_upload_s3(path)
-        backup.location = remote or str(path)
-        backup.destination = "s3" if remote else "local"
+            raise RuntimeError(_redact_backup_error(result.stderr or "pg_dump failed"))
+        if object_store_ready():
+            backup.location = _upload_backup_file(path)
+            backup.destination = "s3"
+        else:
+            backup.location = str(path)
+            backup.destination = "local"
         backup.size_bytes = path.stat().st_size
         backup.status = "success"
+        backup.error = None
         backup.completed_at = datetime.now(timezone.utc)
     except Exception as exc:
+        logger.warning("Database dump failed: %s", _redact_backup_error(str(exc)))
         backup.status = "failed"
-        backup.error = str(exc)[:1000]
+        backup.error = _redact_backup_error(str(exc))
         backup.completed_at = datetime.now(timezone.utc)
-        backup.destination = "local"
+        backup.destination = "s3" if object_store_ready() else "local"
+        backup.location = None
     db.add(backup)
     db.commit()
     db.refresh(backup)

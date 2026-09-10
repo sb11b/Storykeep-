@@ -21,8 +21,11 @@ def backup_to_b2(db: Session = Depends(get_db), user: User = Depends(get_current
     if not backup_service.object_store_ready():
         raise HTTPException(status_code=503, detail="Backblaze is not configured on this service.")
     row = backup_service.create_json_export(db, user)
-    if row.destination != "s3":
-        raise HTTPException(status_code=502, detail="Backup ran but was not stored in the B2 bucket.")
+    if row.status != "success" or row.destination != "s3":
+        raise HTTPException(
+            status_code=502,
+            detail=row.error or "Backup ran but was not stored in the B2 bucket.",
+        )
     return BackupOut.model_validate(row)
 
 
