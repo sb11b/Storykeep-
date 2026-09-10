@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 import httpx
 import trafilatura
@@ -172,6 +173,43 @@ def _clean_text(text: str) -> str:
     return cleaned
 
 
+def _abs_url(src: str, base: str) -> str:
+    return urljoin(base, src.strip())
+
+
+def _extract_image(raw_html: str, url: str, content_html: str | None = None) -> str | None:
+    try:
+        root = lxml_html.fromstring(raw_html)
+    except Exception:
+        root = None
+    if root is not None:
+        for query in (
+            '//meta[@property="og:image"]/@content',
+            '//meta[@property="og:image:url"]/@content',
+            '//meta[@name="twitter:image"]/@content',
+            '//meta[@name="twitter:image:src"]/@content',
+        ):
+            found = root.xpath(query)
+            if found:
+                candidate = str(found[0]).strip()
+                if candidate and not candidate.startswith("data:"):
+                    return _abs_url(candidate, url)[:2000]
+        for link in root.xpath('//link[@rel="image_src"]/@href'):
+            candidate = str(link).strip()
+            if candidate:
+                return _abs_url(candidate, url)[:2000]
+    if content_html:
+        try:
+            body = lxml_html.fromstring(content_html)
+            for img in body.xpath(".//img[@src]"):
+                src = (img.get("src") or "").strip()
+                if src and not src.startswith("data:"):
+                    return _abs_url(src, url)[:2000]
+        except Exception:
+            pass
+    return None
+
+
 def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
     prepared = _prepare_html(html)
     downloaded = trafilatura.extract(
@@ -203,16 +241,24 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def extract_url(url: str) -> tuple[str | None, str | None]:
+def _fetch_html(url: str) -> str | None:
     try:
         with httpx.Client(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
             response = client.get(url)
             response.raise_for_status()
-            html = response.text
+            return response.text
     except Exception as exc:
         logger.info("extract fetch failed %s: %s", url, exc)
-        return None, None
-    return _extract_from_html(html, url)
+        return None
+
+
+def extract_url(url: str) -> tuple[str | None, str | None, str | None]:
+    raw = _fetch_html(url)
+    if not raw:
+        return None, None, None
+    html, text = _extract_from_html(raw, url)
+    image = _extract_image(raw, url, html)
+    return html, text, image
 
 
 def extract_html(raw_html: str, url: str = "") -> tuple[str | None, str | None]:
@@ -227,10 +273,14 @@ def _strip_tags(html: str) -> str:
         return html
 
 
-def extract_page(url: str) -> tuple[str | None, str | None, str | None]:
-    html, text = extract_url(url)
+def extract_page(url: str) -> tuple[str | None, str | None, str | None, str | None]:
+    raw = _fetch_html(url)
+    if not raw:
+        return None, None, None, None
+    html, text = _extract_from_html(raw, url)
+    image = _extract_image(raw, url, html)
     title = None
-    source = html or ""
+    source = html or raw
     if source:
         try:
             tree = lxml_html.fromstring(source)
@@ -241,7 +291,7 @@ def extract_page(url: str) -> tuple[str | None, str | None, str | None]:
             title = None
     if not title:
         title = (url.rstrip("/").rsplit("/", 1)[-1] or url)[:500]
-    return html, text, title
+    return html, text, title, image
 
 
 def _extract_usable(html: str | None, text: str | None) -> bool:
@@ -267,7 +317,7 @@ def fill_article(db: Session, article: Article, force: bool = False) -> Article:
         return article
     previous_html = article.content_html
     previous_text = article.content_text
-    html, text = extract_url(article.url)
+    html, text, image = extract_url(article.url)
     if not _extract_usable(html, text):
         if force and (previous_html or previous_text):
             raise ExtractFailedError("Extract failed, original kept.")
@@ -276,6 +326,8 @@ def fill_article(db: Session, article: Article, force: bool = False) -> Article:
         article.content_html = html
     if text:
         article.content_text = text
+    if image:
+        article.image_url = image
     article.fetched_at = datetime.now(timezone.utc)
     db.add(article)
     return article

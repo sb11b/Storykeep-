@@ -55,6 +55,9 @@ def _entry_image(entry: Any) -> str | None:
     for link in entry.get("links", []) or []:
         if str(link.get("type", "")).startswith("image") and link.get("href"):
             return link["href"]
+    for enclosure in entry.get("enclosures", []) or []:
+        if enclosure.get("href") and str(enclosure.get("type", "")).startswith("image"):
+            return enclosure["href"]
     return None
 
 

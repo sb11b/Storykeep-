@@ -45,7 +45,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { onCodeCopyClick } from "@/lib/code-copy";
-import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
+import {
+  articleHeroImageUrl,
+  articleReaderSource,
+  formatRelative,
+  sanitizeHtml,
+  stripHtml,
+} from "@/lib/format";
 import { clearFindMarks, findMarksInArticle, focusFindMark } from "@/lib/article-find";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { noteMarkdownHtml } from "@/lib/markdown";
@@ -181,6 +187,8 @@ export function LibraryApp({ user }: { user: User }) {
   const loadingMoreRef = useRef(false);
   const listScrollerRef = useRef<ShelfScrollerHandle>(null);
   const listScrollTops = useRef<Record<string, number>>({});
+  const listFeedKeyRef = useRef<string>(shelfKey(shelf));
+  const listDebugLoggedRef = useRef<string | null>(null);
   const [listEpoch, setListEpoch] = useState(0);
   const [listRestoreTop, setListRestoreTop] = useState<number | null>(null);
   const [readerScrollToken, setReaderScrollToken] = useState(0);
@@ -259,6 +267,10 @@ export function LibraryApp({ user }: { user: User }) {
   }, [shelf]);
 
   const loadList = useCallback(async () => {
+    const feed = shelfKey(shelf);
+    listFeedKeyRef.current = feed;
+    listDebugLoggedRef.current = null;
+    delete listScrollTops.current[feed];
     const gen = ++listGenRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false);
@@ -271,6 +283,7 @@ export function LibraryApp({ user }: { user: User }) {
       if (gen !== listGenRef.current) return;
       setItems(page.items);
       setTotal(page.total);
+      listScrollerRef.current?.scrollToIndex(0);
       setListEpoch((current) => current + 1);
     } catch (error) {
       if (gen !== listGenRef.current) return;
@@ -603,6 +616,9 @@ export function LibraryApp({ user }: { user: User }) {
       groupedFeeds={groupedFeeds}
       tags={tags}
       onShelf={(next) => {
+        delete listScrollTops.current[shelfKey(shelf)];
+        delete listScrollTops.current[shelfKey(next)];
+        listDebugLoggedRef.current = null;
         setListRestoreTop(null);
         setShelf(next);
         setSelectedId(null);
@@ -838,8 +854,13 @@ export function LibraryApp({ user }: { user: User }) {
               loaded={items.length}
               total={total}
               onNearEnd={() => void loadMore()}
+              onListReset={({ feed, offset, startIndex }) => {
+                if (listDebugLoggedRef.current === feed) return;
+                listDebugLoggedRef.current = feed;
+                console.info("[StoryKeep] list first paint", { feed, offset, startIndex });
+              }}
               onScrollTop={(top, userInitiated) => {
-                if (userInitiated && top > 0) {
+                if (userInitiated && top > 0 && listFeedKeyRef.current === shelfKey(shelf)) {
                   listScrollTops.current[shelfKey(shelf)] = top;
                 }
               }}
@@ -916,7 +937,6 @@ export function LibraryApp({ user }: { user: User }) {
                 onBack={() => {
                   setReaderFull(false);
                   setSelectedId(null);
-                  setListRestoreTop(listScrollTops.current[shelfKey(shelf)] ?? 0);
                 }}
                 onToggleRead={() => void patchSelected({ is_read: !article.is_read })}
                 onToggleSaved={() => void patchSelected({ is_saved: !article.is_saved })}
@@ -937,10 +957,10 @@ export function LibraryApp({ user }: { user: User }) {
                   } catch (error) {
                     toast.error(
                       error instanceof ApiError && error.status === 422
-                        ? error.message
+                        ? "Extract failed"
                         : error instanceof ApiError
                           ? error.message
-                          : "Extract failed, original kept",
+                          : "Extract failed",
                     );
                   }
                 }}
@@ -1408,6 +1428,7 @@ function ArticleRow({
   onDelete: () => void;
   onClick: () => void;
 }) {
+  const thumbUrl = articleHeroImageUrl(item.image_url, item.url);
   return (
     <div
       className={cn(
@@ -1444,8 +1465,20 @@ function ArticleRow({
           <span>{formatRelative(item.published_at)}</span>
           {item.is_saved ? <Bookmark className="size-3 ml-auto text-primary" /> : null}
         </div>
-        <p className={cn("mt-1 leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>{item.title}</p>
-        <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
+        <div className="mt-1 flex gap-3">
+          {thumbUrl ? (
+            <img
+              src={thumbUrl}
+              alt=""
+              loading="lazy"
+              className="size-14 shrink-0 rounded-md object-cover bg-muted"
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <p className={cn("leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>{item.title}</p>
+            <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
+          </div>
+        </div>
       </button>
       <Button
         type="button"
@@ -1556,7 +1589,8 @@ function Reader({
   );
   const bodyRef = useRef<HTMLDivElement>(null);
   const composed = isStoryKeepNote(article);
-  const html = composed ? composedNoteHtml(article) : article.content_html ? sanitizeHtml(article.content_html) : "";
+  const heroImage = composed ? null : articleHeroImageUrl(article.image_url, article.url);
+  const html = composed ? composedNoteHtml(article) : articleReaderSource(article);
   const titleSpoken = spokenTitle(article.title);
   const titleWordCount = countWords(titleSpoken);
   const fallbackBody = composed
@@ -1898,6 +1932,9 @@ function Reader({
           <SpokenWords text={titleSpoken || article.title} offset={0} />
         </h1>
         {article.author ? <p className="mt-2 text-sm text-muted-foreground">{article.author}</p> : null}
+        {heroImage ? (
+          <img src={heroImage} alt="" className="article-hero mt-4 max-w-full rounded-lg" />
+        ) : null}
         <div className="flex flex-wrap gap-2 mt-4">
           <Button size="sm" variant={article.is_saved ? "default" : "outline"} onClick={onToggleSaved}>
             {article.is_saved ? <BookmarkCheck className="size-3.5" /> : <Bookmark className="size-3.5" />}

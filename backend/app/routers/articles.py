@@ -143,16 +143,20 @@ def save_url(
     feed = _saved_pages_feed(db, user)
     existing = db.scalar(select(Article).where(Article.feed_id == feed.id, Article.guid == url[:2000]))
     now = datetime.now(timezone.utc)
-    html, text, title = extractor.extract_page(url)
+    html, text, title, image = extractor.extract_page(url)
+    usable = extractor._extract_usable(html, text)
     if existing:
         article = existing
-        if html:
-            article.content_html = html
-        if text:
-            article.content_text = text
+        if usable:
+            if html:
+                article.content_html = html
+            if text:
+                article.content_text = text
+            article.fetched_at = now
         if title:
             article.title = title[:500]
-        article.fetched_at = now
+        if image:
+            article.image_url = image
         article.is_saved = True
         article.saved_at = article.saved_at or now
     else:
@@ -161,10 +165,11 @@ def save_url(
             guid=url[:2000],
             url=url[:4000],
             title=(title or url)[:500],
-            content_html=html,
-            content_text=text,
+            content_html=html if usable else None,
+            content_text=text if usable else None,
+            image_url=image,
             published_at=now,
-            fetched_at=now if html or text else None,
+            fetched_at=now if usable and (html or text) else None,
             is_saved=True,
             saved_at=now,
             source_kind="url",

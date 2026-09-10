@@ -5,6 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } fr
 export type ShelfScrollerHandle = {
   getScrollTop: () => number;
   scrollTo: (top: number) => void;
+  scrollToIndex: (index: number) => void;
 };
 
 /** Native overflow list pane. Never wrap this in Base UI ScrollArea. */
@@ -20,6 +21,7 @@ export const ShelfScroller = forwardRef<
     total: number;
     onNearEnd: () => void;
     onScrollTop?: (top: number, userInitiated: boolean) => void;
+    onListReset?: (payload: { feed: string; offset: number; startIndex: number }) => void;
     children: ReactNode;
   }
 >(function ShelfScroller(
@@ -33,16 +35,42 @@ export const ShelfScroller = forwardRef<
     total,
     onNearEnd,
     onScrollTop,
+    onListReset,
     children,
   },
   ref,
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
   const onNearEndRef = useRef(onNearEnd);
+  const onListResetRef = useRef(onListReset);
   const hasMoreRef = useRef(hasMore);
   const userScrolledRef = useRef(false);
   const programmaticRef = useRef(false);
   const paginationReadyRef = useRef(false);
+  const suppressNearEndRef = useRef(false);
+
+  const resetScroll = (notify = false) => {
+    const root = rootRef.current;
+    if (!root) return;
+    userScrolledRef.current = false;
+    paginationReadyRef.current = false;
+    suppressNearEndRef.current = true;
+    programmaticRef.current = true;
+    root.scrollTop = 0;
+    window.requestAnimationFrame(() => {
+      root.scrollTop = 0;
+      window.requestAnimationFrame(() => {
+        programmaticRef.current = false;
+        paginationReadyRef.current = true;
+        window.setTimeout(() => {
+          suppressNearEndRef.current = false;
+        }, 120);
+        if (notify) {
+          onListResetRef.current?.({ feed: shelfKey, offset: 0, startIndex: 0 });
+        }
+      });
+    });
+  };
 
   useImperativeHandle(
     ref,
@@ -57,51 +85,41 @@ export const ShelfScroller = forwardRef<
           programmaticRef.current = false;
         });
       },
+      scrollToIndex: (_index: number) => {
+        resetScroll(false);
+      },
     }),
-    [],
+    [shelfKey],
   );
 
   useEffect(() => {
     onNearEndRef.current = onNearEnd;
+    onListResetRef.current = onListReset;
     hasMoreRef.current = hasMore;
-  }, [onNearEnd, hasMore]);
+  }, [onNearEnd, onListReset, hasMore]);
 
   useEffect(() => {
-    userScrolledRef.current = false;
-    paginationReadyRef.current = false;
-    const root = rootRef.current;
-    if (!root) return;
-    programmaticRef.current = true;
-    root.scrollTo({ top: 0 });
-    window.requestAnimationFrame(() => {
-      programmaticRef.current = false;
-      paginationReadyRef.current = true;
-    });
+    resetScroll(false);
   }, [shelfKey]);
 
   useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    userScrolledRef.current = false;
-    paginationReadyRef.current = false;
-    programmaticRef.current = true;
-    root.scrollTo({ top: 0 });
-    window.requestAnimationFrame(() => {
-      programmaticRef.current = false;
-      paginationReadyRef.current = true;
-    });
+    resetScroll(true);
   }, [listEpoch]);
 
   useEffect(() => {
     if (restoreTop == null) return;
     const root = rootRef.current;
     if (!root) return;
+    suppressNearEndRef.current = true;
     programmaticRef.current = true;
     root.scrollTo({ top: Math.max(0, restoreTop) });
     userScrolledRef.current = restoreTop > 0;
     window.requestAnimationFrame(() => {
       programmaticRef.current = false;
       paginationReadyRef.current = true;
+      window.setTimeout(() => {
+        suppressNearEndRef.current = false;
+      }, 120);
     });
   }, [restoreTop]);
 
@@ -114,6 +132,7 @@ export const ShelfScroller = forwardRef<
         onScrollTop?.(root.scrollTop, userScrolledRef.current);
       }
       if (!paginationReadyRef.current) return;
+      if (suppressNearEndRef.current) return;
       if (!hasMoreRef.current) return;
       if (!userScrolledRef.current) return;
       if (root.clientHeight < 48) return;

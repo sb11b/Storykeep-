@@ -71,6 +71,17 @@ class ExtractorTests(unittest.TestCase):
         css_only = ".widget{margin:0;padding:0;box-sizing:border-box;}\n#footer{display:flex;}"
         self.assertFalse(_extract_usable("<style>.widget{}</style>", css_only))
 
+    def test_extract_image_reads_og_image(self):
+        html = """
+        <html><head>
+        <meta property="og:image" content="https://cdn.example.com/hero.jpg" />
+        </head><body><article><p>Story body.</p></article></body></html>
+        """
+        from app.services.extractor import _extract_image
+
+        image = _extract_image(html, "https://example.com/story")
+        self.assertEqual(image, "https://cdn.example.com/hero.jpg")
+
     def test_fill_article_keeps_previous_body_on_failed_force_extract(self):
         article = SimpleNamespace(
             url="https://example.com/story",
@@ -83,7 +94,7 @@ class ExtractorTests(unittest.TestCase):
             def add(self, _obj) -> None:
                 return None
 
-        with unittest.mock.patch("app.services.extractor.extract_url", return_value=(None, None)):
+        with unittest.mock.patch("app.services.extractor.extract_url", return_value=(None, None, None)):
             with self.assertRaises(ExtractFailedError):
                 fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
         self.assertEqual(article.content_text, "Old body kept.")
