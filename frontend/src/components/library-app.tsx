@@ -1068,7 +1068,9 @@ export function LibraryApp({ user }: { user: User }) {
                       ),
                     );
                     setReaderScrollToken((current) => current + 1);
-                    if (result.notice) {
+                    if (result.notice?.startsWith("Updated from cbr.com")) {
+                      toast.success(result.notice);
+                    } else if (result.notice) {
                       toast(result.notice);
                     } else if (upgraded) {
                       toast.success("Full text refreshed");

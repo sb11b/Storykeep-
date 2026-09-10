@@ -26,8 +26,17 @@ class ExtractFailedError(Exception):
 
 CHROME_NOTICE = "Page extract was chrome; kept feed text."
 FULL_TEXT_UNAVAILABLE = "Full text unavailable"
+CBR_NO_COLUMN_NOTICE = "CBR page returned no article column; kept dek."
 DEK_MIN_PARAGRAPHS = 3
 DEK_MIN_CHARS = 500
+CBR_REFERER = "https://www.cbr.com/"
+_CBR_HOSTS = ("cbr.com", "www.cbr.com")
+_CBR_ARTICLE_XPATHS = (
+    '//*[contains(concat(" ", normalize-space(@class), " "), " article-body ")]',
+    '//*[contains(@class, "article-body")]',
+    '//article[contains(@class, "w-article")]//div[contains(@class, "article-body")]',
+    '//article[contains(@class, "w-article")]',
+)
 
 HEADERS = {
     "User-Agent": (
@@ -358,19 +367,71 @@ def _extract_from_article_node(prepared: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _repair_from_html(html: str) -> tuple[str | None, str | None] | None:
-    prepared = _prepare_html(html)
-    direct = _extract_paragraph_html(prepared, min_chars=80, min_paragraphs=1)
-    if direct[0] and direct[1]:
-        return direct
-    return None
+def _is_cbr_url(url: str | None) -> bool:
+    if not url:
+        return False
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).netloc or "").lower()
+    except Exception:
+        host = url.lower()
+    return any(host == domain or host.endswith(f".{domain}") for domain in _CBR_HOSTS)
 
 
-def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
-    prepared = _prepare_html(html)
-    direct = _extract_from_article_node(prepared)
-    if direct[0] and direct[1]:
-        return direct
+def _cbr_notice(char_count: int, updated: bool) -> str:
+    if updated and char_count > 0:
+        return f"Updated from cbr.com ({char_count} chars)"
+    return CBR_NO_COLUMN_NOTICE
+
+
+def _find_cbr_article_root(root: lxml_html.HtmlElement) -> lxml_html.HtmlElement | None:
+    best: lxml_html.HtmlElement | None = None
+    best_score = 0
+    for query in _CBR_ARTICLE_XPATHS:
+        for node in root.xpath(query):
+            if not isinstance(node.tag, str):
+                continue
+            hay = f"{(node.get('class') or '').lower()} {(node.get('id') or '').lower()}"
+            text_len = len((node.text_content() or "").strip())
+            score = text_len + (1_000_000 if "article-body" in hay else 0)
+            if score > best_score:
+                best_score = score
+                best = node
+    return best
+
+
+def _extract_cbr_article_body(raw: str, url: str) -> tuple[str | None, str | None, int]:
+    try:
+        root = lxml_html.fromstring(raw)
+    except Exception as exc:
+        logger.info("cbr parse failed %s: %s", url, exc)
+        return None, None, 0
+
+    article_root = _find_cbr_article_root(root)
+    if article_root is None:
+        return None, None, 0
+
+    blocks = _collect_article_blocks(article_root)
+    if not blocks:
+        blocks = []
+        for node in article_root.xpath(".//p"):
+            text = (node.text_content() or "").strip()
+            if len(text) >= 40 and not _is_cta_line(text):
+                blocks.append(node)
+    if not blocks:
+        return None, None, 0
+
+    text = _clean_text("\n\n".join((block.text_content() or "").strip() for block in blocks))
+    char_count = len(text)
+    if char_count < 80 or _text_is_polluted(text) or _is_cta_only(text):
+        return None, None, char_count
+
+    html_out = _sanitize_html("".join(lxml_html.tostring(block, encoding="unicode") for block in blocks))
+    return html_out, text, char_count
+
+
+def _extract_with_readability_fallback(prepared: str, url: str) -> tuple[str | None, str | None]:
     downloaded = trafilatura.extract(
         prepared,
         include_comments=False,
@@ -382,7 +443,7 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
     if downloaded and text:
         html_out = _sanitize_html(downloaded)
         text_out = _clean_text(text)
-        if text_out and not _is_cta_only(text_out) and _extract_usable(html_out, text_out):
+        if text_out and not _is_cta_only(text_out) and len(text_out) >= DEK_MIN_CHARS:
             return html_out, text_out
 
     try:
@@ -392,40 +453,97 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
         if cleaned and plain:
             html_out = _sanitize_html(cleaned)
             text_out = _clean_text(plain)
-            if text_out and not _is_cta_only(text_out) and _extract_usable(html_out, text_out):
+            if text_out and not _is_cta_only(text_out) and len(text_out) >= DEK_MIN_CHARS:
                 return html_out, text_out
     except Exception as exc:
         logger.info("readability failed %s: %s", url, exc)
-
     return None, None
 
 
-def _fetch_html(url: str) -> str | None:
+def _extract_cbr_page(raw: str, url: str, *, status: int | None = None) -> tuple[str | None, str | None, int, str]:
+    html_out, text_out, char_count = _extract_cbr_article_body(raw, url)
+    logger.info(
+        "cbr extract url=%s status=%s extracted_char_count=%s",
+        url,
+        status if status is not None else "unknown",
+        char_count,
+    )
+    if char_count >= DEK_MIN_CHARS and html_out and text_out:
+        return html_out, text_out, char_count, "article-body"
+
+    fallback_html, fallback_text = _extract_with_readability_fallback(raw, url)
+    fallback_count = len(_clean_text(fallback_text or ""))
+    if fallback_count >= DEK_MIN_CHARS and fallback_html and fallback_text:
+        logger.info(
+            "cbr extract fallback url=%s status=%s extracted_char_count=%s method=readability",
+            url,
+            status if status is not None else "unknown",
+            fallback_count,
+        )
+        return fallback_html, fallback_text, fallback_count, "readability"
+    return html_out, text_out, char_count, "none"
+
+
+def _repair_from_html(html: str) -> tuple[str | None, str | None] | None:
+    prepared = _prepare_html(html)
+    direct = _extract_paragraph_html(prepared, min_chars=80, min_paragraphs=1)
+    if direct[0] and direct[1]:
+        return direct
+    return None
+
+
+def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
+    if _is_cbr_url(url):
+        page_html, page_text, _char_count, _method = _extract_cbr_page(html, url)
+        if page_html and page_text and len(page_text) >= DEK_MIN_CHARS:
+            return page_html, page_text
+
+    prepared = _prepare_html(html)
+    direct = _extract_from_article_node(prepared)
+    if direct[0] and direct[1]:
+        return direct
+    fallback_html, fallback_text = _extract_with_readability_fallback(prepared, url)
+    if fallback_html and fallback_text and _extract_usable(fallback_html, fallback_text):
+        return fallback_html, fallback_text
+    return None, None
+
+
+def _fetch_html_with_status(url: str) -> tuple[str | None, int | None]:
     last_error: Exception | None = None
     request_headers = dict(HEADERS)
-    try:
-        from urllib.parse import urlparse
+    if _is_cbr_url(url):
+        request_headers["Referer"] = CBR_REFERER
+    else:
+        try:
+            from urllib.parse import urlparse
 
-        parsed = urlparse(url)
-        if parsed.scheme and parsed.netloc:
-            request_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
-    except Exception:
-        pass
+            parsed = urlparse(url)
+            if parsed.scheme and parsed.netloc:
+                request_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+        except Exception:
+            pass
     for attempt in range(3):
         try:
             with httpx.Client(timeout=30.0, follow_redirects=True, headers=request_headers) as client:
                 response = client.get(url)
+                status = response.status_code
                 response.raise_for_status()
                 text = response.text or ""
+                logger.info("extract fetch url=%s status=%s bytes=%s attempt=%s", url, status, len(text), attempt + 1)
                 if len(text) >= 500:
-                    return text
+                    return text, status
                 last_error = ValueError(f"short response ({len(text)} bytes)")
         except Exception as exc:
             last_error = exc
             logger.info("extract fetch attempt %s failed %s: %s", attempt + 1, url, exc)
     if last_error:
         logger.warning("extract fetch failed %s: %s", url, last_error)
-    return None
+    return None, None
+
+
+def _fetch_html(url: str) -> str | None:
+    raw, _status = _fetch_html_with_status(url)
+    return raw
 
 
 def extract_url(url: str) -> tuple[str | None, str | None, str | None]:
@@ -757,6 +875,16 @@ def has_full_text(html: str | None, text: str | None) -> bool:
     return _html_extract_candidate_valid(html, text) and not _is_dek_only(html, text)
 
 
+def _is_long_stored_body(html: str | None, text: str | None) -> bool:
+    return has_full_text(html, text)
+
+
+def _body_longer_than(page_html: str | None, page_text: str | None, previous_html: str | None, previous_text: str | None) -> bool:
+    _page_paras, _page_letters, page_chars = _body_score(page_html, page_text)
+    _prev_paras, _prev_letters, prev_chars = _body_score(previous_html, previous_text)
+    return page_chars > prev_chars
+
+
 def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Article, str | None]:
     feed_html, feed_text = _ensure_feed_body(db, article, refetch=force)
     if feed_html and getattr(article, "feed_html", None) is None:
@@ -769,19 +897,49 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     previous_image = article.image_url
     needs_page = force or article_needs_page_extract(article) or _is_dek_only(feed_html, feed_text)
 
+    if _is_long_stored_body(previous_html, previous_text):
+        return article, None
+
     if not needs_page and has_full_text(article.content_html, article.content_text):
         return article, None
 
     page_html: str | None = None
     page_text: str | None = None
     image: str | None = None
-    raw = _fetch_html(article.url) if needs_page else None
+    raw: str | None = None
+    fetch_status: int | None = None
     page_attempted = needs_page
+    if needs_page:
+        raw, fetch_status = _fetch_html_with_status(article.url)
+    if needs_page and _is_cbr_url(article.url) and not raw:
+        return article, CBR_NO_COLUMN_NOTICE
+    if raw and _is_cbr_url(article.url):
+        page_html, page_text, cbr_char_count, _method = _extract_cbr_page(raw, article.url, status=fetch_status)
+        page_html, page_text = _normalize_page_candidate(page_html, page_text)
+        image = _extract_image(raw, article.url, page_html)
+        if (
+            page_html
+            and page_text
+            and cbr_char_count >= DEK_MIN_CHARS
+            and _body_longer_than(page_html, page_text, previous_html, previous_text)
+        ):
+            article.content_html = page_html
+            article.content_text = page_text
+            if image:
+                article.image_url = image
+            elif force and previous_image:
+                article.image_url = previous_image
+            article.fetched_at = datetime.now(timezone.utc)
+            db.add(article)
+            return article, _cbr_notice(cbr_char_count, True)
+        return article, CBR_NO_COLUMN_NOTICE
+
     if raw:
         page_html, page_text = _extract_from_html(raw, article.url)
         page_html, page_text = _normalize_page_candidate(page_html, page_text)
-        if not _html_extract_candidate_valid(page_html, page_text):
-            page_html, page_text = None, None
+        if page_html and page_text and not _html_extract_candidate_valid(page_html, page_text):
+            if not _body_longer_than(page_html, page_text, previous_html, previous_text):
+                page_html, page_text = None, None
         image = _extract_image(raw, article.url, page_html)
 
     chosen_html, chosen_text, notice, source = pick_display_body(
@@ -808,6 +966,9 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
         (previous_html or "").strip() == (next_html or "").strip()
         and (previous_text or "").strip() == (next_text or "").strip()
     ):
+        return article, notice
+
+    if not _body_longer_than(next_html, next_text, previous_html, previous_text):
         return article, notice
 
     article.content_html = next_html

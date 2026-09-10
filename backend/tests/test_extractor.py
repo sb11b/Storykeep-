@@ -224,6 +224,53 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(source, "page")
         self.assertIn("Full analysis paragraph", chosen_text or "")
 
+    def test_cbr_article_body_selector_prefers_article_body_node(self):
+        from app.services.extractor import _extract_cbr_article_body
+
+        dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
+        cbr_html = f"""
+        <html><head><meta property="og:description" content="{dek}" /></head><body>
+        <article class="w-article widget list layout-rich">
+        <div class="article-body">
+        <p>Intro paragraph with enough words to begin the ranked list article about powerful Naruto ninjas today.</p>
+        <h2>10 Naruto Uzumaki</h2>
+        <p>{"Naruto surpassed every Kage through hard work, Sage Mode, and the Nine-Tails partnership. " * 8}</p>
+        <h2>9 Sasuke Uchiha</h2>
+        <p>{"Sasuke's Sharingan and Rinnegan made him stronger than most village leaders. " * 8}</p>
+        </div></article></body></html>
+        """
+        html, text, char_count = _extract_cbr_article_body(cbr_html, "https://www.cbr.com/example/")
+        self.assertGreaterEqual(char_count, 500)
+        self.assertIn("Naruto surpassed", text or "")
+        self.assertNotIn(dek, (text or "")[:120])
+        self.assertGreaterEqual((html or "").count("<p"), 2)
+
+    def test_fill_article_cbr_returns_readable_notice(self):
+        from app.services.extractor import CBR_NO_COLUMN_NOTICE, fill_article
+        from types import SimpleNamespace
+
+        dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
+        article = SimpleNamespace(
+            url="https://www.cbr.com/naruto-ninjas-kage-level-without-kekkei-genkai/",
+            content_html=f"<p>{dek}</p>",
+            content_text=dek,
+            feed_html=f"<p>{dek}</p>",
+            feed_text=dek,
+            summary=dek,
+            image_url=None,
+            fetched_at=None,
+        )
+
+        class FakeDb:
+            def add(self, _obj) -> None:
+                return None
+
+        with unittest.mock.patch("app.services.extractor._ensure_feed_body", side_effect=lambda _db, art, refetch=False: (art.feed_html, art.feed_text)):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, 404)):
+                updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        self.assertIn(dek, updated.content_text or "")
+        self.assertEqual(notice, CBR_NO_COLUMN_NOTICE)
+
     def test_cbr_article_widget_class_is_not_dropped(self):
         cbr_html = """
         <html><body><article class="w-article widget list layout-rich">
@@ -277,7 +324,7 @@ class ExtractorTests(unittest.TestCase):
                 return None
 
         with unittest.mock.patch("app.services.extractor._ensure_feed_body", return_value=(None, None)):
-            with unittest.mock.patch("app.services.extractor._fetch_html", return_value=None):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, None)):
                 updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
         self.assertIn("Old body kept", updated.content_text or "")
         self.assertIsNone(notice)
@@ -300,7 +347,7 @@ class ExtractorTests(unittest.TestCase):
 
         page_html = "<p>Want to leave a tip?</p><p>Support Us</p>"
         with unittest.mock.patch("app.services.extractor._ensure_feed_body", side_effect=lambda _db, art, refetch=False: (art.feed_html, art.feed_text)):
-            with unittest.mock.patch("app.services.extractor._fetch_html", return_value="<html></html>"):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=("<html></html>", 200)):
                 with unittest.mock.patch(
                     "app.services.extractor._extract_from_html",
                     return_value=(page_html, "Want to leave a tip?\nSupport Us"),
