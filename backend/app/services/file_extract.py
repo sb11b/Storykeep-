@@ -121,11 +121,11 @@ def _pptx(payload: bytes) -> str:
 def _html(payload: bytes) -> str:
     raw = payload.decode("utf-8", errors="replace")
     try:
-        import trafilatura
+        from app.services.extractor import extract_html
 
-        extracted = trafilatura.extract(raw) or ""
-        if extracted.strip():
-            return extracted
+        _, text = extract_html(raw)
+        if text and text.strip():
+            return text
     except Exception:
         pass
     plain = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", raw)

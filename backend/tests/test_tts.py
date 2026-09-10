@@ -75,6 +75,20 @@ class SpeechPlainTests(unittest.TestCase):
         self.assertEqual(note_source_markdown(note), "Remember the chain rule.")
         self.assertIn("chain rule", article_script(note))
 
+    def test_article_script_prefers_clean_text_over_polluted_html(self):
+        article = SimpleNamespace(
+            title="Policy story",
+            guid="https://example.com/1",
+            content_text="Congress moved Tuesday on a surprise package.",
+            content_html='<style>.widget{box-sizing:border-box;}</style><p>Congress moved Tuesday on a surprise package.</p>',
+            summary="",
+            overlay_additions=[],
+        )
+        script = article_script(article)
+        self.assertIn("Congress moved Tuesday", script)
+        self.assertNotIn("box-sizing", script)
+        self.assertNotIn("widget", script)
+
     def test_include_notes_appends_overlay_notes_without_changing_article_body(self):
         article = SimpleNamespace(
             title="RSS story",

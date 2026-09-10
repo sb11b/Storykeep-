@@ -95,11 +95,11 @@ def article_script(
     elif is_composed_note(article):
         body = speech_plain(note_source_markdown(article))
     else:
-        if article.content_html:
-            body = speech_plain(article.content_html)
-        if not body:
+        if (article.content_text or "").strip():
             body = speech_plain(article.content_text or "")
-        if not body:
+        elif article.content_html:
+            body = speech_plain(article.content_html)
+        else:
             body = speech_plain(article.summary or "")
     if body:
         parts.append(body)
