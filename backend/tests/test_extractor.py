@@ -17,13 +17,24 @@ from app.services.extractor import (
 )
 
 
-BLAZE_TIP_JAR = """
+BLAZE_LEDE = (
+    "Congress moved Tuesday on a surprise package that could reshape spending for years to come, "
+    "drawing support from both parties after months of quiet negotiation behind closed doors. "
+    "Leaders said the final language would be scrutinized in committee hearings next week."
+)
+BLAZE_SECOND = (
+    "Analysts said the vote reflected a broader realignment in fiscal policy and could influence "
+    "how lawmakers approach entitlement reform, defense budgets, and emergency spending this fall. "
+    "Several governors said the package would also shape state budget forecasts for the next cycle."
+)
+
+BLAZE_TIP_JAR = f"""
 <html><body>
 <article>
 <h1>Policy Shift Shakes Capitol</h1>
 <div class="article__body">
-<p>Congress moved Tuesday on a surprise package that could reshape spending for years to come.</p>
-<p>Analysts said the vote reflected months of quiet negotiation behind closed doors.</p>
+<p>{BLAZE_LEDE}</p>
+<p>{BLAZE_SECOND}</p>
 </div>
 <div class="tip-jar support-us">
 <p>Want to leave a tip?</p>
@@ -34,7 +45,8 @@ BLAZE_TIP_JAR = """
 """
 
 
-BLAZE_STYLE = """
+BLAZE_STYLE = (
+    """
 <html><head><style>
 .widget { box-sizing: border-box; margin: 0; padding: 0; }
 #footer-nav { display: flex; }
@@ -45,8 +57,12 @@ BLAZE_STYLE = """
 <article>
 <h1>Policy Shift Shakes Capitol</h1>
 <div itemprop="articleBody">
-<p>Congress moved Tuesday on a surprise package that could reshape spending for years.</p>
-<p>Analysts said the vote reflected months of quiet negotiation behind closed doors.</p>
+<p>"""
+    + BLAZE_LEDE
+    + """</p>
+<p>"""
+    + BLAZE_SECOND
+    + """</p>
 </div>
 </article>
 <aside class="related-widget">Related stories you might like</aside>
@@ -56,6 +72,7 @@ BLAZE_STYLE = """
 <div class="newsletter-signup">Subscribe to our newsletter for daily updates.</div>
 </body></html>
 """
+)
 
 
 class ExtractorTests(unittest.TestCase):
@@ -71,8 +88,7 @@ class ExtractorTests(unittest.TestCase):
     def test_repair_display_body_fixes_cta_only_text_from_html(self):
         from app.services.extractor import repair_display_body
 
-        stored_html, _ = extract_html(BLAZE_TIP_JAR, "https://example.com/blaze-story")
-        repaired_text, repaired_html = repair_display_body(stored_html, "Want to leave a tip?\nSupport Us")
+        repaired_text, repaired_html = repair_display_body(BLAZE_TIP_JAR, "Want to leave a tip?\nSupport Us")
         self.assertIsNotNone(repaired_text)
         assert repaired_text is not None
         self.assertIn("Congress moved Tuesday", repaired_text)
@@ -163,17 +179,41 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(notice, CHROME_NOTICE)
         self.assertIn("Congress moved Tuesday", chosen_text or "")
 
-    def test_html_extract_candidate_requires_two_paragraphs_or_400_letters(self):
+    def test_html_extract_candidate_requires_two_paragraphs_and_400_chars(self):
         short = "One short paragraph that is still somewhat long but not enough letters yet."
         self.assertFalse(_html_extract_candidate_valid("<p>x</p>", short))
         long_one = "x" * 420
-        self.assertTrue(_html_extract_candidate_valid(f"<p>{long_one}</p>", long_one))
+        self.assertFalse(_html_extract_candidate_valid(f"<p>{long_one}</p>", long_one))
+        long_two = " ".join(["News lede with enough words."] * 30)
+        html = f"<p>{long_two}</p><p>{long_two}</p>"
+        self.assertTrue(_html_extract_candidate_valid(html, f"{long_two}\n\n{long_two}"))
+
+    def test_single_tip_jar_paragraph_is_not_valid(self):
+        tip = "Want to leave a tip? Support our journalism."
+        self.assertFalse(_html_extract_candidate_valid(f"<p>{tip}</p>", tip))
+
+    def test_pick_display_body_rejects_invalid_current_for_feed(self):
+        para = "Congress moved Tuesday on a surprise package that could reshape spending for years to come and shift priorities."
+        feed_html = f"<p>{para}</p><p>{para} Analysts said the vote reflected months of quiet negotiation behind closed doors.</p>"
+        feed_text = f"{para}\n\n{para} Analysts said the vote reflected months of quiet negotiation behind closed doors."
+        chosen_html, chosen_text, _notice, source = pick_display_body(
+            feed_html,
+            feed_text,
+            "<p>Want to leave a tip?</p>",
+            "Want to leave a tip?",
+            "<p>Want to leave a tip?</p>",
+            "Want to leave a tip?",
+        )
+        self.assertEqual(source, "feed")
+        self.assertIn("Congress moved Tuesday", chosen_text or "")
 
     def test_fill_article_keeps_previous_body_on_failed_force_extract(self):
         article = SimpleNamespace(
             url="https://example.com/story",
-            content_html="<p>Old body kept with enough prose to count as readable article text for tests.</p><p>Second paragraph keeps the reader from going blank during re-extract.</p>",
-            content_text="Old body kept with enough prose to count as readable article text for tests.\n\nSecond paragraph keeps the reader from going blank during re-extract.",
+            content_html="<p>" + ("Old body kept with enough prose to count as readable article text for tests. " * 8) + "</p><p>" + ("Second paragraph keeps the reader from going blank during re-extract. " * 8) + "</p>",
+            content_text=("Old body kept with enough prose to count as readable article text for tests. " * 8).strip()
+            + "\n\n"
+            + ("Second paragraph keeps the reader from going blank during re-extract. " * 8).strip(),
             feed_html=None,
             feed_text=None,
             summary=None,
@@ -185,8 +225,9 @@ class ExtractorTests(unittest.TestCase):
             def add(self, _obj) -> None:
                 return None
 
-        with unittest.mock.patch("app.services.extractor._fetch_html", return_value=None):
-            updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        with unittest.mock.patch("app.services.extractor._ensure_feed_body", return_value=(None, None)):
+            with unittest.mock.patch("app.services.extractor._fetch_html", return_value=None):
+                updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
         self.assertIn("Old body kept", updated.content_text or "")
         self.assertIsNone(notice)
 
@@ -207,12 +248,13 @@ class ExtractorTests(unittest.TestCase):
                 return None
 
         page_html = "<p>Want to leave a tip?</p><p>Support Us</p>"
-        with unittest.mock.patch("app.services.extractor._fetch_html", return_value="<html></html>"):
-            with unittest.mock.patch(
-                "app.services.extractor._extract_from_html",
-                return_value=(page_html, "Want to leave a tip?\nSupport Us"),
-            ):
-                updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        with unittest.mock.patch("app.services.extractor._ensure_feed_body", side_effect=lambda _db, art, refetch=False: (art.feed_html, art.feed_text)):
+            with unittest.mock.patch("app.services.extractor._fetch_html", return_value="<html></html>"):
+                with unittest.mock.patch(
+                    "app.services.extractor._extract_from_html",
+                    return_value=(page_html, "Want to leave a tip?\nSupport Us"),
+                ):
+                    updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
         self.assertIn("Congress moved Tuesday", updated.content_text or "")
         self.assertEqual(notice, CHROME_NOTICE)
 

@@ -49,6 +49,10 @@ const CTA_LINE =
 
 export function isCtaOnlyArticleText(text: string | null | undefined): boolean {
   if (!text?.trim()) return true;
+  const lower = text.toLowerCase();
+  if (/leave a tip|want to leave a tip|support us|sign up|cookie settings|support our|become a member|tip jar|tip-jar|donate now|we use cookies/.test(lower)) {
+    return true;
+  }
   const blocks = text
     .split(/\n{2,}/)
     .map((block) => block.trim())
@@ -56,6 +60,14 @@ export function isCtaOnlyArticleText(text: string | null | undefined): boolean {
   if (!blocks.length) return true;
   const substantive = blocks.filter((block) => block.length >= 40 && !CTA_LINE.test(block) && !/leave a tip|support us|sign up|cookie settings/i.test(block));
   return substantive.length === 0;
+}
+
+export function isUsableArticleBody(content_html: string | null | undefined, content_text: string | null | undefined): boolean {
+  const text = (content_text?.trim() || stripHtml(content_html)).trim();
+  if (text.length < 400 || isCtaOnlyArticleText(text) || isPollutedArticleText(text)) return false;
+  if (content_html && isPollutedArticleHtml(content_html)) return false;
+  const paragraphCount = (content_html?.match(/<p[\s>]/gi) || []).length || text.split(/\n{2,}/).filter((block) => block.trim().length >= 40).length;
+  return paragraphCount >= 2;
 }
 
 export function isPollutedArticleText(text: string): boolean {
@@ -148,8 +160,10 @@ export function articleReaderSource(article: {
   feed_html?: string | null;
   summary?: string | null;
 }): string {
-  const primary = readerBodyFromFields(article.content_html, article.content_text);
-  if (primary) return primary;
+  if (isUsableArticleBody(article.content_html, article.content_text)) {
+    const primary = readerBodyFromFields(article.content_html, article.content_text);
+    if (primary) return primary;
+  }
   if (article.feed_html) {
     const feedBody = readerBodyFromFields(article.feed_html, stripHtml(article.feed_html));
     if (feedBody) return feedBody;
@@ -170,11 +184,9 @@ export function mergeExtractArticle(previous: {
   content_text: string | null;
   image_url?: string | null;
 }) {
-  const nextText = next.content_text?.trim() ?? "";
-  const content_text =
-    nextText && !isCtaOnlyArticleText(nextText) && !isPollutedArticleText(nextText)
-      ? next.content_text
-      : previous.content_text;
+  const content_text = isUsableArticleBody(next.content_html, next.content_text)
+    ? next.content_text
+    : previous.content_text;
   let content_html = next.content_html?.trim() ? next.content_html : previous.content_html;
   if (content_html && isCtaOnlyArticleText(stripHtml(content_html))) {
     content_html = previous.content_html;

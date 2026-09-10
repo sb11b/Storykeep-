@@ -235,26 +235,34 @@ def _extract_image(raw_html: str, url: str, content_html: str | None = None) -> 
     return None
 
 
+_CTA_PHRASES = (
+    "leave a tip",
+    "want to leave a tip",
+    "support us",
+    "sign up",
+    "cookie settings",
+    "support our",
+    "support our journalism",
+    "become a member",
+    "tip jar",
+    "tip-jar",
+    "donate now",
+    "we use cookies",
+)
+
+
+def _contains_cta_phrase(text: str) -> bool:
+    lower = text.lower()
+    return any(phrase in lower for phrase in _CTA_PHRASES)
+
+
 def _is_cta_line(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return True
-    if len(stripped) > 220:
-        return False
     if _CTA_LINE.match(stripped):
         return True
-    lower = stripped.lower()
-    if len(stripped) < 120 and any(
-        phrase in lower
-        for phrase in (
-            "leave a tip",
-            "support us",
-            "sign up",
-            "cookie settings",
-            "support our journalism",
-            "become a member",
-        )
-    ):
+    if len(stripped) <= 320 and _contains_cta_phrase(stripped):
         return True
     return False
 
@@ -269,7 +277,12 @@ def _is_cta_only(text: str | None) -> bool:
     return len(substantive) == 0
 
 
-def _extract_from_article_node(prepared: str) -> tuple[str | None, str | None]:
+def _extract_paragraph_html(
+    prepared: str,
+    *,
+    min_chars: int = 80,
+    min_paragraphs: int = 1,
+) -> tuple[str | None, str | None]:
     try:
         root = lxml_html.fromstring(prepared)
     except Exception:
@@ -279,21 +292,26 @@ def _extract_from_article_node(prepared: str) -> tuple[str | None, str | None]:
         text = (node.text_content() or "").strip()
         if not text or _is_cta_line(text):
             continue
-        if len(text) < 24 and _is_cta_line(text):
-            continue
         paragraphs.append(node)
-    if not paragraphs:
+    if len(paragraphs) < min_paragraphs:
         return None, None
     text = _clean_text("\n\n".join((p.text_content() or "").strip() for p in paragraphs))
-    if len(text) < 80 or _text_is_polluted(text) or _is_cta_only(text):
+    if len(text) < min_chars or _text_is_polluted(text) or _is_cta_only(text):
         return None, None
     html_out = _sanitize_html("".join(lxml_html.tostring(p, encoding="unicode") for p in paragraphs))
     return html_out, text
 
 
+def _extract_from_article_node(prepared: str) -> tuple[str | None, str | None]:
+    html_out, text = _extract_paragraph_html(prepared, min_chars=400, min_paragraphs=2)
+    if html_out and text and _html_extract_candidate_valid(html_out, text):
+        return html_out, text
+    return None, None
+
+
 def _repair_from_html(html: str) -> tuple[str | None, str | None] | None:
     prepared = _prepare_html(html)
-    direct = _extract_from_article_node(prepared)
+    direct = _extract_paragraph_html(prepared, min_chars=80, min_paragraphs=1)
     if direct[0] and direct[1]:
         return direct
     return None
@@ -470,8 +488,12 @@ def _prose_letter_count(text: str | None) -> int:
     return sum(ch.isalpha() for ch in _clean_text(text or ""))
 
 
-def _body_score(html: str | None, text: str | None) -> tuple[int, int]:
-    return _prose_paragraph_count(html, text), _prose_letter_count(text)
+def _prose_char_count(text: str | None) -> int:
+    return len(_clean_text(text or ""))
+
+
+def _body_score(html: str | None, text: str | None) -> tuple[int, int, int]:
+    return _prose_paragraph_count(html, text), _prose_letter_count(text), _prose_char_count(text)
 
 
 def _feed_body_valid(html: str | None, text: str | None) -> bool:
@@ -480,18 +502,18 @@ def _feed_body_valid(html: str | None, text: str | None) -> bool:
         return False
     if html and _html_is_polluted(html):
         return False
-    paragraphs, letters = _body_score(html, text)
+    paragraphs, letters, _chars = _body_score(html, text)
     return paragraphs >= 1 and letters >= 80
 
 
 def _html_extract_candidate_valid(html: str | None, text: str | None) -> bool:
     cleaned = _clean_text(text or "")
-    if not cleaned or _text_is_polluted(cleaned) or _is_cta_only(cleaned):
+    if not cleaned or _text_is_polluted(cleaned) or _is_cta_only(cleaned) or _contains_cta_phrase(cleaned):
         return False
     if html and _html_is_polluted(html):
         return False
-    paragraphs, letters = _body_score(html, text)
-    return paragraphs >= 2 or letters >= 400
+    paragraphs, _letters, chars = _body_score(html, text)
+    return paragraphs >= 2 and chars >= 400
 
 
 def _extract_usable(html: str | None, text: str | None) -> bool:
@@ -552,28 +574,28 @@ def pick_display_body(
     page_text: str | None,
     previous_html: str | None,
     previous_text: str | None,
+    *,
+    page_attempted: bool = False,
 ) -> tuple[str | None, str | None, str | None, str | None]:
     feed_ok = _feed_body_valid(feed_html, feed_text)
     page_ok = _html_extract_candidate_valid(page_html, page_text)
-    feed_paragraphs, feed_letters = _body_score(feed_html, feed_text) if feed_ok else (0, 0)
-    page_paragraphs, page_letters = _body_score(page_html, page_text) if page_ok else (0, 0)
-    page_attempted = bool(page_html or page_text)
+    current_ok = _html_extract_candidate_valid(previous_html, previous_text)
+    feed_paragraphs, _feed_letters, feed_chars = _body_score(feed_html, feed_text) if feed_ok else (0, 0, 0)
+    page_paragraphs, _page_letters, page_chars = _body_score(page_html, page_text) if page_ok else (0, 0, 0)
+    _current_paragraphs, _current_letters, current_chars = _body_score(previous_html, previous_text)
+    page_attempted = page_attempted or bool(page_html or page_text)
     chrome_notice = CHROME_NOTICE if page_attempted and not page_ok else None
 
-    if page_ok and (
-        page_paragraphs > feed_paragraphs
-        or (page_paragraphs == feed_paragraphs and page_letters > feed_letters)
-    ):
+    if page_ok and page_chars >= feed_chars and (not current_ok or page_chars >= current_chars):
         return page_html, page_text, None, "page"
+    if feed_ok and (not current_ok or feed_chars > current_chars):
+        return feed_html, feed_text, chrome_notice, "feed"
+    if current_ok:
+        return previous_html, previous_text, chrome_notice, "previous"
     if feed_ok:
         return feed_html, feed_text, chrome_notice, "feed"
     if page_ok:
         return page_html, page_text, None, "page"
-
-    prev_text = _clean_text(previous_text or "")
-    prev_ok = bool(previous_html or previous_text) and not _is_cta_only(prev_text) and not _text_is_polluted(prev_text)
-    if prev_ok:
-        return previous_html, previous_text, chrome_notice, "previous"
     return None, None, chrome_notice, None
 
 
@@ -601,8 +623,27 @@ def restore_feed_body(db: Session, article: Article) -> Article:
     return article
 
 
-def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Article, str | None]:
+def _ensure_feed_body(db: Session, article: Article, refetch: bool = False) -> tuple[str | None, str | None]:
     feed_html, feed_text = resolve_feed_body(article)
+    if feed_html and feed_text:
+        return feed_html, feed_text
+    if not refetch:
+        return feed_html, feed_text
+    from app.services import rss
+
+    raw = rss.refetch_entry_html(db, article)
+    if not raw:
+        return feed_html, feed_text
+    article.feed_html = raw
+    prepared_html, prepared_text = _prepare_feed_body(raw)
+    if prepared_text:
+        article.feed_text = prepared_text
+        return prepared_html or _text_to_html(prepared_text), prepared_text
+    return feed_html, feed_text
+
+
+def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Article, str | None]:
+    feed_html, feed_text = _ensure_feed_body(db, article, refetch=force)
     if feed_html and getattr(article, "feed_html", None) is None:
         article.feed_html = feed_html
     if feed_text and getattr(article, "feed_text", None) is None:
@@ -623,9 +664,12 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     page_text: str | None = None
     image: str | None = None
     raw = _fetch_html(article.url)
+    page_attempted = bool(raw)
     if raw:
         page_html, page_text = _extract_from_html(raw, article.url)
         page_html, page_text = _normalize_page_candidate(page_html, page_text)
+        if not _html_extract_candidate_valid(page_html, page_text):
+            page_html, page_text = None, None
         image = _extract_image(raw, article.url, page_html)
 
     chosen_html, chosen_text, notice, source = pick_display_body(
@@ -635,15 +679,26 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
         page_text,
         previous_html,
         previous_text,
+        page_attempted=page_attempted,
     )
 
     if not chosen_html and not chosen_text:
         if force and not (previous_html or previous_text or feed_html or feed_text):
             raise ExtractFailedError()
-        return article, notice or (CHROME_NOTICE if page_html or page_text else None)
+        return article, notice or (CHROME_NOTICE if raw else None)
 
-    article.content_html = chosen_html or _text_to_html(chosen_text or "")
-    article.content_text = chosen_text or _clean_text(_strip_tags(chosen_html or ""))
+    next_html = chosen_html or _text_to_html(chosen_text or "")
+    next_text = chosen_text or _clean_text(_strip_tags(chosen_html or ""))
+    if source == "page" and not _html_extract_candidate_valid(next_html, next_text):
+        return article, CHROME_NOTICE
+    if (
+        (previous_html or "").strip() == (next_html or "").strip()
+        and (previous_text or "").strip() == (next_text or "").strip()
+    ):
+        return article, notice
+
+    article.content_html = next_html
+    article.content_text = next_text
     if image:
         article.image_url = image
     elif force and previous_image:
