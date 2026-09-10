@@ -813,9 +813,6 @@ export function LibraryApp({ user }: { user: User }) {
                 <div className="min-w-0 flex-1">
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
                   <p className="text-xs text-muted-foreground">{listRangeLabel(items.length, total, shelf.kind)}</p>
-                  <p className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
-                    list offset={listFirstOffset} page={listFirstPage} n={items.length}
-                  </p>
                 </div>
                 {shelf.kind === "feed" ? (
                   <div className="flex shrink-0 gap-1">
