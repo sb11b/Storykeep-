@@ -20,6 +20,7 @@ from app.schemas import (
     ArticleListItem,
     ArticleOut,
     ArticlePatch,
+    ExtractOut,
     MarkReadIn,
     Page,
     SaveUrlIn,
@@ -263,14 +264,15 @@ def delete_article(
     return {"ok": True}
 
 
-@router.patch("/articles/{article_id}/extract", response_model=ArticleOut)
+@router.patch("/articles/{article_id}/extract", response_model=ExtractOut)
 def extract_article(
     article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> ArticleOut:
+) -> ExtractOut:
     article = _owned_article(db, user, article_id)
     article_id_value = article.id
+    notice: str | None = None
     try:
-        extractor.fill_article(db, article, force=True)
+        _, notice = extractor.fill_article(db, article, force=True)
     except ExtractFailedError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=exc.detail) from exc
@@ -279,7 +281,21 @@ def extract_article(
     except Exception as exc:
         logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
     db.commit()
-    return _article_payload(db, user, article_id_value)
+    return ExtractOut(article=_article_payload(db, user, article_id_value), notice=notice)
+
+
+@router.patch("/articles/{article_id}/use-feed-text", response_model=ArticleOut)
+def use_feed_text(
+    article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    try:
+        extractor.restore_feed_body(db, article)
+    except ExtractFailedError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+    db.commit()
+    return _article_payload(db, user, article.id)
 
 
 @router.post("/articles/bulk")

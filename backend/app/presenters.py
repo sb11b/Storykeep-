@@ -14,7 +14,7 @@ from app.schemas import (
     TagOut,
 )
 from app.services.destination import DEFAULT_DESTINATION, effective_destination
-from app.services.extractor import repair_display_body
+from app.services.extractor import _feed_body_valid, _is_cta_only, _text_is_polluted, repair_display_body
 
 
 def tag_out(tag: Tag, article_count: int = 0) -> TagOut:
@@ -83,8 +83,29 @@ def filed_note_out(article: Article) -> FiledNoteOut:
     )
 
 
-def article_out(article: Article, filed_notes: list[Article] | None = None) -> ArticleOut:
+def _display_body(article: Article) -> tuple[str | None, str | None]:
     content_text, content_html = repair_display_body(article.content_html, article.content_text)
+    stored_bad = (
+        not content_text
+        or _is_cta_only(content_text)
+        or _text_is_polluted(content_text or "")
+    )
+    if stored_bad and (article.feed_html or article.feed_text):
+        feed_text, feed_html = repair_display_body(article.feed_html, article.feed_text)
+        if feed_text and _feed_body_valid(feed_html, feed_text):
+            return feed_text, feed_html
+    if stored_bad and article.summary and len((article.summary or "").strip()) > 120:
+        feed_text, feed_html = repair_display_body(article.summary, None)
+        if feed_text and _feed_body_valid(feed_html, feed_text):
+            return feed_text, feed_html
+    return content_text, content_html
+
+
+def article_out(article: Article, filed_notes: list[Article] | None = None) -> ArticleOut:
+    content_text, content_html = _display_body(article)
+    has_feed_text = bool(article.feed_html) or bool(
+        article.summary and len((article.summary or "").strip()) > 120
+    )
     return ArticleOut(
         id=article.id,
         feed_id=article.feed_id,
@@ -107,7 +128,9 @@ def article_out(article: Article, filed_notes: list[Article] | None = None) -> A
         tags=[tag_out(tag) for tag in article.tags],
         annotations=[annotation_out(note) for note in article.annotations],
         archives=[archive_out(row) for row in article.archives],
-        has_full_text=bool(article.content_text),
+        has_full_text=bool(content_text and content_text.strip()),
+        has_feed_text=has_feed_text,
+        feed_html=article.feed_html,
         guid=article.guid,
         source_kind=getattr(article, "source_kind", None) or "rss",
         source_ref=getattr(article, "source_ref", None),

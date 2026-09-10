@@ -131,20 +131,33 @@ export function articleHeroImageUrl(imageUrl: string | null | undefined, article
   return isAllowedArticleImage(resolved, articleUrl) ? resolved : null;
 }
 
-export function articleReaderSource(article: {
-  content_html: string | null;
-  content_text: string | null;
-  summary?: string | null;
-}): string {
-  const text = article.content_text?.trim() || "";
-  const html = article.content_html ? sanitizeHtml(article.content_html) : "";
+function readerBodyFromFields(content_html: string | null, content_text: string | null): string {
+  const text = content_text?.trim() || "";
+  const html = content_html ? sanitizeHtml(content_html) : "";
   if (text.length >= 40 && !isPollutedArticleText(text) && !isCtaOnlyArticleText(text) && (!html || isPollutedArticleHtml(html))) {
     return plainTextToArticleHtml(text);
   }
   if (html && !isPollutedArticleHtml(html) && !isCtaOnlyArticleText(stripHtml(html))) return html;
   if (text && !isPollutedArticleText(text) && !isCtaOnlyArticleText(text)) return plainTextToArticleHtml(text);
+  return "";
+}
+
+export function articleReaderSource(article: {
+  content_html: string | null;
+  content_text: string | null;
+  feed_html?: string | null;
+  summary?: string | null;
+}): string {
+  const primary = readerBodyFromFields(article.content_html, article.content_text);
+  if (primary) return primary;
+  if (article.feed_html) {
+    const feedBody = readerBodyFromFields(article.feed_html, stripHtml(article.feed_html));
+    if (feedBody) return feedBody;
+  }
   const summaryText = stripHtml(article.summary);
-  if (summaryText && !isPollutedArticleHtml(summaryText)) return plainTextToArticleHtml(summaryText);
+  if (summaryText && summaryText.length >= 80 && !isCtaOnlyArticleText(summaryText) && !isPollutedArticleHtml(summaryText)) {
+    return plainTextToArticleHtml(summaryText);
+  }
   return "";
 }
 

@@ -23,6 +23,9 @@ class ExtractFailedError(Exception):
         super().__init__(detail)
         self.detail = detail
 
+
+CHROME_NOTICE = "Page extract was chrome; kept feed text."
+
 HEADERS = {
     "User-Agent": "Storykeep/1.0 (+https://localhost; personal archive reader)"
 }
@@ -58,6 +61,8 @@ _CHROME_HINTS = (
     "cookie_settings",
     "paywall",
     "membership",
+    "engagement-bottom-unit",
+    "engagement_bottom",
 )
 _MAIN_QUERIES = (
     '//*[@itemprop="articleBody"]',
@@ -441,47 +446,209 @@ def repair_display_body(content_html: str | None, content_text: str | None) -> t
     return content_text, content_html
 
 
-def _extract_usable(html: str | None, text: str | None) -> bool:
+def _prose_paragraph_count(html: str | None, text: str | None) -> int:
+    count = 0
+    if html:
+        try:
+            root = lxml_html.fromstring(html)
+            for node in root.xpath(".//p"):
+                chunk = (node.text_content() or "").strip()
+                if len(chunk) >= 40 and not _is_cta_line(chunk):
+                    count += 1
+        except Exception:
+            pass
+    if count:
+        return count
+    cleaned = _clean_text(text or "")
+    if not cleaned:
+        return 0
+    blocks = [block.strip() for block in re.split(r"\n{2,}", cleaned) if block.strip()]
+    return sum(1 for block in blocks if len(block) >= 40 and not _is_cta_line(block))
+
+
+def _prose_letter_count(text: str | None) -> int:
+    return sum(ch.isalpha() for ch in _clean_text(text or ""))
+
+
+def _body_score(html: str | None, text: str | None) -> tuple[int, int]:
+    return _prose_paragraph_count(html, text), _prose_letter_count(text)
+
+
+def _feed_body_valid(html: str | None, text: str | None) -> bool:
     cleaned = _clean_text(text or "")
     if len(cleaned) < 80 or _text_is_polluted(cleaned) or _is_cta_only(cleaned):
         return False
-    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
-    if not lines:
+    if html and _html_is_polluted(html):
         return False
-    cssish = sum(1 for line in lines if _CSS_LINE.match(line) or ("{" in line and _CSS_PROP_LINE.match(line)))
-    if cssish and cssish >= max(2, len(lines) // 2):
+    paragraphs, letters = _body_score(html, text)
+    return paragraphs >= 1 and letters >= 80
+
+
+def _html_extract_candidate_valid(html: str | None, text: str | None) -> bool:
+    cleaned = _clean_text(text or "")
+    if not cleaned or _text_is_polluted(cleaned) or _is_cta_only(cleaned):
         return False
     if html and _html_is_polluted(html):
-        return len(cleaned) >= 120
-    return True
+        return False
+    paragraphs, letters = _body_score(html, text)
+    return paragraphs >= 2 or letters >= 400
 
 
-def fill_article(db: Session, article: Article, force: bool = False) -> Article:
-    if article.content_text and not force:
-        return article
-    previous_html = article.content_html
-    previous_text = article.content_text
-    previous_image = article.image_url
-    html, text, image = extract_url(article.url)
+def _extract_usable(html: str | None, text: str | None) -> bool:
+    return _html_extract_candidate_valid(html, text)
+
+
+def _prepare_feed_body(raw_html: str | None, summary: str | None = None) -> tuple[str | None, str | None]:
+    source = (raw_html or "").strip() or (summary or "").strip()
+    if not source:
+        return None, None
+    if "<" in source:
+        sanitized = _sanitize_html(source)
+        repaired = _repair_from_html(sanitized)
+        if repaired:
+            rep_html, rep_text = repaired
+            if _feed_body_valid(rep_html, rep_text):
+                return rep_html, rep_text
+        stripped = _clean_text(_strip_tags(sanitized))
+        if _feed_body_valid(sanitized, stripped):
+            return sanitized, stripped
+        return None, None
+    text = _clean_text(source)
+    if _feed_body_valid(None, text):
+        return _text_to_html(text), text
+    return None, None
+
+
+def resolve_feed_body(article: Article) -> tuple[str | None, str | None]:
+    feed_html = getattr(article, "feed_html", None)
+    feed_text = getattr(article, "feed_text", None)
+    if feed_html or feed_text:
+        html = feed_html
+        text = feed_text or (_clean_text(_strip_tags(html)) if html else None)
+        if _feed_body_valid(html, text):
+            return html, text
+        prepared = _prepare_feed_body(feed_html, None)
+        if prepared[0] and prepared[1]:
+            return prepared
+    summary = getattr(article, "summary", None)
+    if summary and len(summary.strip()) > 120:
+        return _prepare_feed_body(summary, None)
+    return None, None
+
+
+def _normalize_page_candidate(html: str | None, text: str | None) -> tuple[str | None, str | None]:
     text = _clean_text(text or "") or None
     if html and _html_is_polluted(html):
         html = _text_to_html(text) if text else None
     elif html:
         html = _sanitize_html(html)
-    if not _extract_usable(html, text):
-        if force and (previous_html or previous_text):
+    return html, text
+
+
+def pick_display_body(
+    feed_html: str | None,
+    feed_text: str | None,
+    page_html: str | None,
+    page_text: str | None,
+    previous_html: str | None,
+    previous_text: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    feed_ok = _feed_body_valid(feed_html, feed_text)
+    page_ok = _html_extract_candidate_valid(page_html, page_text)
+    feed_paragraphs, feed_letters = _body_score(feed_html, feed_text) if feed_ok else (0, 0)
+    page_paragraphs, page_letters = _body_score(page_html, page_text) if page_ok else (0, 0)
+    page_attempted = bool(page_html or page_text)
+    chrome_notice = CHROME_NOTICE if page_attempted and not page_ok else None
+
+    if page_ok and (
+        page_paragraphs > feed_paragraphs
+        or (page_paragraphs == feed_paragraphs and page_letters > feed_letters)
+    ):
+        return page_html, page_text, None, "page"
+    if feed_ok:
+        return feed_html, feed_text, chrome_notice, "feed"
+    if page_ok:
+        return page_html, page_text, None, "page"
+
+    prev_text = _clean_text(previous_text or "")
+    prev_ok = bool(previous_html or previous_text) and not _is_cta_only(prev_text) and not _text_is_polluted(prev_text)
+    if prev_ok:
+        return previous_html, previous_text, chrome_notice, "previous"
+    return None, None, chrome_notice, None
+
+
+def restore_feed_body(db: Session, article: Article) -> Article:
+    feed_html, feed_text = resolve_feed_body(article)
+    if not feed_html and not feed_text:
+        from app.services import rss
+
+        raw = rss.refetch_entry_html(db, article)
+        if raw:
+            prepared_html, prepared_text = _prepare_feed_body(raw)
+            if prepared_html and prepared_text:
+                article.feed_html = raw
+                article.feed_text = prepared_text
+                feed_html, feed_text = prepared_html, prepared_text
+    if not feed_html and not feed_text:
+        raise ExtractFailedError("No feed text available for this article")
+    if article.feed_html is None and feed_html:
+        article.feed_html = feed_html
+    if article.feed_text is None and feed_text:
+        article.feed_text = feed_text
+    article.content_html = feed_html or _text_to_html(feed_text or "")
+    article.content_text = feed_text or _clean_text(_strip_tags(feed_html or ""))
+    db.add(article)
+    return article
+
+
+def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Article, str | None]:
+    feed_html, feed_text = resolve_feed_body(article)
+    if feed_html and getattr(article, "feed_html", None) is None:
+        article.feed_html = feed_html
+    if feed_text and getattr(article, "feed_text", None) is None:
+        article.feed_text = feed_text
+
+    previous_html = article.content_html
+    previous_text = article.content_text
+    previous_image = article.image_url
+
+    if (
+        not force
+        and article.content_text
+        and _html_extract_candidate_valid(article.content_html, article.content_text)
+    ):
+        return article, None
+
+    page_html: str | None = None
+    page_text: str | None = None
+    image: str | None = None
+    raw = _fetch_html(article.url)
+    if raw:
+        page_html, page_text = _extract_from_html(raw, article.url)
+        page_html, page_text = _normalize_page_candidate(page_html, page_text)
+        image = _extract_image(raw, article.url, page_html)
+
+    chosen_html, chosen_text, notice, source = pick_display_body(
+        feed_html,
+        feed_text,
+        page_html,
+        page_text,
+        previous_html,
+        previous_text,
+    )
+
+    if not chosen_html and not chosen_text:
+        if force and not (previous_html or previous_text or feed_html or feed_text):
             raise ExtractFailedError()
-        return article
-    if not text or len(text.strip()) < 80:
-        if force and (previous_html or previous_text):
-            raise ExtractFailedError()
-        return article
-    article.content_text = text
-    article.content_html = html or _text_to_html(text)
+        return article, notice or (CHROME_NOTICE if page_html or page_text else None)
+
+    article.content_html = chosen_html or _text_to_html(chosen_text or "")
+    article.content_text = chosen_text or _clean_text(_strip_tags(chosen_html or ""))
     if image:
         article.image_url = image
     elif force and previous_image:
         article.image_url = previous_image
-    article.fetched_at = datetime.now(timezone.utc)
+    if source == "page":
+        article.fetched_at = datetime.now(timezone.utc)
     db.add(article)
-    return article
+    return article, notice

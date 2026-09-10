@@ -5,7 +5,16 @@ import unittest.mock
 
 from types import SimpleNamespace
 
-from app.services.extractor import ExtractFailedError, _clean_text, _extract_usable, extract_html, fill_article
+from app.services.extractor import (
+    CHROME_NOTICE,
+    ExtractFailedError,
+    _clean_text,
+    _extract_usable,
+    _html_extract_candidate_valid,
+    extract_html,
+    fill_article,
+    pick_display_body,
+)
 
 
 BLAZE_TIP_JAR = """
@@ -139,11 +148,35 @@ class ExtractorTests(unittest.TestCase):
         self.assertTrue(_html_is_polluted("<style>.widget{}</style><p>Hi</p>"))
         self.assertTrue(_html_is_polluted("<p>.widget{margin:0;box-sizing:border-box;}</p>"))
 
+    def test_pick_display_body_prefers_feed_over_chrome_page(self):
+        feed_html = "<p>Congress moved Tuesday on a surprise package that could reshape spending for years.</p><p>Analysts said the vote reflected months of quiet negotiation behind closed doors.</p>"
+        feed_text = "Congress moved Tuesday on a surprise package that could reshape spending for years.\n\nAnalysts said the vote reflected months of quiet negotiation behind closed doors."
+        chosen_html, chosen_text, notice, source = pick_display_body(
+            feed_html,
+            feed_text,
+            "<p>Want to leave a tip?</p>",
+            "Want to leave a tip?",
+            None,
+            None,
+        )
+        self.assertEqual(source, "feed")
+        self.assertEqual(notice, CHROME_NOTICE)
+        self.assertIn("Congress moved Tuesday", chosen_text or "")
+
+    def test_html_extract_candidate_requires_two_paragraphs_or_400_letters(self):
+        short = "One short paragraph that is still somewhat long but not enough letters yet."
+        self.assertFalse(_html_extract_candidate_valid("<p>x</p>", short))
+        long_one = "x" * 420
+        self.assertTrue(_html_extract_candidate_valid(f"<p>{long_one}</p>", long_one))
+
     def test_fill_article_keeps_previous_body_on_failed_force_extract(self):
         article = SimpleNamespace(
             url="https://example.com/story",
-            content_html="<p>Old body kept.</p>",
-            content_text="Old body kept.",
+            content_html="<p>Old body kept with enough prose to count as readable article text for tests.</p><p>Second paragraph keeps the reader from going blank during re-extract.</p>",
+            content_text="Old body kept with enough prose to count as readable article text for tests.\n\nSecond paragraph keeps the reader from going blank during re-extract.",
+            feed_html=None,
+            feed_text=None,
+            summary=None,
             image_url=None,
             fetched_at=None,
         )
@@ -152,10 +185,36 @@ class ExtractorTests(unittest.TestCase):
             def add(self, _obj) -> None:
                 return None
 
-        with unittest.mock.patch("app.services.extractor.extract_url", return_value=(None, None, None)):
-            with self.assertRaises(ExtractFailedError):
-                fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
-        self.assertEqual(article.content_text, "Old body kept.")
+        with unittest.mock.patch("app.services.extractor._fetch_html", return_value=None):
+            updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        self.assertIn("Old body kept", updated.content_text or "")
+        self.assertIsNone(notice)
+
+    def test_fill_article_keeps_feed_when_page_is_chrome(self):
+        article = SimpleNamespace(
+            url="https://example.com/story",
+            content_html="Want to leave a tip?",
+            content_text="Want to leave a tip?",
+            feed_html="<p>Congress moved Tuesday on a surprise package that could reshape spending for years.</p><p>Analysts said the vote reflected months of quiet negotiation behind closed doors.</p>",
+            feed_text="Congress moved Tuesday on a surprise package that could reshape spending for years.\n\nAnalysts said the vote reflected months of quiet negotiation behind closed doors.",
+            summary=None,
+            image_url=None,
+            fetched_at=None,
+        )
+
+        class FakeDb:
+            def add(self, _obj) -> None:
+                return None
+
+        page_html = "<p>Want to leave a tip?</p><p>Support Us</p>"
+        with unittest.mock.patch("app.services.extractor._fetch_html", return_value="<html></html>"):
+            with unittest.mock.patch(
+                "app.services.extractor._extract_from_html",
+                return_value=(page_html, "Want to leave a tip?\nSupport Us"),
+            ):
+                updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        self.assertIn("Congress moved Tuesday", updated.content_text or "")
+        self.assertEqual(notice, CHROME_NOTICE)
 
 
 if __name__ == "__main__":

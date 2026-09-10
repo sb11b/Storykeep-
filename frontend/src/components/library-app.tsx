@@ -978,13 +978,15 @@ export function LibraryApp({ user }: { user: User }) {
                   const id = article.id;
                   const previous = article;
                   try {
-                    const next = await api.extract(id);
+                    const result = await api.extract(id);
+                    const next = result.article;
                     if (selectedIdRef.current !== id) return;
                     const mergedBody = mergeExtractArticle(previous, next);
                     const merged = { ...next, ...mergedBody };
                     const hasBody =
                       Boolean(merged.content_text?.trim() && !isPollutedArticleText(merged.content_text) && !isCtaOnlyArticleText(merged.content_text)) ||
-                      Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html) && !isCtaOnlyArticleText(stripHtml(merged.content_html)));
+                      Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html) && !isCtaOnlyArticleText(stripHtml(merged.content_html))) ||
+                      Boolean(merged.feed_html?.trim() && !isCtaOnlyArticleText(stripHtml(merged.feed_html)));
                     if (!hasBody) {
                       toast.error("Extract found no article text");
                       return;
@@ -998,7 +1000,11 @@ export function LibraryApp({ user }: { user: User }) {
                       ),
                     );
                     setReaderScrollToken((current) => current + 1);
-                    toast.success("Full text refreshed");
+                    if (result.notice) {
+                      toast(result.notice);
+                    } else {
+                      toast.success("Full text refreshed");
+                    }
                   } catch (error) {
                     toast.error(
                       error instanceof ApiError && error.status === 422
@@ -1007,6 +1013,23 @@ export function LibraryApp({ user }: { user: User }) {
                           ? error.message
                           : "Extract found no article text",
                     );
+                  }
+                }}
+                onUseFeedText={async () => {
+                  const id = article.id;
+                  try {
+                    const next = await api.useFeedText(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    setItems((current) =>
+                      current.map((item) =>
+                        item.id === id ? { ...item, has_full_text: Boolean(next.content_text?.trim()) } : item,
+                      ),
+                    );
+                    setReaderScrollToken((current) => current + 1);
+                    toast.success("Restored feed text");
+                  } catch (error) {
+                    toast.error(error instanceof ApiError ? error.message : "No feed text available");
                   }
                 }}
                 readerScrollToken={readerScrollToken}
@@ -1579,6 +1602,7 @@ function Reader({
   onToggleSaved,
   onToggleStar,
   onExtract,
+  onUseFeedText,
   onArchive,
   onTag,
   onNote,
@@ -1601,6 +1625,7 @@ function Reader({
   onToggleSaved: () => void;
   onToggleStar: () => void;
   onExtract: () => Promise<void>;
+  onUseFeedText: () => Promise<void>;
   onArchive: () => Promise<void>;
   readerScrollToken: number;
   onTag: (name: string) => Promise<void>;
@@ -2006,6 +2031,19 @@ function Reader({
           >
             Re-extract
           </Button>
+          {article.has_feed_text || article.source_kind === "rss" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void onUseFeedText().finally(() => setBusy(false));
+              }}
+            >
+              Use feed text
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="outline"

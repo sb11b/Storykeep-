@@ -263,6 +263,11 @@ class FiledNoteOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ExtractOut(BaseModel):
+    article: "ArticleOut"
+    notice: str | None = None
+
+
 class ArticleOut(BaseModel):
     id: uuid.UUID
     feed_id: uuid.UUID
@@ -286,6 +291,8 @@ class ArticleOut(BaseModel):
     annotations: list[AnnotationOut] = []
     archives: list[ArchiveOut] = []
     has_full_text: bool = False
+    has_feed_text: bool = False
+    feed_html: str | None = None
     guid: str | None = None
     source_kind: str = "rss"
     source_ref: str | None = None

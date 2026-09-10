@@ -18,7 +18,7 @@ def snapshot_article(db: Session, article: Article, archive_type: str = "html") 
     html = article.content_html
     text = article.content_text
     if (not html or not text) and _HTTP_URL.match((article.url or "").strip()):
-        extractor.fill_article(db, article, force=True)
+        extractor.fill_article(db, article, force=True)[0]
         html = article.content_html
         text = article.content_text
     payload = html or text or article.summary or article.url or ""

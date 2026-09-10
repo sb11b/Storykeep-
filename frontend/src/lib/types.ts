@@ -126,9 +126,16 @@ export type ArticleListItem = {
   tags: Tag[];
 };
 
+export type ExtractResult = {
+  article: Article;
+  notice: string | null;
+};
+
 export type Article = ArticleListItem & {
   content_text: string | null;
   content_html: string | null;
+  feed_html?: string | null;
+  has_feed_text?: boolean;
   read_at: string | null;
   saved_at: string | null;
   fetched_at: string | null;

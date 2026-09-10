@@ -68,6 +68,27 @@ def _entry_html(entry: Any) -> str | None:
     return entry.get("summary")
 
 
+def refetch_entry_html(db: Session, article: Article) -> str | None:
+    feed = db.get(Feed, article.feed_id)
+    if not feed:
+        return None
+    try:
+        parsed, _, _ = fetch_feed_document(feed.url, feed.etag, feed.last_modified)
+    except Exception as exc:
+        logger.info("refetch feed failed %s: %s", feed.url, exc)
+        return None
+    if parsed is None:
+        return None
+    target_guid = article.guid
+    target_url = article.url
+    for entry in parsed.entries:
+        guid = str(entry.get("id") or entry.get("link") or entry.get("title") or "")
+        url = str(entry.get("link") or "")
+        if guid == target_guid or url == target_url:
+            return _entry_html(entry)
+    return None
+
+
 COMMON_FEED_PATHS = (
     "/feed",
     "/rss",
@@ -240,7 +261,8 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
         existing = db.scalar(select(Article).where(Article.feed_id == feed.id, Article.guid == guid))
         if existing:
             continue
-        html = _entry_html(entry)
+        feed_html = _entry_html(entry)
+        feed_body_html, feed_body_text = extractor._prepare_feed_body(feed_html, entry.get("summary"))
         article = Article(
             feed_id=feed.id,
             guid=guid[:2000],
@@ -249,7 +271,10 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
             author=entry.get("author"),
             published_at=_entry_datetime(entry),
             summary=entry.get("summary"),
-            content_html=html,
+            feed_html=feed_html,
+            feed_text=feed_body_text,
+            content_html=feed_body_html,
+            content_text=feed_body_text,
             image_url=_entry_image(entry),
         )
         db.add(article)
