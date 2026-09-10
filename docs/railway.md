@@ -28,7 +28,11 @@ On the Storykeep service, add a variable that points at the database:
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 ```
 
-Railway’s URL looks like `postgresql://…`. Storykeep rewrites that to SQLAlchemy’s `postgresql+psycopg2://` form automatically.
+Railway’s URL looks like `postgresql://…`. Storykeep parses **host, port, user, password, and database** from that URL and connects with those fields. It does **not** pass the raw string (or its `sslmode` / `sslrootcert` query) into the engine.
+
+The public TCP proxy (`*.proxy.rlwy.net`) uses a cert that is not in the default CA store. Public hosts encrypt with `sslmode=require` (no CA verify). Local Postgres, Docker Compose `db`, and `*.railway.internal` stay unencrypted.
+
+Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for the whole process and is a last-resort workaround only. The web UI never talks to Postgres; seed and the API use this engine config.
 
 ## 3. Variables
 

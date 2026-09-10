@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
+from app.database import parse_database_url
 from app.models import Annotation, Article, Backup, Feed, Tag, User
 
 
@@ -113,31 +114,31 @@ def create_db_dump(db: Session, user_id: UUID | None) -> Backup:
     )
     db.add(backup)
     db.flush()
-    parsed = urlparse(settings.database_url.replace("postgresql+psycopg2", "postgresql"))
+    conn = parse_database_url(settings.database_url)
     filename = f"storykeep-db-{backup.id}.sql"
     path = settings.backup_dir / filename
-    env = {
-        "PGPASSWORD": parsed.password or "",
-    }
+    env = {**os.environ, "PGPASSWORD": conn.password}
+    if conn.connect_args.get("sslmode"):
+        env["PGSSLMODE"] = conn.connect_args["sslmode"]
     try:
         result = subprocess.run(
             [
                 "pg_dump",
                 "-h",
-                parsed.hostname or "127.0.0.1",
+                conn.host,
                 "-p",
-                str(parsed.port or 5432),
+                str(conn.port),
                 "-U",
-                parsed.username or "storykeep",
+                conn.user,
                 "-d",
-                (parsed.path or "/storykeep").lstrip("/"),
+                conn.database,
                 "-f",
                 str(path),
             ],
             check=False,
             capture_output=True,
             text=True,
-            env={**dict(**{k: v for k, v in __import__("os").environ.items()}), **env},
+            env=env,
         )
         if result.returncode != 0 or not path.exists():
             raise RuntimeError(result.stderr or "pg_dump failed")
