@@ -1070,14 +1070,8 @@ export function LibraryApp({ user }: { user: User }) {
                     );
                     setReaderScrollToken((current) => current + 1);
                     showExtractToast({ message: result.message, ok: result.ok, upgraded, keptPrevious });
-                  } catch (error) {
-                    toast.error(
-                      error instanceof ApiError && error.status === 422
-                        ? EXTRACT_MESSAGES.failed
-                        : error instanceof ApiError
-                          ? error.message || EXTRACT_MESSAGES.failed
-                          : EXTRACT_MESSAGES.failed,
-                    );
+                  } catch {
+                    toast.error(EXTRACT_MESSAGES.failed);
                   }
                 }}
                 onUseFeedText={async () => {

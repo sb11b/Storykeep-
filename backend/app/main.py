@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import select, text
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
@@ -19,6 +20,22 @@ from app.services import rss
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
+
+
+class NormalizeApiPathMiddleware:
+    """Strip trailing slashes on /api/* so PATCH routes are not shadowed by the SPA GET catch-all."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            if path.startswith("/api/") and path.endswith("/") and len(path) > 1:
+                normalized = path.rstrip("/")
+                scope["path"] = normalized
+                scope["raw_path"] = normalized.encode("utf-8")
+        await self.app(scope, receive, send)
 
 
 def refresh_due_feeds() -> None:
@@ -110,6 +127,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Storykeep", version="0.1.0", lifespan=lifespan)
+app.add_middleware(NormalizeApiPathMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
