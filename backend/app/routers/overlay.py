@@ -20,7 +20,14 @@ from app.schemas import (
     VaultImportOut,
 )
 from app.services import changelog
-from app.services.note_media import markdown_image, owned_media, save_note_image
+from app.services.note_media import (
+    delete_note_media,
+    is_image_media,
+    markdown_for_media,
+    owned_media,
+    save_note_image,
+    save_note_media,
+)
 from app.services.overlay_pack import build_obsidian_pack
 from app.services.file_ingest import MAX_UPLOAD_BYTES, ingest_upload, original_file_path
 from app.services.vault_import import (
@@ -157,26 +164,28 @@ def move_composed_note(
 
 
 @router.post("/media", status_code=201)
-async def upload_note_image(
+async def upload_note_media(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     payload = await file.read()
     try:
-        row = save_note_image(db, user, file.filename or "image.png", payload, file.content_type)
+        row = save_note_media(db, user, file.filename or "attachment.bin", payload, file.content_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    kind = "image" if is_image_media(row) else "file"
     return {
         "id": str(row.id),
         "url": f"/api/v1/media/{row.id}",
-        "markdown": markdown_image(row),
+        "markdown": markdown_for_media(row),
         "filename": row.filename,
+        "kind": kind,
     }
 
 
 @router.get("/media/{media_id}")
-def get_note_image(
+def get_note_media(
     media_id: UUID,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -184,8 +193,17 @@ def get_note_image(
     row = owned_media(db, user, media_id)
     path = Path(row.storage_path)
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Image file is missing.")
+        raise HTTPException(status_code=404, detail="File is missing.")
     return FileResponse(path, media_type=row.content_type, filename=row.filename)
+
+
+@router.delete("/media/{media_id}")
+def remove_note_media(
+    media_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    return delete_note_media(db, user, media_id)
 
 
 @router.post("/storykeep-notes", response_model=OverlayAdditionOut, status_code=201)

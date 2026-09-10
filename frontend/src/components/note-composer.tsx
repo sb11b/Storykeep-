@@ -1,7 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from "react";
-import { Bold, Code2, Highlighter, ImagePlus, Italic, List, ListOrdered, LoaderCircle, Maximize2, Minimize2, Underline } from "lucide-react";
+import {
+  Bold,
+  Code2,
+  Highlighter,
+  ImagePlus,
+  Italic,
+  List,
+  ListOrdered,
+  LoaderCircle,
+  Maximize2,
+  Minimize2,
+  Paperclip,
+  Underline,
+} from "lucide-react";
+import { NoteAttachmentEditorList } from "@/components/note-attachments";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -71,9 +85,11 @@ export function NoteComposer({
 }) {
   const dictation = useDictation();
   const areaRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
+  const attachRef = useRef<HTMLInputElement>(null);
   const selectionRef = useRef({ start: 0, end: 0 });
-  const [uploading, setUploading] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [composerStyle, setComposerStyle] = useState<ComposerStyle>("body");
@@ -155,6 +171,32 @@ export function NoteComposer({
     const result = applyComposerStyle(value, start, end, style);
     setComposerStyle(style);
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
+  }
+
+  async function insertUploadedMedia(file: File, mode: "image" | "file") {
+    const setBusy = mode === "image" ? setUploadingImage : setUploadingFile;
+    setBusy(true);
+    try {
+      const uploaded = await api.uploadNoteMedia(file);
+      const { start, end } = selectionRef.current;
+      const insertAt = Math.max(0, Math.min(start, value.length));
+      const insertEnd = Math.max(insertAt, Math.min(end, value.length));
+      const insert =
+        uploaded.kind === "file" || mode === "file"
+          ? `[${uploaded.filename}](${uploaded.url})`
+          : uploaded.markdown;
+      const prefix = insertAt > 0 && value[insertAt - 1] !== "\n" ? "\n" : "";
+      const suffix = insertEnd >= value.length || value[insertEnd] !== "\n" ? "\n" : "";
+      const chunk = `${prefix}${insert}${suffix}`;
+      const next = value.slice(0, insertAt) + chunk + value.slice(insertEnd);
+      const cursor = insertAt + chunk.length;
+      applyWrap(next, cursor, cursor);
+      toast.success(mode === "image" ? "Image added to the note" : "File attached to the note");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not upload that file");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function insertCodeFence() {
@@ -252,15 +294,29 @@ export function NoteComposer({
             type="button"
             size="sm"
             variant="outline"
-            disabled={uploading}
+            disabled={uploadingImage}
             onMouseDown={(event) => {
               event.preventDefault();
               captureSelection();
             }}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => imageRef.current?.click()}
           >
-            {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
-            {uploading ? "Uploading…" : "Image"}
+            {uploadingImage ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+            {uploadingImage ? "Uploading…" : "Image"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={uploadingFile}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              captureSelection();
+            }}
+            onClick={() => attachRef.current?.click()}
+          >
+            {uploadingFile ? <LoaderCircle className="size-3.5 animate-spin" /> : <Paperclip className="size-3.5" />}
+            {uploadingFile ? "Uploading…" : "Attach"}
           </Button>
           <label className="inline-flex items-center gap-1.5 text-[0.8rem] text-muted-foreground">
             <span className="whitespace-nowrap">Style</span>
@@ -300,37 +356,32 @@ export function NoteComposer({
           {actions}
         </div>
         <input
-          ref={fileRef}
+          ref={imageRef}
           type="file"
           accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp"
           className="hidden"
-          onChange={async (event) => {
+          onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
             if (!file) return;
-            setUploading(true);
-            try {
-              const uploaded = await api.uploadNoteImage(file);
-              const { start, end } = selectionRef.current;
-              const insertAt = Math.max(0, Math.min(start, value.length));
-              const insertEnd = Math.max(insertAt, Math.min(end, value.length));
-              const insert = uploaded.markdown;
-              const prefix = insertAt > 0 && value[insertAt - 1] !== "\n" ? "\n" : "";
-              const suffix = value[insertEnd] !== "\n" ? "\n" : "";
-              const chunk = `${prefix}${insert}${suffix}`;
-              const next = value.slice(0, insertAt) + chunk + value.slice(insertEnd);
-              const cursor = insertAt + chunk.length;
-              applyWrap(next, cursor, cursor);
-              toast.success("Image added to the note");
-            } catch (error) {
-              toast.error(error instanceof ApiError ? error.message : "Could not add that image");
-            } finally {
-              setUploading(false);
-            }
+            void insertUploadedMedia(file, "image");
+          }}
+        />
+        <input
+          ref={attachRef}
+          type="file"
+          accept=".pdf,.txt,.md,.docx,.csv,application/pdf,text/plain,text/markdown,text/csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (!file) return;
+            void insertUploadedMedia(file, "file");
           }}
         />
       </div>
       {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
+      <NoteAttachmentEditorList markdown={value} onChange={onChange} />
       <Textarea
         id={id}
         ref={(node) => {
@@ -375,9 +426,8 @@ export function NoteComposer({
         ) : null}
       </div>
       <p className="shrink-0 text-[11px] text-muted-foreground">
-        Highlight uses <code>==yellow==</code>. Code uses fenced blocks with a language label. Underline uses{" "}
-        <code>&lt;u&gt;</code>. Use the Style menu for headings and small/large text. Images stay in
-        StoryKeep and unzip under StoryKeep/Additions/media.
+        Highlight uses <code>==yellow==</code>. Attach stores files in StoryKeep media only — never in Steve&apos;s Surface Vault.
+        Pack export copies them to StoryKeep/Additions/media with relative links.
         {expanded ? " Esc or Shrink returns to the card." : null}
       </p>
     </div>

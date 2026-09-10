@@ -118,7 +118,7 @@ def _render_text_lines(lines: list[str]) -> str:
             level = len(heading.group(1))
             blocks.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
             continue
-        if _is_image_line(line):
+        if _is_media_line(line):
             flush_list()
             blocks.append(_inline(line.strip()))
             continue
@@ -140,11 +140,12 @@ def _render_text_lines(lines: list[str]) -> str:
 
 IMAGE_SRC = re.compile(r"^/api/v1/media/[0-9a-fA-F-]{36}$")
 IMAGE_MD = re.compile(r"!\[([^\]]*)\]\((/api/v1/media/[0-9a-fA-F-]{36})\)")
+FILE_MD = re.compile(r"(?<!!)\[([^\]]+)\]\((/api/v1/media/[0-9a-fA-F-]{36})\)")
 
 
-def _is_image_line(line: str) -> bool:
-    match = IMAGE_MD.fullmatch(line.strip())
-    return bool(match)
+def _is_media_line(line: str) -> bool:
+    trimmed = line.strip()
+    return bool(IMAGE_MD.fullmatch(trimmed) or FILE_MD.fullmatch(trimmed))
 
 
 def _inline(value: str) -> str:
@@ -163,6 +164,13 @@ def _inline(value: str) -> str:
     escaped = "".join(pieces)
     escaped = IMAGE_MD.sub(
         lambda match: f'<img src="{match.group(2)}" alt="{html.escape(match.group(1))}" />',
+        escaped,
+    )
+    escaped = FILE_MD.sub(
+        lambda match: (
+            f'<a class="sk-attachment-link" href="{match.group(2)}" download="{html.escape(match.group(1))}">'
+            f"{html.escape(match.group(1))}</a>"
+        ),
         escaped,
     )
     escaped = re.sub(r"==([\s\S]+?)==", r"<mark>\1</mark>", escaped)

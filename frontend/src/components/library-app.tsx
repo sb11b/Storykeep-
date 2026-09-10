@@ -33,6 +33,7 @@ import { ListenControls, type ListenControlsHandle } from "@/components/listen-c
 import { GrokBubble } from "@/components/grok-bubble";
 import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect } from "@/components/destination-controls";
+import { NoteAttachmentChips } from "@/components/note-attachments";
 import { NoteComposer } from "@/components/note-composer";
 import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
 import { Badge } from "@/components/ui/badge";
@@ -2221,6 +2222,7 @@ function Reader({
             </label>
           </div>
         ) : null}
+        {composed ? <NoteAttachmentChips markdown={composedNoteMarkdown(article)} className="mb-4" /> : null}
         {bodyHtml ? (
           <div
             ref={bodyRef}
@@ -2397,6 +2399,7 @@ function Reader({
                       onChange={(next) => void onMoveNote(item.id, asDestination(item.destination, "notes"), next)}
                     />
                   </div>
+                  <NoteAttachmentChips markdown={item.markdown} className="mt-2 mb-2" />
                   <div
                     className="text-sm mt-1 note-md"
                     onClick={onCodeCopyClick}

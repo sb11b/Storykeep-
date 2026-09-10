@@ -7,7 +7,8 @@ function escapeHtml(value: string): string {
 }
 
 const MEDIA_IMAGE = /!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
-const MEDIA_LINE = /^!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)$/;
+const MEDIA_FILE = /(?<!!)\[([^\]]+)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
+const MEDIA_LINE = /^(!?\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\))$/;
 const FENCE_OPEN = /^(`{3})([\w-+#.]*)?\s*$/;
 const FENCE_CLOSE = /^(`{3})\s*$/;
 const INDENTED_CODE = /^(?: {4}|\t)/;
@@ -15,6 +16,10 @@ const INDENTED_CODE = /^(?: {4}|\t)/;
 function inline(value: string): string {
   const escaped = escapeHtml(value)
     .replace(MEDIA_IMAGE, '<img src="$2" alt="$1" />')
+    .replace(
+      MEDIA_FILE,
+      '<a class="sk-attachment-link" href="$2" download="$1">$1</a>',
+    )
     .replace(/==([\s\S]+?)==/g, "<mark>$1</mark>")
     .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>")
     .replace(

@@ -141,6 +141,13 @@
   border-color: color-mix(in oklab, currentColor 22%, transparent) !important;
 }
 
+.sk-attachment-link {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 500;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
