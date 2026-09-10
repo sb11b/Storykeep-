@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class ExtractFailedError(Exception):
     """Readable extract was empty or unusable; caller should keep the previous body."""
 
-    def __init__(self, detail: str = "Extract failed, original kept.") -> None:
+    def __init__(self, detail: str = "Extract found no article text") -> None:
         super().__init__(detail)
         self.detail = detail
 
@@ -48,12 +48,30 @@ _CHROME_HINTS = (
     "taboola",
     "signup",
     "sign-up",
+    "tip-jar",
+    "tipjar",
+    "tip_jar",
+    "support-us",
+    "support_us",
+    "donate",
+    "cookie-settings",
+    "cookie_settings",
+    "paywall",
+    "membership",
 )
 _MAIN_QUERIES = (
     '//*[@itemprop="articleBody"]',
+    '//*[contains(concat(" ", normalize-space(@class), " "), " article__body ")]',
+    '//*[contains(concat(" ", normalize-space(@class), " "), " article__main ")]',
     "//article",
     '//*[@role="article"]',
     "//main",
+)
+_CTA_LINE = re.compile(
+    r"^\s*(?:want to leave a tip|leave a tip|support us|sign up|cookie settings|"
+    r"subscribe(?:\s+to|\s+for|\s+now)?|support our|become a member|donate now|"
+    r"we use cookies|accept cookies|manage cookies)",
+    re.I,
 )
 _CSS_LINE = re.compile(
     r"^\s*(?:[.#@][\w#.\[\](),\s%-]+|\*)\s*\{",
@@ -162,6 +180,8 @@ def _clean_text(text: str) -> str:
             continue
         if _NOISE_LINE.match(stripped):
             continue
+        if _is_cta_line(stripped):
+            continue
         if "box-sizing:border-box" in stripped.replace(" ", ""):
             continue
         key = re.sub(r"\s+", " ", stripped.lower())[:160]
@@ -210,8 +230,75 @@ def _extract_image(raw_html: str, url: str, content_html: str | None = None) -> 
     return None
 
 
+def _is_cta_line(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if len(stripped) > 220:
+        return False
+    if _CTA_LINE.match(stripped):
+        return True
+    lower = stripped.lower()
+    if len(stripped) < 120 and any(
+        phrase in lower
+        for phrase in (
+            "leave a tip",
+            "support us",
+            "sign up",
+            "cookie settings",
+            "support our journalism",
+            "become a member",
+        )
+    ):
+        return True
+    return False
+
+
+def _is_cta_only(text: str | None) -> bool:
+    if not text or not text.strip():
+        return True
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
+    if not blocks:
+        return True
+    substantive = [block for block in blocks if not _is_cta_line(block) and len(block) >= 40]
+    return len(substantive) == 0
+
+
+def _extract_from_article_node(prepared: str) -> tuple[str | None, str | None]:
+    try:
+        root = lxml_html.fromstring(prepared)
+    except Exception:
+        return None, None
+    paragraphs: list[lxml_html.HtmlElement] = []
+    for node in root.xpath(".//p"):
+        text = (node.text_content() or "").strip()
+        if not text or _is_cta_line(text):
+            continue
+        if len(text) < 24 and _is_cta_line(text):
+            continue
+        paragraphs.append(node)
+    if not paragraphs:
+        return None, None
+    text = _clean_text("\n\n".join((p.text_content() or "").strip() for p in paragraphs))
+    if len(text) < 80 or _text_is_polluted(text) or _is_cta_only(text):
+        return None, None
+    html_out = _sanitize_html("".join(lxml_html.tostring(p, encoding="unicode") for p in paragraphs))
+    return html_out, text
+
+
+def _repair_from_html(html: str) -> tuple[str | None, str | None] | None:
+    prepared = _prepare_html(html)
+    direct = _extract_from_article_node(prepared)
+    if direct[0] and direct[1]:
+        return direct
+    return None
+
+
 def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
     prepared = _prepare_html(html)
+    direct = _extract_from_article_node(prepared)
+    if direct[0] and direct[1]:
+        return direct
     downloaded = trafilatura.extract(
         prepared,
         include_comments=False,
@@ -223,7 +310,7 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
     if downloaded and text:
         html_out = _sanitize_html(downloaded)
         text_out = _clean_text(text)
-        if text_out:
+        if text_out and not _is_cta_only(text_out) and _extract_usable(html_out, text_out):
             return html_out, text_out
 
     try:
@@ -233,7 +320,7 @@ def _extract_from_html(html: str, url: str) -> tuple[str | None, str | None]:
         if cleaned and plain:
             html_out = _sanitize_html(cleaned)
             text_out = _clean_text(plain)
-            if text_out:
+            if text_out and not _is_cta_only(text_out) and _extract_usable(html_out, text_out):
                 return html_out, text_out
     except Exception as exc:
         logger.info("readability failed %s: %s", url, exc)
@@ -337,19 +424,26 @@ def _text_to_html(text: str) -> str:
 def repair_display_body(content_html: str | None, content_text: str | None) -> tuple[str | None, str | None]:
     text = _clean_text(content_text or "")
     html = content_html
-    if text and len(text) >= 40 and not _text_is_polluted(text):
+    if text and len(text) >= 40 and not _text_is_polluted(text) and not _is_cta_only(text):
         safe_html = html if html and not _html_is_polluted(html) else _text_to_html(text)
         return text, safe_html
-    if html and _html_is_polluted(html):
-        stripped = _clean_text(_strip_tags(html))
-        if len(stripped) >= 80 and not _text_is_polluted(stripped):
-            return stripped, _text_to_html(stripped)
+    if html:
+        repaired = _repair_from_html(html)
+        if repaired:
+            rep_html, rep_text = repaired
+            return rep_text, rep_html
+        if _html_is_polluted(html):
+            stripped = _clean_text(_strip_tags(html))
+            if len(stripped) >= 80 and not _text_is_polluted(stripped) and not _is_cta_only(stripped):
+                return stripped, _text_to_html(stripped)
+    if _is_cta_only(content_text) or _is_cta_only(text):
+        return None, None
     return content_text, content_html
 
 
 def _extract_usable(html: str | None, text: str | None) -> bool:
     cleaned = _clean_text(text or "")
-    if len(cleaned) < 80 or _text_is_polluted(cleaned):
+    if len(cleaned) < 80 or _text_is_polluted(cleaned) or _is_cta_only(cleaned):
         return False
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if not lines:
@@ -376,11 +470,11 @@ def fill_article(db: Session, article: Article, force: bool = False) -> Article:
         html = _sanitize_html(html)
     if not _extract_usable(html, text):
         if force and (previous_html or previous_text):
-            raise ExtractFailedError("Extract failed, original kept.")
+            raise ExtractFailedError()
         return article
     if not text or len(text.strip()) < 80:
         if force and (previous_html or previous_text):
-            raise ExtractFailedError("Extract failed, original kept.")
+            raise ExtractFailedError()
         return article
     article.content_text = text
     article.content_html = html or _text_to_html(text)

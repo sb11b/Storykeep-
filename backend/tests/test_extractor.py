@@ -8,6 +8,23 @@ from types import SimpleNamespace
 from app.services.extractor import ExtractFailedError, _clean_text, _extract_usable, extract_html, fill_article
 
 
+BLAZE_TIP_JAR = """
+<html><body>
+<article>
+<h1>Policy Shift Shakes Capitol</h1>
+<div class="article__body">
+<p>Congress moved Tuesday on a surprise package that could reshape spending for years to come.</p>
+<p>Analysts said the vote reflected months of quiet negotiation behind closed doors.</p>
+</div>
+<div class="tip-jar support-us">
+<p>Want to leave a tip?</p>
+<p>Support Us</p>
+</div>
+</article>
+</body></html>
+"""
+
+
 BLAZE_STYLE = """
 <html><head><style>
 .widget { box-sizing: border-box; margin: 0; padding: 0; }
@@ -33,6 +50,29 @@ BLAZE_STYLE = """
 
 
 class ExtractorTests(unittest.TestCase):
+    def test_blaze_tip_jar_extracts_article_not_cta(self):
+        html, text = extract_html(BLAZE_TIP_JAR, "https://example.com/blaze-story")
+        self.assertIsNotNone(text)
+        assert text is not None
+        self.assertIn("Congress moved Tuesday", text)
+        self.assertNotIn("leave a tip", text.lower())
+        self.assertNotIn("Support Us", text)
+        self.assertFalse(_extract_usable(html, "Want to leave a tip?\nSupport Us"))
+
+    def test_repair_display_body_fixes_cta_only_text_from_html(self):
+        from app.services.extractor import repair_display_body
+
+        stored_html, _ = extract_html(BLAZE_TIP_JAR, "https://example.com/blaze-story")
+        repaired_text, repaired_html = repair_display_body(stored_html, "Want to leave a tip?\nSupport Us")
+        self.assertIsNotNone(repaired_text)
+        assert repaired_text is not None
+        self.assertIn("Congress moved Tuesday", repaired_text)
+        self.assertNotIn("<p>", repaired_text)
+        self.assertNotIn("leave a tip", repaired_text.lower())
+        self.assertIsNotNone(repaired_html)
+        assert repaired_html is not None
+        self.assertIn("<p>", repaired_html)
+
     def test_blaze_style_page_starts_at_lede_without_css(self):
         html, text = extract_html(BLAZE_STYLE, "https://example.com/blaze-story")
         self.assertIsNotNone(text)
@@ -104,6 +144,7 @@ class ExtractorTests(unittest.TestCase):
             url="https://example.com/story",
             content_html="<p>Old body kept.</p>",
             content_text="Old body kept.",
+            image_url=None,
             fetched_at=None,
         )
 

@@ -49,6 +49,7 @@ import {
   articleHeroImageUrl,
   articleReaderSource,
   formatRelative,
+  isCtaOnlyArticleText,
   isPollutedArticleHtml,
   isPollutedArticleText,
   mergeExtractArticle,
@@ -982,10 +983,10 @@ export function LibraryApp({ user }: { user: User }) {
                     const mergedBody = mergeExtractArticle(previous, next);
                     const merged = { ...next, ...mergedBody };
                     const hasBody =
-                      Boolean(merged.content_text?.trim() && !isPollutedArticleText(merged.content_text)) ||
-                      Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html));
+                      Boolean(merged.content_text?.trim() && !isPollutedArticleText(merged.content_text) && !isCtaOnlyArticleText(merged.content_text)) ||
+                      Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html) && !isCtaOnlyArticleText(stripHtml(merged.content_html)));
                     if (!hasBody) {
-                      toast.error("Extract failed");
+                      toast.error("Extract found no article text");
                       return;
                     }
                     setArticle((current) =>
@@ -1001,10 +1002,10 @@ export function LibraryApp({ user }: { user: User }) {
                   } catch (error) {
                     toast.error(
                       error instanceof ApiError && error.status === 422
-                        ? "Extract failed"
+                        ? "Extract found no article text"
                         : error instanceof ApiError
                           ? error.message
-                          : "Extract failed",
+                          : "Extract found no article text",
                     );
                   }
                 }}

@@ -44,6 +44,20 @@ export function sanitizeHtml(html: string): string {
     .replace(/javascript:/gi, "");
 }
 
+const CTA_LINE =
+  /^\s*(?:want to leave a tip|leave a tip|support us|sign up|cookie settings|subscribe(?:\s+to|\s+for|\s+now)?|support our|become a member|donate now|we use cookies|accept cookies|manage cookies)/i;
+
+export function isCtaOnlyArticleText(text: string | null | undefined): boolean {
+  if (!text?.trim()) return true;
+  const blocks = text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  if (!blocks.length) return true;
+  const substantive = blocks.filter((block) => block.length >= 40 && !CTA_LINE.test(block) && !/leave a tip|support us|sign up|cookie settings/i.test(block));
+  return substantive.length === 0;
+}
+
 export function isPollutedArticleText(text: string): boolean {
   const lines = text
     .split("\n")
@@ -124,11 +138,11 @@ export function articleReaderSource(article: {
 }): string {
   const text = article.content_text?.trim() || "";
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
-  if (text.length >= 40 && !isPollutedArticleText(text) && (!html || isPollutedArticleHtml(html))) {
+  if (text.length >= 40 && !isPollutedArticleText(text) && !isCtaOnlyArticleText(text) && (!html || isPollutedArticleHtml(html))) {
     return plainTextToArticleHtml(text);
   }
-  if (html && !isPollutedArticleHtml(html)) return html;
-  if (text && !isPollutedArticleText(text)) return plainTextToArticleHtml(text);
+  if (html && !isPollutedArticleHtml(html) && !isCtaOnlyArticleText(stripHtml(html))) return html;
+  if (text && !isPollutedArticleText(text) && !isCtaOnlyArticleText(text)) return plainTextToArticleHtml(text);
   const summaryText = stripHtml(article.summary);
   if (summaryText && !isPollutedArticleHtml(summaryText)) return plainTextToArticleHtml(summaryText);
   return "";
@@ -143,8 +157,15 @@ export function mergeExtractArticle(previous: {
   content_text: string | null;
   image_url?: string | null;
 }) {
-  const content_text = next.content_text?.trim() ? next.content_text : previous.content_text;
+  const nextText = next.content_text?.trim() ?? "";
+  const content_text =
+    nextText && !isCtaOnlyArticleText(nextText) && !isPollutedArticleText(nextText)
+      ? next.content_text
+      : previous.content_text;
   let content_html = next.content_html?.trim() ? next.content_html : previous.content_html;
+  if (content_html && isCtaOnlyArticleText(stripHtml(content_html))) {
+    content_html = previous.content_html;
+  }
   if (content_html && isPollutedArticleHtml(content_html)) {
     content_html = content_text ? plainTextToArticleHtml(content_text) : previous.content_html;
   }
