@@ -262,7 +262,7 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
         if existing:
             continue
         feed_html = _entry_html(entry)
-        feed_body_html, feed_body_text = extractor._prepare_feed_body(feed_html, entry.get("summary"))
+        feed_store_html, feed_store_text = extractor._feed_storage_body(feed_html, entry.get("summary"))
         article = Article(
             feed_id=feed.id,
             guid=guid[:2000],
@@ -271,10 +271,10 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
             author=entry.get("author"),
             published_at=_entry_datetime(entry),
             summary=entry.get("summary"),
-            feed_html=feed_html,
-            feed_text=feed_body_text,
-            content_html=feed_body_html,
-            content_text=feed_body_text,
+            feed_html=feed_html or feed_store_html,
+            feed_text=feed_store_text,
+            content_html=None,
+            content_text=None,
             image_url=_entry_image(entry),
         )
         db.add(article)

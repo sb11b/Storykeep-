@@ -7,10 +7,12 @@ from types import SimpleNamespace
 
 from app.services.extractor import (
     CHROME_NOTICE,
+    FULL_TEXT_UNAVAILABLE,
     ExtractFailedError,
     _clean_text,
     _extract_usable,
     _html_extract_candidate_valid,
+    _is_dek_only,
     extract_html,
     fill_article,
     pick_display_body,
@@ -174,6 +176,8 @@ class ExtractorTests(unittest.TestCase):
             "Want to leave a tip?",
             None,
             None,
+            page_attempted=True,
+            page_fetched=True,
         )
         self.assertEqual(source, "feed")
         self.assertEqual(notice, CHROME_NOTICE)
@@ -191,6 +195,44 @@ class ExtractorTests(unittest.TestCase):
     def test_single_tip_jar_paragraph_is_not_valid(self):
         tip = "Want to leave a tip? Support our journalism."
         self.assertFalse(_html_extract_candidate_valid(f"<p>{tip}</p>", tip))
+
+    def test_dek_only_feed_is_not_full_body(self):
+        dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
+        self.assertTrue(_is_dek_only(f"<p>{dek}</p>", dek))
+
+    def test_pick_display_body_prefers_page_over_dek_feed(self):
+        dek = "These four Naruto characters prove you can surpass Kage-level strength without becoming Hokage."
+        page_html = "<p>" + ("Full analysis paragraph with enough prose to count. " * 12) + "</p><p>" + ("Second section with more detail. " * 12) + "</p>"
+        page_text = strip = " ".join(["Full analysis paragraph with enough prose to count."] * 12) + "\n\n" + " ".join(["Second section with more detail."] * 12)
+        chosen_html, chosen_text, notice, source = pick_display_body(
+            f"<p>{dek}</p>",
+            dek,
+            page_html,
+            page_text,
+            f"<p>{dek}</p>",
+            dek,
+        )
+        self.assertEqual(source, "page")
+        self.assertIn("Full analysis paragraph", chosen_text or "")
+
+    def test_cbr_article_widget_class_is_not_dropped(self):
+        cbr_html = """
+        <html><body><article class="w-article widget list layout-rich">
+        <div class="article-body">
+        <p>Intro paragraph with enough words to begin the ranked list article about powerful Naruto ninjas today.</p>
+        <h2>10 Naruto Uzumaki</h2>
+        <p>""" + ("Naruto surpassed every Kage through hard work, Sage Mode, and the Nine-Tails partnership. " * 8) + """</p>
+        <h2>9 Sasuke Uchiha</h2>
+        <p>""" + ("Sasuke's Sharingan and Rinnegan made him stronger than most village leaders. " * 8) + """</p>
+        </div></article></body></html>
+        """
+        html, text = extract_html(cbr_html, "https://www.cbr.com/example/")
+        self.assertIsNotNone(text)
+        assert text is not None
+        self.assertIn("Naruto surpassed", text)
+        self.assertIn("Sasuke", text)
+        self.assertGreaterEqual((html or "").count("<h2"), 1)
+        self.assertFalse(_is_dek_only(html, text))
 
     def test_pick_display_body_rejects_invalid_current_for_feed(self):
         para = "Congress moved Tuesday on a surprise package that could reshape spending for years to come and shift priorities."

@@ -14,7 +14,7 @@ from app.schemas import (
     TagOut,
 )
 from app.services.destination import DEFAULT_DESTINATION, effective_destination
-from app.services.extractor import _feed_body_valid, _html_extract_candidate_valid, repair_display_body
+from app.services.extractor import _feed_body_valid, _html_extract_candidate_valid, _is_dek_only, repair_display_body
 
 
 def tag_out(tag: Tag, article_count: int = 0) -> TagOut:
@@ -85,7 +85,7 @@ def filed_note_out(article: Article) -> FiledNoteOut:
 
 def _display_body(article: Article) -> tuple[str | None, str | None]:
     content_text, content_html = repair_display_body(article.content_html, article.content_text)
-    stored_bad = not _html_extract_candidate_valid(content_html, content_text)
+    stored_bad = _is_dek_only(content_html, content_text) or not _html_extract_candidate_valid(content_html, content_text)
     if stored_bad and (article.feed_html or article.feed_text):
         feed_text, feed_html = repair_display_body(article.feed_html, article.feed_text)
         if feed_text and _feed_body_valid(feed_html, feed_text):

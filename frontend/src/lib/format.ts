@@ -62,7 +62,17 @@ export function isCtaOnlyArticleText(text: string | null | undefined): boolean {
   return substantive.length === 0;
 }
 
+export function isDekOnlyArticleBody(content_html: string | null | undefined, content_text: string | null | undefined): boolean {
+  const text = (content_text?.trim() || stripHtml(content_html)).trim();
+  if (!text || text.length < 80 || isCtaOnlyArticleText(text) || isPollutedArticleText(text)) return true;
+  const paragraphCount =
+    (content_html?.match(/<p[\s>]/gi) || []).length ||
+    text.split(/\n{2,}/).filter((block) => block.trim().length >= 40).length;
+  return paragraphCount < 3 || text.length < 500;
+}
+
 export function isUsableArticleBody(content_html: string | null | undefined, content_text: string | null | undefined): boolean {
+  if (isDekOnlyArticleBody(content_html, content_text)) return false;
   const text = (content_text?.trim() || stripHtml(content_html)).trim();
   if (text.length < 400 || isCtaOnlyArticleText(text) || isPollutedArticleText(text)) return false;
   if (content_html && isPollutedArticleHtml(content_html)) return false;
@@ -161,6 +171,9 @@ export function articleReaderSource(article: {
   summary?: string | null;
 }): string {
   if (isUsableArticleBody(article.content_html, article.content_text)) {
+    return readerBodyFromFields(article.content_html, article.content_text);
+  }
+  if (!isDekOnlyArticleBody(article.content_html, article.content_text)) {
     const primary = readerBodyFromFields(article.content_html, article.content_text);
     if (primary) return primary;
   }

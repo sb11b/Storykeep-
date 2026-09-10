@@ -25,6 +25,9 @@ class ExtractFailedError(Exception):
 
 
 CHROME_NOTICE = "Page extract was chrome; kept feed text."
+FULL_TEXT_UNAVAILABLE = "Full text unavailable"
+DEK_MIN_PARAGRAPHS = 3
+DEK_MIN_CHARS = 500
 
 HEADERS = {
     "User-Agent": "Storykeep/1.0 (+https://localhost; personal archive reader)"
@@ -37,7 +40,10 @@ _CHROME_HINTS = (
     "subscribe",
     "related",
     "share",
-    "widget",
+    "related-widget",
+    "sidebar-widget",
+    "share-widget",
+    "outbrain-widget",
     "sidebar",
     "promo",
     "author-bio",
@@ -63,15 +69,28 @@ _CHROME_HINTS = (
     "membership",
     "engagement-bottom-unit",
     "engagement_bottom",
+    "newsletter-signup",
+)
+_PROTECTED_ARTICLE_MARKERS = (
+    "article-body",
+    "article__body",
+    "article-content",
+    "article-main",
+    "article__main",
+    "w-article",
+    "entry-content",
+    "post-content",
 )
 _MAIN_QUERIES = (
     '//*[@itemprop="articleBody"]',
+    '//*[contains(concat(" ", normalize-space(@class), " "), " article-body ")]',
     '//*[contains(concat(" ", normalize-space(@class), " "), " article__body ")]',
     '//*[contains(concat(" ", normalize-space(@class), " "), " article__main ")]',
     "//article",
     '//*[@role="article"]',
     "//main",
 )
+_BLOCK_TAGS = ("h2", "h3", "h4", "p", "ul", "ol", "blockquote")
 _CTA_LINE = re.compile(
     r"^\s*(?:want to leave a tip|leave a tip|support us|sign up|cookie settings|"
     r"subscribe(?:\s+to|\s+for|\s+now)?|support our|become a member|donate now|"
@@ -92,6 +111,13 @@ _NOISE_LINE = re.compile(
 )
 
 
+def _is_protected_article_node(el: lxml_html.HtmlElement) -> bool:
+    if el.tag == "article":
+        return True
+    hay = f"{(el.get('class') or '').lower()} {(el.get('id') or '').lower()}"
+    return any(marker in hay for marker in _PROTECTED_ARTICLE_MARKERS)
+
+
 def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlElement]:
     drop: list[lxml_html.HtmlElement] = []
     seen: set[int] = set()
@@ -100,6 +126,8 @@ def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlEle
             continue
         ident = id(el)
         if ident in seen:
+            continue
+        if _is_protected_article_node(el):
             continue
         if el.tag in _KILL_TAGS:
             drop.append(el)
@@ -277,6 +305,26 @@ def _is_cta_only(text: str | None) -> bool:
     return len(substantive) == 0
 
 
+def _collect_article_blocks(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlElement]:
+    candidates: list[lxml_html.HtmlElement] = []
+    for tag in _BLOCK_TAGS:
+        candidates.extend(root.xpath(f".//{tag}"))
+    if not candidates:
+        return []
+    candidate_ids = {id(node) for node in candidates}
+    blocks: list[lxml_html.HtmlElement] = []
+    for node in candidates:
+        if node.tag in {"li"}:
+            continue
+        if any(id(ancestor) in candidate_ids for ancestor in node.iterancestors()):
+            continue
+        text = (node.text_content() or "").strip()
+        if not text or _is_cta_line(text):
+            continue
+        blocks.append(node)
+    return blocks
+
+
 def _extract_paragraph_html(
     prepared: str,
     *,
@@ -287,18 +335,14 @@ def _extract_paragraph_html(
         root = lxml_html.fromstring(prepared)
     except Exception:
         return None, None
-    paragraphs: list[lxml_html.HtmlElement] = []
-    for node in root.xpath(".//p"):
-        text = (node.text_content() or "").strip()
-        if not text or _is_cta_line(text):
-            continue
-        paragraphs.append(node)
-    if len(paragraphs) < min_paragraphs:
+    blocks = _collect_article_blocks(root)
+    prose_blocks = [block for block in blocks if block.tag == "p" or block.tag.startswith("h")]
+    if len(prose_blocks) < min_paragraphs and len(blocks) < min_paragraphs:
         return None, None
-    text = _clean_text("\n\n".join((p.text_content() or "").strip() for p in paragraphs))
+    text = _clean_text("\n\n".join((block.text_content() or "").strip() for block in blocks))
     if len(text) < min_chars or _text_is_polluted(text) or _is_cta_only(text):
         return None, None
-    html_out = _sanitize_html("".join(lxml_html.tostring(p, encoding="unicode") for p in paragraphs))
+    html_out = _sanitize_html("".join(lxml_html.tostring(block, encoding="unicode") for block in blocks))
     return html_out, text
 
 
@@ -496,14 +540,38 @@ def _body_score(html: str | None, text: str | None) -> tuple[int, int, int]:
     return _prose_paragraph_count(html, text), _prose_letter_count(text), _prose_char_count(text)
 
 
-def _feed_body_valid(html: str | None, text: str | None) -> bool:
+def _is_dek_only(html: str | None, text: str | None) -> bool:
     cleaned = _clean_text(text or "")
-    if len(cleaned) < 80 or _text_is_polluted(cleaned) or _is_cta_only(cleaned):
+    if not cleaned or len(cleaned) < 80 or _text_is_polluted(cleaned) or _is_cta_only(cleaned):
+        return True
+    paragraphs, _letters, chars = _body_score(html, text)
+    return paragraphs < DEK_MIN_PARAGRAPHS or chars < DEK_MIN_CHARS
+
+
+def _feed_body_valid(html: str | None, text: str | None) -> bool:
+    if _is_dek_only(html, text):
+        return False
+    cleaned = _clean_text(text or "")
+    if _text_is_polluted(cleaned) or _is_cta_only(cleaned):
         return False
     if html and _html_is_polluted(html):
         return False
     paragraphs, letters, _chars = _body_score(html, text)
     return paragraphs >= 1 and letters >= 80
+
+
+def _feed_storage_body(raw_html: str | None, summary: str | None = None) -> tuple[str | None, str | None]:
+    source = (raw_html or "").strip() or (summary or "").strip()
+    if not source:
+        return None, None
+    if "<" in source:
+        sanitized = _sanitize_html(source)
+        text = _clean_text(_strip_tags(sanitized))
+        if text:
+            return sanitized, text
+        return None, None
+    text = _clean_text(source)
+    return (_text_to_html(text), text) if text else (None, None)
 
 
 def _html_extract_candidate_valid(html: str | None, text: str | None) -> bool:
@@ -549,6 +617,9 @@ def resolve_feed_body(article: Article) -> tuple[str | None, str | None]:
         text = feed_text or (_clean_text(_strip_tags(html)) if html else None)
         if _feed_body_valid(html, text):
             return html, text
+        storage = _feed_storage_body(feed_html, None)
+        if storage[0] and storage[1]:
+            return storage
         prepared = _prepare_feed_body(feed_html, None)
         if prepared[0] and prepared[1]:
             return prepared
@@ -576,27 +647,39 @@ def pick_display_body(
     previous_text: str | None,
     *,
     page_attempted: bool = False,
+    page_fetched: bool = False,
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    feed_ok = _feed_body_valid(feed_html, feed_text)
+    feed_full = _feed_body_valid(feed_html, feed_text)
     page_ok = _html_extract_candidate_valid(page_html, page_text)
     current_ok = _html_extract_candidate_valid(previous_html, previous_text)
-    feed_paragraphs, _feed_letters, feed_chars = _body_score(feed_html, feed_text) if feed_ok else (0, 0, 0)
+    feed_is_dek = _is_dek_only(feed_html, feed_text)
+    current_is_dek = _is_dek_only(previous_html, previous_text)
+    feed_paragraphs, _feed_letters, feed_chars = _body_score(feed_html, feed_text) if feed_html or feed_text else (0, 0, 0)
     page_paragraphs, _page_letters, page_chars = _body_score(page_html, page_text) if page_ok else (0, 0, 0)
     _current_paragraphs, _current_letters, current_chars = _body_score(previous_html, previous_text)
     page_attempted = page_attempted or bool(page_html or page_text)
-    chrome_notice = CHROME_NOTICE if page_attempted and not page_ok else None
+    unavailable_notice = (
+        FULL_TEXT_UNAVAILABLE if page_attempted and not page_fetched and not current_ok else None
+    )
+    chrome_notice = CHROME_NOTICE if page_attempted and page_fetched and not page_ok else None
 
-    if page_ok and page_chars >= feed_chars and (not current_ok or page_chars >= current_chars):
+    if page_ok and (feed_is_dek or not feed_full or page_chars >= feed_chars or not current_ok):
         return page_html, page_text, None, "page"
-    if feed_ok and (not current_ok or feed_chars > current_chars):
+    if current_ok and not page_ok:
+        return previous_html, previous_text, unavailable_notice, "previous"
+    if feed_full and (not current_ok or feed_chars > current_chars):
         return feed_html, feed_text, chrome_notice, "feed"
     if current_ok:
-        return previous_html, previous_text, chrome_notice, "previous"
-    if feed_ok:
+        return previous_html, previous_text, unavailable_notice, "previous"
+    if feed_full:
         return feed_html, feed_text, chrome_notice, "feed"
     if page_ok:
         return page_html, page_text, None, "page"
-    return None, None, chrome_notice, None
+    if (feed_html or feed_text) and (feed_chars >= current_chars or not current_ok):
+        return feed_html, feed_text, unavailable_notice or chrome_notice, "feed"
+    if previous_html or previous_text:
+        return previous_html, previous_text, unavailable_notice, "previous"
+    return None, None, unavailable_notice, None
 
 
 def restore_feed_body(db: Session, article: Article) -> Article:
@@ -635,7 +718,7 @@ def _ensure_feed_body(db: Session, article: Article, refetch: bool = False) -> t
     if not raw:
         return feed_html, feed_text
     article.feed_html = raw
-    prepared_html, prepared_text = _prepare_feed_body(raw)
+    prepared_html, prepared_text = _feed_storage_body(raw)
     if prepared_text:
         article.feed_text = prepared_text
         return prepared_html or _text_to_html(prepared_text), prepared_text
@@ -657,6 +740,7 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
         not force
         and article.content_text
         and _html_extract_candidate_valid(article.content_html, article.content_text)
+        and not _is_dek_only(article.content_html, article.content_text)
     ):
         return article, None
 
@@ -664,7 +748,7 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     page_text: str | None = None
     image: str | None = None
     raw = _fetch_html(article.url)
-    page_attempted = bool(raw)
+    page_attempted = force or bool(raw)
     if raw:
         page_html, page_text = _extract_from_html(raw, article.url)
         page_html, page_text = _normalize_page_candidate(page_html, page_text)
@@ -680,12 +764,13 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
         previous_html,
         previous_text,
         page_attempted=page_attempted,
+        page_fetched=bool(raw),
     )
 
     if not chosen_html and not chosen_text:
         if force and not (previous_html or previous_text or feed_html or feed_text):
             raise ExtractFailedError()
-        return article, notice or (CHROME_NOTICE if raw else None)
+        return article, notice or (FULL_TEXT_UNAVAILABLE if page_attempted else None)
 
     next_html = chosen_html or _text_to_html(chosen_text or "")
     next_text = chosen_text or _clean_text(_strip_tags(chosen_html or ""))
