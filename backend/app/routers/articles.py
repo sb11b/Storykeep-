@@ -35,8 +35,15 @@ from app.services.extractor import ExtractFailedError, _feed_body_valid, _is_dek
 router = APIRouter(tags=["articles"])
 
 EXTRACT_MSG_SUCCESS = "Updated from the page."
-EXTRACT_MSG_DEK_KEPT = "Page had no full article; kept the short feed text."
-EXTRACT_MSG_FAILED = "Extract failed; previous text kept."
+
+
+def _kept_existing_message(reason: str | None) -> str:
+    detail = (reason or "extract found no usable text").strip().rstrip(".")
+    return f"Kept existing text: {detail}."
+
+
+def _extract_char_count(content_text: str | None, content_html: str | None) -> int:
+    return len((content_text or "").strip()) or len((content_html or "").strip())
 
 
 def _extract_user_message(
@@ -44,6 +51,8 @@ def _extract_user_message(
     prev_text: str | None,
     next_html: str | None,
     next_text: str | None,
+    *,
+    notice: str | None = None,
 ) -> tuple[bool, str]:
     had_previous = bool((prev_html or prev_text or "").strip())
     next_usable = _feed_body_valid(next_html, next_text)
@@ -52,10 +61,30 @@ def _extract_user_message(
     if next_usable:
         return True, EXTRACT_MSG_SUCCESS
     if had_previous and next_dek:
-        return True, EXTRACT_MSG_DEK_KEPT
+        return False, _kept_existing_message(notice or "page had no full article")
     if had_previous:
-        return False, EXTRACT_MSG_FAILED
-    return False, EXTRACT_MSG_FAILED
+        return False, _kept_existing_message(notice or "extract failed")
+    return False, _kept_existing_message(notice or "no article text was available")
+
+
+def _extract_out(
+    db: Session,
+    user: User,
+    article_id: UUID,
+    *,
+    ok: bool,
+    message: str,
+    notice: str | None = None,
+) -> ExtractOut:
+    payload = _article_payload(db, user, article_id)
+    text = (message or "").strip() or (EXTRACT_MSG_SUCCESS if ok else _kept_existing_message(None))
+    return ExtractOut(
+        article=payload,
+        notice=notice,
+        ok=ok,
+        message=text,
+        chars=_extract_char_count(payload.content_text, payload.content_html),
+    )
 logger = logging.getLogger(__name__)
 
 SAVED_PAGES_URL = "https://storykeep.local/saved-pages"
@@ -309,36 +338,55 @@ def extract_article(
 ) -> ExtractOut:
     article = _owned_article(db, user, article_id)
     article_id_value = article.id
+    article_url = article.url
     prev_html = article.content_html
     prev_text = article.content_text
     notice: str | None = None
     try:
-        _, notice = extractor.fill_article(db, article, force=True)
-    except ExtractFailedError as exc:
+        try:
+            _, notice = extractor.fill_article(db, article, force=True)
+        except ExtractFailedError as exc:
+            db.rollback()
+            db.refresh(article)
+            return _extract_out(
+                db,
+                user,
+                article_id_value,
+                ok=False,
+                message=_kept_existing_message(exc.detail),
+                notice=notice,
+            )
+        try:
+            archive_service.snapshot_article(db, article, "html")
+        except Exception as exc:
+            logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
+        db.commit()
+        db.refresh(article)
+        ok, message = _extract_user_message(
+            prev_html,
+            prev_text,
+            article.content_html,
+            article.content_text,
+            notice=notice,
+        )
+        return _extract_out(db, user, article_id_value, ok=ok, message=message, notice=notice)
+    except Exception as exc:
+        logger.exception(
+            "extract failed article_id=%s url=%s",
+            article_id_value,
+            article_url,
+        )
         db.rollback()
         db.refresh(article)
-        failure_message = (exc.detail or EXTRACT_MSG_FAILED).strip() or EXTRACT_MSG_FAILED
-        return ExtractOut(
-            article=_article_payload(db, user, article_id_value),
-            notice=notice,
+        reason = str(exc).strip() or exc.__class__.__name__
+        return _extract_out(
+            db,
+            user,
+            article_id_value,
             ok=False,
-            message=failure_message,
+            message=_kept_existing_message(reason),
+            notice=notice,
         )
-    try:
-        archive_service.snapshot_article(db, article, "html")
-    except Exception as exc:
-        logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
-    db.commit()
-    db.refresh(article)
-    ok, message = _extract_user_message(prev_html, prev_text, article.content_html, article.content_text)
-    if not message:
-        message = EXTRACT_MSG_SUCCESS if ok else EXTRACT_MSG_FAILED
-    return ExtractOut(
-        article=_article_payload(db, user, article_id_value),
-        notice=notice,
-        ok=ok,
-        message=message,
-    )
 
 
 @router.patch("/articles/{article_id}/use-feed-text", response_model=ArticleOut)

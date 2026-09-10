@@ -4,16 +4,8 @@ import { messageFromApiError, nonEmptyMessage, toastError } from "@/lib/toast-me
 
 export const EXTRACT_MESSAGES = {
   success: "Updated from the page.",
-  dekKept: "Page had no full article; kept the short feed text.",
-  failed: "Extract failed; previous text kept.",
+  failed: "Kept existing text: extract failed.",
 } as const;
-
-type ExtractToastInput = {
-  message?: string | null;
-  ok?: boolean;
-  upgraded: boolean;
-  keptPrevious: boolean;
-};
 
 export function extractFailureMessage(message?: string | null): string {
   return nonEmptyMessage(message, EXTRACT_MESSAGES.failed);
@@ -29,16 +21,8 @@ export function showExtractFailed(message?: string | null, error?: unknown): voi
   toastError(text);
 }
 
-export function showExtractToast({ ok, upgraded, keptPrevious, message }: ExtractToastInput) {
-  if (ok === false || (!upgraded && !keptPrevious)) {
-    showExtractFailed(message);
-    return;
-  }
-  if (keptPrevious && !upgraded) {
-    toast.message(nonEmptyMessage(EXTRACT_MESSAGES.dekKept, EXTRACT_MESSAGES.dekKept));
-    return;
-  }
-  toast.success(EXTRACT_MESSAGES.success);
+export function showExtractSuccess(message?: string | null): void {
+  toast.success(nonEmptyMessage(message, EXTRACT_MESSAGES.success));
 }
 
 export function showExtractCaughtError(error: unknown): void {

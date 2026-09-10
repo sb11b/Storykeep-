@@ -14,7 +14,13 @@ from app.schemas import (
     TagOut,
 )
 from app.services.destination import DEFAULT_DESTINATION, effective_destination
-from app.services.extractor import _feed_body_valid, _is_dek_only, has_full_text, repair_display_body
+from app.services.extractor import (
+    _feed_body_valid,
+    _html_extract_candidate_valid,
+    _is_dek_only,
+    has_full_text,
+    repair_display_body,
+)
 
 
 def tag_out(tag: Tag, article_count: int = 0) -> TagOut:

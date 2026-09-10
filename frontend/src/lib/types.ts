@@ -131,6 +131,7 @@ export type ExtractResult = {
   notice: string | null;
   ok: boolean;
   message: string;
+  chars: number;
 };
 
 export type Article = ArticleListItem & {

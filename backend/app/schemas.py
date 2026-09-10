@@ -268,6 +268,7 @@ class ExtractOut(BaseModel):
     notice: str | None = None
     ok: bool = True
     message: str = ""
+    chars: int = 0
 
 
 class ArticleOut(BaseModel):

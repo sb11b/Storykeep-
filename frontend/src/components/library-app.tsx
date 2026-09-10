@@ -82,7 +82,7 @@ import type {
   Tag,
   User,
 } from "@/lib/types";
-import { showExtractCaughtError, showExtractToast } from "@/lib/extract-toast";
+import { showExtractCaughtError, showExtractFailed, showExtractSuccess } from "@/lib/extract-toast";
 import { toastErrorFromUnknown } from "@/lib/toast-message";
 import { cn } from "@/lib/utils";
 
@@ -1047,21 +1047,16 @@ export function LibraryApp({ user }: { user: User }) {
                   const previous = article;
                   try {
                     const result = await api.extract(id);
-                    const next = result.article;
                     if (selectedIdRef.current !== id) return;
-                    const mergedBody = mergeExtractArticle(previous, next);
-                    const merged = { ...next, ...mergedBody };
-                    const upgraded = isUsableArticleBody(merged.content_html, merged.content_text);
-                    const keptPrevious =
-                      Boolean(previous.content_text?.trim() || previous.content_html?.trim()) &&
-                      isDekOnlyArticleBody(merged.content_html, merged.content_text);
-                    if (!upgraded && !keptPrevious) {
-                      showExtractToast({ message: result.message, ok: result.ok, upgraded, keptPrevious });
-                      return;
-                    }
+                    const mergedBody = mergeExtractArticle(previous, result.article);
+                    const merged = { ...result.article, ...mergedBody };
                     setArticle((current) =>
                       current && current.id === id ? { ...current, ...merged } : { ...previous, ...merged },
                     );
+                    if (!result.ok) {
+                      showExtractFailed(result.message);
+                      return;
+                    }
                     setItems((current) =>
                       current.map((item) =>
                         item.id === id
@@ -1070,7 +1065,7 @@ export function LibraryApp({ user }: { user: User }) {
                       ),
                     );
                     setReaderScrollToken((current) => current + 1);
-                    showExtractToast({ message: result.message, ok: result.ok, upgraded, keptPrevious });
+                    showExtractSuccess(result.message);
                   } catch (error) {
                     showExtractCaughtError(error);
                   }
