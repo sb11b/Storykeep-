@@ -266,7 +266,7 @@ class ExtractorTests(unittest.TestCase):
                 return None
 
         with unittest.mock.patch("app.services.extractor._ensure_feed_body", side_effect=lambda _db, art, refetch=False: (art.feed_html, art.feed_text)):
-            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, 404)):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, 404, None)):
                 updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
         self.assertIn(dek, updated.content_text or "")
         self.assertEqual(notice, CBR_NO_COLUMN_NOTICE)
@@ -324,9 +324,36 @@ class ExtractorTests(unittest.TestCase):
                 return None
 
         with unittest.mock.patch("app.services.extractor._ensure_feed_body", return_value=(None, None)):
-            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, None)):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, None, "Fetch failed")):
                 updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
         self.assertIn("Old body kept", updated.content_text or "")
+        self.assertIsNone(notice)
+
+    def test_re_extract_short_body_keeps_previous_and_does_not_shrink(self):
+        """Regression: re-extract on a short-body article must keep prior text when fetch fails."""
+        article = SimpleNamespace(
+            url="https://example.com/short",
+            content_html="<p>" + ("Readable short body kept during re-extract. " * 8) + "</p><p>" + ("Second paragraph for tests. " * 8) + "</p>",
+            content_text=("Readable short body kept during re-extract. " * 8).strip()
+            + "\n\n"
+            + ("Second paragraph for tests. " * 8).strip(),
+            feed_html=None,
+            feed_text=None,
+            summary=None,
+            image_url=None,
+            fetched_at=None,
+        )
+
+        class FakeDb:
+            def add(self, _obj) -> None:
+                return None
+
+        before_len = len(article.content_text or "")
+        with unittest.mock.patch("app.services.extractor._ensure_feed_body", return_value=(None, None)):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=(None, 503, "Unavailable")):
+                updated, notice = fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        self.assertGreaterEqual(len(updated.content_text or ""), before_len)
+        self.assertIn("Readable short body kept", updated.content_text or "")
         self.assertIsNone(notice)
 
     def test_fill_article_keeps_feed_when_page_is_chrome(self):
@@ -347,7 +374,7 @@ class ExtractorTests(unittest.TestCase):
 
         page_html = "<p>Want to leave a tip?</p><p>Support Us</p>"
         with unittest.mock.patch("app.services.extractor._ensure_feed_body", side_effect=lambda _db, art, refetch=False: (art.feed_html, art.feed_text)):
-            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=("<html></html>", 200)):
+            with unittest.mock.patch("app.services.extractor._fetch_html_with_status", return_value=("<html></html>", 200, None)):
                 with unittest.mock.patch(
                     "app.services.extractor._extract_from_html",
                     return_value=(page_html, "Want to leave a tip?\nSupport Us"),

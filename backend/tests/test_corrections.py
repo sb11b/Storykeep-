@@ -1,4 +1,5 @@
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -56,10 +57,34 @@ class CorrectionServiceTests(unittest.TestCase):
         user = SimpleNamespace(id=user_id)
         article = SimpleNamespace(id=article_id)
 
-        row = upsert_correction(db, user, article, "second pass")
+        with unittest.mock.patch("app.services.corrections.changelog.record"):
+            row = upsert_correction(db, user, article, "second pass")
 
         self.assertIs(row, existing)
         self.assertEqual(existing.markdown, "second pass")
+        self.assertEqual(len(db.added), 0)
+
+    def test_correction_save_twice_one_row_latest_text(self):
+        article_id = uuid4()
+        user_id = uuid4()
+        existing = SimpleNamespace(
+            id=uuid4(),
+            user_id=user_id,
+            article_id=article_id,
+            markdown="first",
+            created_at=None,
+        )
+        db = FakeDb([existing])
+        user = SimpleNamespace(id=user_id)
+        article = SimpleNamespace(id=article_id)
+
+        with unittest.mock.patch("app.services.corrections.changelog.record"):
+            upsert_correction(db, user, article, "second pass")
+            row = upsert_correction(db, user, article, "third pass")
+
+        self.assertIs(row, existing)
+        self.assertEqual(existing.markdown, "third pass")
+        self.assertEqual(len(db.rows), 1)
         self.assertEqual(len(db.added), 0)
 
 

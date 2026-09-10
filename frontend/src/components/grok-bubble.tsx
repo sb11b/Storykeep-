@@ -200,7 +200,7 @@ export function GrokBubble({
       setMessages((current) =>
         current.map((item) => (item.id === assistantId ? { ...item, content: item.content || detail } : item)),
       );
-      toast.error(detail);
+      toast.error(detail.trim() || "Grok did not reply");
     } finally {
       setBusy(false);
     }

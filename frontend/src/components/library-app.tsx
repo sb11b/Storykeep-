@@ -84,6 +84,7 @@ import type {
   User,
 } from "@/lib/types";
 import { showExtractCaughtError, showExtractFailed, showExtractSuccess } from "@/lib/extract-toast";
+import { initialListDebug, listRangeLabel } from "@/lib/list-range";
 import { toastErrorFromUnknown } from "@/lib/toast-message";
 import { cn } from "@/lib/utils";
 
@@ -157,13 +158,6 @@ function shelfKey(shelf: Shelf): string {
 
 const LIST_PAGE = 40;
 
-function listRangeLabel(loaded: number, total: number, kind: Shelf["kind"]): string {
-  const noun = kind === "notes" ? "notes" : "articles";
-  if (total === 0) return `No ${noun}`;
-  if (loaded === 0) return `${total} ${noun}`;
-  return `Showing 1–${loaded} of ${total}`;
-}
-
 export function LibraryApp({ user }: { user: User }) {
   const router = useRouter();
   const [feeds, setFeeds] = useState<Feed[]>([]);
@@ -210,7 +204,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [listFirstOffset, setListFirstOffset] = useState(0);
   const [listFirstPage, setListFirstPage] = useState(1);
   const [listFirstFetchUrl, setListFirstFetchUrl] = useState("");
-  const [listDebug, setListDebug] = useState({ offset: 0, startIndex: 0, count: 0 });
+  const [listDebug, setListDebug] = useState(initialListDebug);
   const [readerScrollToken, setReaderScrollToken] = useState(0);
   itemsRef.current = items;
   totalRef.current = total;
@@ -349,7 +343,7 @@ export function LibraryApp({ user }: { user: User }) {
     setListFirstOffset(0);
     setListFirstPage(1);
     setListFirstFetchUrl("");
-    setListDebug({ offset: 0, startIndex: 0, count: 0 });
+    setListDebug(initialListDebug);
     setItems([]);
     try {
       const result = await fetchShelfPage(0, true);
@@ -723,7 +717,7 @@ export function LibraryApp({ user }: { user: User }) {
       onShelf={(next) => {
         setListFirstOffset(0);
         setListFirstPage(1);
-        setListDebug({ offset: 0, startIndex: 0, count: 0 });
+        setListDebug(initialListDebug);
         setShelf(next);
         setSelectedId(null);
         setMobileNav(false);
