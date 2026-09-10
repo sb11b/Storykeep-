@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type ReactNode } from "react";
 
 export type ShelfScrollerHandle = {
   getScrollTop: () => number;
@@ -8,48 +8,60 @@ export type ShelfScrollerHandle = {
   scrollToIndex: (index: number) => void;
 };
 
+function visibleStartIndex(root: HTMLDivElement): number {
+  const rows = root.querySelectorAll<HTMLElement>("[data-list-index]");
+  if (!rows.length) return 0;
+  const rootTop = root.getBoundingClientRect().top;
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom > rootTop + 4) {
+      const index = Number(row.dataset.listIndex);
+      return Number.isFinite(index) ? index : 0;
+    }
+  }
+  return 0;
+}
+
 /** Native overflow list pane. Never wrap this in Base UI ScrollArea. */
 export const ShelfScroller = forwardRef<
   ShelfScrollerHandle,
   {
     shelfKey: string;
     listEpoch: number;
-    restoreTop: number | null;
+    itemCount: number;
     hasMore: boolean;
     loadingMore?: boolean;
     loaded: number;
     total: number;
     onNearEnd: () => void;
-    onScrollTop?: (top: number, userInitiated: boolean) => void;
-    onListReset?: (payload: { feed: string; offset: number; startIndex: number }) => void;
+    onListPaint?: (payload: { feed: string; offset: number; startIndex: number; count: number }) => void;
     children: ReactNode;
   }
 >(function ShelfScroller(
   {
     shelfKey,
     listEpoch,
-    restoreTop,
+    itemCount,
     hasMore,
     loadingMore,
     loaded,
     total,
     onNearEnd,
-    onScrollTop,
-    onListReset,
+    onListPaint,
     children,
   },
   ref,
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
   const onNearEndRef = useRef(onNearEnd);
-  const onListResetRef = useRef(onListReset);
+  const onListPaintRef = useRef(onListPaint);
   const hasMoreRef = useRef(hasMore);
   const userScrolledRef = useRef(false);
   const programmaticRef = useRef(false);
   const paginationReadyRef = useRef(false);
-  const suppressNearEndRef = useRef(false);
+  const suppressNearEndRef = useRef(true);
 
-  const resetScroll = (notify = false) => {
+  const forceTop = (notify: boolean) => {
     const root = rootRef.current;
     if (!root) return;
     userScrolledRef.current = false;
@@ -57,19 +69,20 @@ export const ShelfScroller = forwardRef<
     suppressNearEndRef.current = true;
     programmaticRef.current = true;
     root.scrollTop = 0;
-    window.requestAnimationFrame(() => {
-      root.scrollTop = 0;
-      window.requestAnimationFrame(() => {
-        programmaticRef.current = false;
-        paginationReadyRef.current = true;
-        window.setTimeout(() => {
-          suppressNearEndRef.current = false;
-        }, 120);
-        if (notify) {
-          onListResetRef.current?.({ feed: shelfKey, offset: 0, startIndex: 0 });
-        }
+    const startIndex = visibleStartIndex(root);
+    programmaticRef.current = false;
+    paginationReadyRef.current = true;
+    window.setTimeout(() => {
+      suppressNearEndRef.current = false;
+    }, 400);
+    if (notify) {
+      onListPaintRef.current?.({
+        feed: shelfKey,
+        offset: 0,
+        startIndex,
+        count: itemCount,
       });
-    });
+    }
   };
 
   useImperativeHandle(
@@ -85,51 +98,45 @@ export const ShelfScroller = forwardRef<
           programmaticRef.current = false;
         });
       },
-      scrollToIndex: (_index: number) => {
-        resetScroll(false);
+      scrollToIndex: (index: number) => {
+        const root = rootRef.current;
+        if (!root) return;
+        programmaticRef.current = true;
+        if (index <= 0) {
+          root.scrollTop = 0;
+        } else {
+          const row = root.querySelector<HTMLElement>(`[data-list-index="${index}"]`);
+          if (row) row.scrollIntoView({ block: "start" });
+          else root.scrollTop = 0;
+        }
+        window.requestAnimationFrame(() => {
+          programmaticRef.current = false;
+        });
       },
     }),
-    [shelfKey],
+    [],
   );
 
   useEffect(() => {
     onNearEndRef.current = onNearEnd;
-    onListResetRef.current = onListReset;
+    onListPaintRef.current = onListPaint;
     hasMoreRef.current = hasMore;
-  }, [onNearEnd, onListReset, hasMore]);
+  }, [onNearEnd, onListPaint, hasMore]);
 
-  useEffect(() => {
-    resetScroll(false);
+  useLayoutEffect(() => {
+    forceTop(false);
   }, [shelfKey]);
 
-  useEffect(() => {
-    resetScroll(true);
-  }, [listEpoch]);
-
-  useEffect(() => {
-    if (restoreTop == null) return;
-    const root = rootRef.current;
-    if (!root) return;
-    suppressNearEndRef.current = true;
-    programmaticRef.current = true;
-    root.scrollTo({ top: Math.max(0, restoreTop) });
-    userScrolledRef.current = restoreTop > 0;
-    window.requestAnimationFrame(() => {
-      programmaticRef.current = false;
-      paginationReadyRef.current = true;
-      window.setTimeout(() => {
-        suppressNearEndRef.current = false;
-      }, 120);
-    });
-  }, [restoreTop]);
+  useLayoutEffect(() => {
+    forceTop(true);
+  }, [listEpoch, itemCount]);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     const onScroll = () => {
-      if (!programmaticRef.current) {
-        if (root.scrollTop > 0) userScrolledRef.current = true;
-        onScrollTop?.(root.scrollTop, userScrolledRef.current);
+      if (!programmaticRef.current && root.scrollTop > 8) {
+        userScrolledRef.current = true;
       }
       if (!paginationReadyRef.current) return;
       if (suppressNearEndRef.current) return;
@@ -141,7 +148,7 @@ export const ShelfScroller = forwardRef<
     };
     root.addEventListener("scroll", onScroll, { passive: true });
     return () => root.removeEventListener("scroll", onScroll);
-  }, [onScrollTop, shelfKey]);
+  }, [shelfKey]);
 
   return (
     <div ref={rootRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">

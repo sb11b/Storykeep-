@@ -49,6 +49,8 @@ import {
   articleHeroImageUrl,
   articleReaderSource,
   formatRelative,
+  isPollutedArticleHtml,
+  mergeExtractArticle,
   sanitizeHtml,
   stripHtml,
 } from "@/lib/format";
@@ -186,11 +188,10 @@ export function LibraryApp({ user }: { user: User }) {
   const listGenRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const listScrollerRef = useRef<ShelfScrollerHandle>(null);
-  const listScrollTops = useRef<Record<string, number>>({});
   const listFeedKeyRef = useRef<string>(shelfKey(shelf));
-  const listDebugLoggedRef = useRef<string | null>(null);
   const [listEpoch, setListEpoch] = useState(0);
-  const [listRestoreTop, setListRestoreTop] = useState<number | null>(null);
+  const [listQueryOffset, setListQueryOffset] = useState(0);
+  const [listDebug, setListDebug] = useState({ offset: 0, startIndex: 0, count: 0 });
   const [readerScrollToken, setReaderScrollToken] = useState(0);
   itemsRef.current = items;
   totalRef.current = total;
@@ -213,8 +214,6 @@ export function LibraryApp({ user }: { user: User }) {
 
   const openArticle = useCallback(
     (id: string) => {
-      listScrollTops.current[shelfKey(shelf)] = listScrollerRef.current?.getScrollTop() ?? 0;
-      setListRestoreTop(null);
       setSelectedId(id);
       const row = itemsRef.current.find((item) => item.id === id);
       if (row?.is_read) return;
@@ -269,21 +268,20 @@ export function LibraryApp({ user }: { user: User }) {
   const loadList = useCallback(async () => {
     const feed = shelfKey(shelf);
     listFeedKeyRef.current = feed;
-    listDebugLoggedRef.current = null;
-    delete listScrollTops.current[feed];
     const gen = ++listGenRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false);
     setLoadingList(true);
     setListError(null);
-    setListRestoreTop(null);
+    setListQueryOffset(0);
+    setListDebug({ offset: 0, startIndex: 0, count: 0 });
     setItems([]);
     try {
       const page = await fetchShelfPage(0, true);
       if (gen !== listGenRef.current) return;
       setItems(page.items);
       setTotal(page.total);
-      listScrollerRef.current?.scrollToIndex(0);
+      setListQueryOffset(0);
       setListEpoch((current) => current + 1);
     } catch (error) {
       if (gen !== listGenRef.current) return;
@@ -616,10 +614,8 @@ export function LibraryApp({ user }: { user: User }) {
       groupedFeeds={groupedFeeds}
       tags={tags}
       onShelf={(next) => {
-        delete listScrollTops.current[shelfKey(shelf)];
-        delete listScrollTops.current[shelfKey(next)];
-        listDebugLoggedRef.current = null;
-        setListRestoreTop(null);
+        setListQueryOffset(0);
+        setListDebug({ offset: 0, startIndex: 0, count: 0 });
         setShelf(next);
         setSelectedId(null);
         setMobileNav(false);
@@ -782,6 +778,11 @@ export function LibraryApp({ user }: { user: User }) {
                       ? `${items.length} of ${total} ${shelf.kind === "notes" ? "notes" : "articles"}`
                       : `${total} ${shelf.kind === "notes" ? "notes" : "articles"}`}
                   </p>
+                  {process.env.NODE_ENV === "development" ? (
+                    <p className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
+                      offset={listQueryOffset} startIndex={listDebug.startIndex} count={listDebug.count}
+                    </p>
+                  ) : null}
                 </div>
                 {shelf.kind === "feed" ? (
                   <div className="flex shrink-0 gap-1">
@@ -845,24 +846,20 @@ export function LibraryApp({ user }: { user: User }) {
               ) : null}
             </div>
             <ShelfScroller
+              key={`${shelfKey(shelf)}-${listEpoch}`}
               ref={listScrollerRef}
               shelfKey={shelfKey(shelf)}
               listEpoch={listEpoch}
-              restoreTop={listRestoreTop}
+              itemCount={items.length}
               hasMore={!loadingList && items.length > 0 && items.length < total}
               loadingMore={loadingMore}
               loaded={items.length}
               total={total}
               onNearEnd={() => void loadMore()}
-              onListReset={({ feed, offset, startIndex }) => {
-                if (listDebugLoggedRef.current === feed) return;
-                listDebugLoggedRef.current = feed;
-                console.info("[StoryKeep] list first paint", { feed, offset, startIndex });
-              }}
-              onScrollTop={(top, userInitiated) => {
-                if (userInitiated && top > 0 && listFeedKeyRef.current === shelfKey(shelf)) {
-                  listScrollTops.current[shelfKey(shelf)] = top;
-                }
+              onListPaint={({ feed, offset, startIndex, count }) => {
+                if (listFeedKeyRef.current !== feed) return;
+                setListDebug({ offset, startIndex, count });
+                console.info("[StoryKeep] list first paint", { feed, offset, startIndex, count });
               }}
             >
               {loadingList ? (
@@ -903,9 +900,10 @@ export function LibraryApp({ user }: { user: User }) {
                   }
                 />
               ) : (
-                items.map((item) => (
+                items.map((item, index) => (
                   <ArticleRow
                     key={item.id}
+                    listIndex={index}
                     item={item}
                     active={item.id === selectedId}
                     selected={selectedIds.includes(item.id)}
@@ -947,11 +945,21 @@ export function LibraryApp({ user }: { user: User }) {
                   try {
                     const next = await api.extract(id);
                     if (selectedIdRef.current !== id) return;
-                    setArticle({
-                      ...next,
-                      content_text: next.content_text || previous.content_text,
-                      content_html: next.content_html || previous.content_html,
-                    });
+                    const mergedBody = mergeExtractArticle(previous, next);
+                    const merged = { ...next, ...mergedBody };
+                    const hasBody =
+                      Boolean(merged.content_text?.trim()) ||
+                      Boolean(merged.content_html?.trim() && !isPollutedArticleHtml(merged.content_html));
+                    if (!hasBody) {
+                      toast.error("Extract failed");
+                      return;
+                    }
+                    setArticle(merged);
+                    setItems((current) =>
+                      current.map((item) =>
+                        item.id === id ? { ...item, has_full_text: Boolean(merged.content_text?.trim()) } : item,
+                      ),
+                    );
                     setReaderScrollToken((current) => current + 1);
                     toast.success("Full text refreshed");
                   } catch (error) {
@@ -1414,6 +1422,7 @@ function NavButton({
 }
 
 function ArticleRow({
+  listIndex,
   item,
   active,
   selected,
@@ -1421,6 +1430,7 @@ function ArticleRow({
   onDelete,
   onClick,
 }: {
+  listIndex: number;
   item: ArticleListItem;
   active: boolean;
   selected: boolean;
@@ -1431,6 +1441,7 @@ function ArticleRow({
   const thumbUrl = articleHeroImageUrl(item.image_url, item.url);
   return (
     <div
+      data-list-index={listIndex}
       className={cn(
         "flex items-start gap-2 border-b px-3 py-3 hover:bg-accent/40",
         active && "bg-accent/70",

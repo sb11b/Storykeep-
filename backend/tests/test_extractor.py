@@ -82,6 +82,12 @@ class ExtractorTests(unittest.TestCase):
         image = _extract_image(html, "https://example.com/story")
         self.assertEqual(image, "https://cdn.example.com/hero.jpg")
 
+    def test_html_pollution_rejected(self):
+        from app.services.extractor import _html_is_polluted
+
+        self.assertTrue(_html_is_polluted("<style>.widget{}</style><p>Hi</p>"))
+        self.assertTrue(_html_is_polluted("<p>.widget{margin:0;box-sizing:border-box;}</p>"))
+
     def test_fill_article_keeps_previous_body_on_failed_force_extract(self):
         article = SimpleNamespace(
             url="https://example.com/story",

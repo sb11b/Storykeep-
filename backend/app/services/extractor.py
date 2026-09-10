@@ -294,6 +294,36 @@ def extract_page(url: str) -> tuple[str | None, str | None, str | None, str | No
     return html, text, title, image
 
 
+def _html_is_polluted(html: str | None) -> bool:
+    if not html or not html.strip():
+        return False
+    lowered = html.lower()
+    if "<style" in lowered:
+        return True
+    compact = lowered.replace(" ", "")
+    if "box-sizing:border-box" in compact or ".widget{" in compact or "{box-sizing" in compact:
+        return True
+    if len(_CSS_LINE.findall(html)) >= 2:
+        return True
+    return False
+
+
+def _text_to_html(text: str) -> str:
+    blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
+    if not blocks:
+        return ""
+    parts: list[str] = []
+    for block in blocks:
+        escaped = (
+            block.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+        parts.append(f"<p>{escaped.replace(chr(10), '<br />')}</p>")
+    return "".join(parts)
+
+
 def _extract_usable(html: str | None, text: str | None) -> bool:
     cleaned = _clean_text(text or "")
     if len(cleaned) < 80:
@@ -304,11 +334,8 @@ def _extract_usable(html: str | None, text: str | None) -> bool:
     cssish = sum(1 for line in lines if _CSS_LINE.match(line) or ("{" in line and _CSS_PROP_LINE.match(line)))
     if cssish and cssish >= max(2, len(lines) // 2):
         return False
-    if html:
-        lowered = html.lower()
-        if "<style" in lowered or "box-sizing:border-box" in lowered.replace(" ", ""):
-            if len(cleaned) < 240:
-                return False
+    if html and _html_is_polluted(html):
+        return len(cleaned) >= 120
     return True
 
 
@@ -317,17 +344,27 @@ def fill_article(db: Session, article: Article, force: bool = False) -> Article:
         return article
     previous_html = article.content_html
     previous_text = article.content_text
+    previous_image = article.image_url
     html, text, image = extract_url(article.url)
+    text = _clean_text(text or "") or None
+    if html and _html_is_polluted(html):
+        html = _text_to_html(text) if text else None
+    elif html:
+        html = _sanitize_html(html)
     if not _extract_usable(html, text):
         if force and (previous_html or previous_text):
             raise ExtractFailedError("Extract failed, original kept.")
         return article
-    if html:
-        article.content_html = html
-    if text:
-        article.content_text = text
+    if not text or len(text.strip()) < 80:
+        if force and (previous_html or previous_text):
+            raise ExtractFailedError("Extract failed, original kept.")
+        return article
+    article.content_text = text
+    article.content_html = html or _text_to_html(text)
     if image:
         article.image_url = image
+    elif force and previous_image:
+        article.image_url = previous_image
     article.fetched_at = datetime.now(timezone.utc)
     db.add(article)
     return article

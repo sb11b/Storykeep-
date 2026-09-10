@@ -45,11 +45,15 @@ export function sanitizeHtml(html: string): string {
 }
 
 export function isPollutedArticleHtml(html: string): boolean {
-  const sample = html.slice(0, 8000).toLowerCase();
+  const sample = html.slice(0, 12000).toLowerCase();
   if (/<style[\s>]/i.test(html)) return true;
   if (/box-sizing\s*:\s*border-box/.test(sample)) return true;
   if (/\.widget\s*\{/.test(sample)) return true;
-  if (/^\s*[.#@][\w#.\[\](),\s%-]+\s*\{/m.test(html)) return true;
+  if (/\{box-sizing/i.test(sample)) return true;
+  if (/#footer\s*\{/.test(sample)) return true;
+  if (/display\s*:\s*flex/.test(sample) && sample.includes("{")) return true;
+  const cssRuleCount = (html.match(/[.#][\w-]+\s*\{/g) || []).length;
+  if (cssRuleCount >= 2) return true;
   return false;
 }
 
@@ -106,9 +110,32 @@ export function articleReaderSource(article: {
   content_text: string | null;
   summary?: string | null;
 }): string {
+  const text = article.content_text?.trim() || "";
   const html = article.content_html ? sanitizeHtml(article.content_html) : "";
+  if (text.length >= 40 && (!html || isPollutedArticleHtml(html))) {
+    return plainTextToArticleHtml(text);
+  }
   if (html && !isPollutedArticleHtml(html)) return html;
-  if (article.content_text?.trim()) return plainTextToArticleHtml(article.content_text);
-  if (html) return html;
-  return plainTextToArticleHtml(stripHtml(article.summary));
+  if (text) return plainTextToArticleHtml(text);
+  const summaryText = stripHtml(article.summary);
+  if (summaryText && !isPollutedArticleHtml(summaryText)) return plainTextToArticleHtml(summaryText);
+  return "";
+}
+
+export function mergeExtractArticle(previous: {
+  content_html: string | null;
+  content_text: string | null;
+  image_url?: string | null;
+}, next: {
+  content_html: string | null;
+  content_text: string | null;
+  image_url?: string | null;
+}) {
+  const content_text = next.content_text?.trim() ? next.content_text : previous.content_text;
+  let content_html = next.content_html?.trim() ? next.content_html : previous.content_html;
+  if (content_html && isPollutedArticleHtml(content_html)) {
+    content_html = content_text ? plainTextToArticleHtml(content_text) : previous.content_html;
+  }
+  const image_url = next.image_url?.trim() ? next.image_url : previous.image_url ?? null;
+  return { content_text, content_html, image_url };
 }

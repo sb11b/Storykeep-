@@ -268,12 +268,21 @@ def extract_article(
     article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
+    article_id_value = article.id
     try:
         extractor.fill_article(db, article, force=True)
     except ExtractFailedError as exc:
+        db.rollback()
         raise HTTPException(status_code=422, detail=exc.detail) from exc
+    try:
+        archive_service.snapshot_article(db, article, "html")
+    except ExtractFailedError:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Extract failed, original kept.") from None
+    except Exception as exc:
+        logger.warning("snapshot after extract failed for article %s: %s", article_id_value, exc)
     db.commit()
-    return _article_payload(db, user, article_id)
+    return _article_payload(db, user, article_id_value)
 
 
 @router.post("/articles/bulk")
