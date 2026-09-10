@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Correction, OverlayAddition, User
+from app.models import OverlayAddition, User
 from app.presenters import article_out
 from app.routers.articles import _article_payload, _owned_article
 from app.schemas import (
@@ -20,6 +20,7 @@ from app.schemas import (
     VaultImportOut,
 )
 from app.services import changelog
+from app.services.corrections import unlink_correction, upsert_correction
 from app.services.note_media import (
     delete_note_media,
     is_image_media,
@@ -240,6 +241,11 @@ def create_addition(
     user: User = Depends(get_current_user),
 ) -> OverlayAdditionOut:
     article = _owned_article(db, user, article_id)
+    if payload.is_correction:
+        raise HTTPException(
+            status_code=400,
+            detail="Corrections attach to this article directly. Use the correction save path instead of a filed note.",
+        )
     try:
         child = create_composed_note(
             db,
@@ -249,7 +255,7 @@ def create_addition(
             payload.tags,
             destination=payload.destination or "notes",
             parent_id=article.id,
-            is_correction=payload.is_correction,
+            is_correction=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -260,21 +266,30 @@ def create_addition(
     return OverlayAdditionOut.model_validate(row)
 
 
-@router.post("/articles/{article_id}/corrections", response_model=CorrectionOut, status_code=201)
-def create_correction(
+@router.post("/articles/{article_id}/corrections", response_model=CorrectionOut)
+def save_correction(
     article_id: UUID,
     payload: CorrectionIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> CorrectionOut:
     article = _owned_article(db, user, article_id)
-    row = Correction(user_id=user.id, article_id=article.id, markdown=payload.markdown)
-    db.add(row)
-    db.flush()
-    changelog.record(db, user.id, "correction", row.id, "upsert", {"article_id": str(article.id)})
-    db.commit()
-    db.refresh(row)
+    try:
+        row = upsert_correction(db, user, article, payload.markdown)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CorrectionOut.model_validate(row)
+
+
+@router.delete("/articles/{article_id}/corrections")
+def remove_correction_link(
+    article_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, bool]:
+    _owned_article(db, user, article_id)
+    unlink_correction(db, user, article_id)
+    return {"ok": True}
 
 
 @router.get("/articles/{article_id}/overlay", response_model=dict)

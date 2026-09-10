@@ -1116,12 +1116,24 @@ export function LibraryApp({ user }: { user: User }) {
                 }}
                 onNote={async (title, markdown, destination, isCorrection) => {
                   const id = article.id;
+                  const hadCorrection = Boolean(article.corrections?.length);
                   try {
-                    await api.addAddition(id, title, markdown, destination, isCorrection);
+                    if (isCorrection) {
+                      await api.upsertCorrection(id, markdown);
+                    } else {
+                      if (hadCorrection) {
+                        await api.deleteCorrection(id);
+                      }
+                      await api.addAddition(id, title, markdown, destination, false);
+                    }
                     const next = await api.article(id);
                     if (selectedIdRef.current !== id) return;
                     setArticle(next);
-                    toast.success("Note saved on that shelf. The vault original was not touched.");
+                    toast.success(
+                      isCorrection
+                        ? "Correction updated on this article. The vault original was not touched."
+                        : "Note saved on that shelf. The vault original was not touched.",
+                    );
                     void Promise.all([loadNav(), loadList()]);
                   } catch (error) {
                     readerActionError(error, "Could not save that note");
@@ -1752,7 +1764,10 @@ function Reader({
     .map((item) => `${item.id}:${item.color}:${item.quote}`)
     .join("|");
   const highlights = article.annotations.filter((item) => item.kind === "highlight" && item.quote);
-  const filedNotes = article.filed_notes || [];
+  const filedNotes = (article.filed_notes || []).filter((item) => !item.is_correction);
+  const articleCorrection = article.corrections?.length
+    ? article.corrections[article.corrections.length - 1]
+    : null;
 
   useEffect(() => {
     const marks = article.annotations
@@ -1781,10 +1796,17 @@ function Reader({
   useEffect(() => {
     setActiveWord(null);
     clickedWordRef.current = null;
-    setNote("");
-    setNoteTitle("");
+    if (!isStoryKeepNote(article) && article.corrections?.length) {
+      const latest = article.corrections[article.corrections.length - 1];
+      setNote(latest?.markdown || "");
+      setNoteTitle("Correction");
+      setNoteCorrection(true);
+    } else {
+      setNote("");
+      setNoteTitle("");
+      setNoteCorrection(false);
+    }
     setNoteDest("notes");
-    setNoteCorrection(false);
     setTag("");
     setEditTitle(article.title);
     setEditBody(composedNoteMarkdown(article) || article.content_text || "");
@@ -2277,17 +2299,33 @@ function Reader({
               </ul>
             ) : null}
           </form>
+          {articleCorrection ? (
+            <div className="rounded-lg border bg-muted/25 px-3 py-2 space-y-2">
+              <p className="text-sm font-medium">Correction on this article</p>
+              <div
+                className="note-md text-sm"
+                onClick={onCodeCopyClick}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeHtml(noteMarkdownHtml(articleCorrection.markdown)),
+                }}
+              />
+            </div>
+          ) : null}
           {isStoryKeepNote(article) ? null : (
           <form
             className="space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
               if (!note.trim()) return;
-              const title = noteTitle.trim() || note.trim().split("\n")[0]?.slice(0, 80) || "Note";
+              const title = noteCorrection
+                ? "Correction"
+                : noteTitle.trim() || note.trim().split("\n")[0]?.slice(0, 80) || "Note";
               void onNote(title, note.trim(), noteDest, noteCorrection).then(() => {
-                setNote("");
-                setNoteTitle("");
-                setNoteCorrection(false);
+                if (!noteCorrection) {
+                  setNote("");
+                  setNoteTitle("");
+                }
+                setNoteCorrection(noteCorrection);
               });
             }}
           >

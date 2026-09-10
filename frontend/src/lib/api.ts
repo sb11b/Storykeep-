@@ -17,6 +17,7 @@ import type {
   User,
   VaultImportResult,
   ChatStatus,
+  Correction,
 } from "./types";
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
@@ -202,11 +203,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ title, markdown, destination: destination || "notes", is_correction: Boolean(isCorrection) }),
     }),
-  addCorrection: (articleId: string, markdown: string) =>
-    request(`/api/v1/articles/${articleId}/corrections`, {
+  upsertCorrection: (articleId: string, markdown: string) =>
+    request<Correction>(`/api/v1/articles/${articleId}/corrections`, {
       method: "POST",
       body: JSON.stringify({ markdown }),
     }),
+  deleteCorrection: (articleId: string) =>
+    request<{ ok: boolean }>(`/api/v1/articles/${articleId}/corrections`, { method: "DELETE" }),
   importOpml: async (file: File) => {
     const body = new FormData();
     body.append("file", file);
