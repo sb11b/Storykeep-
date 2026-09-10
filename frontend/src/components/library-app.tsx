@@ -187,11 +187,15 @@ export function LibraryApp({ user }: { user: User }) {
   const totalRef = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   const listGenRef = useRef(0);
+  const loadMoreGenRef = useRef(0);
+  const firstPageReadyRef = useRef(false);
   const loadingMoreRef = useRef(false);
   const listScrollerRef = useRef<ShelfScrollerHandle>(null);
   const listFeedKeyRef = useRef<string>(shelfKey(shelf));
   const [listEpoch, setListEpoch] = useState(0);
-  const [listQueryOffset, setListQueryOffset] = useState(0);
+  const [listFirstOffset, setListFirstOffset] = useState(0);
+  const [listFirstPage, setListFirstPage] = useState(1);
+  const [listFirstFetchUrl, setListFirstFetchUrl] = useState("");
   const [listDebug, setListDebug] = useState({ offset: 0, startIndex: 0, count: 0 });
   const [readerScrollToken, setReaderScrollToken] = useState(0);
   itemsRef.current = items;
@@ -240,14 +244,20 @@ export function LibraryApp({ user }: { user: User }) {
   );
 
   const fetchShelfPage = useCallback(async (offset: number, firstPage = false) => {
+    const page = Math.floor(offset / LIST_PAGE) + 1;
     if (firstPage && offset !== 0) {
-      console.warn("[StoryKeep] first shelf page requested with non-zero offset", { offset, shelf: shelfKey(shelf) });
+      console.error("[StoryKeep] first shelf page requested with non-zero offset", { offset, shelf: shelfKey(shelf) });
     }
     if (shelf.kind === "search") {
-      const page = await api.search(shelf.q, { limit: LIST_PAGE, offset });
+      const url = `/api/v1/search?q=${encodeURIComponent(shelf.q)}&limit=${LIST_PAGE}&offset=${offset}`;
+      console.info("[StoryKeep] list fetch", { url, offset, page, firstPage, feed: shelfKey(shelf) });
+      const result = await api.search(shelf.q, { limit: LIST_PAGE, offset });
       return {
-        items: page.items.map((hit) => ({ ...hit.article, summary: hit.headline ?? hit.article.summary })),
-        total: page.total,
+        items: result.items.map((hit) => ({ ...hit.article, summary: hit.headline ?? hit.article.summary })),
+        total: result.total,
+        offset,
+        page,
+        url,
       };
     }
     const params: Record<string, string | number | boolean> = { limit: LIST_PAGE, offset };
@@ -262,27 +272,42 @@ export function LibraryApp({ user }: { user: User }) {
     if (shelf.kind === "feed") params.feed_id = shelf.id;
     if (shelf.kind === "category") params.category_id = shelf.id;
     if (shelf.kind === "tag") params.tag_id = shelf.id;
-    const page = await api.articles(params);
-    return { items: page.items, total: page.total };
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") search.set(key, String(value));
+    }
+    const url = `/api/v1/articles?${search.toString()}`;
+    console.info("[StoryKeep] list fetch", { url, offset, page, firstPage, feed: shelfKey(shelf) });
+    const result = await api.articles(params);
+    return { items: result.items, total: result.total, offset, page, url };
   }, [shelf]);
 
   const loadList = useCallback(async () => {
     const feed = shelfKey(shelf);
     listFeedKeyRef.current = feed;
     const gen = ++listGenRef.current;
+    loadMoreGenRef.current += 1;
+    firstPageReadyRef.current = false;
     loadingMoreRef.current = false;
+    itemsRef.current = [];
     setLoadingMore(false);
     setLoadingList(true);
     setListError(null);
-    setListQueryOffset(0);
+    setListFirstOffset(0);
+    setListFirstPage(1);
+    setListFirstFetchUrl("");
     setListDebug({ offset: 0, startIndex: 0, count: 0 });
     setItems([]);
     try {
-      const page = await fetchShelfPage(0, true);
+      const result = await fetchShelfPage(0, true);
       if (gen !== listGenRef.current) return;
-      setItems(page.items);
-      setTotal(page.total);
-      setListQueryOffset(0);
+      itemsRef.current = result.items;
+      setItems(result.items);
+      setTotal(result.total);
+      setListFirstOffset(result.offset);
+      setListFirstPage(result.page);
+      setListFirstFetchUrl(result.url);
+      firstPageReadyRef.current = true;
       setListEpoch((current) => current + 1);
     } catch (error) {
       if (gen !== listGenRef.current) return;
@@ -293,36 +318,40 @@ export function LibraryApp({ user }: { user: User }) {
   }, [fetchShelfPage]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current || loadingList) return;
+    if (!firstPageReadyRef.current || loadingMoreRef.current || loadingList) return;
     const loaded = itemsRef.current.length;
     const tot = totalRef.current;
     if (tot > 0 && loaded >= tot) return;
-    if (loaded === 0) return;
+    if (loaded === 0 || loaded % LIST_PAGE !== 0) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    const gen = listGenRef.current;
+    const listGen = listGenRef.current;
+    const loadMoreGen = loadMoreGenRef.current;
+    const offset = loaded;
     try {
-      const page = await fetchShelfPage(loaded);
-      if (gen !== listGenRef.current) return;
-      if (!page.items.length) {
+      const result = await fetchShelfPage(offset);
+      if (listGen !== listGenRef.current || loadMoreGen !== loadMoreGenRef.current) return;
+      if (!result.items.length) {
         setTotal(loaded);
         return;
       }
       setItems((current) => {
         const seen = new Set(current.map((item) => item.id));
-        return [...current, ...page.items.filter((item) => !seen.has(item.id))];
+        const next = [...current, ...result.items.filter((item) => !seen.has(item.id))];
+        itemsRef.current = next;
+        return next;
       });
-      setTotal(page.total);
+      setTotal(result.total);
     } catch (error) {
-      if (gen !== listGenRef.current) return;
+      if (listGen !== listGenRef.current || loadMoreGen !== loadMoreGenRef.current) return;
       toast.error(error instanceof ApiError ? error.message : "Could not load more articles");
     } finally {
-      if (gen === listGenRef.current) {
+      if (listGen === listGenRef.current && loadMoreGen === loadMoreGenRef.current) {
         loadingMoreRef.current = false;
         setLoadingMore(false);
       }
     }
-  }, [fetchShelfPage, loadingList, shelf.kind]);
+  }, [fetchShelfPage, loadingList]);
 
   useEffect(() => {
     void loadNav().catch((error) => {
@@ -615,7 +644,8 @@ export function LibraryApp({ user }: { user: User }) {
       groupedFeeds={groupedFeeds}
       tags={tags}
       onShelf={(next) => {
-        setListQueryOffset(0);
+        setListFirstOffset(0);
+        setListFirstPage(1);
         setListDebug({ offset: 0, startIndex: 0, count: 0 });
         setShelf(next);
         setSelectedId(null);
@@ -779,11 +809,9 @@ export function LibraryApp({ user }: { user: User }) {
                       ? `${items.length} of ${total} ${shelf.kind === "notes" ? "notes" : "articles"}`
                       : `${total} ${shelf.kind === "notes" ? "notes" : "articles"}`}
                   </p>
-                  {process.env.NODE_ENV === "development" ? (
-                    <p className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
-                      offset={listQueryOffset} startIndex={listDebug.startIndex} count={listDebug.count}
-                    </p>
-                  ) : null}
+                  <p className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
+                    list offset={listFirstOffset} page={listFirstPage} n={items.length}
+                  </p>
                 </div>
                 {shelf.kind === "feed" ? (
                   <div className="flex shrink-0 gap-1">
@@ -856,7 +884,9 @@ export function LibraryApp({ user }: { user: User }) {
               loadingMore={loadingMore}
               loaded={items.length}
               total={total}
-              onNearEnd={() => void loadMore()}
+              onNearEnd={() => {
+                if (firstPageReadyRef.current) void loadMore();
+              }}
               onListPaint={({ feed, offset, startIndex, count }) => {
                 if (listFeedKeyRef.current !== feed) return;
                 setListDebug({ offset, startIndex, count });

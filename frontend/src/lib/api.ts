@@ -278,7 +278,7 @@ export const api = {
   markFeedRead: (id: string) =>
     request<{ updated: number }>(`/api/v1/feeds/${id}/mark-read`, { method: "POST" }),
   extract: (id: string) =>
-    request<Article>(`/api/v1/articles/${id}/extract`, { method: "POST" }),
+    request<Article>(`/api/v1/articles/${id}/extract`, { method: "PATCH" }),
   attachTag: (id: string, name: string) =>
     request<Tag>(`/api/v1/articles/${id}/tags`, {
       method: "POST",
