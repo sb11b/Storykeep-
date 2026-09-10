@@ -150,6 +150,13 @@ function shelfKey(shelf: Shelf): string {
 
 const LIST_PAGE = 40;
 
+function listRangeLabel(loaded: number, total: number, kind: Shelf["kind"]): string {
+  const noun = kind === "notes" ? "notes" : "articles";
+  if (total === 0) return `No ${noun}`;
+  if (loaded === 0) return `${total} ${noun}`;
+  return `Showing 1–${loaded} of ${total}`;
+}
+
 export function LibraryApp({ user }: { user: User }) {
   const router = useRouter();
   const [feeds, setFeeds] = useState<Feed[]>([]);
@@ -804,11 +811,7 @@ export function LibraryApp({ user }: { user: User }) {
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags)}</h1>
-                  <p className="text-xs text-muted-foreground">
-                    {items.length > 0 && items.length < total
-                      ? `${items.length} of ${total} ${shelf.kind === "notes" ? "notes" : "articles"}`
-                      : `${total} ${shelf.kind === "notes" ? "notes" : "articles"}`}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{listRangeLabel(items.length, total, shelf.kind)}</p>
                   <p className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
                     list offset={listFirstOffset} page={listFirstPage} n={items.length}
                   </p>
