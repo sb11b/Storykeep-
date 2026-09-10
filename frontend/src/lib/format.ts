@@ -1,3 +1,5 @@
+import type { Annotation, Archive, Article, ArticleListItem, FiledNote } from "./types";
+
 export function formatRelative(value: string | null | undefined): string {
   if (!value) return "Unknown date";
   const date = new Date(value);
@@ -162,6 +164,31 @@ function readerBodyFromFields(content_html: string | null, content_text: string 
   if (html && !isPollutedArticleHtml(html) && !isCtaOnlyArticleText(stripHtml(html))) return html;
   if (text && !isPollutedArticleText(text) && !isCtaOnlyArticleText(text)) return plainTextToArticleHtml(text);
   return "";
+}
+
+export function articlePreviewFromListItem(item: ArticleListItem): Article {
+  const summary = item.summary?.trim() || "";
+  const summaryText = stripHtml(summary);
+  const summaryHtml = summary.includes("<") ? sanitizeHtml(summary) : summaryText ? plainTextToArticleHtml(summaryText) : null;
+  const now = item.published_at || new Date().toISOString();
+  return {
+    ...item,
+    content_html: summaryHtml,
+    content_text: summaryText || null,
+    feed_html: null,
+    has_feed_text: false,
+    read_at: null,
+    saved_at: null,
+    fetched_at: null,
+    created_at: now,
+    guid: null,
+    annotations: [] as Annotation[],
+    archives: [] as Archive[],
+    filed_notes: [] as FiledNote[],
+    overlay_highlights: [],
+    overlay_additions: [],
+    corrections: [],
+  };
 }
 
 export function articleReaderSource(article: {

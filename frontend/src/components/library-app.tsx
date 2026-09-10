@@ -47,6 +47,7 @@ import { ApiError, api } from "@/lib/api";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   articleHeroImageUrl,
+  articlePreviewFromListItem,
   articleReaderSource,
   formatRelative,
   isCtaOnlyArticleText,
@@ -229,8 +230,11 @@ export function LibraryApp({ user }: { user: User }) {
 
   const openArticle = useCallback(
     (id: string) => {
-      setSelectedId(id);
       const row = itemsRef.current.find((item) => item.id === id);
+      setSelectedId(id);
+      if (row) {
+        setArticle((current) => (current?.id === id ? current : articlePreviewFromListItem(row)));
+      }
       if (row?.is_read) return;
       if (row) {
         setItems((current) => current.map((item) => (item.id === id ? { ...item, is_read: true } : item)));
@@ -250,7 +254,7 @@ export function LibraryApp({ user }: { user: User }) {
           }
         });
     },
-    [loadNav, shelf],
+    [loadNav],
   );
 
   const fetchShelfPage = useCallback(async (offset: number, firstPage = false) => {
@@ -500,7 +504,12 @@ export function LibraryApp({ user }: { user: User }) {
     if (!selectedId) {
       setArticle(null);
       setReaderFull(false);
+      setLoadingArticle(false);
       return;
+    }
+    const row = itemsRef.current.find((item) => item.id === selectedId);
+    if (row) {
+      setArticle((current) => (current?.id === selectedId ? current : articlePreviewFromListItem(row)));
     }
     let cancelled = false;
     setLoadingArticle(true);
@@ -510,6 +519,7 @@ export function LibraryApp({ user }: { user: User }) {
         if (cancelled) return;
         const listed = itemsRef.current.find((item) => item.id === next.id);
         setArticle(listed?.is_read && !next.is_read ? { ...next, is_read: true } : next);
+        setReaderScrollToken((current) => current + 1);
       })
       .catch((error) => {
         if (!cancelled) toast.error(error instanceof ApiError ? error.message : "Could not open article");
@@ -521,6 +531,45 @@ export function LibraryApp({ user }: { user: User }) {
       cancelled = true;
     };
   }, [selectedId]);
+
+  const autoExtractRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (loadingArticle || !selectedId || !article || article.id !== selectedId) return;
+    if (isStoryKeepNote(article)) return;
+    if (!isDekOnlyArticleBody(article.content_html, article.content_text)) {
+      autoExtractRef.current = null;
+      return;
+    }
+    if (autoExtractRef.current === article.id) return;
+    autoExtractRef.current = article.id;
+
+    let cancelled = false;
+    const previous = article;
+    void api
+      .extract(selectedId)
+      .then((result) => {
+        if (cancelled || selectedIdRef.current !== selectedId) return;
+        const mergedBody = mergeExtractArticle(previous, result.article);
+        const merged = { ...result.article, ...mergedBody };
+        setArticle((current) => (current && current.id === selectedId ? { ...current, ...merged } : current));
+        if (isUsableArticleBody(merged.content_html, merged.content_text)) {
+          setReaderScrollToken((current) => current + 1);
+          setItems((current) =>
+            current.map((item) =>
+              item.id === selectedId
+                ? { ...item, has_full_text: isUsableArticleBody(merged.content_html, merged.content_text) }
+                : item,
+            ),
+          );
+        }
+      })
+      .catch(() => {
+        /* Keep dek visible in the reader. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [article, loadingArticle, selectedId]);
 
   const groupedFeeds = useMemo(() => {
     const groups = categories.map((category) => ({
@@ -700,9 +749,14 @@ export function LibraryApp({ user }: { user: User }) {
             className="min-w-40 flex-1 max-w-xl"
             onSubmit={(event) => {
               event.preventDefault();
-              if (query.trim()) {
-                setShelf({ kind: "search", q: query.trim() });
+              const q = query.trim();
+              if (!q) return;
+              const nextShelf = { kind: "search" as const, q };
+              const queryChanged = shelf.kind !== "search" || shelf.q !== q;
+              setShelf(nextShelf);
+              if (queryChanged) {
                 setSelectedId(null);
+                setArticle(null);
               }
             }}
           >
@@ -955,9 +1009,9 @@ export function LibraryApp({ user }: { user: User }) {
           </section>
 
           <section className={cn("flex min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex", readerFull && "flex")}>
-            {loadingArticle ? (
+            {loadingArticle && !article ? (
               <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
-            ) : article ? (
+            ) : article && selectedId === article.id ? (
               <Reader
                 article={article}
                 tags={tags}
@@ -1146,6 +1200,8 @@ export function LibraryApp({ user }: { user: User }) {
                   }
                 }}
               />
+            ) : selectedId ? (
+              <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
             ) : (
               <EmptyState
                 title="Choose a story"
@@ -1527,7 +1583,14 @@ function ArticleRow({
       >
         {selected ? <Check className="size-3.5" /> : null}
       </button>
-      <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          onClick();
+        }}
+        className="min-w-0 flex-1 text-left"
+      >
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
           {!item.is_read ? (
             <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
