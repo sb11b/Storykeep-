@@ -212,6 +212,8 @@ export type TtsPlan = {
   cached_chunks: number;
   sections: { id: string; title: string; chars: number }[];
   source_kind?: string;
+  include_notes?: boolean;
+  note_count?: number;
 };
 
 export type TtsStatus = {

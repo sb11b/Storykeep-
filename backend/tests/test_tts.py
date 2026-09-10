@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
-from app.services.tts import body_sections, script_digest, speech_plain, spoken_title, word_count
+from app.services.tts import (
+    article_script,
+    body_sections,
+    is_composed_note,
+    note_source_markdown,
+    script_digest,
+    speech_plain,
+    spoken_title,
+    word_count,
+)
 
 
 class SpeechPlainTests(unittest.TestCase):
@@ -30,10 +40,65 @@ class SpeechPlainTests(unittest.TestCase):
             content_text = "# Limits\nA limit is...\n\n# Derivatives\nSlope of the tangent."
             content_html = None
             summary = None
+            guid = "rss:1"
+            overlay_additions = []
 
         sections = body_sections(Fake())
         self.assertGreaterEqual(len(sections), 2)
         self.assertEqual(sections[0]["title"], "Limits")
+
+    def test_composed_note_script_uses_markdown_not_rss_html(self):
+        note = SimpleNamespace(
+            title="Lecture notes",
+            guid="storykeep-note:abc",
+            content_text="The ==slope== of y.\n![plot](/api/v1/media/11111111-1111-1111-1111-111111111111)",
+            content_html="<p>stale html that must not win</p>",
+            summary="",
+            overlay_additions=[],
+        )
+        self.assertTrue(is_composed_note(note))
+        script = article_script(note)
+        self.assertIn("slope of y", script)
+        self.assertNotIn("stale html", script)
+        self.assertNotIn("==", script)
+        self.assertNotIn("plot", script)
+
+    def test_overlay_markdown_fills_empty_composed_body(self):
+        note = SimpleNamespace(
+            title="Addition",
+            guid="storykeep-note:xyz",
+            content_text="",
+            content_html="",
+            summary="",
+            overlay_additions=[SimpleNamespace(markdown="Remember the chain rule.")],
+        )
+        self.assertEqual(note_source_markdown(note), "Remember the chain rule.")
+        self.assertIn("chain rule", article_script(note))
+
+    def test_include_notes_appends_overlay_notes_without_changing_article_body(self):
+        article = SimpleNamespace(
+            title="RSS story",
+            guid="https://example.com/1",
+            content_text="Original article body stays.",
+            content_html="<p>Original article body stays.</p>",
+            summary="",
+            overlay_additions=[],
+        )
+        without = article_script(article)
+        with_notes = article_script(
+            article,
+            include_notes=True,
+            extra_notes=[("My note", "I typed ==this== aside.")],
+        )
+        self.assertIn("Original article body stays", without)
+        self.assertNotIn("I typed", without)
+        self.assertIn("Original article body stays", with_notes)
+        self.assertIn("I typed this aside", with_notes)
+        self.assertNotIn("==", with_notes)
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":

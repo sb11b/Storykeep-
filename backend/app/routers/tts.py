@@ -2,16 +2,54 @@ from uuid import UUID
 import base64
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import User
+from app.models import Article, User
 from app.routers.articles import _owned_article
 from app.services import tts as tts_service
 from app.services.demo_lock import reject_locked
 
 router = APIRouter(tags=["tts"])
+
+
+def _extra_note_scripts(db: Session, article: Article) -> list[tuple[str, str]]:
+    """Child overlay notes only. Does not merge into or rewrite the source article."""
+    if tts_service.is_composed_note(article):
+        return []
+    children = db.scalars(
+        select(Article).where(Article.parent_id == article.id).order_by(Article.created_at.asc())
+    ).all()
+    rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for child in children:
+        markdown = tts_service.note_source_markdown(child)
+        if not markdown or markdown in seen:
+            continue
+        seen.add(markdown)
+        rows.append((child.title or "Note", markdown))
+    if rows:
+        return rows
+    for addition in getattr(article, "overlay_additions", None) or []:
+        markdown = (addition.markdown or "").strip()
+        if not markdown or markdown in seen:
+            continue
+        seen.add(markdown)
+        rows.append((addition.title or "Note", markdown))
+    return rows
+
+
+def _speech_script(
+    db: Session,
+    article: Article,
+    *,
+    include_notes: bool,
+    section: str | None = None,
+) -> str:
+    extras = _extra_note_scripts(db, article) if include_notes else []
+    return tts_service.article_script(article, section_id=section, include_notes=include_notes, extra_notes=extras)
 
 
 @router.get("/tts")
@@ -29,12 +67,13 @@ def tts_status(user: User = Depends(get_current_user)) -> dict:
 def speech_plan(
     article_id: UUID,
     voice_id: str = Query(default="eve", max_length=64),
+    include_notes: bool = Query(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     reject_locked(user)
     article = _owned_article(db, user, article_id)
-    script = tts_service.article_script(article)
+    script = _speech_script(db, article, include_notes=include_notes)
     chunks = tts_service.split_chunks(script)
     digest = tts_service.script_digest(script, voice_id)
     sections = []
@@ -56,6 +95,8 @@ def speech_plan(
         "cached_chunks": tts_service.cached_chunk_count(article.id, digest, voice_id),
         "sections": sections,
         "source_kind": getattr(article, "source_kind", None) or "rss",
+        "include_notes": bool(include_notes),
+        "note_count": len(_extra_note_scripts(db, article)) if include_notes else 0,
     }
 
 
@@ -79,12 +120,13 @@ def speak_article(
     chunk: int = Query(default=0, ge=0, le=200),
     confirm: bool = Query(default=False),
     section: str | None = Query(default=None, max_length=16),
+    include_notes: bool = Query(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     reject_locked(user)
     article = _owned_article(db, user, article_id)
-    script = tts_service.article_script(article, section_id=section)
+    script = _speech_script(db, article, include_notes=include_notes, section=section)
     if len(script) > tts_service.LONG_SCRIPT_CHARS and not confirm and not section:
         raise HTTPException(
             status_code=412,
@@ -94,7 +136,9 @@ def speak_article(
     if not chunks:
         raise HTTPException(
             status_code=400,
-            detail="This story has no stored text to read. Open it in the reader, then try Listen again.",
+            detail="This note has no stored text to read."
+            if tts_service.is_composed_note(article)
+            else "This story has no stored text to read. Open it in the reader, then try Listen again.",
         )
     if chunk >= len(chunks):
         raise HTTPException(status_code=400, detail="That speech part does not exist.")
@@ -117,4 +161,5 @@ def speak_article(
         "audio": base64.b64encode(timed["audio"]).decode("ascii"),
         "words": timed.get("words") or [],
         "content_hash": digest,
+        "include_notes": bool(include_notes),
     }

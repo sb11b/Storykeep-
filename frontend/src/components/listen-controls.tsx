@@ -19,12 +19,20 @@ type SpeechPayload = {
   chunkWordCounts: number[];
   duration: number | null;
   words: TtsWord[];
+  contentHash?: string;
 };
 
 const speechMemory = new Map<string, SpeechPayload>();
 
-function memoryKey(articleId: string, voice: string, chunk: number, section: string | null) {
-  return `${articleId}:${voice}:${section || "full"}:${chunk}`;
+function memoryKey(
+  articleId: string,
+  voice: string,
+  chunk: number,
+  section: string | null,
+  includeNotes: boolean,
+  contentHash: string,
+) {
+  return `${articleId}:${contentHash || "pending"}:${voice}:${section || "full"}:${includeNotes ? "notes" : "body"}:${chunk}`;
 }
 
 function rememberSpeech(key: string, data: SpeechPayload) {
@@ -89,10 +97,12 @@ export const ListenControls = forwardRef<
   {
     articleId: string;
     hasText: boolean;
+    includeNotes?: boolean;
+    noteMode?: boolean;
     onCue?: (wordIndex: number | null) => void;
     getCaretWord?: () => number | null;
   }
->(function ListenControls({ articleId, hasText, onCue, getCaretWord }, ref) {
+>(function ListenControls({ articleId, hasText, includeNotes = false, noteMode = false, onCue, getCaretWord }, ref) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const generationRef = useRef(0);
@@ -108,6 +118,8 @@ export const ListenControls = forwardRef<
   const [planOpen, setPlanOpen] = useState(false);
   const [plan, setPlan] = useState<{ chars: number; sections: { id: string; title: string; chars: number }[] } | null>(null);
   const pendingWordRef = useRef(0);
+  const includeNotesRef = useRef(includeNotes);
+  const contentHashRef = useRef("");
   const [status, setStatus] = useState<TtsStatus | null>(null);
   const [voiceId, setVoiceId] = useState("eve");
   const [speed, setSpeed] = useState(1);
@@ -125,6 +137,10 @@ export const ListenControls = forwardRef<
   useEffect(() => {
     voiceRef.current = voiceId;
   }, [voiceId]);
+
+  useEffect(() => {
+    includeNotesRef.current = includeNotes;
+  }, [includeNotes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,6 +245,7 @@ export const ListenControls = forwardRef<
     countsRef.current = [];
     sectionRef.current = null;
     confirmRef.current = false;
+    contentHashRef.current = "";
     const audio = new Audio();
     applyPlaybackRate(audio, speedRef.current);
     audioRef.current = audio;
@@ -244,23 +261,25 @@ export const ListenControls = forwardRef<
       }
       onCue?.(null);
     };
-  }, [articleId, persistCue]);
+  }, [articleId, includeNotes, persistCue]);
 
   const loadChunk = useCallback(
     async (index: number, voice: string) => {
       const section = sectionRef.current;
-      const key = memoryKey(articleId, voice, index, section);
+      const key = memoryKey(articleId, voice, index, section, includeNotesRef.current, contentHashRef.current);
       const hit = speechMemory.get(key);
       if (hit) return hit;
       const data = await api.articleSpeech(articleId, voice, index, {
         confirm: confirmRef.current,
         section,
+        includeNotes: includeNotesRef.current,
       });
-      rememberSpeech(key, data);
+      if (data.contentHash) contentHashRef.current = data.contentHash;
+      rememberSpeech(memoryKey(articleId, voice, index, section, includeNotesRef.current, contentHashRef.current), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
       return data;
     },
-    [articleId],
+    [articleId, includeNotes],
   );
 
   const playChunk = useCallback(
@@ -308,7 +327,9 @@ export const ListenControls = forwardRef<
 
       const alreadyLoaded = loadedChunkRef.current === index && loadedVoiceRef.current === voice && Boolean(audio.src);
       if (alreadyLoaded && wordsRef.current.length) {
-        const cached = speechMemory.get(memoryKey(articleId, voice, index, sectionRef.current));
+        const cached = speechMemory.get(
+          memoryKey(articleId, voice, index, sectionRef.current, includeNotesRef.current, contentHashRef.current),
+        );
         const total = cached?.chunks ?? 1;
         attachEnded(total);
         setChunk(index);
@@ -346,7 +367,7 @@ export const ListenControls = forwardRef<
   const startAtWord = useCallback(
     async (wordIndex: number, opts?: { confirm?: boolean; section?: string | null }) => {
       if (!hasText) {
-        toast.error("Extract the full text first, then listen.");
+        toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
         return;
       }
       const voice = voiceRef.current;
@@ -357,7 +378,8 @@ export const ListenControls = forwardRef<
       }
       if (!confirmRef.current && !sectionRef.current) {
         try {
-          const nextPlan = await api.ttsPlan(articleId, voice);
+          const nextPlan = await api.ttsPlan(articleId, voice, { includeNotes: includeNotesRef.current });
+          if (nextPlan.content_hash) contentHashRef.current = nextPlan.content_hash;
           if (nextPlan.long) {
             pendingWordRef.current = wordIndex;
             setPlan(nextPlan);
@@ -377,21 +399,21 @@ export const ListenControls = forwardRef<
       const { chunk: target, local } = chunkForWord(counts, Math.max(0, wordIndex));
       void playChunk(target, voice, local);
     },
-    [articleId, hasText, loadChunk, playChunk],
+    [articleId, hasText, includeNotes, loadChunk, noteMode, playChunk],
   );
 
   const listenFromHere = useCallback(() => {
     if (!hasText) {
-      toast.error("Extract the full text first, then listen.");
+      toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
       return;
     }
     const word = getCaretWord?.();
     void startAtWord(word == null ? 0 : word);
-  }, [getCaretWord, hasText, startAtWord]);
+  }, [getCaretWord, hasText, noteMode, startAtWord]);
 
   const togglePlay = useCallback(() => {
     if (!hasText) {
-      toast.error("Extract the full text first, then listen.");
+      toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
       return;
     }
     if (phaseRef.current === "playing") {
@@ -412,7 +434,7 @@ export const ListenControls = forwardRef<
     }
     if (phaseRef.current === "loading") return;
     void startAtWord(0);
-  }, [hasText, persistCue, startAtWord, startCueLoop, stopCueLoop]);
+  }, [hasText, noteMode, persistCue, startAtWord, startCueLoop, stopCueLoop]);
 
   useImperativeHandle(
     ref,
@@ -439,7 +461,7 @@ export const ListenControls = forwardRef<
           }}
         >
           <Volume2 className="size-3.5" />
-          Listen
+          {noteMode ? "Listen on this note" : "Listen"}
         </Button>
       ) : null}
       {phase === "loading" ? (
@@ -486,9 +508,11 @@ export const ListenControls = forwardRef<
           Stop
         </Button>
       ) : null}
+      {noteMode ? null : (
       <Button size="sm" variant="ghost" title="Listen from the selected word (Shift+L)" onClick={listenFromHere}>
         Listen from here
       </Button>
+      )}
       <label className="sr-only" htmlFor={`voice-${articleId}`}>
         Voice
       </label>

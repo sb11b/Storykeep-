@@ -318,8 +318,11 @@ export const api = {
       body: JSON.stringify({ backup_type }),
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
-  ttsPlan: (id: string, voiceId: string) =>
-    request<TtsPlan>(`/api/v1/articles/${id}/tts/plan?voice_id=${encodeURIComponent(voiceId)}`),
+  ttsPlan: (id: string, voiceId: string, opts?: { includeNotes?: boolean }) => {
+    const search = new URLSearchParams({ voice_id: voiceId });
+    if (opts?.includeNotes) search.set("include_notes", "true");
+    return request<TtsPlan>(`/api/v1/articles/${id}/tts/plan?${search.toString()}`);
+  },
   releaseTtsAudio: (id: string, voiceId: string) =>
     request<{ ok: boolean }>(`/api/v1/articles/${id}/tts/release?voice_id=${encodeURIComponent(voiceId)}`, {
       method: "POST",
@@ -375,11 +378,12 @@ export const api = {
     id: string,
     voiceId: string,
     chunk = 0,
-    opts?: { confirm?: boolean; section?: string | null },
+    opts?: { confirm?: boolean; section?: string | null; includeNotes?: boolean },
   ) => {
     const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
     if (opts?.confirm) search.set("confirm", "true");
     if (opts?.section) search.set("section", opts.section);
+    if (opts?.includeNotes) search.set("include_notes", "true");
     const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {
       credentials: "include",
       cache: "no-store",
@@ -402,6 +406,7 @@ export const api = {
       chunk_word_counts?: number[];
       duration?: number | null;
       words?: TtsWord[];
+      content_hash?: string;
     };
     const binary = Uint8Array.from(atob(data.audio), (char) => char.charCodeAt(0));
     const blob = new Blob([binary], { type: data.content_type || "audio/mpeg" });
@@ -413,6 +418,7 @@ export const api = {
       chunkWordCounts: Array.isArray(data.chunk_word_counts) ? data.chunk_word_counts : [],
       duration: data.duration ?? null,
       words: Array.isArray(data.words) ? data.words : [],
+      contentHash: data.content_hash || "",
     };
   },
 };

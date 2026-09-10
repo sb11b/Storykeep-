@@ -21,7 +21,9 @@ XAI_TTS_URL = "https://api.x.ai/v1/tts"
 XAI_VOICES_URL = "https://api.x.ai/v1/tts/voices"
 MAX_CHUNK_CHARS = 1400
 LONG_SCRIPT_CHARS = 20_000
+NOTES_HARD_CAP = 60_000
 CACHE_TTL = timedelta(hours=24)
+COMPOSED_GUID_PREFIX = "storykeep-note:"
 FALLBACK_VOICES = [
     {"voice_id": "eve", "name": "Eve"},
     {"voice_id": "ara", "name": "Ara"},
@@ -54,7 +56,29 @@ def word_count(text: str) -> int:
     return len(re.findall(r"\S+", text or ""))
 
 
-def article_script(article: Article, section_id: str | None = None) -> str:
+def is_composed_note(article: Article) -> bool:
+    return (getattr(article, "guid", None) or "").startswith(COMPOSED_GUID_PREFIX)
+
+
+def note_source_markdown(article: Article) -> str:
+    """StoryKeep-authored markdown. Never reads vault files from disk."""
+    body = (article.content_text or "").strip()
+    if body:
+        return body
+    for row in getattr(article, "overlay_additions", None) or []:
+        markdown = (getattr(row, "markdown", None) or "").strip()
+        if markdown:
+            return markdown
+    return (article.summary or "").strip()
+
+
+def article_script(
+    article: Article,
+    section_id: str | None = None,
+    *,
+    include_notes: bool = False,
+    extra_notes: list[tuple[str, str]] | None = None,
+) -> str:
     parts: list[str] = []
     title = spoken_title(article.title)
     if title and not section_id:
@@ -68,24 +92,45 @@ def article_script(article: Article, section_id: str | None = None) -> str:
                 if heading:
                     parts.append(heading)
                 break
+    elif is_composed_note(article):
+        body = speech_plain(note_source_markdown(article))
     else:
         if article.content_html:
             body = speech_plain(article.content_html)
         if not body:
             body = speech_plain(article.content_text or "")
-        if not body and article.summary:
-            body = speech_plain(article.summary)
+        if not body:
+            body = speech_plain(article.summary or "")
     if body:
         parts.append(body)
-    script = "\n\n".join(parts)
+    if include_notes and extra_notes:
+        spoken_notes: list[str] = []
+        used = len("\n\n".join(parts))
+        for note_title, markdown in extra_notes:
+            piece = speech_plain(markdown)
+            if not piece:
+                continue
+            header = spoken_title(note_title)
+            block = f"{header} {piece}".strip() if header else piece
+            if used + len(block) + 28 > NOTES_HARD_CAP:
+                spoken_notes.append("Further notes were omitted.")
+                break
+            spoken_notes.append(block)
+            used += len(block) + 2
+        if spoken_notes:
+            parts.append("Your notes.")
+            parts.extend(spoken_notes)
+    script = "\n\n".join(part for part in parts if part)
     script = re.sub(r"https?://\S+", "", script)
     script = re.sub(r"[ \t]+\n", "\n", script)
     script = re.sub(r"\n{3,}", "\n\n", script).strip()
+    if len(script) > NOTES_HARD_CAP:
+        script = script[: NOTES_HARD_CAP - 32].rsplit(" ", 1)[0].strip() + " Further notes were omitted."
     return script
 
 
 def body_sections(article: Article) -> list[dict[str, str]]:
-    raw = article.content_text or ""
+    raw = note_source_markdown(article) if is_composed_note(article) else (article.content_text or "")
     if not raw.strip():
         raw = speech_plain(article.content_html or article.summary or "")
     blocks = re.split(r"(?m)(?=^#{1,3}\s+)", raw)

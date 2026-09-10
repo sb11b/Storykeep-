@@ -1497,6 +1497,7 @@ function Reader({
     : article.content_text || stripHtml(article.summary) || "";
   const [bodyHtml, setBodyHtml] = useState(html || "");
   const [articleTextSize, setArticleTextSize] = useState<ArticleTextSize>("md");
+  const [includeNotesInListen, setIncludeNotesInListen] = useState(false);
   const suggestions = tags
     .filter((item) => !article.tags.some((attached) => attached.id === item.id))
     .filter((item) => !tag.trim() || item.name.toLowerCase().includes(tag.trim().toLowerCase()))
@@ -1620,6 +1621,11 @@ function Reader({
 
   useEffect(() => {
     setArticleTextSize(readArticleTextSize());
+    try {
+      setIncludeNotesInListen(window.localStorage.getItem("storykeep-tts-include-notes") === "1");
+    } catch {
+      setIncludeNotesInListen(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -1776,14 +1782,41 @@ function Reader({
             Original
           </a>
         </div>
-        <div className="mt-3">
+        <div className="mt-3 space-y-2">
           <ListenControls
             ref={listenRef}
             articleId={article.id}
-            hasText={Boolean(article.content_text || article.content_html || article.summary)}
+            hasText={Boolean(
+              composedNoteMarkdown(article) || article.content_text || article.content_html || article.summary,
+            )}
+            includeNotes={includeNotesInListen}
             onCue={setActiveWord}
             getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
           />
+          {!composed && filedNotes.length > 0 ? (
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={includeNotesInListen}
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  setIncludeNotesInListen(next);
+                  try {
+                    window.localStorage.setItem("storykeep-tts-include-notes", next ? "1" : "0");
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
+              <span>
+                Include my notes
+                <span className="block text-[11px]">
+                  Off by default so Listen does not speak overlay notes (or bill xAI for them) unless you ask.
+                </span>
+              </span>
+            </label>
+          ) : null}
         </div>
         {article.tags.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mt-4">
@@ -2040,6 +2073,15 @@ function Reader({
                     className="text-sm mt-1 note-md"
                     dangerouslySetInnerHTML={{ __html: sanitizeHtml(noteMarkdownHtml(item.markdown)) }}
                   />
+                  {item.markdown.trim() ? (
+                    <div className="mt-2">
+                      <ListenControls
+                        articleId={item.id}
+                        hasText
+                        noteMode
+                      />
+                    </div>
+                  ) : null}
                   <p className="text-[11px] text-muted-foreground mt-1">{formatRelative(item.updated_at || item.created_at)}</p>
                 </li>
               ))}
