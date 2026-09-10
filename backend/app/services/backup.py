@@ -15,16 +15,47 @@ from app.database import parse_database_url
 from app.models import Annotation, Article, Backup, Feed, Tag, User
 
 
+def object_store_ready() -> bool:
+    return bool(settings.object_bucket)
+
+
+def _b2_endpoint_url() -> str:
+    endpoint = (settings.b2_endpoint or "").strip()
+    if not endpoint:
+        return ""
+    if "://" not in endpoint:
+        endpoint = f"https://{endpoint}"
+    return endpoint
+
+
+def _object_store_client():
+    import boto3
+    from botocore.config import Config
+
+    extra: dict[str, str] = {}
+    endpoint = _b2_endpoint_url()
+    if endpoint:
+        extra["endpoint_url"] = endpoint
+    kwargs: dict = {
+        "config": Config(signature_version="s3v4"),
+        "region_name": settings.object_region,
+    }
+    key_id = (settings.b2_key_id or "").strip()
+    app_key = (settings.b2_application_key or "").strip()
+    if key_id and app_key:
+        kwargs["aws_access_key_id"] = key_id
+        kwargs["aws_secret_access_key"] = app_key
+    return boto3.client("s3", **kwargs, **extra)
+
+
 def _maybe_upload_s3(path: Path) -> str | None:
-    if not settings.s3_bucket:
+    bucket = settings.object_bucket
+    if not bucket:
         return None
     try:
-        import boto3
-
-        key = f"{settings.s3_prefix}/{path.name}"
-        client = boto3.client("s3", region_name=settings.aws_region)
-        client.upload_file(str(path), settings.s3_bucket, key)
-        return f"s3://{settings.s3_bucket}/{key}"
+        key = f"{settings.s3_prefix.strip('/')}/{path.name}"
+        _object_store_client().upload_file(str(path), bucket, key)
+        return f"s3://{bucket}/{key}"
     except Exception:
         return None
 
@@ -34,7 +65,7 @@ def create_json_export(db: Session, user: User) -> Backup:
         user_id=user.id,
         backup_type="export_json",
         status="pending",
-        destination="s3" if settings.s3_bucket else "local",
+        destination="s3" if object_store_ready() else "local",
     )
     db.add(backup)
     db.flush()
@@ -110,7 +141,7 @@ def create_db_dump(db: Session, user_id: UUID | None) -> Backup:
         user_id=user_id,
         backup_type="db_dump",
         status="pending",
-        destination="s3" if settings.s3_bucket else "local",
+        destination="s3" if object_store_ready() else "local",
     )
     db.add(backup)
     db.flush()

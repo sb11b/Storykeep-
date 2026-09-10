@@ -10,8 +10,20 @@ from app.deps import get_current_user
 from app.models import Backup, User
 from app.schemas import BackupCreate, BackupOut
 from app.services import backup as backup_service
+from app.services.demo_lock import reject_locked
 
 router = APIRouter(tags=["backups"])
+
+
+@router.post("/backup/b2", response_model=BackupOut, status_code=201)
+def backup_to_b2(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> BackupOut:
+    reject_locked(user)
+    if not backup_service.object_store_ready():
+        raise HTTPException(status_code=503, detail="Backblaze is not configured on this service.")
+    row = backup_service.create_json_export(db, user)
+    if row.destination != "s3":
+        raise HTTPException(status_code=502, detail="Backup ran but was not stored in the B2 bucket.")
+    return BackupOut.model_validate(row)
 
 
 @router.post("/backups", response_model=BackupOut)

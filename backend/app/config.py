@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_prefix: str = "storykeep"
     aws_region: str = "us-east-1"
+    b2_key_id: str = ""
+    b2_application_key: str = ""
+    b2_bucket: str | None = None
+    b2_endpoint: str = ""
+    b2_region: str = ""
     refresh_minutes: int = 15
     extract_on_import: bool = True
     secure_cookies: bool = False
@@ -62,6 +67,15 @@ class Settings(BaseSettings):
     @property
     def cookie_secure(self) -> bool:
         return self.secure_cookies or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+
+    @property
+    def object_bucket(self) -> str | None:
+        bucket = (self.b2_bucket or self.s3_bucket or "").strip()
+        return bucket or None
+
+    @property
+    def object_region(self) -> str:
+        return (self.b2_region or self.aws_region or "us-east-1").strip()
 
     @property
     def signing_key(self) -> str:

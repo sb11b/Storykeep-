@@ -41,7 +41,12 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `DATABASE_URL` | Yes | From the Postgres plugin |
 | `SECRET_KEY` | Recommended | Any long random string. If you skip it, a stable key is derived from the database URL. |
 | `SEED_DEMO` | No | Defaults on. May create a locked internal demo user and sample feeds. Password login for `steve@storykeep.local` is closed. |
-| `S3_BUCKET` | No | Optional off-site backup target |
+| `S3_BUCKET` | No | Optional AWS S3 bucket if you are not using Backblaze |
+| `B2_KEY_ID` | No | Backblaze application key ID |
+| `B2_APPLICATION_KEY` | No | Backblaze application key (never put this in git or the browser) |
+| `B2_BUCKET` | No | Backblaze bucket name |
+| `B2_ENDPOINT` | No | S3-compatible endpoint, e.g. `https://s3.us-west-004.backblazeb2.com` |
+| `B2_REGION` | No | Backblaze region, e.g. `us-west-004` |
 | `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 
