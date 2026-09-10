@@ -359,10 +359,17 @@ export function LibraryApp({ user }: { user: User }) {
         }
         return;
       }
-      if (event.key === "Escape" && readerFull) {
-        event.preventDefault();
-        setReaderFull(false);
-        return;
+      if (event.key === "Escape") {
+        if (listenRef.current?.isActive()) {
+          event.preventDefault();
+          listenRef.current.stop();
+          return;
+        }
+        if (readerFull) {
+          event.preventDefault();
+          setReaderFull(false);
+          return;
+        }
       }
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "j" || event.key === "k") {
@@ -1499,6 +1506,11 @@ function Reader({
   const [bodyHtml, setBodyHtml] = useState(html || "");
   const [articleTextSize, setArticleTextSize] = useState<ArticleTextSize>("md");
   const [includeNotesInListen, setIncludeNotesInListen] = useState(false);
+  const [followSpeech, setFollowSpeech] = useState(false);
+  const followSpeechRef = useRef(false);
+  const userPausedFollowRef = useRef(false);
+  const programmaticScrollRef = useRef(false);
+  const prevActiveWordRef = useRef<number | null>(null);
   const suggestions = tags
     .filter((item) => !article.tags.some((attached) => attached.id === item.id))
     .filter((item) => !tag.trim() || item.name.toLowerCase().includes(tag.trim().toLowerCase()))
@@ -1624,10 +1636,16 @@ function Reader({
     setArticleTextSize(readArticleTextSize());
     try {
       setIncludeNotesInListen(window.localStorage.getItem("storykeep-tts-include-notes") === "1");
+      setFollowSpeech(window.localStorage.getItem("storykeep-tts-follow-speech") === "1");
     } catch {
       setIncludeNotesInListen(false);
+      setFollowSpeech(false);
     }
   }, []);
+
+  useEffect(() => {
+    followSpeechRef.current = followSpeech;
+  }, [followSpeech]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -1639,6 +1657,9 @@ function Reader({
     });
     const onScroll = () => {
       window.localStorage.setItem(key, String(el.scrollTop));
+      if (!programmaticScrollRef.current && listenRef.current?.isActive()) {
+        userPausedFollowRef.current = true;
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
@@ -1662,6 +1683,13 @@ function Reader({
   }
 
   useEffect(() => {
+    if (prevActiveWordRef.current == null && activeWord != null) {
+      userPausedFollowRef.current = false;
+    }
+    prevActiveWordRef.current = activeWord;
+  }, [activeWord]);
+
+  useEffect(() => {
     const root = articleRef.current;
     if (!root) return;
     root.querySelectorAll(".tts-word-active").forEach((node) => node.classList.remove("tts-word-active"));
@@ -1669,18 +1697,101 @@ function Reader({
     const current = root.querySelector(`[data-tts-word="${activeWord}"]`);
     if (!(current instanceof HTMLElement)) return;
     current.classList.add("tts-word-active");
-    const holder = current.closest(".overflow-y-auto");
-    if (holder instanceof HTMLElement) {
-      const wordBox = current.getBoundingClientRect();
-      const holdBox = holder.getBoundingClientRect();
-      if (wordBox.top < holdBox.top + 72 || wordBox.bottom > holdBox.bottom - 72) {
-        current.scrollIntoView({ block: "center", behavior: "auto" });
-      }
+    if (!followSpeechRef.current || userPausedFollowRef.current) return;
+    const holder = scrollRef.current;
+    if (!holder) return;
+    const wordBox = current.getBoundingClientRect();
+    const holdBox = holder.getBoundingClientRect();
+    const margin = 72;
+    if (wordBox.top >= holdBox.top + margin && wordBox.bottom <= holdBox.bottom - margin) return;
+    programmaticScrollRef.current = true;
+    if (wordBox.top < holdBox.top + margin) {
+      holder.scrollTop += wordBox.top - holdBox.top - margin;
+    } else if (wordBox.bottom > holdBox.bottom - margin) {
+      holder.scrollTop += wordBox.bottom - holdBox.bottom + margin;
     }
+    window.requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+    });
   }, [activeWord]);
 
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (!listenRef.current?.isActive()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      listenRef.current.stop();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [listenRef]);
+
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="tts-player-bar z-20 shrink-0 border-b bg-card/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+        <ListenControls
+          ref={listenRef}
+          articleId={article.id}
+          hasText={Boolean(
+            composedNoteMarkdown(article) || article.content_text || article.content_html || article.summary,
+          )}
+          includeNotes={includeNotesInListen}
+          noteMode={composed}
+          onCue={setActiveWord}
+          getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
+        />
+        <div className="mt-2 flex flex-wrap items-start gap-x-4 gap-y-1">
+          {!composed && filedNotes.length > 0 ? (
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={includeNotesInListen}
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  setIncludeNotesInListen(next);
+                  try {
+                    window.localStorage.setItem("storykeep-tts-include-notes", next ? "1" : "0");
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
+              <span>
+                Include my notes
+                <span className="block text-[11px]">
+                  Off by default so Listen does not speak overlay notes unless you ask.
+                </span>
+              </span>
+            </label>
+          ) : null}
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={followSpeech}
+              onChange={(event) => {
+                const next = event.target.checked;
+                setFollowSpeech(next);
+                if (next) userPausedFollowRef.current = false;
+                try {
+                  window.localStorage.setItem("storykeep-tts-follow-speech", next ? "1" : "0");
+                } catch {
+                  /* ignore */
+                }
+              }}
+            />
+            <span>
+              Follow speech
+              <span className="block text-[11px]">
+                Off by default. When on, scroll chases the spoken word until you scroll by hand.
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <article
         ref={articleRef}
         className={cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl")}
@@ -1782,43 +1893,6 @@ function Reader({
           >
             Original
           </a>
-        </div>
-        <div className="mt-3 space-y-2">
-          <ListenControls
-            ref={listenRef}
-            articleId={article.id}
-            hasText={Boolean(
-              composedNoteMarkdown(article) || article.content_text || article.content_html || article.summary,
-            )}
-            includeNotes={includeNotesInListen}
-            noteMode={composed}
-            onCue={setActiveWord}
-            getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
-          />
-          {!composed && filedNotes.length > 0 ? (
-            <label className="flex items-start gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={includeNotesInListen}
-                onChange={(event) => {
-                  const next = event.target.checked;
-                  setIncludeNotesInListen(next);
-                  try {
-                    window.localStorage.setItem("storykeep-tts-include-notes", next ? "1" : "0");
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-              />
-              <span>
-                Include my notes
-                <span className="block text-[11px]">
-                  Off by default so Listen does not speak overlay notes (or bill xAI for them) unless you ask.
-                </span>
-              </span>
-            </label>
-          ) : null}
         </div>
         {article.tags.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mt-4">
@@ -2141,6 +2215,7 @@ function Reader({
           />
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

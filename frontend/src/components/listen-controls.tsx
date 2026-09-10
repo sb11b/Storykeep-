@@ -47,6 +47,8 @@ export type ListenControlsHandle = {
   togglePlay: () => void;
   playFromWord: (wordIndex: number) => void;
   listenFromHere: () => void;
+  stop: () => void;
+  isActive: () => boolean;
 };
 
 function formatSpeed(rate: number): string {
@@ -416,25 +418,12 @@ export const ListenControls = forwardRef<
       toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
       return;
     }
-    if (phaseRef.current === "playing") {
-      audioRef.current?.pause();
-      stopCueLoop();
-      persistCue();
-      setPhase("paused");
+    if (phaseRef.current !== "idle") {
+      stop();
       return;
     }
-    if (phaseRef.current === "paused") {
-      const audio = audioRef.current;
-      if (audio) applyPlaybackRate(audio, speedRef.current);
-      void audio?.play().then(() => {
-        startCueLoop();
-        setPhase("playing");
-      });
-      return;
-    }
-    if (phaseRef.current === "loading") return;
     void startAtWord(0);
-  }, [hasText, noteMode, persistCue, startAtWord, startCueLoop, stopCueLoop]);
+  }, [hasText, noteMode, startAtWord, stop]);
 
   useImperativeHandle(
     ref,
@@ -444,8 +433,10 @@ export const ListenControls = forwardRef<
         void startAtWord(wordIndex);
       },
       listenFromHere,
+      stop: () => stop(),
+      isActive: () => phaseRef.current !== "idle",
     }),
-    [listenFromHere, startAtWord, togglePlay],
+    [listenFromHere, startAtWord, stop, togglePlay],
   );
 
   return (
