@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from "react";
-import { Bold, Highlighter, ImagePlus, Italic, List, ListOrdered, LoaderCircle, Maximize2, Minimize2, Underline } from "lucide-react";
+import { Bold, Code2, Highlighter, ImagePlus, Italic, List, ListOrdered, LoaderCircle, Maximize2, Minimize2, Underline } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useDictation } from "@/components/dictation";
 import { ApiError, api } from "@/lib/api";
-import { noteMarkdownHtml, prefixSelectedLines, wrapHighlight, wrapInline } from "@/lib/markdown";
+import { onCodeCopyClick } from "@/lib/code-copy";
+import { normalizeCodeLang, noteMarkdownHtml, prefixSelectedLines, wrapCodeFence, wrapHighlight, wrapInline } from "@/lib/markdown";
 import {
   applyComposerStyle,
   COMPOSER_STYLE_OPTIONS,
@@ -156,6 +157,17 @@ export function NoteComposer({
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
   }
 
+  function insertCodeFence() {
+    const el = areaRef.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    const picked = window.prompt("Code language (python, js, sql, text)", "text");
+    if (picked === null) return;
+    const lang = normalizeCodeLang(picked);
+    const result = wrapCodeFence(value, start, end, lang);
+    applyWrap(result.text, result.selectionStart, result.selectionEnd);
+  }
+
   return (
     <div
       className={cn(
@@ -225,6 +237,16 @@ export function NoteComposer({
           >
             <ListOrdered className="size-3.5" />
             Outline
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={insertCodeFence}
+          >
+            <Code2 className="size-3.5" />
+            Code
           </Button>
           <Button
             type="button"
@@ -340,6 +362,7 @@ export function NoteComposer({
           <div
             className="note-md composer-preview h-40 max-h-48 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm"
             aria-label="Highlight preview"
+            onClick={onCodeCopyClick}
           >
             {value.trim() ? (
               <div dangerouslySetInnerHTML={{ __html: noteMarkdownHtml(value) }} />
@@ -352,8 +375,8 @@ export function NoteComposer({
         ) : null}
       </div>
       <p className="shrink-0 text-[11px] text-muted-foreground">
-        Highlight uses <code>==yellow==</code>. Underline uses <code>&lt;u&gt;</code>. Use the Style menu for headings and
-        small/large text. Images stay in
+        Highlight uses <code>==yellow==</code>. Code uses fenced blocks with a language label. Underline uses{" "}
+        <code>&lt;u&gt;</code>. Use the Style menu for headings and small/large text. Images stay in
         StoryKeep and unzip under StoryKeep/Additions/media.
         {expanded ? " Esc or Shrink returns to the card." : null}
       </p>

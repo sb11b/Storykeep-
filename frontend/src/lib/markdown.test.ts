@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { noteMarkdownHtml, prefixSelectedLines, renderMarkdown, wrapHighlight, wrapInline } from "./markdown";
+import {
+  noteMarkdownHtml,
+  prefixSelectedLines,
+  renderMarkdown,
+  wrapCodeFence,
+  wrapHighlight,
+  wrapInline,
+} from "./markdown";
 
 test("wrapHighlight wraps a textarea selection", () => {
   const result = wrapHighlight("The slope of y", 4, 9);
@@ -76,4 +83,38 @@ test("underscore italics do not wrap snake_case names", () => {
   assert.match(html, /my_file_name/);
   assert.equal(html.includes("<em>file</em>"), false);
   assert.match(html, /<em>emphasis<\/em>/);
+});
+
+test("fenced code blocks preserve angle brackets and hash comments", () => {
+  const source = ["```python", "print('<div>')", "# comment", "```"].join("\n");
+  const html = renderMarkdown(source);
+  assert.match(html, /<pre class="sk-code">/);
+  assert.match(html, /<span class="sk-code-lang">python<\/span>/);
+  assert.match(html, /data-copy>Copy<\/button>/);
+  assert.match(html, /print\('&lt;div&gt;'\)/);
+  assert.match(html, /# comment/);
+  assert.equal(html.includes("<div>"), false);
+  assert.equal(html.includes("<h"), false);
+});
+
+test("code fences skip highlight and heading transforms inside", () => {
+  const source = ["```text", "==not highlight==", "# not heading", "```"].join("\n");
+  const html = renderMarkdown(source);
+  assert.match(html, /==not highlight==/);
+  assert.match(html, /# not heading/);
+  assert.equal(html.includes("<mark>"), false);
+  assert.equal(html.includes("<h1>"), false);
+});
+
+test("wrapCodeFence inserts empty fence at caret", () => {
+  const result = wrapCodeFence("hello", 5, 5, "python");
+  assert.equal(result.text, "hello```python\n\n```");
+  assert.equal(result.selectionStart, 5 + "```python\n".length);
+  assert.equal(result.selectionEnd, result.selectionStart);
+});
+
+test("wrapCodeFence wraps a selection", () => {
+  const source = "before code after";
+  const result = wrapCodeFence(source, 7, 11, "js");
+  assert.equal(result.text, "before ```js\ncode\n``` after");
 });

@@ -8,6 +8,9 @@ function escapeHtml(value: string): string {
 
 const MEDIA_IMAGE = /!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
 const MEDIA_LINE = /^!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)$/;
+const FENCE_OPEN = /^(`{3})([\w-+#.]*)?\s*$/;
+const FENCE_CLOSE = /^(`{3})\s*$/;
+const INDENTED_CODE = /^(?: {4}|\t)/;
 
 function inline(value: string): string {
   const escaped = escapeHtml(value)
@@ -66,6 +69,37 @@ export function wrapInline(source: string, start: number, end: number, open: str
   };
 }
 
+const CODE_LANGS = ["text", "python", "js", "sql"] as const;
+export type CodeLang = (typeof CODE_LANGS)[number];
+
+export function normalizeCodeLang(raw: string | null | undefined): CodeLang {
+  const value = (raw || "text").trim().toLowerCase();
+  if (value === "javascript" || value === "typescript") return "js";
+  if (CODE_LANGS.includes(value as CodeLang)) return value as CodeLang;
+  return "text";
+}
+
+export function wrapCodeFence(source: string, start: number, end: number, lang: CodeLang = "text"): WrapResult {
+  const from = Math.max(0, Math.min(start, end, source.length));
+  const to = Math.min(source.length, Math.max(start, end, from));
+  if (from === to) {
+    const open = `\`\`\`${lang}\n`;
+    const fence = `${open}\n\`\`\``;
+    const text = `${source.slice(0, from)}${fence}${source.slice(to)}`;
+    const caret = from + open.length;
+    return { text, selectionStart: caret, selectionEnd: caret };
+  }
+  const inner = source.slice(from, to);
+  const open = `\`\`\`${lang}\n`;
+  const close = "\n```";
+  const text = `${source.slice(0, from)}${open}${inner}${close}${source.slice(to)}`;
+  return {
+    text,
+    selectionStart: from + open.length,
+    selectionEnd: from + open.length + inner.length,
+  };
+}
+
 function lineBounds(source: string, start: number, end: number): { from: number; to: number } {
   const from = source.lastIndexOf("\n", Math.max(0, Math.min(start, end) - 1)) + 1;
   const max = Math.max(start, end);
@@ -114,6 +148,54 @@ export function noteMarkdownHtml(source: string): string {
 
 type MarkdownSegment = { kind: "raw"; text: string } | { kind: "highlight"; text: string };
 
+type ParsedBlock = { kind: "code"; lang: string; body: string } | { kind: "text"; lines: string[] };
+
+function renderCodeBlock(lang: string, body: string): string {
+  const label = escapeHtml((lang || "text").trim() || "text");
+  const escaped = escapeHtml(body);
+  return `<pre class="sk-code"><div class="sk-code-bar"><span class="sk-code-lang">${label}</span><button type="button" data-copy>Copy</button></div><code>${escaped}</code></pre>`;
+}
+
+function parseBlocks(source: string): ParsedBlock[] {
+  const lines = source.split("\n");
+  const blocks: ParsedBlock[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const fenceOpen = line.match(FENCE_OPEN);
+    if (fenceOpen) {
+      const lang = (fenceOpen[2] || "text").trim() || "text";
+      index += 1;
+      const bodyLines: string[] = [];
+      while (index < lines.length && !FENCE_CLOSE.test(lines[index] ?? "")) {
+        bodyLines.push(lines[index] ?? "");
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push({ kind: "code", lang, body: bodyLines.join("\n") });
+      continue;
+    }
+    if (INDENTED_CODE.test(line)) {
+      const bodyLines: string[] = [];
+      while (index < lines.length && INDENTED_CODE.test(lines[index] ?? "")) {
+        bodyLines.push((lines[index] ?? "").replace(/^(?: {4}|\t)/, ""));
+        index += 1;
+      }
+      blocks.push({ kind: "code", lang: "text", body: bodyLines.join("\n") });
+      continue;
+    }
+    const textLines: string[] = [];
+    while (index < lines.length) {
+      const current = lines[index] ?? "";
+      if (FENCE_OPEN.test(current) || INDENTED_CODE.test(current)) break;
+      textLines.push(current);
+      index += 1;
+    }
+    if (textLines.length) blocks.push({ kind: "text", lines: textLines });
+  }
+  return blocks.length ? blocks : [{ kind: "text", lines: [] }];
+}
+
 function splitHighlightSegments(source: string): MarkdownSegment[] {
   const segments: MarkdownSegment[] = [];
   const re = /==([\s\S]+?)==/g;
@@ -133,8 +215,7 @@ function splitHighlightSegments(source: string): MarkdownSegment[] {
   return segments.length ? segments : [{ kind: "raw", text: source }];
 }
 
-function renderMarkdownBlocks(source: string): string {
-  const lines = source.split("\n");
+function renderTextLines(lines: string[]): string {
   const html: string[] = [];
   let listKind: "ul" | "ol" | null = null;
   const flushList = () => {
@@ -187,15 +268,24 @@ function renderMarkdownBlocks(source: string): string {
   return html.join("");
 }
 
-export function renderMarkdown(source: string): string {
-  const normalized = (source || "").replace(/\r\n/g, "\n");
-  return splitHighlightSegments(normalized)
-    .map((segment) => {
-      if (segment.kind === "highlight") {
-        const inner = renderMarkdownBlocks(segment.text);
-        return inner ? `<mark class="sk-highlight-block">${inner}</mark>` : "";
-      }
-      return renderMarkdownBlocks(segment.text);
+function renderMarkdownBlocks(source: string): string {
+  return parseBlocks(source)
+    .map((block) => {
+      if (block.kind === "code") return renderCodeBlock(block.lang, block.body);
+      return splitHighlightSegments(block.lines.join("\n"))
+        .map((segment) => {
+          if (segment.kind === "highlight") {
+            const inner = renderMarkdownBlocks(segment.text);
+            return inner ? `<mark class="sk-highlight-block">${inner}</mark>` : "";
+          }
+          return renderTextLines(segment.text.split("\n"));
+        })
+        .join("");
     })
     .join("");
+}
+
+export function renderMarkdown(source: string): string {
+  const normalized = (source || "").replace(/\r\n/g, "\n");
+  return renderMarkdownBlocks(normalized);
 }

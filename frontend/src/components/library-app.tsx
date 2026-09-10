@@ -44,6 +44,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
+import { onCodeCopyClick } from "@/lib/code-copy";
 import { formatRelative, sanitizeHtml, stripHtml } from "@/lib/format";
 import { clearFindMarks, findMarksInArticle, focusFindMark } from "@/lib/article-find";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
@@ -1898,6 +1899,7 @@ function Reader({
           <div
             ref={bodyRef}
             className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
+            onClick={onCodeCopyClick}
             onMouseUp={() => {
               const next = selectionInRoot(bodyRef.current);
               setPicker(next);
@@ -2071,6 +2073,7 @@ function Reader({
                   </div>
                   <div
                     className="text-sm mt-1 note-md"
+                    onClick={onCodeCopyClick}
                     dangerouslySetInnerHTML={{ __html: sanitizeHtml(noteMarkdownHtml(item.markdown)) }}
                   />
                   {item.markdown.trim() ? (

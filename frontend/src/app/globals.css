@@ -277,3 +277,53 @@
   border-radius: 0.4rem;
   margin: 0.6em 0;
 }
+.note-md pre.sk-code,
+.composer-preview pre.sk-code,
+.article-body pre.sk-code {
+  margin: 0.75em 0;
+  padding: 0;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  background: color-mix(in oklab, var(--muted) 55%, var(--background));
+  overflow-x: auto;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.88em;
+  line-height: 1.45;
+}
+.sk-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  background: color-mix(in oklab, var(--muted) 75%, transparent);
+}
+.sk-code-lang {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  color: var(--muted-foreground);
+}
+.sk-code-bar button[data-copy] {
+  border: 1px solid color-mix(in oklab, var(--border) 90%, transparent);
+  border-radius: 0.35rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+}
+.sk-code-bar button[data-copy]:hover {
+  background: color-mix(in oklab, var(--accent) 65%, var(--background));
+}
+pre.sk-code > code {
+  display: block;
+  padding: 0.65rem 0.75rem;
+  background: transparent;
+  border-radius: 0;
+  white-space: pre;
+  overflow-x: auto;
+}

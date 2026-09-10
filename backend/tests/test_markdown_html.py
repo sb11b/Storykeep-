@@ -54,6 +54,25 @@ class MarkdownHtmlTests(unittest.TestCase):
         html = markdown_to_html('Intro with <span class="sk-size-lg">big</span> word')
         self.assertIn('<span class="sk-size-lg">big</span>', html)
 
+    def test_fenced_code_preserves_html_and_hash(self):
+        source = "```python\nprint('<div>')\n# comment\n```"
+        html = markdown_to_html(source)
+        self.assertIn('<pre class="sk-code">', html)
+        self.assertIn('<span class="sk-code-lang">python</span>', html)
+        self.assertIn("data-copy", html)
+        self.assertIn("print('&lt;div&gt;')", html)
+        self.assertIn("# comment", html)
+        self.assertNotIn("<div>", html)
+        self.assertNotIn("<h1>", html)
+
+    def test_code_fence_skips_markdown_inside(self):
+        source = "```text\n==no highlight==\n# not heading\n```"
+        html = markdown_to_html(source)
+        self.assertIn("==no highlight==", html)
+        self.assertIn("# not heading", html)
+        self.assertNotIn("<mark>", html)
+        self.assertNotIn("<h1>", html)
+
 
 if __name__ == "__main__":
     unittest.main()
