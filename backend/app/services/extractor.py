@@ -14,6 +14,14 @@ from app.models import Article
 
 logger = logging.getLogger(__name__)
 
+
+class ExtractFailedError(Exception):
+    """Readable extract was empty or unusable; caller should keep the previous body."""
+
+    def __init__(self, detail: str = "Extract failed, original kept.") -> None:
+        super().__init__(detail)
+        self.detail = detail
+
 HEADERS = {
     "User-Agent": "Storykeep/1.0 (+https://localhost; personal archive reader)"
 }
@@ -236,15 +244,38 @@ def extract_page(url: str) -> tuple[str | None, str | None, str | None]:
     return html, text, title
 
 
+def _extract_usable(html: str | None, text: str | None) -> bool:
+    cleaned = _clean_text(text or "")
+    if len(cleaned) < 80:
+        return False
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if not lines:
+        return False
+    cssish = sum(1 for line in lines if _CSS_LINE.match(line) or ("{" in line and _CSS_PROP_LINE.match(line)))
+    if cssish and cssish >= max(2, len(lines) // 2):
+        return False
+    if html:
+        lowered = html.lower()
+        if "<style" in lowered or "box-sizing:border-box" in lowered.replace(" ", ""):
+            if len(cleaned) < 240:
+                return False
+    return True
+
+
 def fill_article(db: Session, article: Article, force: bool = False) -> Article:
     if article.content_text and not force:
         return article
+    previous_html = article.content_html
+    previous_text = article.content_text
     html, text = extract_url(article.url)
+    if not _extract_usable(html, text):
+        if force and (previous_html or previous_text):
+            raise ExtractFailedError("Extract failed, original kept.")
+        return article
     if html:
         article.content_html = html
     if text:
         article.content_text = text
-    if html or text:
-        article.fetched_at = datetime.now(timezone.utc)
+    article.fetched_at = datetime.now(timezone.utc)
     db.add(article)
     return article

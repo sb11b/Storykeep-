@@ -34,7 +34,7 @@ import { GrokBubble } from "@/components/grok-bubble";
 import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect } from "@/components/destination-controls";
 import { NoteComposer } from "@/components/note-composer";
-import { ShelfScroller } from "@/components/shelf-scroller";
+import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -176,6 +176,11 @@ export function LibraryApp({ user }: { user: User }) {
   const selectedIdRef = useRef<string | null>(null);
   const listGenRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const listScrollerRef = useRef<ShelfScrollerHandle>(null);
+  const listScrollTops = useRef<Record<string, number>>({});
+  const [listEpoch, setListEpoch] = useState(0);
+  const [listRestoreTop, setListRestoreTop] = useState<number | null>(null);
+  const [readerScrollToken, setReaderScrollToken] = useState(0);
   itemsRef.current = items;
   totalRef.current = total;
   selectedIdRef.current = selectedId;
@@ -197,6 +202,8 @@ export function LibraryApp({ user }: { user: User }) {
 
   const openArticle = useCallback(
     (id: string) => {
+      listScrollTops.current[shelfKey(shelf)] = listScrollerRef.current?.getScrollTop() ?? 0;
+      setListRestoreTop(null);
       setSelectedId(id);
       const row = itemsRef.current.find((item) => item.id === id);
       if (row?.is_read) return;
@@ -218,10 +225,13 @@ export function LibraryApp({ user }: { user: User }) {
           }
         });
     },
-    [loadNav],
+    [loadNav, shelf],
   );
 
-  const fetchShelfPage = useCallback(async (offset: number) => {
+  const fetchShelfPage = useCallback(async (offset: number, firstPage = false) => {
+    if (firstPage && offset !== 0) {
+      console.warn("[StoryKeep] first shelf page requested with non-zero offset", { offset, shelf: shelfKey(shelf) });
+    }
     if (shelf.kind === "search") {
       const page = await api.search(shelf.q, { limit: LIST_PAGE, offset });
       return {
@@ -251,12 +261,14 @@ export function LibraryApp({ user }: { user: User }) {
     setLoadingMore(false);
     setLoadingList(true);
     setListError(null);
+    setListRestoreTop(null);
     setItems([]);
     try {
-      const page = await fetchShelfPage(0);
+      const page = await fetchShelfPage(0, true);
       if (gen !== listGenRef.current) return;
       setItems(page.items);
       setTotal(page.total);
+      setListEpoch((current) => current + 1);
     } catch (error) {
       if (gen !== listGenRef.current) return;
       setListError(error instanceof ApiError ? error.message : "Could not load articles");
@@ -577,6 +589,7 @@ export function LibraryApp({ user }: { user: User }) {
       groupedFeeds={groupedFeeds}
       tags={tags}
       onShelf={(next) => {
+        setListRestoreTop(null);
         setShelf(next);
         setSelectedId(null);
         setMobileNav(false);
@@ -801,12 +814,20 @@ export function LibraryApp({ user }: { user: User }) {
               ) : null}
             </div>
             <ShelfScroller
+              ref={listScrollerRef}
               shelfKey={shelfKey(shelf)}
+              listEpoch={listEpoch}
+              restoreTop={listRestoreTop}
               hasMore={!loadingList && items.length > 0 && items.length < total}
               loadingMore={loadingMore}
               loaded={items.length}
               total={total}
               onNearEnd={() => void loadMore()}
+              onScrollTop={(top, userInitiated) => {
+                if (userInitiated && top > 0) {
+                  listScrollTops.current[shelfKey(shelf)] = top;
+                }
+              }}
             >
               {loadingList ? (
                 <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening the shelf" body="Fetching the latest from your archive." />
@@ -880,21 +901,35 @@ export function LibraryApp({ user }: { user: User }) {
                 onBack={() => {
                   setReaderFull(false);
                   setSelectedId(null);
+                  setListRestoreTop(listScrollTops.current[shelfKey(shelf)] ?? 0);
                 }}
                 onToggleRead={() => void patchSelected({ is_read: !article.is_read })}
                 onToggleSaved={() => void patchSelected({ is_saved: !article.is_saved })}
                 onToggleStar={() => void patchSelected({ is_starred: !article.is_starred })}
                 onExtract={async () => {
                   const id = article.id;
+                  const previous = article;
                   try {
                     const next = await api.extract(id);
                     if (selectedIdRef.current !== id) return;
-                    setArticle(next);
+                    setArticle({
+                      ...next,
+                      content_text: next.content_text || previous.content_text,
+                      content_html: next.content_html || previous.content_html,
+                    });
+                    setReaderScrollToken((current) => current + 1);
                     toast.success("Full text refreshed");
                   } catch (error) {
-                    readerActionError(error, "Could not refresh the article text");
+                    toast.error(
+                      error instanceof ApiError && error.status === 422
+                        ? error.message
+                        : error instanceof ApiError
+                          ? error.message
+                          : "Extract failed, original kept",
+                    );
                   }
                 }}
+                readerScrollToken={readerScrollToken}
                 onArchive={async () => {
                   const id = article.id;
                   try {
@@ -1449,6 +1484,7 @@ function Reader({
   onMoveNote,
   onEditComposed,
   onDownloadPack,
+  readerScrollToken,
 }: {
   article: Article;
   tags: Tag[];
@@ -1463,6 +1499,7 @@ function Reader({
   onToggleStar: () => void;
   onExtract: () => Promise<void>;
   onArchive: () => Promise<void>;
+  readerScrollToken: number;
   onTag: (name: string) => Promise<void>;
   onNote: (title: string, markdown: string, destination: NoteDestination, isCorrection: boolean) => Promise<void>;
   onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string; note?: string }) => Promise<void>;
@@ -1646,6 +1683,10 @@ function Reader({
   useEffect(() => {
     followSpeechRef.current = followSpeech;
   }, [followSpeech]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [readerScrollToken]);
 
   useEffect(() => {
     const el = scrollRef.current;

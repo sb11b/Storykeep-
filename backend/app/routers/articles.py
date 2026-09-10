@@ -29,6 +29,7 @@ from app.schemas import (
 )
 from app.services.overlay_search import article_search_match
 from app.services import archive as archive_service, changelog, extractor
+from app.services.extractor import ExtractFailedError
 
 router = APIRouter(tags=["articles"])
 logger = logging.getLogger(__name__)
@@ -262,7 +263,10 @@ def extract_article(
     article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
-    extractor.fill_article(db, article, force=True)
+    try:
+        extractor.fill_article(db, article, force=True)
+    except ExtractFailedError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
     db.commit()
     return _article_payload(db, user, article_id)
 

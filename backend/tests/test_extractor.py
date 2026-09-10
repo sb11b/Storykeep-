@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import unittest.mock
 
-from app.services.extractor import _clean_text, extract_html
+from types import SimpleNamespace
+
+from app.services.extractor import ExtractFailedError, _clean_text, _extract_usable, extract_html, fill_article
 
 
 BLAZE_STYLE = """
@@ -62,6 +65,28 @@ class ExtractorTests(unittest.TestCase):
         self.assertNotIn(".widget", cleaned)
         self.assertNotIn("box-sizing", cleaned)
         self.assertEqual(cleaned.count("Actual paragraph one."), 1)
+
+
+    def test_extract_usable_rejects_css_only(self):
+        css_only = ".widget{margin:0;padding:0;box-sizing:border-box;}\n#footer{display:flex;}"
+        self.assertFalse(_extract_usable("<style>.widget{}</style>", css_only))
+
+    def test_fill_article_keeps_previous_body_on_failed_force_extract(self):
+        article = SimpleNamespace(
+            url="https://example.com/story",
+            content_html="<p>Old body kept.</p>",
+            content_text="Old body kept.",
+            fetched_at=None,
+        )
+
+        class FakeDb:
+            def add(self, _obj) -> None:
+                return None
+
+        with unittest.mock.patch("app.services.extractor.extract_url", return_value=(None, None)):
+            with self.assertRaises(ExtractFailedError):
+                fill_article(FakeDb(), article, force=True)  # type: ignore[arg-type]
+        self.assertEqual(article.content_text, "Old body kept.")
 
 
 if __name__ == "__main__":
