@@ -2552,7 +2552,7 @@ function Reader({
           ) : null}
           {isStoryKeepNote(article) ? (
             <form
-              className="space-y-2 rounded-md border p-3"
+              className="flex max-h-[min(70vh,40rem)] min-h-0 flex-col overflow-hidden rounded-md border p-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (!editTitle.trim() || !editBody.trim()) return;
@@ -2564,6 +2564,7 @@ function Reader({
                 onChange={setEditBody}
                 placeholder="Full note, with ==highlights== and images…"
                 rows={10}
+                fill
                 header={
                   <>
                     <Label>This StoryKeep note</Label>

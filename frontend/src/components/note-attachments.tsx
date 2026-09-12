@@ -65,26 +65,32 @@ export function NoteAttachmentEditorList({
   if (!items.length) return null;
 
   return (
-    <ul className="space-y-2">
-      {items.map((item) => (
-        <li key={item.id}>
-          <AttachmentRow
-            item={item}
-            onRemove={() => {
-              void (async () => {
-                const next = removeAttachmentFromMarkdown(markdown, item.id);
-                onChange(next);
-                try {
-                  await api.deleteNoteMedia(item.id);
-                } catch (error) {
-                  toastErrorFromUnknown(error, "Could not remove that attachment");
-                }
-              })();
-            }}
-          />
-        </li>
-      ))}
-    </ul>
+    <div
+      className="max-h-32 shrink-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-1.5"
+      aria-label="Attached files"
+    >
+      <ul className="space-y-1">
+        {items.map((item) => (
+          <li key={item.id}>
+            <AttachmentRow
+              item={item}
+              compact
+              onRemove={() => {
+                void (async () => {
+                  const next = removeAttachmentFromMarkdown(markdown, item.id);
+                  onChange(next);
+                  try {
+                    await api.deleteNoteMedia(item.id);
+                  } catch (error) {
+                    toastErrorFromUnknown(error, "Could not remove that attachment");
+                  }
+                })();
+              }}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

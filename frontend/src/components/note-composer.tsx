@@ -210,10 +210,12 @@ export function NoteComposer({
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
   }
 
+  const pinned = expanded || fill;
+
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col gap-2",
+        "flex min-h-0 flex-col gap-2 overflow-hidden",
         fill && !expanded && "h-full min-h-0 flex-1",
         expanded && "fixed inset-0 z-[80] flex h-[100dvh] w-[100vw] flex-col bg-background p-3",
       )}
@@ -380,28 +382,32 @@ export function NoteComposer({
           }}
         />
       </div>
-      {header ? <div className="shrink-0 space-y-2">{header}</div> : null}
-      <NoteAttachmentEditorList markdown={value} onChange={onChange} />
-      <Textarea
-        id={id}
-        ref={(node) => {
-          areaRef.current = node;
-          assignRef(textareaRef, node);
-        }}
-        value={value}
-        required={required}
-        rows={rows}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        onSelect={syncComposerStyle}
-        onKeyUp={syncComposerStyle}
-        onClick={syncComposerStyle}
-        onFocus={captureSelection}
-        className={cn(
-          "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
-          (expanded || fill) && "h-auto min-h-0 flex-1",
-        )}
-      />
+      <div className="shrink-0 space-y-2">
+        {header ? <div className="space-y-2">{header}</div> : null}
+        <NoteAttachmentEditorList markdown={value} onChange={onChange} />
+      </div>
+      <div className={cn("flex min-h-0 flex-col overflow-hidden", pinned && "min-h-0 flex-1")}>
+        <Textarea
+          id={id}
+          ref={(node) => {
+            areaRef.current = node;
+            assignRef(textareaRef, node);
+          }}
+          value={value}
+          required={required}
+          rows={rows}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          onSelect={syncComposerStyle}
+          onKeyUp={syncComposerStyle}
+          onClick={syncComposerStyle}
+          onFocus={captureSelection}
+          className={cn(
+            "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
+            pinned ? "min-h-0 flex-1" : "min-h-[6rem] max-h-[40vh]",
+          )}
+        />
+      </div>
       <div className="shrink-0 space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] font-medium text-muted-foreground">Highlight preview</p>
