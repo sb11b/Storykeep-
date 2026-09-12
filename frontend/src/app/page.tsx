@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { LibraryApp } from "@/components/library-app";
+import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
 import type { User } from "@/lib/types";
 
@@ -16,7 +17,10 @@ export default function HomePage() {
     if (pathname !== "/") return;
     api
       .me()
-      .then(setUser)
+      .then((next) => {
+        applyAppearanceFromUser(next);
+        setUser(next);
+      })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
           router.replace("/login");
@@ -45,5 +49,13 @@ export default function HomePage() {
     );
   }
 
-  return <LibraryApp user={user} onUserChange={setUser} />;
+  return (
+    <LibraryApp
+      user={user}
+      onUserChange={(next) => {
+        applyAppearanceFromUser(next);
+        setUser(next);
+      }}
+    />
+  );
 }

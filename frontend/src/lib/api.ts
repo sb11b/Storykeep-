@@ -102,6 +102,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  updatePreferences: (payload: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/v1/preferences", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   changePassword: (payload: { current_password: string; new_password: string; confirm_password: string }) =>
     request<{ ok: boolean }>("/api/v1/auth/change-password", {
       method: "POST",

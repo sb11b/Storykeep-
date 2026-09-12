@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowLeft, Camera, Loader2 } from "lucide-react";
+import { appearanceFromPreferences, type AppearanceSettings } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
 import type { Profile, TotpSetup } from "@/lib/types";
+import { ProfileAppearancePanel } from "@/components/profile-appearance-panel";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,6 +47,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const [disableTotpCode, setDisableTotpCode] = useState("");
   const [busy2fa, setBusy2fa] = useState(false);
+  const [section, setSection] = useState<"profile" | "appearance">("profile");
+  const [appearance, setAppearance] = useState<AppearanceSettings>(() => appearanceFromPreferences(undefined));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,6 +57,7 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
       setProfile(data);
       setDisplayName(data.display_name || "");
       setBirthdate(data.birthdate || "");
+      setAppearance(appearanceFromPreferences(data.preferences));
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         router.replace("/login");
@@ -239,10 +244,14 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
             <ArrowLeft className="size-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">Profile</h1>
-            <p className="truncate text-sm text-muted-foreground">Account settings and sign-in security</p>
+            <h1 className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">
+              {section === "profile" ? "Profile" : "Appearance"}
+            </h1>
+            <p className="truncate text-sm text-muted-foreground">
+              {section === "profile" ? "Account settings and sign-in security" : "Theme colors and typography"}
+            </p>
           </div>
-          {!readOnly ? (
+          {section === "profile" && !readOnly ? (
             <Button type="button" size="sm" onClick={() => void saveProfile()} disabled={savingProfile}>
               {savingProfile ? "Saving…" : "Save profile"}
             </Button>
@@ -250,14 +259,56 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]">
-        <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-10">
-        {readOnly ? (
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <nav className="flex w-36 shrink-0 flex-col gap-1 border-r border-border/80 bg-muted/20 p-3">
+          <button
+            type="button"
+            className={cn(
+              "rounded-md px-3 py-2 text-left text-sm transition-colors",
+              section === "profile" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:bg-background/70",
+            )}
+            onClick={() => setSection("profile")}
+          >
+            Profile
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded-md px-3 py-2 text-left text-sm transition-colors",
+              section === "appearance" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:bg-background/70",
+            )}
+            onClick={() => setSection("appearance")}
+          >
+            Appearance
+          </button>
+        </nav>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]">
+          <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-10">
+        {section === "appearance" ? (
+          <ProfileAppearancePanel
+            appearance={appearance}
+            readOnly={readOnly}
+            onChange={setAppearance}
+            onSaved={(preferences) => {
+              setProfile((current) => {
+                if (!current) return current;
+                const next = { ...current, preferences };
+                onUpdated?.(next);
+                return next;
+              });
+            }}
+          />
+        ) : null}
+
+        {section === "profile" && readOnly ? (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Demo account profile is read-only.
           </p>
         ) : null}
 
+        {section === "profile" ? (
+        <>
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
@@ -420,6 +471,9 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
             </Card>
           </>
         ) : null}
+        </>
+        ) : null}
+          </div>
         </div>
       </div>
     </div>

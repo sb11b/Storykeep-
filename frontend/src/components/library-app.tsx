@@ -69,6 +69,7 @@ import {
 } from "@/lib/format";
 import { clearFindMarks, findMarksInArticle, focusFindMark } from "@/lib/article-find";
 import {
+  listRemovesOnRead,
   listShowsUnreadOnly,
   nextRowIndex,
   pickAdvanceTarget,
@@ -249,6 +250,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const loadingMoreRef = useRef(false);
   const listScrollerRef = useRef<ShelfScrollerHandle>(null);
   const listFeedKeyRef = useRef<string>(shelfKey(shelf));
+  const loadListRef = useRef<(() => Promise<void>) | null>(null);
   const [listEpoch, setListEpoch] = useState(0);
   const [listFirstOffset, setListFirstOffset] = useState(0);
   const [listFirstPage, setListFirstPage] = useState(1);
@@ -318,7 +320,17 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       setArticle(preview);
       void loadArticleById(id, preview);
       if (item.is_read) return;
-      setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: true } : row)));
+      const removeFromList = listRemovesOnRead(shelf);
+      if (removeFromList) {
+        setItems((current) => {
+          const next = current.filter((row) => row.id !== id);
+          itemsRef.current = next;
+          return next;
+        });
+        setTotal((count) => Math.max(0, count - 1));
+      } else {
+        setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: true } : row)));
+      }
       void api
         .patchArticle(id, { is_read: true })
         .then((next) => {
@@ -326,16 +338,20 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           setArticle((current) =>
             current && current.id === id ? { ...current, is_read: next.is_read, read_at: next.read_at } : current,
           );
-          setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: next.is_read } : row)));
+          if (!removeFromList) {
+            setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)));
+          }
           void loadNav();
         })
         .catch(() => {
-          if (!item.is_read) {
+          if (removeFromList) {
+            void loadListRef.current?.();
+          } else {
             setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: false } : row)));
           }
         });
     },
-    [loadArticleById, loadNav],
+    [loadArticleById, loadNav, shelf],
   );
 
   const openArticle = useCallback(
@@ -427,6 +443,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       if (gen === listGenRef.current) setLoadingList(false);
     }
   }, [fetchShelfPage]);
+  loadListRef.current = loadList;
 
   const loadMore = useCallback(async () => {
     if (!firstPageReadyRef.current || loadingMoreRef.current || loadingList) return;
@@ -524,41 +541,51 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         if (delta > 0 && index >= 0 && selectedIdRef.current) {
           const currentId = selectedIdRef.current;
           const current = list[index];
-          const removeFromList = listShowsUnreadOnly(shelf, unreadOnlyFilter);
+          const queueRemovesOnRead = listRemovesOnRead(shelf);
+          const markingRead = !current.is_read;
+          const shouldRemove = queueRemovesOnRead && markingRead;
 
-          if (!current.is_read) {
+          if (markingRead) {
             setArticle((row) => (row?.id === currentId ? { ...row, is_read: true } : row));
             void api
               .patchArticle(currentId, { is_read: true })
               .then((next) => {
-                setItems((rows) =>
-                  rows.map((row) => (row.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)),
-                );
+                if (!shouldRemove) {
+                  setItems((rows) =>
+                    rows.map((row) => (row.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)),
+                  );
+                }
                 if (selectedIdRef.current === currentId) {
                   setArticle((row) => (row?.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row));
                 }
                 void loadNav();
               })
               .catch(() => {
-                setItems((rows) => rows.map((row) => (row.id === currentId ? { ...row, is_read: false } : row)));
-                if (selectedIdRef.current === currentId) {
-                  setArticle((row) => (row?.id === currentId ? { ...row, is_read: false } : row));
+                if (shouldRemove) {
+                  void loadListRef.current?.();
+                } else {
+                  setItems((rows) => rows.map((row) => (row.id === currentId ? { ...row, is_read: false } : row)));
+                  if (selectedIdRef.current === currentId) {
+                    setArticle((row) => (row?.id === currentId ? { ...row, is_read: false } : row));
+                  }
                 }
               });
           }
 
-          let updatedList = removeFromList
+          let updatedList = shouldRemove
             ? list.filter((row) => row.id !== currentId)
-            : list.map((row) => (row.id === currentId ? { ...row, is_read: true } : row));
+            : markingRead
+              ? list.map((row) => (row.id === currentId ? { ...row, is_read: true } : row))
+              : list;
           itemsRef.current = updatedList;
           setItems(updatedList);
-          const nextTotal = removeFromList ? Math.max(0, totalRef.current - 1) : totalRef.current;
-          if (removeFromList) {
+          const nextTotal = shouldRemove ? Math.max(0, totalRef.current - 1) : totalRef.current;
+          if (shouldRemove) {
             setTotal(nextTotal);
           }
 
-          let target = pickAdvanceTarget(updatedList, index, removeFromList);
-          const targetIndex = nextRowIndex(index, removeFromList);
+          let target = pickAdvanceTarget(updatedList, index, shouldRemove);
+          const targetIndex = nextRowIndex(index, shouldRemove);
           if (!target && updatedList.length < nextTotal) {
             await loadMore();
             updatedList = itemsRef.current;
@@ -583,7 +610,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         if (next) openArticle(next.id);
       })();
     },
-    [clearReaderSelection, loadMore, loadNav, openArticle, shelf, unreadOnlyFilter],
+    [clearReaderSelection, loadMore, loadNav, openArticle, shelf],
   );
 
   useEffect(() => {

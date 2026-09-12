@@ -426,7 +426,13 @@ def put_preferences(
     payload: PreferencesIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> dict:
     current = dict(user.preferences or {})
-    current.update({k: v for k, v in payload.model_dump().items() if v is not None})
+    data = payload.model_dump(exclude_none=True)
+    appearance = data.pop("appearance", None)
+    current.update(data)
+    if appearance:
+        merged = dict(current.get("appearance") or {})
+        merged.update(appearance)
+        current["appearance"] = merged
     user.preferences = current
     db.add(user)
     db.commit()

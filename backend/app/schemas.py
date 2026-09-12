@@ -542,10 +542,22 @@ class BackupOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AppearancePreferencesIn(BaseModel):
+    page_preset: str | None = None
+    rail_preset: str | None = None
+    topbar_preset: str | None = None
+    page_custom: str | None = None
+    rail_custom: str | None = None
+    topbar_custom: str | None = None
+    font_family: str | None = None
+    base_font_size: str | None = None
+
+
 class PreferencesIn(BaseModel):
     theme: str | None = None
     items_per_page: int | None = Field(default=None, ge=10, le=200)
     mark_read_on_open: bool | None = None
+    appearance: AppearancePreferencesIn | None = None
 
 
 class StatsOut(BaseModel):

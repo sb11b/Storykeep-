@@ -49,6 +49,7 @@
 }
 
 :root {
+  --storykeep-body-font: var(--font-sans), ui-sans-serif, sans-serif;
   --background: oklch(0.965 0.018 88);
   --foreground: oklch(0.24 0.02 55);
   --card: oklch(0.985 0.01 88);
@@ -154,9 +155,10 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--storykeep-body-font);
   }
   html {
-    @apply font-sans;
+    font-family: var(--storykeep-body-font);
   }
   mark {
     background: #fde68a;
@@ -166,7 +168,7 @@
 }
 
 .article-body {
-  font-family: var(--font-serif), ui-serif, Georgia, serif;
+  font-family: var(--storykeep-body-font, var(--font-serif), ui-serif, Georgia, serif);
   font-size: 1.125rem;
   line-height: 1.75;
 }
