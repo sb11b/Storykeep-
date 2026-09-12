@@ -1,23 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { LoaderCircle, Maximize2, Minimize2, Send, Sparkles, X } from "lucide-react";
-import { GrokChatMessage } from "@/components/grok-chat-message";
-import { toast } from "sonner";
+import { Maximize2, Plus, Sparkles, X } from "lucide-react";
+import { createGrokPane, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { ApiError, api } from "@/lib/api";
-import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-
-type ChatRole = "user" | "assistant";
-type ChatLine = { id: string; role: ChatRole; content: string };
-type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
 const PANEL_KEY = "storykeep-grok-panel";
 const DEFAULT_PANEL = { w: 380, h: 520 };
+const MAX_PANES = 4;
 
 function loadPoint(key: string, fallback: { x: number; y: number }) {
   try {
@@ -45,20 +39,15 @@ function loadSize() {
   return DEFAULT_PANEL;
 }
 
-function isComposedNote(guid?: string | null) {
-  return Boolean(guid?.startsWith("storykeep-note:"));
+function paneGridStyle(count: number): CSSProperties {
+  if (count <= 1) return { gridTemplateColumns: "1fr", gridTemplateRows: "1fr" };
+  if (count === 2) return { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr" };
+  return { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
 }
 
-function titleFromReply(reply: string) {
-  const line = reply.trim().split("\n").find((item) => item.trim()) || "Grok note";
-  return line.replace(/^#+\s*/, "").replace(/^["“]+|["”]+$/g, "").slice(0, 80) || "Grok note";
-}
-
-function noteMarkdown(reply: string, articleTitle: string | null, sourceRef: string | null) {
-  const heading = titleFromReply(reply);
-  const source = articleTitle || sourceRef;
-  if (!source) return `# ${heading}\n\n${reply.trim()}`;
-  return `# ${heading}\n\nAbout: ${source}${sourceRef ? `\nPath: ${sourceRef}` : ""}\n\n${reply.trim()}`;
+function paneCellStyle(count: number, index: number): CSSProperties | undefined {
+  if (count === 3 && index === 2) return { gridColumn: "1 / span 2" };
+  return undefined;
 }
 
 export function GrokBubble({
@@ -75,7 +64,7 @@ export function GrokBubble({
   articleGuid?: string | null;
   sourceRef?: string | null;
   articleBody?: string | null;
-  onSavedNote: (noteId?: string, destination?: GrokNoteDestination) => Promise<void>;
+  onSavedNote: (noteId?: string, destination?: "notes" | "schoolwork") => Promise<void>;
   onStopArticleListen?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -83,11 +72,8 @@ export function GrokBubble({
   const [fullscreen, setFullscreen] = useState(false);
   const [pos, setPos] = useState({ x: 24, y: 24 });
   const [size, setSize] = useState(DEFAULT_PANEL);
-  const [messages, setMessages] = useState<ChatLine[]>([]);
-  const [draft, setDraft] = useState("");
-  const [includeArticle, setIncludeArticle] = useState(true);
-  const [noteDest, setNoteDest] = useState<GrokNoteDestination>("notes");
-  const [busy, setBusy] = useState(false);
+  const [panes, setPanes] = useState<GrokPaneState[]>(() => [createGrokPane()]);
+  const [focusedPaneId, setFocusedPaneId] = useState<string>(() => panes[0]!.id);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -96,8 +82,9 @@ export function GrokBubble({
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
   const movedRef = useRef(false);
   const resizeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const focusedPane = panes.find((pane) => pane.id === focusedPaneId) ?? panes[0]!;
 
   useEffect(() => {
     setMounted(true);
@@ -134,12 +121,18 @@ export function GrokBubble({
   }, [mounted, size]);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages, open]);
+    if (!panes.some((pane) => pane.id === focusedPaneId)) {
+      setFocusedPaneId(panes[0]?.id ?? focusedPaneId);
+    }
+  }, [focusedPaneId, panes]);
 
-  useEffect(() => {
-    setIncludeArticle(Boolean(articleId));
-  }, [articleId]);
+  const exitFullscreen = useCallback(() => {
+    setPanes((current) => {
+      const keep = current.find((pane) => pane.id === focusedPaneId) ?? current[0];
+      return keep ? [keep] : [createGrokPane()];
+    });
+    setFullscreen(false);
+  }, [focusedPaneId]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -154,7 +147,7 @@ export function GrokBubble({
           return;
         }
         if (fullscreen) {
-          setFullscreen(false);
+          exitFullscreen();
           return;
         }
         setOpen(false);
@@ -168,7 +161,7 @@ export function GrokBubble({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [fullscreen, listening, open]);
+  }, [exitFullscreen, fullscreen, listening, open]);
 
   function handleActivateListen(stop: (() => void) | null) {
     activeListenStopRef.current = stop;
@@ -176,29 +169,56 @@ export function GrokBubble({
   }
 
   function closePanel() {
-    setFullscreen(false);
+    exitFullscreen();
     setOpen(false);
   }
 
   function toggleFullscreen() {
-    setFullscreen((current) => !current);
-  }
-
-  const onPointerMove = useCallback((event: PointerEvent) => {
-    if (fullscreen) return;
-    if (resizeRef.current) {
-      const nextW = Math.min(window.innerWidth - 24, Math.max(300, resizeRef.current.w + (event.clientX - resizeRef.current.x)));
-      const nextH = Math.min(window.innerHeight - 24, Math.max(320, resizeRef.current.h + (event.clientY - resizeRef.current.y)));
-      setSize({ w: nextW, h: nextH });
+    if (fullscreen) {
+      exitFullscreen();
       return;
     }
-    const drag = dragRef.current;
-    if (!drag) return;
-    const x = Math.min(window.innerWidth - 48, Math.max(8, event.clientX - drag.dx));
-    const y = Math.min(window.innerHeight - 48, Math.max(8, event.clientY - drag.dy));
-    if (Math.abs(x - pos.x) > 3 || Math.abs(y - pos.y) > 3) movedRef.current = true;
-    setPos({ x, y });
-  }, [fullscreen, pos.x, pos.y]);
+    setFullscreen(true);
+  }
+
+  function addPane() {
+    if (locked || panes.length >= MAX_PANES) return;
+    const next = createGrokPane();
+    setPanes((current) => [...current, next]);
+    setFocusedPaneId(next.id);
+  }
+
+  function removePane(id: string) {
+    setPanes((current) => {
+      const next = current.filter((pane) => pane.id !== id);
+      const result = next.length ? next : [createGrokPane()];
+      setFocusedPaneId((focused) => (focused === id ? result[0]!.id : focused));
+      return result;
+    });
+  }
+
+  function updatePane(id: string, updater: (pane: GrokPaneState) => GrokPaneState) {
+    setPanes((current) => current.map((pane) => (pane.id === id ? updater(pane) : pane)));
+  }
+
+  const onPointerMove = useCallback(
+    (event: PointerEvent) => {
+      if (fullscreen) return;
+      if (resizeRef.current) {
+        const nextW = Math.min(window.innerWidth - 24, Math.max(300, resizeRef.current.w + (event.clientX - resizeRef.current.x)));
+        const nextH = Math.min(window.innerHeight - 24, Math.max(320, resizeRef.current.h + (event.clientY - resizeRef.current.y)));
+        setSize({ w: nextW, h: nextH });
+        return;
+      }
+      const drag = dragRef.current;
+      if (!drag) return;
+      const x = Math.min(window.innerWidth - 48, Math.max(8, event.clientX - drag.dx));
+      const y = Math.min(window.innerHeight - 48, Math.max(8, event.clientY - drag.dy));
+      if (Math.abs(x - pos.x) > 3 || Math.abs(y - pos.y) > 3) movedRef.current = true;
+      setPos({ x, y });
+    },
+    [fullscreen, pos.x, pos.y],
+  );
 
   const onPointerUp = useCallback(() => {
     dragRef.current = null;
@@ -213,60 +233,6 @@ export function GrokBubble({
       window.removeEventListener("pointerup", onPointerUp);
     };
   }, [onPointerMove, onPointerUp]);
-
-  async function send() {
-    const content = draft.trim();
-    if (!content || busy || !enabled) return;
-    const userLine: ChatLine = { id: crypto.randomUUID(), role: "user", content };
-    const assistantId = crypto.randomUUID();
-    const nextMessages = [...messages, userLine];
-    setMessages([...nextMessages, { id: assistantId, role: "assistant", content: "" }]);
-    setDraft("");
-    setBusy(true);
-    try {
-      await api.streamChat(
-        {
-          messages: nextMessages.map((item) => ({ role: item.role, content: item.content })),
-          article_id: articleId,
-          include_article: Boolean(includeArticle && articleId),
-        },
-        (delta) => {
-          setMessages((current) =>
-            current.map((item) => (item.id === assistantId ? { ...item, content: item.content + delta } : item)),
-          );
-        },
-      );
-    } catch (error) {
-      const detail = error instanceof ApiError ? error.message : "Grok did not reply";
-      setMessages((current) =>
-        current.map((item) => (item.id === assistantId ? { ...item, content: item.content || detail } : item)),
-      );
-      toast.error(detail.trim() || "Grok did not reply");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addToNotes(content: string) {
-    const body = content.trim();
-    if (!body) return;
-    try {
-      if (articleId && isComposedNote(articleGuid)) {
-        const existing = (articleBody || "").trim();
-        const next = existing ? `${existing}\n\n## Grok\n\n${body}` : body;
-        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next);
-        toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
-        await onSavedNote(articleId, noteDest);
-        return;
-      }
-      const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
-      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"], noteDest);
-      toast.success(`Saved to StoryKeep/${DESTINATION_LABEL[noteDest]}.`);
-      await onSavedNote(article.id, noteDest);
-    } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not save that note");
-    }
-  }
 
   if (!mounted) return null;
 
@@ -291,15 +257,19 @@ export function GrokBubble({
 
   const panelLeft = Math.min(pos.x, window.innerWidth - size.w - 8);
   const panelTop = Math.min(pos.y, window.innerHeight - size.h - 8);
+  const subtitle =
+    focusedPane.includeArticle && articleTitle
+      ? `Connected: ${articleTitle}`
+      : articleTitle
+        ? "Thread only (article not included)"
+        : "School coding help";
 
   const panel = (
     <div
       ref={panelRef}
       className={cn(
         "fixed flex flex-col overflow-hidden border bg-popover text-popover-foreground shadow-xl",
-        fullscreen
-          ? "inset-0 z-[90] h-[100dvh] w-[100vw] rounded-none"
-          : "z-[80] rounded-xl",
+        fullscreen ? "inset-0 z-[90] h-[100dvh] w-[100vw] rounded-none" : "z-[80] rounded-xl",
       )}
       style={
         fullscreen
@@ -326,26 +296,20 @@ export function GrokBubble({
         <Sparkles className="size-4 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium leading-none">Grok</p>
-          <p className="truncate text-[11px] text-muted-foreground">
-            {includeArticle && articleTitle
-              ? `Connected: ${articleTitle}`
-              : articleTitle
-                ? "General knowledge (article disconnected)"
-                : "School coding help"}
-          </p>
+          <p className="truncate text-[11px] text-muted-foreground">{fullscreen ? `${panes.length} pane${panes.length === 1 ? "" : "s"}` : subtitle}</p>
         </div>
+        {fullscreen && !locked && panes.length < MAX_PANES ? (
+          <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={addPane}>
+            <Plus className="size-3.5" />
+            Add Grok
+          </Button>
+        ) : null}
         {fullscreen ? (
-          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setFullscreen(false)}>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={exitFullscreen}>
             Exit full screen
           </Button>
         ) : (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={toggleFullscreen}
-            aria-label="Full screen"
-            title="Full screen (f)"
-          >
+          <Button size="icon-xs" variant="ghost" onClick={toggleFullscreen} aria-label="Full screen" title="Full screen (f)">
             <Maximize2 className="size-3.5" />
           </Button>
         )}
@@ -353,88 +317,60 @@ export function GrokBubble({
           <X className="size-3.5" />
         </Button>
       </div>
-      <label className="flex items-start gap-2 border-b px-3 py-2 text-xs leading-snug">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={includeArticle}
-          disabled={!articleId}
-          onChange={(event) => setIncludeArticle(event.target.checked)}
+
+      {fullscreen ? (
+        <div className="grid min-h-0 flex-1 gap-px bg-border" style={paneGridStyle(panes.length)}>
+          {panes.map((pane, index) => (
+            <div
+              key={pane.id}
+              className="min-h-0 overflow-hidden bg-popover"
+              style={paneCellStyle(panes.length, index)}
+            >
+              <GrokPane
+                pane={pane}
+                label={`Grok ${index + 1}`}
+                compact
+                focused={pane.id === focusedPaneId}
+                canRemove={panes.length > 1}
+                articleId={articleId}
+                articleTitle={articleTitle}
+                articleGuid={articleGuid}
+                sourceRef={sourceRef}
+                articleBody={articleBody}
+                enabled={Boolean(enabled)}
+                ttsEnabled={ttsEnabled}
+                locked={locked}
+                onFocus={() => setFocusedPaneId(pane.id)}
+                onUpdate={(updater) => updatePane(pane.id, updater)}
+                onRemove={() => removePane(pane.id)}
+                onSavedNote={onSavedNote}
+                onActivateListen={handleActivateListen}
+                onStopArticleListen={onStopArticleListen}
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <GrokPane
+          pane={focusedPane}
+          label="Grok"
+          articleId={articleId}
+          articleTitle={articleTitle}
+          articleGuid={articleGuid}
+          sourceRef={sourceRef}
+          articleBody={articleBody}
+          enabled={Boolean(enabled)}
+          ttsEnabled={ttsEnabled}
+          locked={locked}
+          onFocus={() => setFocusedPaneId(focusedPane.id)}
+          onUpdate={(updater) => updatePane(focusedPane.id, updater)}
+          onSavedNote={onSavedNote}
+          onActivateListen={handleActivateListen}
+          onStopArticleListen={onStopArticleListen}
         />
-        <span>
-          Connect to current article
-          {!articleId ? (
-            <span className="block text-[11px] text-muted-foreground">Open an article to connect Grok to it.</span>
-          ) : includeArticle ? (
-            <span className="block text-[11px] text-muted-foreground">Grok uses up to ~12k characters from this article.</span>
-          ) : (
-            <span className="block text-[11px] text-muted-foreground">
-              Unchecked — Grok answers from general knowledge, not the article.
-            </span>
-          )}
-        </span>
-      </label>
-      <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
-        {messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {includeArticle && articleId
-              ? "Ask about this article or school coding. Try dictating a Python question."
-              : "Ask for school coding help — explanations, debugging, or fenced code examples."}
-          </p>
-        ) : (
-          messages.map((item) => (
-            <GrokChatMessage
-              key={item.id}
-              id={item.id}
-              role={item.role}
-              content={item.content}
-              ttsAvailable={ttsEnabled && !locked}
-              noteDest={noteDest}
-              showNoteDest={!(articleId && isComposedNote(articleGuid)) && item.role === "assistant"}
-              onNoteDestChange={setNoteDest}
-              onAddToNotes={(body) => void addToNotes(body)}
-              onActivateListen={handleActivateListen}
-              onStopArticleListen={onStopArticleListen}
-            />
-          ))
-        )}
-      </div>
-      {locked ? (
-        <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-          Demo accounts cannot use chat, dictation, or Listen.
-        </p>
-      ) : enabled === false ? (
-        <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-          Chat is off until XAI_API_KEY is set on Railway. It never lives in the browser.
-        </p>
-      ) : null}
-      <form
-        className="flex gap-2 border-t p-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-      >
-        <Textarea
-          className="min-h-12 max-h-28 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder={
-            includeArticle && articleId ? "Ask about this article or school coding…" : "Ask Grok for school coding help…"
-          }
-          disabled={!enabled}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <Button type="submit" size="icon" disabled={busy || !draft.trim() || !enabled} aria-label="Send">
-          {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
-        </Button>
-      </form>
-      {fullscreen ? null : (
+      )}
+
+      {!fullscreen ? (
         <button
           type="button"
           className="absolute bottom-1 right-1 size-4 cursor-se-resize"
@@ -446,7 +382,7 @@ export function GrokBubble({
         >
           <Maximize2 className="size-3 text-muted-foreground" />
         </button>
-      )}
+      ) : null}
     </div>
   );
 
