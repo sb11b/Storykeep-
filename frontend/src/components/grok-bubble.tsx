@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Copy, LoaderCircle, Maximize2, NotebookPen, Send, Sparkles, X } from "lucide-react";
+import { Copy, LoaderCircle, Maximize2, Minimize2, NotebookPen, Send, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -81,6 +81,7 @@ export function GrokBubble({
 }) {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [pos, setPos] = useState({ x: 24, y: 24 });
   const [size, setSize] = useState(DEFAULT_PANEL);
   const [messages, setMessages] = useState<ChatLine[]>([]);
@@ -94,6 +95,7 @@ export function GrokBubble({
   const movedRef = useRef(false);
   const resizeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -135,16 +137,40 @@ export function GrokBubble({
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || !open) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen(false);
+      if (!open) return;
+      const target = event.target as HTMLElement | null;
+      const inPanel = Boolean(panelRef.current && target && panelRef.current.contains(target));
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (fullscreen) {
+          setFullscreen(false);
+          return;
+        }
+        setOpen(false);
+        return;
+      }
+      if (event.key === "f" && !event.metaKey && !event.ctrlKey && !event.altKey && inPanel) {
+        if (target?.closest("textarea, input, select, [contenteditable='true']")) return;
+        event.preventDefault();
+        setFullscreen((current) => !current);
+      }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open]);
+  }, [fullscreen, open]);
+
+  function closePanel() {
+    setFullscreen(false);
+    setOpen(false);
+  }
+
+  function toggleFullscreen() {
+    setFullscreen((current) => !current);
+  }
 
   const onPointerMove = useCallback((event: PointerEvent) => {
+    if (fullscreen) return;
     if (resizeRef.current) {
       const nextW = Math.min(window.innerWidth - 24, Math.max(300, resizeRef.current.w + (event.clientX - resizeRef.current.x)));
       const nextH = Math.min(window.innerHeight - 24, Math.max(320, resizeRef.current.h + (event.clientY - resizeRef.current.y)));
@@ -157,7 +183,7 @@ export function GrokBubble({
     const y = Math.min(window.innerHeight - 48, Math.max(8, event.clientY - drag.dy));
     if (Math.abs(x - pos.x) > 3 || Math.abs(y - pos.y) > 3) movedRef.current = true;
     setPos({ x, y });
-  }, [pos.x, pos.y]);
+  }, [fullscreen, pos.x, pos.y]);
 
   const onPointerUp = useCallback(() => {
     dragRef.current = null;
@@ -248,14 +274,36 @@ export function GrokBubble({
     </button>
   );
 
+  const panelLeft = Math.min(pos.x, window.innerWidth - size.w - 8);
+  const panelTop = Math.min(pos.y, window.innerHeight - size.h - 8);
+
   const panel = (
     <div
-      className="fixed z-[80] flex flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl"
-      style={{ left: Math.min(pos.x, window.innerWidth - size.w - 8), top: Math.min(pos.y, window.innerHeight - size.h - 8), width: size.w, height: size.h }}
+      ref={panelRef}
+      className={cn(
+        "fixed flex flex-col overflow-hidden border bg-popover text-popover-foreground shadow-xl",
+        fullscreen
+          ? "inset-0 z-[90] h-[100dvh] w-[100vw] rounded-none"
+          : "z-[80] rounded-xl",
+      )}
+      style={
+        fullscreen
+          ? undefined
+          : {
+              left: panelLeft,
+              top: panelTop,
+              width: size.w,
+              height: size.h,
+            }
+      }
     >
       <div
-        className="flex cursor-grab items-center gap-2 border-b px-3 py-2 active:cursor-grabbing"
+        className={cn(
+          "flex shrink-0 items-center gap-2 border-b px-3 py-2",
+          fullscreen ? "cursor-default" : "cursor-grab active:cursor-grabbing",
+        )}
         onPointerDown={(event) => {
+          if (fullscreen) return;
           if ((event.target as HTMLElement).closest("button")) return;
           dragRef.current = { kind: "panel", dx: event.clientX - pos.x, dy: event.clientY - pos.y };
         }}
@@ -271,7 +319,22 @@ export function GrokBubble({
                 : "School coding help"}
           </p>
         </div>
-        <Button size="icon-xs" variant="ghost" onClick={() => setOpen(false)} aria-label="Close chat">
+        {fullscreen ? (
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setFullscreen(false)}>
+            Exit full screen
+          </Button>
+        ) : (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={toggleFullscreen}
+            aria-label="Full screen"
+            title="Full screen (f)"
+          >
+            <Maximize2 className="size-3.5" />
+          </Button>
+        )}
+        <Button size="icon-xs" variant="ghost" onClick={closePanel} aria-label="Close chat">
           <X className="size-3.5" />
         </Button>
       </div>
@@ -392,19 +455,27 @@ export function GrokBubble({
           {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
         </Button>
       </form>
-      <button
-        type="button"
-        className="absolute bottom-1 right-1 size-4 cursor-se-resize"
-        aria-label="Resize chat"
-        onPointerDown={(event) => {
-          event.preventDefault();
-          resizeRef.current = { x: event.clientX, y: event.clientY, w: size.w, h: size.h };
-        }}
-      >
-        <Maximize2 className="size-3 text-muted-foreground" />
-      </button>
+      {fullscreen ? null : (
+        <button
+          type="button"
+          className="absolute bottom-1 right-1 size-4 cursor-se-resize"
+          aria-label="Resize chat"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            resizeRef.current = { x: event.clientX, y: event.clientY, w: size.w, h: size.h };
+          }}
+        >
+          <Maximize2 className="size-3 text-muted-foreground" />
+        </button>
+      )}
     </div>
   );
 
-  return createPortal(open ? panel : bubble, document.body);
+  return createPortal(
+    <>
+      {!open ? bubble : null}
+      {open ? panel : null}
+    </>,
+    document.body,
+  );
 }
