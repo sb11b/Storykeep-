@@ -9,6 +9,7 @@ from app.services.tts import (
     is_composed_note,
     note_source_markdown,
     script_digest,
+    section_start_words,
     speech_plain,
     spoken_title,
     word_count,
@@ -88,6 +89,20 @@ class SpeechPlainTests(unittest.TestCase):
         self.assertIn("Congress moved Tuesday", script)
         self.assertNotIn("box-sizing", script)
         self.assertNotIn("widget", script)
+
+    def test_section_start_words_skip_title_then_accumulate(self):
+        note = SimpleNamespace(
+            title="Course notes",
+            guid="storykeep-note:abc",
+            content_text="# Intro\nFirst paragraph.\n\n# Chapter two\nSecond part continues.",
+            content_html="",
+            summary="",
+            overlay_additions=[],
+        )
+        starts = section_start_words(note)
+        self.assertEqual(starts["0"], word_count(spoken_title(note.title)))
+        intro_words = word_count(speech_plain("# Intro\nFirst paragraph."))
+        self.assertEqual(starts["1"], starts["0"] + intro_words)
 
     def test_include_notes_appends_overlay_notes_without_changing_article_body(self):
         article = SimpleNamespace(

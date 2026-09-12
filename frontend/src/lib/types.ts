@@ -224,7 +224,7 @@ export type TtsPlan = {
   long: boolean;
   content_hash: string;
   cached_chunks: number;
-  sections: { id: string; title: string; chars: number }[];
+  sections: { id: string; title: string; chars: number; word_offset: number }[];
   source_kind?: string;
   include_notes?: boolean;
   note_count?: number;

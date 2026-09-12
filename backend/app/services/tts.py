@@ -129,6 +129,18 @@ def article_script(
     return script
 
 
+def section_start_words(article: Article) -> dict[str, int]:
+    """Word index in the full spoken script where each markdown section begins."""
+    sections = body_sections(article)
+    title = spoken_title(article.title)
+    offset = word_count(title) if title else 0
+    starts: dict[str, int] = {}
+    for section in sections:
+        starts[section["id"]] = offset
+        offset += word_count(speech_plain(section["markdown"]))
+    return starts
+
+
 def body_sections(article: Article) -> list[dict[str, str]]:
     raw = note_source_markdown(article) if is_composed_note(article) else (article.content_text or "")
     if not raw.strip():

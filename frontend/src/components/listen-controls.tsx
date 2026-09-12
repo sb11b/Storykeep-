@@ -27,15 +27,8 @@ type SpeechPayload = {
 
 const speechMemory = new Map<string, SpeechPayload>();
 
-function memoryKey(
-  articleId: string,
-  voice: string,
-  chunk: number,
-  section: string | null,
-  includeNotes: boolean,
-  contentHash: string,
-) {
-  return `${articleId}:${contentHash || "pending"}:${voice}:${section || "full"}:${includeNotes ? "notes" : "body"}:${chunk}`;
+function memoryKey(articleId: string, voice: string, chunk: number, includeNotes: boolean, contentHash: string) {
+  return `${articleId}:${contentHash || "pending"}:${voice}:${includeNotes ? "notes" : "body"}:${chunk}`;
 }
 
 function rememberSpeech(key: string, data: SpeechPayload) {
@@ -124,10 +117,9 @@ export const ListenControls = forwardRef<
   const countsRef = useRef<number[]>([]);
   const timestampsValidRef = useRef(false);
   const followToastShownRef = useRef(false);
-  const sectionRef = useRef<string | null>(null);
   const confirmRef = useRef(false);
   const [planOpen, setPlanOpen] = useState(false);
-  const [plan, setPlan] = useState<{ chars: number; sections: { id: string; title: string; chars: number }[] } | null>(null);
+  const [plan, setPlan] = useState<import("@/lib/types").TtsPlan | null>(null);
   const pendingWordRef = useRef(0);
   const includeNotesRef = useRef(includeNotes);
   const contentHashRef = useRef("");
@@ -281,7 +273,6 @@ export const ListenControls = forwardRef<
     countsRef.current = [];
     timestampsValidRef.current = false;
     followToastShownRef.current = false;
-    sectionRef.current = null;
     confirmRef.current = false;
     contentHashRef.current = "";
     const audio = new Audio();
@@ -306,17 +297,15 @@ export const ListenControls = forwardRef<
 
   const loadChunk = useCallback(
     async (index: number, voice: string) => {
-      const section = sectionRef.current;
-      const key = memoryKey(articleId, voice, index, section, includeNotesRef.current, contentHashRef.current);
+      const key = memoryKey(articleId, voice, index, includeNotesRef.current, contentHashRef.current);
       const hit = speechMemory.get(key);
       if (hit) return hit;
       const data = await api.articleSpeech(articleId, voice, index, {
         confirm: confirmRef.current,
-        section,
         includeNotes: includeNotesRef.current,
       });
       if (data.contentHash) contentHashRef.current = data.contentHash;
-      rememberSpeech(memoryKey(articleId, voice, index, section, includeNotesRef.current, contentHashRef.current), data);
+      rememberSpeech(memoryKey(articleId, voice, index, includeNotesRef.current, contentHashRef.current), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
       return data;
     },
@@ -373,7 +362,7 @@ export const ListenControls = forwardRef<
       const alreadyLoaded = loadedChunkRef.current === index && loadedVoiceRef.current === voice && Boolean(audio.src);
       if (alreadyLoaded && wordsRef.current.length) {
         const cached = speechMemory.get(
-          memoryKey(articleId, voice, index, sectionRef.current, includeNotesRef.current, contentHashRef.current),
+          memoryKey(articleId, voice, index, includeNotesRef.current, contentHashRef.current),
         );
         const total = cached?.chunks ?? 1;
         attachEnded(total);
@@ -412,18 +401,19 @@ export const ListenControls = forwardRef<
   );
 
   const startAtWord = useCallback(
-    async (wordIndex: number, opts?: { confirm?: boolean; section?: string | null }) => {
+    async (wordIndex: number, opts?: { confirm?: boolean }) => {
       if (!hasText) {
         toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
         return;
       }
       const voice = voiceRef.current;
-      if (opts?.confirm) confirmRef.current = true;
-      if (opts?.section !== undefined) {
-        sectionRef.current = opts.section;
+      if (opts?.confirm) {
+        confirmRef.current = true;
         countsRef.current = [];
+        loadedChunkRef.current = null;
+        loadedVoiceRef.current = null;
       }
-      if (!confirmRef.current && !sectionRef.current) {
+      if (!confirmRef.current) {
         try {
           const nextPlan = await api.ttsPlan(articleId, voice, { includeNotes: includeNotesRef.current });
           if (nextPlan.content_hash) contentHashRef.current = nextPlan.content_hash;
@@ -604,12 +594,14 @@ export const ListenControls = forwardRef<
         <DialogHeader>
           <DialogTitle>This note is long to speak</DialogTitle>
           <DialogDescription>
-            About {plan ? plan.chars.toLocaleString() : ""} characters. Confirm a full listen, or speak one chapter. Audio is
-            cached until this listen ends or 24 hours pass.
+            About {plan ? plan.chars.toLocaleString() : ""} characters. StoryKeep reads the full note in order. Confirm to
+            start, or jump to a chapter heading and continue through the rest. Audio is cached until this listen ends or 24
+            hours pass.
           </DialogDescription>
         </DialogHeader>
         {plan && plan.sections.length > 1 ? (
           <div className="max-h-40 space-y-1 overflow-y-auto">
+            <p className="px-1 text-[11px] text-muted-foreground">Jump to chapter (reads through the end)</p>
             {plan.sections.map((section) => (
               <Button
                 key={section.id}
@@ -619,7 +611,7 @@ export const ListenControls = forwardRef<
                 className="w-full justify-start"
                 onClick={() => {
                   setPlanOpen(false);
-                  void startAtWord(0, { section: section.id });
+                  void startAtWord(section.word_offset ?? 0, { confirm: true });
                 }}
               >
                 {section.title}
@@ -636,10 +628,10 @@ export const ListenControls = forwardRef<
             type="button"
             onClick={() => {
               setPlanOpen(false);
-              void startAtWord(pendingWordRef.current, { confirm: true, section: null });
+              void startAtWord(pendingWordRef.current, { confirm: true });
             }}
           >
-            Listen to all
+            {pendingWordRef.current > 0 ? "Listen from here" : "Listen to full note"}
           </Button>
         </DialogFooter>
       </DialogContent>

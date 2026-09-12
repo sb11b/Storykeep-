@@ -457,11 +457,10 @@ export const api = {
     id: string,
     voiceId: string,
     chunk = 0,
-    opts?: { confirm?: boolean; section?: string | null; includeNotes?: boolean },
+    opts?: { confirm?: boolean; includeNotes?: boolean },
   ) => {
     const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
     if (opts?.confirm) search.set("confirm", "true");
-    if (opts?.section) search.set("section", opts.section);
     if (opts?.includeNotes) search.set("include_notes", "true");
     const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {
       credentials: "include",

@@ -76,6 +76,7 @@ def speech_plan(
     script = _speech_script(db, article, include_notes=include_notes)
     chunks = tts_service.split_chunks(script)
     digest = tts_service.script_digest(script, voice_id)
+    section_starts = tts_service.section_start_words(article)
     sections = []
     for section in tts_service.body_sections(article):
         spoken = tts_service.speech_plain(section["markdown"])
@@ -84,6 +85,7 @@ def speech_plan(
                 "id": section["id"],
                 "title": section["title"],
                 "chars": len(spoken),
+                "word_offset": section_starts.get(section["id"], 0),
             }
         )
     return {
@@ -126,11 +128,12 @@ def speak_article(
 ) -> dict:
     reject_locked(user)
     article = _owned_article(db, user, article_id)
-    script = _speech_script(db, article, include_notes=include_notes, section=section)
-    if len(script) > tts_service.LONG_SCRIPT_CHARS and not confirm and not section:
+    _ = section  # deprecated seek hint; full body is always synthesized
+    script = _speech_script(db, article, include_notes=include_notes)
+    if len(script) > tts_service.LONG_SCRIPT_CHARS and not confirm:
         raise HTTPException(
             status_code=412,
-            detail="This text is longer than 20,000 characters. Confirm the full listen, or choose one chapter.",
+            detail="This text is longer than 20,000 characters. Confirm to listen to the full note.",
         )
     chunks = tts_service.split_chunks(script)
     if not chunks:
