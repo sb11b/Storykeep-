@@ -68,6 +68,12 @@ import {
   stripHtml,
 } from "@/lib/format";
 import { clearFindMarks, findMarksInArticle, focusFindMark } from "@/lib/article-find";
+import {
+  listShowsUnreadOnly,
+  nextRowIndex,
+  pickAdvanceTarget,
+  shelfSupportsUnreadFilter,
+} from "@/lib/list-navigation";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
 import { noteMarkdownHtml } from "@/lib/markdown";
 import {
@@ -219,6 +225,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const [addOpen, setAddOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [unreadOnlyFilter, setUnreadOnlyFilter] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedToRemove, setFeedToRemove] = useState<Feed | null>(null);
   const [articleToDelete, setArticleToDelete] = useState<ArticleListItem | null>(null);
@@ -363,7 +370,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       };
     }
     const params: Record<string, string | number | boolean> = { limit: LIST_PAGE, offset };
-    if (shelf.kind === "unread") params.read = false;
+    if (listShowsUnreadOnly(shelf, unreadOnlyFilter)) params.read = false;
     if (shelf.kind === "saved") params.saved = true;
     if (shelf.kind === "starred") params.starred = true;
     if (shelf.kind === "vault") params.shelf = "vault";
@@ -384,7 +391,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     console.info("[StoryKeep] list fetch", { url, offset, page, firstPage, feed: shelfKey(shelf) });
     const result = await api.articles(params);
     return { items: result.items, total: result.total, offset, page, url };
-  }, [shelf]);
+  }, [shelf, unreadOnlyFilter]);
 
   const loadList = useCallback(async () => {
     const feed = shelfKey(shelf);
@@ -501,12 +508,71 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       });
   }, [loadNav, openArticle]);
 
+  const clearReaderSelection = useCallback(() => {
+    selectedIdRef.current = null;
+    setSelectedId(null);
+    setArticle(null);
+  }, []);
+
   const selectRelative = useCallback(
     (delta: number) => {
       void (async () => {
         let list = itemsRef.current;
         if (!list.length) return;
         const index = selectedIdRef.current ? list.findIndex((item) => item.id === selectedIdRef.current) : -1;
+
+        if (delta > 0 && index >= 0 && selectedIdRef.current) {
+          const currentId = selectedIdRef.current;
+          const current = list[index];
+          const removeFromList = listShowsUnreadOnly(shelf, unreadOnlyFilter);
+
+          if (!current.is_read) {
+            setArticle((row) => (row?.id === currentId ? { ...row, is_read: true } : row));
+            void api
+              .patchArticle(currentId, { is_read: true })
+              .then((next) => {
+                setItems((rows) =>
+                  rows.map((row) => (row.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)),
+                );
+                if (selectedIdRef.current === currentId) {
+                  setArticle((row) => (row?.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row));
+                }
+                void loadNav();
+              })
+              .catch(() => {
+                setItems((rows) => rows.map((row) => (row.id === currentId ? { ...row, is_read: false } : row)));
+                if (selectedIdRef.current === currentId) {
+                  setArticle((row) => (row?.id === currentId ? { ...row, is_read: false } : row));
+                }
+              });
+          }
+
+          let updatedList = removeFromList
+            ? list.filter((row) => row.id !== currentId)
+            : list.map((row) => (row.id === currentId ? { ...row, is_read: true } : row));
+          itemsRef.current = updatedList;
+          setItems(updatedList);
+          const nextTotal = removeFromList ? Math.max(0, totalRef.current - 1) : totalRef.current;
+          if (removeFromList) {
+            setTotal(nextTotal);
+          }
+
+          let target = pickAdvanceTarget(updatedList, index, removeFromList);
+          const targetIndex = nextRowIndex(index, removeFromList);
+          if (!target && updatedList.length < nextTotal) {
+            await loadMore();
+            updatedList = itemsRef.current;
+            target = updatedList[targetIndex] ?? null;
+          }
+
+          if (target) {
+            openArticle(target.id);
+          } else {
+            clearReaderSelection();
+          }
+          return;
+        }
+
         let nextIndex = index < 0 ? 0 : Math.min(list.length - 1, Math.max(0, index + delta));
         if (delta > 0 && index >= list.length - 1 && list.length < totalRef.current) {
           await loadMore();
@@ -517,7 +583,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         if (next) openArticle(next.id);
       })();
     },
-    [loadMore, openArticle],
+    [clearReaderSelection, loadMore, loadNav, openArticle, shelf, unreadOnlyFilter],
   );
 
   useEffect(() => {
@@ -591,6 +657,12 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     void loadList();
     setSelectedIds([]);
   }, [loadList]);
+
+  useEffect(() => {
+    if (!shelfSupportsUnreadFilter(shelf)) {
+      setUnreadOnlyFilter(false);
+    }
+  }, [shelf]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -1080,6 +1152,16 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                   <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags, folders)}</h1>
                   <p className="text-xs text-muted-foreground">{listRangeLabel(items.length, total, shelf.kind)}</p>
                 </div>
+                {shelfSupportsUnreadFilter(shelf) ? (
+                  <Button
+                    size="sm"
+                    variant={unreadOnlyFilter ? "default" : "outline"}
+                    title="Show unread items only in this list"
+                    onClick={() => setUnreadOnlyFilter((current) => !current)}
+                  >
+                    Unread
+                  </Button>
+                ) : null}
                 {shelf.kind === "feed" ? (
                   <div className="flex shrink-0 gap-1">
                     <Button
