@@ -46,18 +46,37 @@ def _entry_datetime(entry: Any) -> datetime | None:
     return None
 
 
+def _looks_like_image_url(url: str, mime: str = "") -> bool:
+    if mime.startswith("image"):
+        return True
+    return bool(re.search(r"\.(jpe?g|png|gif|webp|avif|bmp)(\?|$)", url, re.I))
+
+
 def _entry_image(entry: Any) -> str | None:
     if entry.get("image", {}).get("href"):
         return entry["image"]["href"]
     for media in entry.get("media_content", []) or []:
-        if media.get("url") and str(media.get("type", "")).startswith("image"):
-            return media["url"]
+        url = media.get("url")
+        if not url:
+            continue
+        medium = str(media.get("medium", "")).lower()
+        mime = str(media.get("type", "")).lower()
+        if medium == "image" or _looks_like_image_url(url, mime):
+            return url
+    for thumb in entry.get("media_thumbnail", []) or []:
+        url = thumb.get("url")
+        if url:
+            return url
     for link in entry.get("links", []) or []:
         if str(link.get("type", "")).startswith("image") and link.get("href"):
             return link["href"]
     for enclosure in entry.get("enclosures", []) or []:
-        if enclosure.get("href") and str(enclosure.get("type", "")).startswith("image"):
-            return enclosure["href"]
+        href = enclosure.get("href")
+        if not href:
+            continue
+        mime = str(enclosure.get("type", "")).lower()
+        if mime.startswith("image") or _looks_like_image_url(href, mime):
+            return href
     return None
 
 
@@ -263,6 +282,9 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
             continue
         feed_html = _entry_html(entry)
         feed_store_html, feed_store_text = extractor._feed_storage_body(feed_html, entry.get("summary"))
+        image_url = _entry_image(entry)
+        if not image_url:
+            image_url = extractor._first_content_image(feed_html or feed_store_html or "", url)
         article = Article(
             feed_id=feed.id,
             guid=guid[:2000],
@@ -275,7 +297,7 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
             feed_text=feed_store_text,
             content_html=None,
             content_text=None,
-            image_url=_entry_image(entry),
+            image_url=image_url,
         )
         db.add(article)
         db.flush()

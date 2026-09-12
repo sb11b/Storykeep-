@@ -35,6 +35,9 @@ const ARTICLE_CDN_SUFFIXES = [
   "media-amazon.com",
   "blazemedia.com",
   "theblaze.com",
+  "foxnews.com",
+  "fox.com",
+  "fncstatic.com",
 ];
 
 export function sanitizeHtml(html: string): string {

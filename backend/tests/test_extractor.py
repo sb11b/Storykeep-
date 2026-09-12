@@ -149,6 +149,47 @@ class ExtractorTests(unittest.TestCase):
         image = _extract_image(html, "https://example.com/story")
         self.assertEqual(image, "https://cdn.example.com/hero.jpg")
 
+    def test_extract_meta_image_reads_twitter_image(self):
+        from app.services.extractor import _extract_meta_image
+
+        html = """
+        <html><head>
+        <meta name="twitter:image" content="https://static.foxnews.com/hero.jpg" />
+        </head><body></body></html>
+        """
+        image = _extract_meta_image(html, "https://www.foxnews.com/politics/example")
+        self.assertEqual(image, "https://static.foxnews.com/hero.jpg")
+
+    def test_first_content_image_resolves_relative_url(self):
+        from app.services.extractor import _first_content_image
+
+        html = '<div><img src="/images/story.jpg" alt="" /></div>'
+        image = _first_content_image(html, "https://www.foxnews.com/politics/example")
+        self.assertEqual(image, "https://www.foxnews.com/images/story.jpg")
+
+    def test_ensure_article_image_backfills_from_page_meta(self):
+        from app.services.extractor import ensure_article_image
+        from types import SimpleNamespace
+
+        article = SimpleNamespace(
+            url="https://www.foxnews.com/politics/example",
+            image_url=None,
+        )
+        html = """
+        <html><head>
+        <meta property="og:image" content="https://static.foxnews.com/hero.jpg" />
+        </head><body></body></html>
+        """
+
+        class FakeDb:
+            def add(self, _obj) -> None:
+                return None
+
+        with unittest.mock.patch("app.services.extractor._fetch_html", return_value=html):
+            updated = ensure_article_image(FakeDb(), article)  # type: ignore[arg-type]
+        self.assertTrue(updated)
+        self.assertEqual(article.image_url, "https://static.foxnews.com/hero.jpg")
+
     def test_repair_display_body_strips_polluted_html(self):
         from app.services.extractor import repair_display_body
 

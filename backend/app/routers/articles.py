@@ -329,6 +329,15 @@ def get_article(article_id: UUID, db: Session = Depends(get_db), user: User = De
             logger.warning("auto extract failed for article %s: %s", article.id, exc)
             db.rollback()
             article = _owned_article(db, user, article_id)
+    elif not article.image_url:
+        try:
+            if extractor.ensure_article_image(db, article):
+                db.commit()
+                db.refresh(article)
+        except Exception as exc:
+            logger.warning("image backfill failed for article %s: %s", article.id, exc)
+            db.rollback()
+            article = _owned_article(db, user, article_id)
     children = db.scalars(
         select(Article).where(Article.parent_id == article.id).order_by(Article.updated_at.desc())
     ).all()

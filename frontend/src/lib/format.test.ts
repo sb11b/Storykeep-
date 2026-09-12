@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isUsableArticleBody, mergeExtractArticle } from "./format";
+import { articleHeroImageUrl, isUsableArticleBody, mergeExtractArticle } from "./format";
 
 const LONG_PARA =
   "Full article paragraph with enough prose to count as readable article text for regression tests. ".repeat(
@@ -21,6 +21,18 @@ test("mergeExtractArticle grows short-body article when extract succeeds", () =>
   const merged = mergeExtractArticle(previous, LONG_BODY);
   assert.ok((merged.content_text || "").length > dek.length);
   assert.ok(isUsableArticleBody(merged.content_html, merged.content_text));
+});
+
+test("articleHeroImageUrl allows Fox News CDN hosts", () => {
+  const articleUrl = "https://www.foxnews.com/politics/example-story";
+  const imageUrl = "https://static.foxnews.com/fox-news/images/hero.jpg";
+  assert.equal(articleHeroImageUrl(imageUrl, articleUrl), imageUrl);
+});
+
+test("articleHeroImageUrl allows http Fox CDN images for RSS articles", () => {
+  const articleUrl = "https://www.foxnews.com/politics/example-story";
+  const imageUrl = "http://a57.foxnews.com/images/hero.jpg";
+  assert.equal(articleHeroImageUrl(imageUrl, articleUrl), imageUrl);
 });
 
 test("mergeExtractArticle keeps previous body when extract returns worse text", () => {

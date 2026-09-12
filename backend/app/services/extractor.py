@@ -244,37 +244,66 @@ def _abs_url(src: str, base: str) -> str:
     return urljoin(base, src.strip())
 
 
-def _extract_image(raw_html: str, url: str, content_html: str | None = None) -> str | None:
+def _extract_meta_image(raw_html: str, url: str) -> str | None:
     try:
         root = lxml_html.fromstring(raw_html)
     except Exception:
-        root = None
-    if root is not None:
-        for query in (
-            '//meta[@property="og:image"]/@content',
-            '//meta[@property="og:image:url"]/@content',
-            '//meta[@name="twitter:image"]/@content',
-            '//meta[@name="twitter:image:src"]/@content',
-        ):
-            found = root.xpath(query)
-            if found:
-                candidate = str(found[0]).strip()
-                if candidate and not candidate.startswith("data:"):
-                    return _abs_url(candidate, url)[:2000]
-        for link in root.xpath('//link[@rel="image_src"]/@href'):
-            candidate = str(link).strip()
-            if candidate:
+        return None
+    for query in (
+        '//meta[@property="og:image"]/@content',
+        '//meta[@property="og:image:url"]/@content',
+        '//meta[@name="twitter:image"]/@content',
+        '//meta[@name="twitter:image:src"]/@content',
+    ):
+        found = root.xpath(query)
+        if found:
+            candidate = str(found[0]).strip()
+            if candidate and not candidate.startswith("data:"):
                 return _abs_url(candidate, url)[:2000]
-    if content_html:
-        try:
-            body = lxml_html.fromstring(content_html)
-            for img in body.xpath(".//img[@src]"):
-                src = (img.get("src") or "").strip()
-                if src and not src.startswith("data:"):
-                    return _abs_url(src, url)[:2000]
-        except Exception:
-            pass
+    for link in root.xpath('//link[@rel="image_src"]/@href'):
+        candidate = str(link).strip()
+        if candidate:
+            return _abs_url(candidate, url)[:2000]
     return None
+
+
+def _first_content_image(content_html: str, url: str) -> str | None:
+    if not content_html:
+        return None
+    try:
+        body = lxml_html.fromstring(content_html)
+        for img in body.xpath(".//img[@src]"):
+            src = (img.get("src") or "").strip()
+            if src and not src.startswith("data:"):
+                return _abs_url(src, url)[:2000]
+    except Exception:
+        pass
+    return None
+
+
+def _extract_image(raw_html: str, url: str, content_html: str | None = None) -> str | None:
+    meta = _extract_meta_image(raw_html, url)
+    if meta:
+        return meta
+    if content_html:
+        return _first_content_image(content_html, url)
+    return None
+
+
+def ensure_article_image(db: Session, article: Article, raw_html: str | None = None) -> bool:
+    """Backfill article.image_url from page meta tags when still empty."""
+    if article.image_url:
+        return False
+    if raw_html:
+        image = _extract_meta_image(raw_html, article.url)
+    else:
+        raw = _fetch_html(article.url)
+        image = _extract_meta_image(raw, article.url) if raw else None
+    if not image:
+        return False
+    article.image_url = image
+    db.add(article)
+    return True
 
 
 _CTA_PHRASES = (
@@ -906,6 +935,25 @@ def _body_longer_than(page_html: str | None, page_text: str | None, previous_htm
     return page_chars > prev_chars
 
 
+def _apply_extracted_image(
+    db: Session,
+    article: Article,
+    image: str | None,
+    raw_html: str | None,
+    *,
+    previous_image: str | None,
+    force: bool,
+) -> None:
+    if image:
+        article.image_url = image
+        db.add(article)
+    elif not article.image_url:
+        ensure_article_image(db, article, raw_html=raw_html)
+    elif force and previous_image and not image:
+        article.image_url = previous_image
+        db.add(article)
+
+
 def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Article, str | None]:
     feed_html, feed_text = _ensure_feed_body(db, article, refetch=force)
     if feed_html and getattr(article, "feed_html", None) is None:
@@ -919,9 +967,13 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     needs_page = force or article_needs_page_extract(article) or _is_dek_only(feed_html, feed_text)
 
     if _is_long_stored_body(previous_html, previous_text):
+        if not article.image_url:
+            ensure_article_image(db, article)
         return article, None
 
     if not needs_page and has_full_text(article.content_html, article.content_text):
+        if not article.image_url:
+            ensure_article_image(db, article)
         return article, None
 
     page_html: str | None = None
@@ -949,13 +1001,13 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
         ):
             article.content_html = page_html
             article.content_text = page_text
-            if image:
-                article.image_url = image
-            elif force and previous_image:
-                article.image_url = previous_image
+            _apply_extracted_image(
+                db, article, image, raw, previous_image=previous_image, force=force
+            )
             article.fetched_at = datetime.now(timezone.utc)
             db.add(article)
             return article, _cbr_notice(cbr_char_count, True)
+        _apply_extracted_image(db, article, image, raw, previous_image=previous_image, force=force)
         return article, CBR_NO_COLUMN_NOTICE
 
     if raw:
@@ -980,27 +1032,28 @@ def fill_article(db: Session, article: Article, force: bool = False) -> tuple[Ar
     if not chosen_html and not chosen_text:
         if force and not (previous_html or previous_text or feed_html or feed_text):
             raise ExtractFailedError()
+        _apply_extracted_image(db, article, image, raw, previous_image=previous_image, force=force)
         return article, notice or (FULL_TEXT_UNAVAILABLE if page_attempted else None)
 
     next_html = chosen_html or _text_to_html(chosen_text or "")
     next_text = chosen_text or _clean_text(_strip_tags(chosen_html or ""))
     if source == "page" and not _html_extract_candidate_valid(next_html, next_text):
+        _apply_extracted_image(db, article, image, raw, previous_image=previous_image, force=force)
         return article, CHROME_NOTICE
     if (
         (previous_html or "").strip() == (next_html or "").strip()
         and (previous_text or "").strip() == (next_text or "").strip()
     ):
+        _apply_extracted_image(db, article, image, raw, previous_image=previous_image, force=force)
         return article, notice
 
     if not _body_longer_than(next_html, next_text, previous_html, previous_text):
+        _apply_extracted_image(db, article, image, raw, previous_image=previous_image, force=force)
         return article, notice
 
     article.content_html = next_html
     article.content_text = next_text
-    if image:
-        article.image_url = image
-    elif force and previous_image:
-        article.image_url = previous_image
+    _apply_extracted_image(db, article, image, raw, previous_image=previous_image, force=force)
     if source == "page":
         article.fetched_at = datetime.now(timezone.utc)
     db.add(article)
