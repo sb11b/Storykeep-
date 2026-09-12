@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models import Article, Category, Feed, User
+from app.services import rss_shelves as rss_shelf_service
 from app.presenters import feed_out
 from app.schemas import DiscoverOut, FeedCandidate, FeedCreate, FeedOut, FeedUpdate, OpmlImportOut
 from app.services import changelog, rss
@@ -47,12 +48,16 @@ def _refresh_later(feed_id: UUID) -> None:
 
 @router.get("/feeds", response_model=list[FeedOut])
 def list_feeds(
+    shelf_id: UUID | None = None,
     category_id: UUID | None = None,
     active: bool | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[FeedOut]:
+    rss_shelf_service.ensure_user_shelves(db, user)
     stmt = select(Feed).where(Feed.user_id == user.id).order_by(Feed.title.asc().nulls_last())
+    if shelf_id:
+        stmt = stmt.where(Feed.shelf_id == shelf_id)
     if category_id:
         stmt = stmt.where(Feed.category_id == category_id)
     if active is not None:
@@ -67,17 +72,25 @@ def _subscribe(
     url: str,
     *,
     title: str | None = None,
+    shelf_id: UUID | None = None,
     category_id: UUID | None = None,
     background: BackgroundTasks | None = None,
 ) -> tuple[Feed, bool]:
+    rss_shelf_service.ensure_user_shelves(db, user)
     existing = db.scalar(select(Feed).where(Feed.user_id == user.id, Feed.url == url))
     if existing:
         return existing, False
+    shelf = rss_shelf_service.shelf_by_id(db, user, shelf_id) if shelf_id else rss_shelf_service.inbox_shelf(db, user)
+    if not shelf:
+        raise HTTPException(status_code=404, detail="Shelf not found")
     if category_id:
-        category = db.get(Category, category_id)
-        if not category or category.user_id != user.id:
-            raise HTTPException(status_code=404, detail="Category not found")
-    feed = Feed(user_id=user.id, url=url, title=title or url, category_id=category_id)
+        try:
+            rss_shelf_service.validate_category_on_shelf(db, user, shelf.id, category_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    else:
+        category_id = rss_shelf_service.uncategorized_category(db, shelf).id
+    feed = Feed(user_id=user.id, url=url, title=title or url, shelf_id=shelf.id, category_id=category_id)
     db.add(feed)
     db.flush()
     changelog.record(db, user.id, "feed", feed.id, "upsert", {"url": url})
@@ -166,6 +179,7 @@ def create_feed(
         user,
         url,
         title=payload.title,
+        shelf_id=payload.shelf_id,
         category_id=payload.category_id,
         background=background,
     )
@@ -193,10 +207,19 @@ def update_feed(
     if not feed or feed.user_id != user.id:
         raise HTTPException(status_code=404, detail="Feed not found")
     data = payload.model_dump(exclude_unset=True)
+    if "shelf_id" in data and data["shelf_id"]:
+        if not rss_shelf_service.shelf_by_id(db, user, data["shelf_id"]):
+            raise HTTPException(status_code=404, detail="Shelf not found")
     if "category_id" in data and data["category_id"]:
-        category = db.get(Category, data["category_id"])
-        if not category or category.user_id != user.id:
-            raise HTTPException(status_code=404, detail="Category not found")
+        target_shelf = data.get("shelf_id") or feed.shelf_id
+        if not target_shelf:
+            raise HTTPException(status_code=400, detail="Feed has no shelf")
+        try:
+            rss_shelf_service.validate_category_on_shelf(db, user, target_shelf, data["category_id"])
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if "shelf_id" in data and data["shelf_id"] and data["shelf_id"] != feed.shelf_id:
+            feed.shelf_id = data["shelf_id"]
     for key, value in data.items():
         setattr(feed, key, value)
     changelog.record(db, user.id, "feed", feed.id, "upsert", data)

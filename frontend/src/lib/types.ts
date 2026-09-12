@@ -6,12 +6,25 @@ export type User = {
   created_at: string;
 };
 
+export type RssShelf = {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  sort_order: number;
+  feed_count: number;
+  unread_count: number;
+};
+
 export type Category = {
   id: string;
   name: string;
   color: string | null;
   sort_order: number;
+  shelf_id: string | null;
+  is_system?: boolean;
   feed_count: number;
+  unread_count?: number;
 };
 
 export type Feed = {
@@ -21,6 +34,7 @@ export type Feed = {
   description: string | null;
   site_url: string | null;
   favicon_url: string | null;
+  shelf_id: string | null;
   category_id: string | null;
   last_fetched_at: string | null;
   last_error: string | null;

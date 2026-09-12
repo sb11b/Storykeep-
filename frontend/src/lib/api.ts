@@ -115,11 +115,30 @@ export const api = {
     }),
   deleteFolder: (folderId: string) =>
     request<{ ok: boolean }>(`/api/v1/folders/${folderId}`, { method: "DELETE" }),
-  feeds: () => request<Feed[]>("/api/v1/feeds"),
-  addFeed: (url: string, category_id?: string | null, title?: string | null) =>
+  feeds: (opts?: { shelfId?: string; categoryId?: string }) => {
+    const search = new URLSearchParams();
+    if (opts?.shelfId) search.set("shelf_id", opts.shelfId);
+    if (opts?.categoryId) search.set("category_id", opts.categoryId);
+    const qs = search.toString();
+    return request<Feed[]>(`/api/v1/feeds${qs ? `?${qs}` : ""}`);
+  },
+  updateFeed: (id: string, body: { title?: string; shelf_id?: string; category_id?: string | null }) =>
+    request<Feed>(`/api/v1/feeds/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  addFeed: (
+    url: string,
+    opts?: { shelfId?: string | null; categoryId?: string | null; title?: string | null },
+  ) =>
     request<Feed>("/api/v1/feeds", {
       method: "POST",
-      body: JSON.stringify({ url, category_id: category_id || null, title: title || null }),
+      body: JSON.stringify({
+        url,
+        shelf_id: opts?.shelfId || null,
+        category_id: opts?.categoryId || null,
+        title: opts?.title || null,
+      }),
     }),
   discoverFeeds: (url: string) =>
     request<{ queried_url: string; candidates: FeedCandidate[] }>(
@@ -333,12 +352,33 @@ export const api = {
   refreshAll: () => request<{ created: number }>("/api/v1/feeds/refresh", { method: "POST" }),
   deleteFeed: (id: string, force = false) =>
     request<{ ok: boolean }>(`/api/v1/feeds/${id}?force=${force}`, { method: "DELETE" }),
-  categories: () => request<Category[]>("/api/v1/categories"),
-  createCategory: (name: string, color?: string) =>
+  categories: (shelfId?: string) => {
+    const qs = shelfId ? `?shelf_id=${encodeURIComponent(shelfId)}` : "";
+    return request<Category[]>(`/api/v1/categories${qs}`);
+  },
+  createCategory: (name: string, shelfId: string, color?: string) =>
     request<Category>("/api/v1/categories", {
       method: "POST",
-      body: JSON.stringify({ name, color }),
+      body: JSON.stringify({ name, shelf_id: shelfId, color }),
     }),
+  updateCategory: (id: string, body: { name: string; color?: string | null; sort_order?: number }) =>
+    request<Category>(`/api/v1/categories/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteCategory: (id: string) => request<{ ok: boolean }>(`/api/v1/categories/${id}`, { method: "DELETE" }),
+  rssShelves: () => request<import("@/lib/types").RssShelf[]>("/api/v1/rss-shelves"),
+  createRssShelf: (name: string) =>
+    request<import("@/lib/types").RssShelf>("/api/v1/rss-shelves", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateRssShelf: (id: string, body: { name: string; sort_order?: number }) =>
+    request<import("@/lib/types").RssShelf>(`/api/v1/rss-shelves/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteRssShelf: (id: string) => request<{ ok: boolean }>(`/api/v1/rss-shelves/${id}`, { method: "DELETE" }),
   tags: () => request<Tag[]>("/api/v1/tags"),
   articles: (params: Record<string, string | number | boolean | undefined>) => {
     const search = new URLSearchParams();

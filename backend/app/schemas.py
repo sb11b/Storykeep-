@@ -43,10 +43,30 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
 
 
+class RssShelfIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    icon: str | None = None
+    color: str | None = None
+    sort_order: int = 0
+
+
+class RssShelfOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    icon: str | None
+    color: str | None
+    sort_order: int
+    feed_count: int = 0
+    unread_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
 class CategoryIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     color: str | None = None
     sort_order: int = 0
+    shelf_id: uuid.UUID | None = None
 
 
 class CategoryOut(BaseModel):
@@ -54,7 +74,10 @@ class CategoryOut(BaseModel):
     name: str
     color: str | None
     sort_order: int
+    shelf_id: uuid.UUID | None = None
+    is_system: bool = False
     feed_count: int = 0
+    unread_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -62,6 +85,7 @@ class CategoryOut(BaseModel):
 class FeedCreate(BaseModel):
     url: HttpUrl
     title: str | None = None
+    shelf_id: uuid.UUID | None = None
     category_id: uuid.UUID | None = None
 
 
@@ -92,6 +116,7 @@ class TagMergeIn(BaseModel):
 
 class FeedUpdate(BaseModel):
     title: str | None = None
+    shelf_id: uuid.UUID | None = None
     category_id: uuid.UUID | None = None
     is_active: bool | None = None
     fetch_interval_minutes: int | None = Field(default=None, ge=5, le=24 * 60)
@@ -104,6 +129,7 @@ class FeedOut(BaseModel):
     description: str | None
     site_url: str | None
     favicon_url: str | None
+    shelf_id: uuid.UUID | None = None
     category_id: uuid.UUID | None
     last_fetched_at: datetime | None
     last_error: str | None

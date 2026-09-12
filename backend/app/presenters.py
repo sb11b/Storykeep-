@@ -188,6 +188,7 @@ def feed_out(feed: Feed, unread: int = 0, saved: int = 0, total: int = 0) -> Fee
         description=feed.description,
         site_url=feed.site_url,
         favicon_url=feed.favicon_url,
+        shelf_id=feed.shelf_id,
         category_id=feed.category_id,
         last_fetched_at=feed.last_fetched_at,
         last_error=feed.last_error,

@@ -205,6 +205,7 @@ def note_titles(
 @router.get("/articles", response_model=Page[ArticleListItem])
 def list_articles(
     feed_id: UUID | None = None,
+    rss_shelf_id: UUID | None = None,
     category_id: UUID | None = None,
     tag_id: UUID | None = None,
     saved: bool | None = None,
@@ -228,6 +229,8 @@ def list_articles(
     )
     if feed_id:
         stmt = stmt.where(Article.feed_id == feed_id)
+    if rss_shelf_id:
+        stmt = stmt.where(Feed.shelf_id == rss_shelf_id)
     if category_id:
         stmt = stmt.where(Feed.category_id == category_id)
     if tag_id:

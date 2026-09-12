@@ -40,24 +40,47 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    rss_shelves: Mapped[list["RssShelf"]] = relationship(back_populates="user")
     categories: Mapped[list[Category]] = relationship(back_populates="user")
     feeds: Mapped[list[Feed]] = relationship(back_populates="user")
     tags: Mapped[list[Tag]] = relationship(back_populates="user")
     folders: Mapped[list["Folder"]] = relationship(back_populates="user")
 
 
-class Category(Base):
-    __tablename__ = "categories"
+class RssShelf(Base):
+    __tablename__ = "rss_shelves"
     __table_args__ = (UniqueConstraint("user_id", "name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    icon: Mapped[str | None] = mapped_column(Text)
     color: Mapped[str | None] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    user: Mapped[User] = relationship(back_populates="rss_shelves")
+    categories: Mapped[list["Category"]] = relationship(back_populates="shelf")
+    feeds: Mapped[list["Feed"]] = relationship(back_populates="rss_shelf")
+
+
+class Category(Base):
+    __tablename__ = "categories"
+    __table_args__ = (UniqueConstraint("shelf_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    shelf_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rss_shelves.id", ondelete="CASCADE"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    color: Mapped[str | None] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
     user: Mapped[User] = relationship(back_populates="categories")
+    shelf: Mapped[RssShelf | None] = relationship(back_populates="categories")
     feeds: Mapped[list[Feed]] = relationship(back_populates="category")
 
 
@@ -67,6 +90,9 @@ class Feed(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    shelf_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rss_shelves.id", ondelete="CASCADE"), nullable=True
+    )
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL")
     )
@@ -85,6 +111,7 @@ class Feed(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="feeds")
+    rss_shelf: Mapped[RssShelf | None] = relationship(back_populates="feeds")
     category: Mapped[Category | None] = relationship(back_populates="feeds")
     articles: Mapped[list[Article]] = relationship(back_populates="feed", cascade="all, delete-orphan")
 

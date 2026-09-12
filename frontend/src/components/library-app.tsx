@@ -90,6 +90,7 @@ import type {
   Backup,
   Category,
   Feed,
+  RssShelf,
   Shelf,
   Stats,
   Folder,
@@ -108,6 +109,8 @@ function isStoryKeepNote(article: Article): boolean {
 function isVaultImport(article: Article): boolean {
   return (article.guid || "").startsWith("obsidian:") && article.source_kind !== "textbook";
 }
+
+const RSS_SHELF_KEY = "storykeep-rss-shelf-id";
 
 function displayArticleShelf(article: Article): NoteDestination | "" {
   if (article.destination) return asDestination(article.destination, "notes");
@@ -196,6 +199,8 @@ export function LibraryApp({ user }: { user: User }) {
   const router = useRouter();
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [rssShelves, setRssShelves] = useState<RssShelf[]>([]);
+  const [activeRssShelfId, setActiveRssShelfId] = useState<string | null>(null);
   const [tags, setTags] = useState<Tag[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -245,10 +250,20 @@ export function LibraryApp({ user }: { user: User }) {
   totalRef.current = total;
   selectedIdRef.current = selectedId;
 
-  const loadNav = useCallback(async () => {
+  const loadNav = useCallback(async (rssShelfId?: string | null) => {
+    const shelves = await api.rssShelves();
+    setRssShelves(shelves);
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(RSS_SHELF_KEY) : null;
+    const resolved =
+      (rssShelfId && shelves.some((row) => row.id === rssShelfId) && rssShelfId) ||
+      (stored && shelves.some((row) => row.id === stored) ? stored : null) ||
+      shelves[0]?.id ||
+      null;
+    setActiveRssShelfId(resolved);
+    if (resolved && typeof window !== "undefined") window.localStorage.setItem(RSS_SHELF_KEY, resolved);
     const [nextFeeds, nextCategories, nextTags, nextFolders, nextStats, nextBackups] = await Promise.all([
-      api.feeds(),
-      api.categories(),
+      api.feeds(resolved ? { shelfId: resolved } : undefined),
+      api.categories(resolved ?? undefined),
       api.tags(),
       api.folders(),
       api.stats(),
@@ -260,6 +275,7 @@ export function LibraryApp({ user }: { user: User }) {
     setFolders(nextFolders);
     setStats(nextStats);
     setBackups(nextBackups);
+    return resolved;
   }, []);
 
   const loadArticleById = useCallback(async (id: string, preview?: Article) => {
@@ -623,13 +639,16 @@ export function LibraryApp({ user }: { user: User }) {
   }, [article, selectedId]);
 
   const groupedFeeds = useMemo(() => {
-    const groups = categories.map((category) => ({
-      category,
-      feeds: feeds.filter((feed) => feed.category_id === category.id),
-    }));
-    const uncategorized = feeds.filter((feed) => !feed.category_id);
-    return { groups, uncategorized };
-  }, [categories, feeds]);
+    const shelfCategories = categories
+      .filter((category) => !activeRssShelfId || category.shelf_id === activeRssShelfId)
+      .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+    return {
+      groups: shelfCategories.map((category) => ({
+        category,
+        feeds: feeds.filter((feed) => feed.category_id === category.id),
+      })),
+    };
+  }, [activeRssShelfId, categories, feeds]);
 
   const visibleIds = items.map((item) => item.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
@@ -729,15 +748,83 @@ export function LibraryApp({ user }: { user: User }) {
     }
   }
 
-  async function onAddCategory() {
-    const name = window.prompt("Category name:")?.trim();
+  async function onAddRssShelf() {
+    const name = window.prompt("New shelf name:")?.trim();
     if (!name) return;
     try {
-      const category = await api.createCategory(name);
-      await loadNav();
+      const row = await api.createRssShelf(name);
+      await loadNav(row.id);
+      toast.success(`Added shelf ${row.name}`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not add that shelf");
+    }
+  }
+
+  async function onAddCategory() {
+    if (!activeRssShelfId) return;
+    const name = window.prompt("Category name on this shelf:")?.trim();
+    if (!name) return;
+    try {
+      const category = await api.createCategory(name, activeRssShelfId);
+      await loadNav(activeRssShelfId);
       toast.success(`Added ${category.name}`);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not add that category");
+    }
+  }
+
+  async function onRenameCategory(category: Category) {
+    try {
+      await api.updateCategory(category.id, { name: category.name, color: category.color, sort_order: category.sort_order });
+      await loadNav(activeRssShelfId);
+      toast.success("Category renamed");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not rename that category");
+    }
+  }
+
+  async function onDeleteCategory(category: Category) {
+    if (!window.confirm(`Delete "${category.name}"? Its feeds move to Uncategorized.`)) return;
+    try {
+      await api.deleteCategory(category.id);
+      await loadNav(activeRssShelfId);
+      toast.success("Category deleted");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not delete that category");
+    }
+  }
+
+  async function onChangeFeedCategory(feed: Feed) {
+    const shelfCategories = categories.filter((row) => row.shelf_id === feed.shelf_id);
+    const label = shelfCategories.map((row, index) => `${index + 1}. ${row.name}`).join("\n");
+    const pick = window.prompt(`Change category for ${feed.title || "feed"}:\n${label}\nEnter number:`)?.trim();
+    if (!pick) return;
+    const index = Number(pick) - 1;
+    const target = shelfCategories[index];
+    if (!target) {
+      toast.error("Pick a category number from the list");
+      return;
+    }
+    try {
+      await api.updateFeed(feed.id, { category_id: target.id });
+      await loadNav(activeRssShelfId);
+      toast.success(`Moved to ${target.name}`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not move that feed");
+    }
+  }
+
+  async function onRssShelfChange(nextShelfId: string) {
+    setActiveRssShelfId(nextShelfId);
+    if (typeof window !== "undefined") window.localStorage.setItem(RSS_SHELF_KEY, nextShelfId);
+    await loadNav(nextShelfId);
+    if (shelf.kind === "feed") {
+      const feed = feeds.find((row) => row.id === shelf.id);
+      if (feed && feed.shelf_id !== nextShelfId) setShelf({ kind: "unread" });
+    }
+    if (shelf.kind === "category") {
+      const category = categories.find((row) => row.id === shelf.id);
+      if (category && category.shelf_id !== nextShelfId) setShelf({ kind: "unread" });
     }
   }
 
@@ -802,7 +889,8 @@ export function LibraryApp({ user }: { user: User }) {
       user={user}
       stats={stats}
       shelf={shelf}
-      categories={categories}
+      rssShelves={rssShelves}
+      activeRssShelfId={activeRssShelfId}
       groupedFeeds={groupedFeeds}
       tags={tags}
       folders={folders}
@@ -817,9 +905,14 @@ export function LibraryApp({ user }: { user: User }) {
         setSelectedId(null);
         setMobileNav(false);
       }}
+      onRssShelfChange={(id) => void onRssShelfChange(id)}
+      onAddRssShelf={() => void onAddRssShelf()}
       onAdd={() => setAddOpen(true)}
       onAddCategory={() => void onAddCategory()}
       onAddFeed={() => setAddOpen(true)}
+      onRenameCategory={(category) => void onRenameCategory(category)}
+      onDeleteCategory={(category) => void onDeleteCategory(category)}
+      onChangeFeedCategory={(feed) => void onChangeFeedCategory(feed)}
       onManageTags={() => setTagsOpen(true)}
       onBackup={() => setBackupOpen(true)}
       onRefresh={() => void onRefresh()}
@@ -1347,6 +1440,8 @@ export function LibraryApp({ user }: { user: User }) {
 
       <AddFeedDialog
         open={addOpen}
+        rssShelves={rssShelves}
+        activeRssShelfId={activeRssShelfId}
         categories={categories}
         folders={folders}
         onCreateFolder={createFolderOnShelf}
@@ -1510,17 +1605,23 @@ function Sidebar({
   user,
   stats,
   shelf,
-  categories,
+  rssShelves,
+  activeRssShelfId,
   groupedFeeds,
   tags,
   folders,
   onShelf,
+  onRssShelfChange,
+  onAddRssShelf,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
   onAdd,
   onAddCategory,
   onAddFeed,
+  onRenameCategory,
+  onDeleteCategory,
+  onChangeFeedCategory,
   onManageTags,
   onBackup,
   onRefresh,
@@ -1531,17 +1632,23 @@ function Sidebar({
   user: User;
   stats: Stats | null;
   shelf: Shelf;
-  categories: Category[];
-  groupedFeeds: { groups: { category: Category; feeds: Feed[] }[]; uncategorized: Feed[] };
+  rssShelves: RssShelf[];
+  activeRssShelfId: string | null;
+  groupedFeeds: { groups: { category: Category; feeds: Feed[] }[] };
   tags: Tag[];
   folders: Folder[];
   onShelf: (shelf: Shelf) => void;
+  onRssShelfChange: (shelfId: string) => void;
+  onAddRssShelf: () => void;
   onCreateFolder: (shelf: NoteDestination) => Promise<string | null>;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
   onAdd: () => void;
   onAddCategory: () => void;
   onAddFeed: () => void;
+  onRenameCategory: (category: Category) => void;
+  onDeleteCategory: (category: Category) => void;
+  onChangeFeedCategory: (feed: Feed) => void;
   onManageTags: () => void;
   onBackup: () => void;
   onRefresh: () => void;
@@ -1584,11 +1691,17 @@ function Sidebar({
         </NavButton>
         <ShelfSwitcher
           shelf={shelf}
-          categories={categories}
+          rssShelves={rssShelves}
+          activeRssShelfId={activeRssShelfId}
           groupedFeeds={groupedFeeds}
+          onRssShelfChange={onRssShelfChange}
+          onAddRssShelf={onAddRssShelf}
           onShelf={onShelf}
           onAddCategory={onAddCategory}
           onAddFeed={onAddFeed}
+          onRenameCategory={onRenameCategory}
+          onDeleteCategory={onDeleteCategory}
+          onChangeFeedCategory={onChangeFeedCategory}
         />
         {tags.length > 0 ? (
           <>
@@ -2954,6 +3067,8 @@ function RemoveFeedDialog({
 function AddFeedDialog({
   open,
   onOpenChange,
+  rssShelves,
+  activeRssShelfId,
   categories,
   folders,
   onCreateFolder,
@@ -2964,6 +3079,8 @@ function AddFeedDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  rssShelves: RssShelf[];
+  activeRssShelfId: string | null;
   categories: Category[];
   folders: Folder[];
   onCreateFolder: (shelf: NoteDestination) => Promise<string | null>;
@@ -2975,6 +3092,7 @@ function AddFeedDialog({
   const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault" | "file">("feed");
   const [url, setUrl] = useState("");
   const [pageUrl, setPageUrl] = useState("");
+  const [rssShelfId, setRssShelfId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<{ url: string; title: string | null }[]>([]);
@@ -3003,6 +3121,21 @@ function AddFeedDialog({
     typeof window === "undefined"
       ? ""
       : `javascript:void(location='${window.location.origin}/?save='+encodeURIComponent(location.href))`;
+
+  useEffect(() => {
+    if (!open) return;
+    setRssShelfId(activeRssShelfId || rssShelves[0]?.id || "");
+  }, [activeRssShelfId, open, rssShelves]);
+
+  const shelfCategories = categories.filter((row) => row.shelf_id === rssShelfId);
+
+  async function createCategoryInline() {
+    const name = window.prompt("New category name:")?.trim();
+    if (!name || !rssShelfId) return null;
+    const row = await api.createCategory(name, rssShelfId);
+    setCategoryId(row.id);
+    return row.id;
+  }
 
   return (
     <Dialog
@@ -3064,7 +3197,10 @@ function AddFeedDialog({
               event.preventDefault();
               setBusy(true);
               try {
-                await api.addFeed(url, categoryId || null);
+                await api.addFeed(url, {
+                  shelfId: rssShelfId || null,
+                  categoryId: categoryId || null,
+                });
                 toast.success("Feed added. Articles are importing.");
                 setUrl("");
                 setCandidates([]);
@@ -3087,24 +3223,45 @@ function AddFeedDialog({
                 required
               />
             </div>
-            {categories.length > 0 ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="feed-category">Category</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="feed-shelf">Shelf</Label>
+              <select
+                id="feed-shelf"
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={rssShelfId}
+                onChange={(event) => {
+                  setRssShelfId(event.target.value);
+                  setCategoryId("");
+                }}
+              >
+                {rssShelves.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="feed-category">Category</Label>
+              <div className="flex gap-2">
                 <select
                   id="feed-category"
-                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
                   value={categoryId}
                   onChange={(event) => setCategoryId(event.target.value)}
                 >
                   <option value="">Uncategorized</option>
-                  {categories.map((category) => (
+                  {shelfCategories.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
                     </option>
                   ))}
                 </select>
+                <Button type="button" variant="outline" size="sm" onClick={() => void createCategoryInline()}>
+                  + New category
+                </Button>
               </div>
-            ) : null}
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"

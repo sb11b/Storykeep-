@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Annotation, Archive, Article, Category, Feed, Folder, OverlayHighlight, Tag, User
+from app.models import Annotation, Archive, Article, Category, Feed, Folder, OverlayHighlight, RssShelf, Tag, User
 from app.presenters import annotation_out, article_list_item
 from app.services.notes_feed import notes_feed_page
 from app.services.destination import shelf_count
@@ -20,12 +20,15 @@ from app.schemas import (
     FolderOut,
     Page,
     PreferencesIn,
+    RssShelfIn,
+    RssShelfOut,
     SearchHit,
     StatsOut,
     TagIn,
     TagMergeIn,
     TagOut,
 )
+from app.services import rss_shelves as rss_shelf_service
 from app.services.folders import create_folder, delete_folder, list_folders, rename_folder
 from app.services import changelog
 from app.services.overlay_search import article_search_match, overlay_text_subquery
@@ -33,30 +36,136 @@ from app.services.overlay_search import article_search_match, overlay_text_subqu
 router = APIRouter(tags=["library"])
 
 
+def _category_out(db: Session, category: Category) -> CategoryOut:
+    count = db.scalar(select(func.count()).select_from(Feed).where(Feed.category_id == category.id)) or 0
+    unread = rss_shelf_service.category_unread_count(db, category.id)
+    return CategoryOut(
+        id=category.id,
+        name=category.name,
+        color=category.color,
+        sort_order=category.sort_order,
+        shelf_id=category.shelf_id,
+        is_system=bool(category.is_system),
+        feed_count=count,
+        unread_count=unread,
+    )
+
+
+def _rss_shelf_out(db: Session, shelf: RssShelf) -> RssShelfOut:
+    return RssShelfOut(
+        id=shelf.id,
+        name=shelf.name,
+        icon=shelf.icon,
+        color=shelf.color,
+        sort_order=shelf.sort_order,
+        feed_count=rss_shelf_service.shelf_feed_count(db, shelf.id),
+        unread_count=rss_shelf_service.shelf_unread_count(db, shelf.id),
+    )
+
+
+@router.get("/rss-shelves", response_model=list[RssShelfOut])
+def list_rss_shelves(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[RssShelfOut]:
+    shelves = rss_shelf_service.list_shelves(db, user)
+    db.commit()
+    return [_rss_shelf_out(db, shelf) for shelf in shelves]
+
+
+@router.post("/rss-shelves", response_model=RssShelfOut, status_code=201)
+def create_rss_shelf(
+    payload: RssShelfIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> RssShelfOut:
+    rss_shelf_service.ensure_user_shelves(db, user)
+    existing = db.scalar(select(RssShelf).where(RssShelf.user_id == user.id, RssShelf.name == payload.name.strip()))
+    if existing:
+        raise HTTPException(status_code=409, detail="Shelf already exists")
+    shelf = RssShelf(user_id=user.id, **payload.model_dump())
+    db.add(shelf)
+    db.flush()
+    rss_shelf_service.uncategorized_category(db, shelf)
+    db.commit()
+    db.refresh(shelf)
+    return _rss_shelf_out(db, shelf)
+
+
+@router.patch("/rss-shelves/{shelf_id}", response_model=RssShelfOut)
+def update_rss_shelf(
+    shelf_id: UUID,
+    payload: RssShelfIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RssShelfOut:
+    shelf = rss_shelf_service.shelf_by_id(db, user, shelf_id)
+    if not shelf:
+        raise HTTPException(status_code=404, detail="Shelf not found")
+    for key, value in payload.model_dump().items():
+        setattr(shelf, key, value)
+    db.add(shelf)
+    db.commit()
+    db.refresh(shelf)
+    return _rss_shelf_out(db, shelf)
+
+
+@router.delete("/rss-shelves/{shelf_id}")
+def delete_rss_shelf(
+    shelf_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict[str, bool]:
+    rss_shelf_service.ensure_user_shelves(db, user)
+    shelf = rss_shelf_service.shelf_by_id(db, user, shelf_id)
+    if not shelf:
+        raise HTTPException(status_code=404, detail="Shelf not found")
+    total = db.scalar(select(func.count()).select_from(RssShelf).where(RssShelf.user_id == user.id)) or 0
+    if total <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last shelf")
+    rss_shelf_service.move_feeds_to_inbox(db, user, shelf)
+    db.delete(shelf)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/categories", response_model=list[CategoryOut])
-def list_categories(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[CategoryOut]:
-    categories = db.scalars(
-        select(Category).where(Category.user_id == user.id).order_by(Category.sort_order, Category.name)
-    ).all()
-    out: list[CategoryOut] = []
-    for category in categories:
-        count = db.scalar(select(func.count()).select_from(Feed).where(Feed.category_id == category.id)) or 0
-        out.append(CategoryOut(id=category.id, name=category.name, color=category.color, sort_order=category.sort_order, feed_count=count))
-    return out
+def list_categories(
+    shelf_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[CategoryOut]:
+    rss_shelf_service.ensure_user_shelves(db, user)
+    stmt = select(Category).where(Category.user_id == user.id)
+    if shelf_id:
+        if not rss_shelf_service.shelf_by_id(db, user, shelf_id):
+            raise HTTPException(status_code=404, detail="Shelf not found")
+        stmt = stmt.where(Category.shelf_id == shelf_id)
+    categories = db.scalars(stmt.order_by(Category.sort_order, Category.name)).all()
+    db.commit()
+    return [_category_out(db, category) for category in categories]
 
 
 @router.post("/categories", response_model=CategoryOut, status_code=201)
 def create_category(
     payload: CategoryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> CategoryOut:
-    existing = db.scalar(select(Category).where(Category.user_id == user.id, Category.name == payload.name))
+    if not payload.shelf_id:
+        raise HTTPException(status_code=400, detail="shelf_id is required")
+    shelf = rss_shelf_service.shelf_by_id(db, user, payload.shelf_id)
+    if not shelf:
+        raise HTTPException(status_code=404, detail="Shelf not found")
+    if payload.name.strip().lower() == rss_shelf_service.UNCATEGORIZED.lower():
+        raise HTTPException(status_code=400, detail="Uncategorized is reserved")
+    existing = db.scalar(
+        select(Category).where(Category.shelf_id == shelf.id, Category.name == payload.name.strip())
+    )
     if existing:
-        raise HTTPException(status_code=409, detail="Category already exists")
-    category = Category(user_id=user.id, **payload.model_dump())
+        raise HTTPException(status_code=409, detail="Category already exists on this shelf")
+    category = Category(
+        user_id=user.id,
+        shelf_id=shelf.id,
+        name=payload.name.strip(),
+        color=payload.color,
+        sort_order=payload.sort_order,
+    )
     db.add(category)
     db.commit()
     db.refresh(category)
-    return CategoryOut(id=category.id, name=category.name, color=category.color, sort_order=category.sort_order, feed_count=0)
+    return _category_out(db, category)
 
 
 @router.patch("/categories/{category_id}", response_model=CategoryOut)
@@ -69,13 +178,17 @@ def update_category(
     category = db.get(Category, category_id)
     if not category or category.user_id != user.id:
         raise HTTPException(status_code=404, detail="Category not found")
-    for key, value in payload.model_dump().items():
-        setattr(category, key, value)
+    if category.is_system:
+        raise HTTPException(status_code=400, detail="System categories cannot be renamed")
+    if payload.shelf_id and payload.shelf_id != category.shelf_id:
+        raise HTTPException(status_code=400, detail="Move feeds instead of moving categories between shelves")
+    category.name = payload.name.strip()
+    category.color = payload.color
+    category.sort_order = payload.sort_order
     db.add(category)
     db.commit()
     db.refresh(category)
-    count = db.scalar(select(func.count()).select_from(Feed).where(Feed.category_id == category.id)) or 0
-    return CategoryOut(id=category.id, name=category.name, color=category.color, sort_order=category.sort_order, feed_count=count)
+    return _category_out(db, category)
 
 
 @router.delete("/categories/{category_id}")
@@ -85,6 +198,9 @@ def delete_category(
     category = db.get(Category, category_id)
     if not category or category.user_id != user.id:
         raise HTTPException(status_code=404, detail="Category not found")
+    if category.is_system:
+        raise HTTPException(status_code=400, detail="System categories cannot be deleted")
+    rss_shelf_service.reassign_feeds_to_uncategorized(db, category)
     db.delete(category)
     db.commit()
     return {"ok": True}

@@ -103,6 +103,19 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_locked BOOLEAN DEFAULT FALSE")
     _try_sql("UPDATE users SET is_demo_locked = TRUE WHERE lower(email) = 'steve@storykeep.local'")
     _try_sql("UPDATE users SET is_demo_locked = FALSE WHERE lower(email) = 'stevebitsko@duck.com'")
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS rss_shelves ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "name TEXT NOT NULL, icon TEXT, color TEXT, sort_order INTEGER DEFAULT 0, "
+        "created_at TIMESTAMPTZ DEFAULT now(), "
+        "UNIQUE(user_id, name))"
+    )
+    _try_sql("ALTER TABLE categories ADD COLUMN IF NOT EXISTS shelf_id UUID REFERENCES rss_shelves(id) ON DELETE CASCADE")
+    _try_sql("ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE")
+    _try_sql("ALTER TABLE feeds ADD COLUMN IF NOT EXISTS shelf_id UUID REFERENCES rss_shelves(id) ON DELETE CASCADE")
+    _try_sql("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_user_id_name_key")
+    _try_sql("CREATE UNIQUE INDEX IF NOT EXISTS categories_shelf_name_idx ON categories (shelf_id, name)")
 
 
 def _seed_in_background() -> None:
