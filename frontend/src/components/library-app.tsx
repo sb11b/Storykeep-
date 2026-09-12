@@ -1971,7 +1971,6 @@ function Reader({
   const followSpeechRef = useRef(false);
   const userPausedFollowRef = useRef(false);
   const programmaticScrollRef = useRef(false);
-  const prevActiveWordRef = useRef<number | null>(null);
   const suggestions = tags
     .filter((item) => !article.tags.some((attached) => attached.id === item.id))
     .filter((item) => !tag.trim() || item.name.toLowerCase().includes(tag.trim().toLowerCase()))
@@ -2168,13 +2167,6 @@ function Reader({
   }
 
   useEffect(() => {
-    if (prevActiveWordRef.current == null && activeWord != null) {
-      userPausedFollowRef.current = false;
-    }
-    prevActiveWordRef.current = activeWord;
-  }, [activeWord]);
-
-  useEffect(() => {
     const root = articleRef.current;
     if (!root) return;
     root.querySelectorAll(".tts-word-active").forEach((node) => node.classList.remove("tts-word-active"));
@@ -2214,7 +2206,7 @@ function Reader({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="tts-player-bar z-20 shrink-0 border-b bg-card/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <div className="tts-player-bar sticky top-0 z-30 shrink-0 border-b bg-card/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80">
         <ListenControls
           ref={listenRef}
           articleId={article.id}
@@ -2224,6 +2216,14 @@ function Reader({
           includeNotes={includeNotesInListen}
           noteMode={composed}
           onCue={setActiveWord}
+          onFollowUnavailable={() => {
+            setFollowSpeech(false);
+            try {
+              window.localStorage.setItem("storykeep-tts-follow-speech", "0");
+            } catch {
+              /* ignore */
+            }
+          }}
           getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
         />
         <div className="mt-2 flex flex-wrap items-start gap-x-4 gap-y-1">

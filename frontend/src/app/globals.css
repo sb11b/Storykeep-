@@ -268,8 +268,11 @@
   transition: background-color 80ms ease, box-shadow 80ms ease;
 }
 .tts-word-active {
-  background: oklch(0.9 0.08 85);
-  box-shadow: 0 0 0 2px oklch(0.9 0.08 85);
+  background: oklch(0.92 0.14 95);
+  box-shadow: 0 0 0 2px oklch(0.88 0.16 90);
+}
+.tts-player-bar {
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--border) 80%, transparent);
 }
 .article-body mark.find-hit {
   background: oklch(0.9 0.12 95);

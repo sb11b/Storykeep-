@@ -6,8 +6,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
+import { timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
 import { cn } from "@/lib/utils";
 import type { TtsStatus, TtsWord } from "@/lib/types";
+
+const FOLLOW_UNAVAILABLE = "Follow unavailable for this audio.";
 
 const SPEED_KEY = "storykeep-tts-speed";
 const SPEEDS = [0.7, 0.8, 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5, 2.8, 3] as const;
@@ -102,9 +105,13 @@ export const ListenControls = forwardRef<
     includeNotes?: boolean;
     noteMode?: boolean;
     onCue?: (wordIndex: number | null) => void;
+    onFollowUnavailable?: () => void;
     getCaretWord?: () => number | null;
   }
->(function ListenControls({ articleId, hasText, includeNotes = false, noteMode = false, onCue, getCaretWord }, ref) {
+>(function ListenControls(
+  { articleId, hasText, includeNotes = false, noteMode = false, onCue, onFollowUnavailable, getCaretWord },
+  ref,
+) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const generationRef = useRef(0);
@@ -115,6 +122,8 @@ export const ListenControls = forwardRef<
   const loadedChunkRef = useRef<number | null>(null);
   const loadedVoiceRef = useRef<string | null>(null);
   const countsRef = useRef<number[]>([]);
+  const timestampsValidRef = useRef(false);
+  const followToastShownRef = useRef(false);
   const sectionRef = useRef<string | null>(null);
   const confirmRef = useRef(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -185,31 +194,54 @@ export const ListenControls = forwardRef<
     writeResume(articleId, lastCueRef.current);
   }, [articleId]);
 
+  const syncCueFromAudio = useCallback(() => {
+    if (!timestampsValidRef.current) return;
+    const audio = audioRef.current;
+    const words = wordsRef.current;
+    if (!audio || !words.length) return;
+    const local = wordIndexAtTime(words, audio.currentTime);
+    const next = wordOffsetRef.current + local;
+    if (next !== lastCueRef.current) {
+      lastCueRef.current = next;
+      emitCue(next);
+    }
+  }, [emitCue]);
+
+  const markTimestampsUnavailable = useCallback(() => {
+    timestampsValidRef.current = false;
+    stopCueLoop();
+    lastCueRef.current = null;
+    emitCue(null);
+    if (!followToastShownRef.current) {
+      followToastShownRef.current = true;
+      toast(FOLLOW_UNAVAILABLE);
+      onFollowUnavailable?.();
+    }
+  }, [emitCue, onFollowUnavailable, stopCueLoop]);
+
+  const applyTimestampValidation = useCallback(
+    (words: TtsWord[], chunkIndex: number, chunkWordCounts: number[]) => {
+      const valid = timestampsMatchChunk(words, chunkIndex, chunkWordCounts);
+      timestampsValidRef.current = valid;
+      if (!valid) {
+        markTimestampsUnavailable();
+        return false;
+      }
+      return true;
+    },
+    [markTimestampsUnavailable],
+  );
+
   const startCueLoop = useCallback(() => {
     stopCueLoop();
+    if (!timestampsValidRef.current) return;
+    syncCueFromAudio();
     const tick = () => {
-      const audio = audioRef.current;
-      const words = wordsRef.current;
-      if (audio && words.length) {
-        const time = audio.currentTime;
-        let local = 0;
-        for (let i = 0; i < words.length; i += 1) {
-          if (time >= words[i].start) local = i;
-          if (time < words[i].end) {
-            local = i;
-            break;
-          }
-        }
-        const next = wordOffsetRef.current + local;
-        if (next !== lastCueRef.current) {
-          lastCueRef.current = next;
-          emitCue(next);
-        }
-      }
+      syncCueFromAudio();
       cueRafRef.current = requestAnimationFrame(tick);
     };
     cueRafRef.current = requestAnimationFrame(tick);
-  }, [emitCue, stopCueLoop]);
+  }, [stopCueLoop, syncCueFromAudio]);
 
   const stop = useCallback(
     (clearResume = false) => {
@@ -222,6 +254,8 @@ export const ListenControls = forwardRef<
       else persistCue();
       lastCueRef.current = null;
       emitCue(null);
+      timestampsValidRef.current = false;
+      followToastShownRef.current = false;
       const audio = audioRef.current;
       if (audio) {
         audio.onended = null;
@@ -245,13 +279,18 @@ export const ListenControls = forwardRef<
     loadedChunkRef.current = null;
     loadedVoiceRef.current = null;
     countsRef.current = [];
+    timestampsValidRef.current = false;
+    followToastShownRef.current = false;
     sectionRef.current = null;
     confirmRef.current = false;
     contentHashRef.current = "";
     const audio = new Audio();
     applyPlaybackRate(audio, speedRef.current);
     audioRef.current = audio;
+    const onSeeked = () => syncCueFromAudio();
+    audio.addEventListener("seeked", onSeeked);
     return () => {
+      audio.removeEventListener("seeked", onSeeked);
       persistCue();
       audio.pause();
       audio.onended = null;
@@ -263,7 +302,7 @@ export const ListenControls = forwardRef<
       }
       onCue?.(null);
     };
-  }, [articleId, includeNotes, persistCue]);
+  }, [articleId, includeNotes, onCue, persistCue, syncCueFromAudio]);
 
   const loadChunk = useCallback(
     async (index: number, voice: string) => {
@@ -302,12 +341,18 @@ export const ListenControls = forwardRef<
         };
       };
 
-      const seekAndPlay = async (words: TtsWord[], wordOffset: number) => {
+      const seekAndPlay = async (
+        words: TtsWord[],
+        wordOffset: number,
+        chunkIndex: number,
+        chunkWordCounts: number[],
+      ) => {
         wordsRef.current = words;
         wordOffsetRef.current = wordOffset;
+        applyTimestampValidation(words, chunkIndex, chunkWordCounts);
         applyPlaybackRate(audio, speedRef.current);
         const applySeek = () => {
-          if (seekLocal != null && words[seekLocal]) {
+          if (seekLocal != null && timestampsValidRef.current && words[seekLocal]) {
             audio.currentTime = words[seekLocal].start;
           } else if (seekLocal == null) {
             audio.currentTime = 0;
@@ -319,11 +364,9 @@ export const ListenControls = forwardRef<
         applySeek();
         applyPlaybackRate(audio, speedRef.current);
         if (generation !== generationRef.current) return;
-        startCueLoop();
         setPhase("playing");
-        if (seekLocal != null) {
-          lastCueRef.current = wordOffset + seekLocal;
-          emitCue(lastCueRef.current);
+        if (timestampsValidRef.current) {
+          startCueLoop();
         }
       };
 
@@ -336,7 +379,8 @@ export const ListenControls = forwardRef<
         attachEnded(total);
         setChunk(index);
         setChunks(total);
-        await seekAndPlay(wordsRef.current, wordOffsetRef.current);
+        const counts = countsRef.current.length ? countsRef.current : cached?.chunkWordCounts || [];
+        await seekAndPlay(wordsRef.current, wordOffsetRef.current, index, counts);
         return;
       }
 
@@ -353,7 +397,8 @@ export const ListenControls = forwardRef<
         audio.src = url;
         loadedChunkRef.current = index;
         loadedVoiceRef.current = voice;
-        await seekAndPlay(data.words, data.wordOffset);
+        const counts = data.chunkWordCounts.length ? data.chunkWordCounts : countsRef.current;
+        await seekAndPlay(data.words, data.wordOffset, index, counts);
         if (index + 1 < data.chunks) {
           void loadChunk(index + 1, voice);
         }
@@ -363,7 +408,7 @@ export const ListenControls = forwardRef<
         toast.error(err instanceof ApiError ? err.message : "Could not start speech");
       }
     },
-    [articleId, emitCue, loadChunk, startCueLoop, stop],
+    [applyTimestampValidation, articleId, loadChunk, startCueLoop, stop],
   );
 
   const startAtWord = useCallback(
@@ -466,6 +511,7 @@ export const ListenControls = forwardRef<
           size="sm"
           variant="outline"
           onClick={() => {
+            syncCueFromAudio();
             audioRef.current?.pause();
             stopCueLoop();
             persistCue();
