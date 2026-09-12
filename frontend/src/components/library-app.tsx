@@ -77,7 +77,12 @@ import {
 } from "@/lib/reader-text-size";
 import { asDestination, DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
 import { folderById, foldersForShelf, isFolderShelf, matchFolderByName, shelfFolderId } from "@/lib/folders";
-import { countWords, spokenTitle, wordIndexFromSelection, wrapHtmlWords, wrapPlainWords } from "@/lib/tts-words";
+import { wordIndexFromSelection } from "@/lib/tts-words";
+import {
+  buildVisibleSpeechScript,
+  visibleSpeechSections,
+} from "@/lib/tts-visible";
+import type { VisibleSpeechPayload } from "@/lib/tts-visible";
 import type {
   Article,
   ArticleListItem,
@@ -1835,26 +1840,6 @@ function ArticleRow({
   );
 }
 
-function SpokenWords({ text, offset }: { text: string; offset: number }) {
-  const parts = text.split(/(\s+)/);
-  let index = offset;
-  return (
-    <>
-      {parts.map((part, key) => {
-        if (!part) return null;
-        if (/^\s+$/.test(part)) return <span key={key}>{part}</span>;
-        const wordIndex = index;
-        index += 1;
-        return (
-          <span key={key} className="tts-word" data-tts-word={wordIndex}>
-            {part}
-          </span>
-        );
-      })}
-    </>
-  );
-}
-
 function Reader({
   article,
   tags,
@@ -1987,8 +1972,6 @@ function Reader({
   const composed = isStoryKeepNote(article);
   const heroImage = composed ? null : articleHeroImageUrl(article.image_url, article.url);
   const html = composed ? composedNoteHtml(article) : articleReaderSource(article);
-  const titleSpoken = spokenTitle(article.title);
-  const titleWordCount = countWords(titleSpoken);
   const fallbackBody = composed
     ? composedNoteMarkdown(article)
     : article.content_text || stripHtml(article.summary) || "";
@@ -2079,24 +2062,25 @@ function Reader({
         suffix: item.suffix,
       }));
     if (composed && fallbackBody) {
-      const rendered = applyHighlights(
-        wrapHtmlWords(sanitizeHtml(noteMarkdownHtml(fallbackBody, wikilinkResolver)), titleWordCount),
-        marks,
-      );
-      setBodyHtml(rendered);
+      setBodyHtml(applyHighlights(sanitizeHtml(noteMarkdownHtml(fallbackBody, wikilinkResolver)), marks));
       return;
     }
     if (html) {
-      setBodyHtml(applyHighlights(wrapHtmlWords(html, titleWordCount), marks));
+      setBodyHtml(applyHighlights(html, marks));
       return;
     }
     if (fallbackBody) {
-      const rendered = applyHighlights(wrapPlainWords(fallbackBody, titleWordCount), marks);
-      setBodyHtml(rendered);
+      const escaped = fallbackBody
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/\n/g, "<br/>");
+      setBodyHtml(applyHighlights(`<p>${escaped}</p>`, marks));
       return;
     }
     setBodyHtml("");
-  }, [article.id, composed, fallbackBody, html, highlightKey, titleWordCount, wikilinkResolver]);
+  }, [article.id, composed, fallbackBody, html, highlightKey, wikilinkResolver]);
 
   useEffect(() => {
     setActiveWord(null);
@@ -2191,7 +2175,7 @@ function Reader({
 
   useEffect(() => {
     noteFocusRef.current = () => noteRef.current?.focus();
-    caretWordRef.current = () => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current;
+    caretWordRef.current = () => wordIndexFromSelection(bodyRef.current) ?? clickedWordRef.current;
     return () => {
       noteFocusRef.current = null;
       caretWordRef.current = null;
@@ -2293,15 +2277,28 @@ function Reader({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [listenRef]);
 
+  const getVisibleSpeech = useCallback((): VisibleSpeechPayload | null => {
+    if (!bodyRef.current) return null;
+    const noteRoots = includeNotesInListen
+      ? (Array.from(articleRef.current?.querySelectorAll(".tts-spoken-note") ?? []) as HTMLElement[])
+      : [];
+    const { script, visibleWordCount } = buildVisibleSpeechScript(bodyRef.current, {
+      skipTitle: article.title,
+      skipAuthor: article.author,
+      noteRoots,
+      includeNotes: includeNotesInListen,
+    });
+    if (!script.trim()) return null;
+    return { script, visibleWordCount };
+  }, [article.author, article.title, includeNotesInListen]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="tts-player-bar sticky top-0 z-30 shrink-0 border-b bg-card/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80">
         <ListenControls
           ref={listenRef}
           articleId={article.id}
-          hasText={Boolean(
-            composedNoteMarkdown(article) || article.content_text || article.content_html || article.summary,
-          )}
+          hasText={Boolean(bodyHtml)}
           includeNotes={includeNotesInListen}
           noteMode={composed}
           onCue={setActiveWord}
@@ -2313,7 +2310,9 @@ function Reader({
               /* ignore */
             }
           }}
-          getCaretWord={() => wordIndexFromSelection(articleRef.current) ?? clickedWordRef.current}
+          getCaretWord={() => wordIndexFromSelection(bodyRef.current) ?? clickedWordRef.current}
+          getVisibleSpeech={getVisibleSpeech}
+          getVisibleSections={() => visibleSpeechSections(bodyRef.current)}
         />
         <div className="mt-2 flex flex-wrap items-start gap-x-4 gap-y-1">
           {!composed && filedNotes.length > 0 ? (
@@ -2366,20 +2365,7 @@ function Reader({
         </div>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <article
-        ref={articleRef}
-        className={cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl")}
-        onClick={(event) => {
-          const word = (event.target as HTMLElement).closest("[data-tts-word]");
-          if (word instanceof HTMLElement) {
-            const index = Number(word.dataset.ttsWord);
-            if (Number.isFinite(index)) {
-              clickedWordRef.current = index;
-              setActiveWord(index);
-            }
-          }
-        }}
-      >
+      <article ref={articleRef} className={cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl")}>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <Button variant="ghost" className="lg:hidden -ml-2" onClick={onBack}>
             Back to list
@@ -2405,9 +2391,7 @@ function Reader({
           · {formatRelative(article.published_at)}
           {article.source_ref ? ` · ${article.source_ref}` : ""}
         </p>
-        <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl leading-tight mt-2">
-          <SpokenWords text={titleSpoken || article.title} offset={0} />
-        </h1>
+        <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl leading-tight mt-2">{article.title}</h1>
         {article.author ? <p className="mt-2 text-sm text-muted-foreground">{article.author}</p> : null}
         {heroImage ? (
           <img src={heroImage} alt="" className="article-hero mt-4 max-w-full rounded-lg" />
@@ -2591,7 +2575,17 @@ function Reader({
           <div
             ref={bodyRef}
             className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
-            onClick={handleReaderBodyClick}
+            onClick={(event) => {
+              handleReaderBodyClick(event);
+              const word = (event.target as HTMLElement).closest("[data-tts-word]");
+              if (word instanceof HTMLElement) {
+                const index = Number(word.dataset.ttsWord);
+                if (Number.isFinite(index)) {
+                  clickedWordRef.current = index;
+                  setActiveWord(index);
+                }
+              }
+            }}
             onMouseUp={() => {
               const next = selectionInRoot(bodyRef.current);
               setPicker(next);
@@ -2825,7 +2819,7 @@ function Reader({
                   </div>
                   <NoteAttachmentChips markdown={item.markdown} className="mt-2 mb-2" />
                   <div
-                    className="text-sm mt-1 note-md"
+                    className="text-sm mt-1 note-md tts-spoken-note"
                     onClick={handleReaderBodyClick}
                     dangerouslySetInnerHTML={{ __html: sanitizeHtml(noteMarkdownHtml(item.markdown, wikilinkResolver)) }}
                   />

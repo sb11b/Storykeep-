@@ -218,6 +218,7 @@ export type ChatStatus = {
 };
 
 export type TtsPlan = {
+  tts_word_count?: number;
   enabled: boolean;
   chars: number;
   chunks: number;

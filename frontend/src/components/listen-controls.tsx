@@ -23,7 +23,10 @@ type SpeechPayload = {
   duration: number | null;
   words: TtsWord[];
   contentHash?: string;
+  ttsWordCount?: number;
 };
+
+import type { VisibleSpeechPayload } from "@/lib/tts-visible";
 
 const speechMemory = new Map<string, SpeechPayload>();
 
@@ -100,9 +103,21 @@ export const ListenControls = forwardRef<
     onCue?: (wordIndex: number | null) => void;
     onFollowUnavailable?: () => void;
     getCaretWord?: () => number | null;
+    getVisibleSpeech?: () => VisibleSpeechPayload | null;
+    getVisibleSections?: () => import("@/lib/tts-visible").VisibleSpeechSection[];
   }
 >(function ListenControls(
-  { articleId, hasText, includeNotes = false, noteMode = false, onCue, onFollowUnavailable, getCaretWord },
+  {
+    articleId,
+    hasText,
+    includeNotes = false,
+    noteMode = false,
+    onCue,
+    onFollowUnavailable,
+    getCaretWord,
+    getVisibleSpeech,
+    getVisibleSections,
+  },
   ref,
 ) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -312,16 +327,34 @@ export const ListenControls = forwardRef<
       const key = memoryKey(articleId, voice, index, includeNotesRef.current, contentHashRef.current);
       const hit = speechMemory.get(key);
       if (hit) return hit;
-      const data = await api.articleSpeech(articleId, voice, index, {
-        confirm: confirmRef.current,
-        includeNotes: includeNotesRef.current,
-      });
+      const visible = getVisibleSpeech?.();
+      const data = visible?.script
+        ? await api.articleSpeechVisible(
+            articleId,
+            voice,
+            index,
+            {
+              visibleText: visible.script,
+              includeNotes: false,
+            },
+            { confirm: confirmRef.current },
+          )
+        : await api.articleSpeech(articleId, voice, index, {
+            confirm: confirmRef.current,
+            includeNotes: includeNotesRef.current,
+          });
       if (data.contentHash) contentHashRef.current = data.contentHash;
+      if (visible && "ttsWordCount" in data && data.ttsWordCount) {
+        console.info("[tts-visible]", {
+          ttsWordCount: data.ttsWordCount,
+          visibleWordCount: visible.visibleWordCount,
+        });
+      }
       rememberSpeech(memoryKey(articleId, voice, index, includeNotesRef.current, contentHashRef.current), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
       return data;
     },
-    [articleId, includeNotes],
+    [articleId, getVisibleSpeech, includeNotes],
   );
 
   const playChunk = useCallback(
@@ -428,11 +461,33 @@ export const ListenControls = forwardRef<
       }
       if (!confirmRef.current) {
         try {
-          const nextPlan = await api.ttsPlan(articleId, voice, { includeNotes: includeNotesRef.current });
+          const visible = getVisibleSpeech?.();
+          const nextPlan = visible?.script
+            ? await api.ttsPlanVisible(articleId, {
+                visibleText: visible.script,
+                voiceId: voice,
+                includeNotes: false,
+              })
+            : await api.ttsPlan(articleId, voice, { includeNotes: includeNotesRef.current });
           if (nextPlan.content_hash) contentHashRef.current = nextPlan.content_hash;
+          if (visible) {
+            console.info("[tts-visible]", {
+              ttsWordCount: nextPlan.tts_word_count ?? 0,
+              visibleWordCount: visible.visibleWordCount,
+            });
+          }
           if (nextPlan.long) {
             pendingWordRef.current = wordIndex;
-            setPlan(nextPlan);
+            const visibleSections = getVisibleSections?.() ?? [];
+            const sections = visibleSections.length
+              ? visibleSections.map((section) => ({
+                  id: section.id,
+                  title: section.title,
+                  chars: 0,
+                  word_offset: section.word_offset,
+                }))
+              : nextPlan.sections;
+            setPlan({ ...nextPlan, sections });
             setPlanOpen(true);
             return;
           }
@@ -449,7 +504,7 @@ export const ListenControls = forwardRef<
       const { chunk: target, local } = chunkForWord(counts, Math.max(0, wordIndex));
       void playChunk(target, voice, local);
     },
-    [articleId, hasText, includeNotes, loadChunk, noteMode, playChunk],
+    [articleId, getVisibleSections, getVisibleSpeech, hasText, includeNotes, loadChunk, noteMode, playChunk],
   );
 
   const listenFromHere = useCallback(() => {

@@ -72,6 +72,31 @@ def note_source_markdown(article: Article) -> str:
     return (article.summary or "").strip()
 
 
+def visible_speech_script(
+    visible_text: str,
+    *,
+    include_notes: bool = False,
+    notes_text: str | None = None,
+) -> str:
+    """Speech script from client-visible reader text only."""
+    parts: list[str] = []
+    body = speech_plain(visible_text)
+    if body:
+        parts.append(body)
+    if include_notes:
+        note_body = speech_plain(notes_text or "")
+        if note_body:
+            parts.append("Your notes.")
+            parts.append(note_body)
+    script = "\n\n".join(part for part in parts if part)
+    script = re.sub(r"https?://\S+", "", script)
+    script = re.sub(r"[ \t]+\n", "\n", script)
+    script = re.sub(r"\n{3,}", "\n\n", script).strip()
+    if len(script) > NOTES_HARD_CAP:
+        script = script[: NOTES_HARD_CAP - 32].rsplit(" ", 1)[0].strip() + " Further notes were omitted."
+    return script
+
+
 def article_script(
     article: Article,
     section_id: str | None = None,

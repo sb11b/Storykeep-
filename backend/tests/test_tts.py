@@ -12,6 +12,7 @@ from app.services.tts import (
     section_start_words,
     speech_plain,
     spoken_title,
+    visible_speech_script,
     word_count,
 )
 
@@ -103,6 +104,12 @@ class SpeechPlainTests(unittest.TestCase):
         self.assertEqual(starts["0"], word_count(spoken_title(note.title)))
         intro_words = word_count(speech_plain("# Intro\nFirst paragraph."))
         self.assertEqual(starts["1"], starts["0"] + intro_words)
+
+    def test_visible_speech_script_uses_client_body_only(self):
+        script = visible_speech_script("Body text the reader sees.")
+        self.assertEqual(script, "Body text the reader sees.")
+        self.assertEqual(word_count(script), 5)
+        self.assertNotIn("Hidden title", visible_speech_script("Body text the reader sees."))
 
     def test_include_notes_appends_overlay_notes_without_changing_article_body(self):
         article = SimpleNamespace(

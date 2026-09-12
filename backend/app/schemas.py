@@ -483,3 +483,10 @@ class NoteTitleOut(BaseModel):
 
 class NoteTitlesOut(BaseModel):
     items: list[NoteTitleOut]
+
+
+class VisibleSpeechIn(BaseModel):
+    visible_text: str = Field(default="", max_length=65000)
+    notes_text: str | None = Field(default=None, max_length=65000)
+    include_notes: bool = False
+    voice_id: str = Field(default="eve", max_length=64)
