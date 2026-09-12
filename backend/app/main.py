@@ -83,6 +83,7 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_correction BOOLEAN DEFAULT FALSE")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS feed_html TEXT")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS feed_text TEXT")
+    _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS folder_id UUID")
     _try_sql(
         "UPDATE articles SET feed_html = summary "
         "WHERE feed_html IS NULL AND source_kind = 'rss' AND summary IS NOT NULL AND length(summary) > 120"

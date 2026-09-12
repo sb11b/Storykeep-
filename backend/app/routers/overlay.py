@@ -114,6 +114,7 @@ def compose_vault_note(
             payload.markdown,
             payload.tags,
             destination=payload.destination,
+            folder_id=payload.folder_id,
             parent_id=payload.parent_id,
             is_correction=payload.is_correction,
         )
@@ -138,10 +139,13 @@ def edit_composed_note(
             payload.title,
             payload.markdown,
             payload.is_correction,
+            folder_id=payload.folder_id,
             commit=False,
         )
         dest = payload.destination or getattr(article, "destination", None) or "additions"
-        set_composed_destination(db, user, article, dest, payload.is_correction, commit=False)
+        set_composed_destination(
+            db, user, article, dest, payload.is_correction, folder_id=payload.folder_id, commit=False
+        )
         db.commit()
     except ValueError as exc:
         db.rollback()
@@ -158,7 +162,9 @@ def move_composed_note(
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
     try:
-        set_composed_destination(db, user, article, payload.destination, payload.is_correction)
+        set_composed_destination(
+            db, user, article, payload.destination, payload.is_correction, folder_id=payload.folder_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _article_payload(db, user, article.id)
@@ -221,6 +227,7 @@ def create_standalone_addition(
             payload.markdown,
             payload.tags,
             destination=payload.destination,
+            folder_id=payload.folder_id,
             parent_id=payload.parent_id,
             is_correction=payload.is_correction,
         )
@@ -254,6 +261,7 @@ def create_addition(
             payload.markdown,
             payload.tags,
             destination=payload.destination or "notes",
+            folder_id=payload.folder_id,
             parent_id=article.id,
             is_correction=False,
         )

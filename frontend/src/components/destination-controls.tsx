@@ -1,6 +1,8 @@
 "use client";
 
 import { DESTINATION_LABEL, NOTE_DESTINATIONS, type NoteDestination } from "@/lib/destinations";
+import { foldersForShelf } from "@/lib/folders";
+import type { Folder } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function DestinationSelect({
@@ -30,6 +32,53 @@ export function DestinationSelect({
           {DESTINATION_LABEL[item]}
         </option>
       ))}
+    </select>
+  );
+}
+
+export function FolderSelect({
+  shelf,
+  folders,
+  value,
+  onChange,
+  onCreateFolder,
+  id,
+  className,
+}: {
+  shelf: NoteDestination;
+  folders: Folder[];
+  value: string | null;
+  onChange: (next: string | null) => void;
+  onCreateFolder: () => void;
+  id?: string;
+  className?: string;
+}) {
+  const options = foldersForShelf(folders, shelf);
+  return (
+    <select
+      id={id}
+      aria-label="Folder"
+      value={value ?? ""}
+      onChange={(event) => {
+        const next = event.target.value;
+        if (next === "__new__") {
+          onCreateFolder();
+          return;
+        }
+        onChange(next || null);
+      }}
+      className={cn(
+        "h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+        className,
+      )}
+    >
+      <option value="">No folder</option>
+      {options.map((folder) => (
+        <option key={folder.id} value={folder.id}>
+          {folder.name}
+        </option>
+      ))}
+      <option value="__new__">New folder…</option>
     </select>
   );
 }

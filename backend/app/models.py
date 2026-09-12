@@ -43,6 +43,7 @@ class User(Base):
     categories: Mapped[list[Category]] = relationship(back_populates="user")
     feeds: Mapped[list[Feed]] = relationship(back_populates="user")
     tags: Mapped[list[Tag]] = relationship(back_populates="user")
+    folders: Mapped[list["Folder"]] = relationship(back_populates="user")
 
 
 class Category(Base):
@@ -121,6 +122,9 @@ class Article(Base):
     )
     obsidian_path: Mapped[str | None] = mapped_column(Text)
     destination: Mapped[str | None] = mapped_column(String(16))
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL")
+    )
     is_correction: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -138,6 +142,7 @@ class Article(Base):
     )
 
     feed: Mapped[Feed] = relationship(back_populates="articles")
+    folder: Mapped["Folder | None"] = relationship(back_populates="articles")
     tags: Mapped[list[Tag]] = relationship(secondary="article_tags", back_populates="articles")
     annotations: Mapped[list[Annotation]] = relationship(back_populates="article", cascade="all, delete-orphan")
     archives: Mapped[list[Archive]] = relationship(back_populates="article", cascade="all, delete-orphan")
@@ -150,6 +155,20 @@ class Article(Base):
     corrections: Mapped[list["Correction"]] = relationship(
         back_populates="article", cascade="all, delete-orphan"
     )
+
+
+class Folder(Base):
+    __tablename__ = "folders"
+    __table_args__ = (UniqueConstraint("user_id", "shelf", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    shelf: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship(back_populates="folders")
+    articles: Mapped[list[Article]] = relationship(back_populates="folder")
 
 
 class Tag(Base):

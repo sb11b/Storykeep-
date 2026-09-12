@@ -101,6 +101,20 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/v1/auth/logout", { method: "POST" }),
   stats: () => request<Stats>("/api/v1/stats"),
+  folders: (shelf?: string) =>
+    request<import("@/lib/types").Folder[]>(shelf ? `/api/v1/folders?shelf=${encodeURIComponent(shelf)}` : "/api/v1/folders"),
+  createFolder: (shelf: string, name: string) =>
+    request<import("@/lib/types").Folder>("/api/v1/folders", {
+      method: "POST",
+      body: JSON.stringify({ shelf, name }),
+    }),
+  renameFolder: (folderId: string, shelf: string, name: string) =>
+    request<import("@/lib/types").Folder>(`/api/v1/folders/${folderId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ shelf, name }),
+    }),
+  deleteFolder: (folderId: string) =>
+    request<{ ok: boolean }>(`/api/v1/folders/${folderId}`, { method: "DELETE" }),
   feeds: () => request<Feed[]>("/api/v1/feeds"),
   addFeed: (url: string, category_id?: string | null, title?: string | null) =>
     request<Feed>("/api/v1/feeds", {
@@ -156,20 +170,41 @@ export const api = {
     tags: string[] = [],
     destination?: string,
     isCorrection?: boolean,
+    folderId?: string | null,
   ) =>
     request<Article>("/api/v1/sources/obsidian/notes", {
       method: "POST",
-      body: JSON.stringify({ title, markdown, tags, destination, is_correction: Boolean(isCorrection) }),
+      body: JSON.stringify({
+        title,
+        markdown,
+        tags,
+        destination,
+        folder_id: folderId ?? null,
+        is_correction: Boolean(isCorrection),
+      }),
     }),
-  updateComposedNote: (articleId: string, title: string, markdown: string, destination?: string, isCorrection?: boolean) =>
+  updateComposedNote: (
+    articleId: string,
+    title: string,
+    markdown: string,
+    destination?: string,
+    isCorrection?: boolean,
+    folderId?: string | null,
+  ) =>
     request<Article>(`/api/v1/articles/${articleId}/storykeep-note`, {
       method: "PATCH",
-      body: JSON.stringify({ title, markdown, destination, is_correction: Boolean(isCorrection) }),
+      body: JSON.stringify({
+        title,
+        markdown,
+        destination,
+        folder_id: folderId ?? null,
+        is_correction: Boolean(isCorrection),
+      }),
     }),
-  setNoteDestination: (articleId: string, destination: string, isCorrection?: boolean) =>
+  setNoteDestination: (articleId: string, destination: string, isCorrection?: boolean, folderId?: string | null) =>
     request<Article>(`/api/v1/articles/${articleId}/destination`, {
       method: "PATCH",
-      body: JSON.stringify({ destination, is_correction: isCorrection }),
+      body: JSON.stringify({ destination, folder_id: folderId ?? null, is_correction: isCorrection }),
     }),
   uploadNoteMedia,
   uploadNoteImage: uploadNoteMedia,
@@ -198,10 +233,23 @@ export const api = {
     }
     return (await response.json()) as Article;
   },
-  addAddition: (articleId: string, title: string, markdown: string, destination?: string, isCorrection?: boolean) =>
+  addAddition: (
+    articleId: string,
+    title: string,
+    markdown: string,
+    destination?: string,
+    isCorrection?: boolean,
+    folderId?: string | null,
+  ) =>
     request(`/api/v1/articles/${articleId}/additions`, {
       method: "POST",
-      body: JSON.stringify({ title, markdown, destination: destination || "notes", is_correction: Boolean(isCorrection) }),
+      body: JSON.stringify({
+        title,
+        markdown,
+        destination: destination || "notes",
+        folder_id: folderId ?? null,
+        is_correction: Boolean(isCorrection),
+      }),
     }),
   upsertCorrection: (articleId: string, markdown: string) =>
     request<Correction>(`/api/v1/articles/${articleId}/corrections`, {

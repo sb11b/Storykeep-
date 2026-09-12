@@ -72,6 +72,7 @@ def article_list_item(article: Article) -> ArticleListItem:
         has_full_text=has_full_text(article.content_html, article.content_text),
         source_kind=getattr(article, "source_kind", None) or "rss",
         destination=effective_destination(article),
+        folder_id=getattr(article, "folder_id", None),
         tags=[tag_out(tag) for tag in article.tags],
     )
 
@@ -82,6 +83,7 @@ def filed_note_out(article: Article) -> FiledNoteOut:
         title=article.title,
         markdown=article.content_text or "",
         destination=effective_destination(article) or DEFAULT_DESTINATION,
+        folder_id=getattr(article, "folder_id", None),
         is_correction=bool(getattr(article, "is_correction", False)),
         parent_id=article.parent_id,
         created_at=article.created_at,
@@ -171,6 +173,7 @@ def article_out(article: Article, filed_notes: list[Article] | None = None) -> A
             for row in getattr(article, "corrections", []) or []
         ],
         destination=effective_destination(article),
+        folder_id=getattr(article, "folder_id", None),
         is_correction=bool(getattr(article, "is_correction", False)),
         parent_id=article.parent_id,
         filed_notes=[filed_note_out(row) for row in filed_notes or []],

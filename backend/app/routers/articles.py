@@ -11,6 +11,7 @@ from app.deps import get_current_user
 from app.models import Annotation, Archive, Article, Feed, OverlayAddition, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, archive_out, article_list_item, article_out, tag_out
 from app.services.destination import apply_shelf_filter
+from app.services.folders import apply_folder_filter, get_folder
 from app.schemas import (
     AnnotationIn,
     AnnotationOut,
@@ -145,6 +146,7 @@ def list_articles(
     read: bool | None = None,
     q: str | None = None,
     shelf: str | None = Query(default=None),
+    folder_id: UUID | None = None,
     since: datetime | None = None,
     limit: int = Query(default=40, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -173,6 +175,13 @@ def list_articles(
     if since:
         stmt = stmt.where(Article.updated_at >= since)
     stmt = apply_shelf_filter(stmt, shelf)
+    if folder_id:
+        folder = get_folder(db, user, folder_id)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        if shelf and shelf != folder.shelf:
+            raise HTTPException(status_code=400, detail="Folder does not belong to this shelf")
+        stmt = apply_folder_filter(stmt, folder_id)
     if q:
         tsquery = func.plainto_tsquery("english", q)
         stmt = stmt.where(article_search_match(user.id, tsquery, q))

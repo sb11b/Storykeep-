@@ -6,6 +6,7 @@ from sqlalchemy.sql import ColumnElement
 from app.models import Article, Feed, User
 
 DESTINATIONS = ("vault", "additions", "books", "notes", "schoolwork")
+FOLDER_SHELVES = DESTINATIONS
 DEFAULT_DESTINATION = "additions"
 
 

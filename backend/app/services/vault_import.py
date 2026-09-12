@@ -18,6 +18,8 @@ from app.services.destination import (
     source_kind_for_destination,
 )
 from app.services.markdown_html import markdown_to_html
+_UNSET = object()
+
 from app.services.vault_paths import (
     classify_zip_entry,
     import_tags_for_path,
@@ -179,6 +181,7 @@ def create_composed_note(
     markdown: str,
     tags: list[str] | None = None,
     destination: str | None = None,
+    folder_id=None,
     parent_id=None,
     is_correction: bool = False,
 ) -> Article:
@@ -190,6 +193,9 @@ def create_composed_note(
     if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
         raise ValueError("That note is larger than 1.5 MB.")
     dest = normalize_destination(destination)
+    from app.services.folders import resolve_folder_id
+
+    resolved_folder_id = resolve_folder_id(db, user, dest, folder_id)
     tags_l = [(tag or "").lower() for tag in tags or []]
     if dest == DEFAULT_DESTINATION and (heading.startswith("_book_") or "book" in tags_l):
         dest = "books"
@@ -213,6 +219,7 @@ def create_composed_note(
         source_kind=kind,
         parent_id=parent_id,
         destination=dest,
+        folder_id=resolved_folder_id,
         is_correction=bool(is_correction),
     )
     db.add(article)
@@ -256,6 +263,7 @@ def update_composed_note(
     title: str,
     markdown: str,
     is_correction: bool | None = None,
+    folder_id=_UNSET,
     *,
     commit: bool = True,
 ) -> Article:
@@ -271,6 +279,14 @@ def update_composed_note(
     now = datetime.now(timezone.utc)
     if is_correction is not None:
         article.is_correction = bool(is_correction)
+    if folder_id is not _UNSET:
+        from app.services.folders import resolve_folder_id
+
+        if folder_id is None:
+            article.folder_id = None
+        else:
+            dest = getattr(article, "destination", None) or DEFAULT_DESTINATION
+            article.folder_id = resolve_folder_id(db, user, dest, folder_id)
     article.title = heading[:500]
     article.summary = body[:280]
     article.content_text = body
@@ -313,6 +329,7 @@ def set_composed_destination(
     article: Article,
     destination: str,
     is_correction: bool | None = None,
+    folder_id=_UNSET,
     *,
     commit: bool = True,
 ) -> Article:
@@ -322,6 +339,19 @@ def set_composed_destination(
     dest = normalize_destination(destination)
     flag = article.is_correction if is_correction is None else bool(is_correction)
     apply_destination(article, dest, flag)
+    from app.services.folders import get_folder, match_folder_by_name, resolve_folder_id
+
+    if folder_id is not _UNSET:
+        if folder_id is None:
+            article.folder_id = None
+        else:
+            article.folder_id = resolve_folder_id(db, user, dest, folder_id)
+    else:
+        previous_name = None
+        if article.folder_id:
+            previous = get_folder(db, user, article.folder_id)
+            previous_name = previous.name if previous else None
+        article.folder_id = match_folder_by_name(db, user, dest, previous_name)
     pack_kind = "correction" if article.is_correction else "addition"
     article.source_ref = overlay_relpath(pack_kind, None, f"{article.title}-{str(article.id)[:8]}")
     article.url = f"storykeep://{article.source_ref}"[:4000]

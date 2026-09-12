@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Annotation, Archive, Article, Category, Feed, OverlayHighlight, Tag, User
+from app.models import Annotation, Archive, Article, Category, Feed, Folder, OverlayHighlight, Tag, User
 from app.presenters import annotation_out, article_list_item
 from app.services.notes_feed import notes_feed_page
 from app.services.destination import shelf_count
@@ -16,6 +16,8 @@ from app.schemas import (
     AnnotationOut,
     CategoryIn,
     CategoryOut,
+    FolderIn,
+    FolderOut,
     Page,
     PreferencesIn,
     SearchHit,
@@ -24,6 +26,7 @@ from app.schemas import (
     TagMergeIn,
     TagOut,
 )
+from app.services.folders import create_folder, delete_folder, list_folders, rename_folder
 from app.services import changelog
 from app.services.overlay_search import article_search_match, overlay_text_subquery
 
@@ -312,6 +315,64 @@ def put_preferences(
     db.add(user)
     db.commit()
     return current
+
+
+@router.get("/folders", response_model=list[FolderOut])
+def folders(
+    shelf: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[FolderOut]:
+    rows = list_folders(db, user, shelf)
+    return [
+        FolderOut(id=row.id, shelf=row.shelf, name=row.name, item_count=count, created_at=row.created_at)
+        for row, count in rows
+    ]
+
+
+@router.post("/folders", response_model=FolderOut, status_code=201)
+def create_folder_route(
+    payload: FolderIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> FolderOut:
+    try:
+        row = create_folder(db, user, payload.shelf, payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FolderOut(id=row.id, shelf=row.shelf, name=row.name, item_count=0, created_at=row.created_at)
+
+
+@router.patch("/folders/{folder_id}", response_model=FolderOut)
+def rename_folder_route(
+    folder_id: UUID,
+    payload: FolderIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FolderOut:
+    try:
+        row = rename_folder(db, user, folder_id, payload.name)
+    except ValueError as exc:
+        status = 404 if "not found" in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    from app.services.folders import folder_item_count
+
+    return FolderOut(
+        id=row.id,
+        shelf=row.shelf,
+        name=row.name,
+        item_count=folder_item_count(db, user, row),
+        created_at=row.created_at,
+    )
+
+
+@router.delete("/folders/{folder_id}")
+def delete_folder_route(
+    folder_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict[str, bool]:
+    try:
+        delete_folder(db, user, folder_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @router.get("/stats", response_model=StatsOut)

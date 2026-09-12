@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Article, Correction, NoteMedia, OverlayAddition, OverlayHighlight, User
 from app.services.note_media import media_ids_in_markdown
+from app.services.folders import folder_name_for_article
 from app.services.vault_paths import overlay_relpath
 
 YAML_ESCAPE = str.maketrans({'"': '\\"', "\\": "\\\\"})
@@ -87,8 +88,9 @@ def build_obsidian_pack(db: Session, user: User) -> bytes:
             path = overlay_relpath(pack_kind, None, f"{row.title}-{str(row.id)[:8]}")
             source_ref = _source_ref(row.article) if row.article else None
             packed_body = _pack_addition_markdown(zf, db, user, row.markdown, packed_media)
+            folder_name = folder_name_for_article(db, user, row.article) if row.article else None
             text = [
-                _frontmatter(row.id, pack_kind, source_ref, row.updated_at or row.created_at),
+                _frontmatter(row.id, pack_kind, source_ref, row.updated_at or row.created_at, folder_name),
                 "",
                 f"# {row.title}",
                 "",
@@ -158,15 +160,17 @@ def _iso(value: datetime | None) -> str:
     return value.isoformat()
 
 
-def _frontmatter(entity_id, kind: str, source_ref: str | None, updated: datetime | None) -> str:
+def _frontmatter(
+    entity_id, kind: str, source_ref: str | None, updated: datetime | None, folder: str | None = None
+) -> str:
     ref = (source_ref or "").translate(YAML_ESCAPE)
-    return "\n".join(
-        [
-            "---",
-            f"storykeep_id: {entity_id}",
-            f"kind: {kind}",
-            f'source_ref: "{ref}"',
-            f"updated: {_iso(updated)}",
-            "---",
-        ]
-    )
+    lines = [
+        "---",
+        f"storykeep_id: {entity_id}",
+        f"kind: {kind}",
+        f'source_ref: "{ref}"',
+    ]
+    if folder:
+        lines.append(f'folder: "{folder.translate(YAML_ESCAPE)}"')
+    lines.extend([f"updated: {_iso(updated)}", "---"])
+    return "\n".join(lines)

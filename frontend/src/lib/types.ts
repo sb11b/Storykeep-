@@ -123,6 +123,7 @@ export type ArticleListItem = {
   has_full_text: boolean;
   source_kind?: string;
   destination?: string | null;
+  folder_id?: string | null;
   tags: Tag[];
 };
 
@@ -152,6 +153,7 @@ export type Article = ArticleListItem & {
   overlay_additions?: OverlayAddition[];
   corrections?: Correction[];
   destination?: string | null;
+  folder_id?: string | null;
   is_correction?: boolean;
   parent_id?: string | null;
   filed_notes?: FiledNote[];
@@ -245,16 +247,26 @@ export type OpmlImportResult = {
   errors: { url: string; detail: string }[];
 };
 
+export type FolderShelfKind = "vault" | "additions" | "books" | "notes" | "schoolwork";
+
+export type Folder = {
+  id: string;
+  shelf: FolderShelfKind;
+  name: string;
+  item_count: number;
+  created_at: string;
+};
+
 export type Shelf =
   | { kind: "inbox" }
   | { kind: "unread" }
   | { kind: "saved" }
   | { kind: "starred" }
-  | { kind: "notes" }
-  | { kind: "vault" }
-  | { kind: "additions" }
-  | { kind: "books" }
-  | { kind: "schoolwork" }
+  | { kind: "vault"; folderId?: string }
+  | { kind: "additions"; folderId?: string }
+  | { kind: "books"; folderId?: string }
+  | { kind: "notes"; folderId?: string }
+  | { kind: "schoolwork"; folderId?: string }
   | { kind: "feed"; id: string }
   | { kind: "category"; id: string }
   | { kind: "tag"; id: string }

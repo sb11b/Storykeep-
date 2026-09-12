@@ -190,11 +190,27 @@ class OverlayHighlightOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FolderIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    shelf: str
+
+
+class FolderOut(BaseModel):
+    id: uuid.UUID
+    shelf: str
+    name: str
+    item_count: int = 0
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class OverlayAdditionIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     markdown: str = Field(min_length=1)
     tags: list[str] = []
     destination: str | None = None
+    folder_id: uuid.UUID | None = None
     is_correction: bool = False
     parent_id: uuid.UUID | None = None
 
@@ -215,6 +231,7 @@ class OverlayAdditionOut(BaseModel):
 class DestinationIn(BaseModel):
     destination: str
     is_correction: bool | None = None
+    folder_id: uuid.UUID | None = None
 
 
 class CorrectionIn(BaseModel):
@@ -255,6 +272,7 @@ class FiledNoteOut(BaseModel):
     title: str
     markdown: str
     destination: str
+    folder_id: uuid.UUID | None = None
     is_correction: bool = False
     parent_id: uuid.UUID | None = None
     created_at: datetime
@@ -304,6 +322,7 @@ class ArticleOut(BaseModel):
     overlay_additions: list[OverlayAdditionOut] = []
     corrections: list[CorrectionOut] = []
     destination: str | None = None
+    folder_id: uuid.UUID | None = None
     is_correction: bool = False
     parent_id: uuid.UUID | None = None
     filed_notes: list[FiledNoteOut] = []
@@ -327,6 +346,7 @@ class ArticleListItem(BaseModel):
     has_full_text: bool = False
     source_kind: str = "rss"
     destination: str | None = None
+    folder_id: uuid.UUID | None = None
     tags: list[TagOut] = []
 
     model_config = {"from_attributes": True}
