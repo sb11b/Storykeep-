@@ -1,14 +1,19 @@
 import type { TtsWord } from "@/lib/types";
 
-/** Map playback time (seconds) to a word index in the same chunk's words[] array. */
-export function wordIndexAtTime(words: TtsWord[], time: number): number {
-  if (!words.length) return 0;
-  let index = 0;
+/**
+ * Find the word index for audio.currentTime (seconds).
+ * Active when start <= time < end. In gaps between words, hold the last started word.
+ */
+export function wordIndexAtTime(words: TtsWord[], time: number): number | null {
+  if (!words.length) return null;
   for (let i = 0; i < words.length; i += 1) {
-    if (time >= words[i].start) index = i;
-    else break;
+    const w = words[i];
+    if (time >= w.start && time < w.end) return i;
   }
-  return index;
+  for (let i = words.length - 1; i >= 0; i -= 1) {
+    if (time >= words[i].start) return i;
+  }
+  return null;
 }
 
 /** Timestamps must exist and match the spoken script word count for this chunk. */
@@ -17,4 +22,11 @@ export function timestampsMatchChunk(words: TtsWord[], chunkIndex: number, chunk
   const expected = chunkWordCounts[chunkIndex];
   if (expected == null || expected <= 0) return false;
   return words.length === expected;
+}
+
+/** True when the chosen word's start is materially after playback time (highlight ahead of voice). */
+export function cueAheadOfVoice(words: TtsWord[], localIndex: number, currentTime: number, epsilon = 0.02): boolean {
+  const w = words[localIndex];
+  if (!w) return false;
+  return currentTime + epsilon < w.start;
 }

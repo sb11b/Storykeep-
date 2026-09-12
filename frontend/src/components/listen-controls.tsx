@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
-import { timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
+import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
 import { cn } from "@/lib/utils";
 import type { TtsStatus, TtsWord } from "@/lib/types";
 
@@ -191,7 +191,19 @@ export const ListenControls = forwardRef<
     const audio = audioRef.current;
     const words = wordsRef.current;
     if (!audio || !words.length) return;
-    const local = wordIndexAtTime(words, audio.currentTime);
+    const currentTime = audio.currentTime;
+    const local = wordIndexAtTime(words, currentTime);
+    if (local == null) return;
+    if (cueAheadOfVoice(words, local, currentTime)) {
+      const w = words[local];
+      console.warn("[tts-cue]", {
+        currentTime,
+        wordStart: w?.start,
+        wordEnd: w?.end,
+        rate: audio.playbackRate,
+      });
+      return;
+    }
     const next = wordOffsetRef.current + local;
     if (next !== lastCueRef.current) {
       lastCueRef.current = next;
@@ -355,6 +367,7 @@ export const ListenControls = forwardRef<
         if (generation !== generationRef.current) return;
         setPhase("playing");
         if (timestampsValidRef.current) {
+          syncCueFromAudio();
           startCueLoop();
         }
       };
@@ -397,7 +410,7 @@ export const ListenControls = forwardRef<
         toast.error(err instanceof ApiError ? err.message : "Could not start speech");
       }
     },
-    [applyTimestampValidation, articleId, loadChunk, startCueLoop, stop],
+    [applyTimestampValidation, articleId, loadChunk, startCueLoop, stop, syncCueFromAudio],
   );
 
   const startAtWord = useCallback(
