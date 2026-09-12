@@ -6,9 +6,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
-import { readStoredTtsSpeed, readStoredTtsVoice } from "@/lib/tts-preferences";
+import {
+  readStoredTtsSpeed,
+  TTS_SPEEDS,
+  writeStoredTtsSpeed,
+  readStoredTtsVoice,
+} from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
-import { buildVisibleSpeechScript } from "@/lib/tts-visible";
+import { chatSpeechScript } from "@/lib/tts-words";
 import type { TtsWord } from "@/lib/types";
 
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
@@ -19,15 +24,20 @@ function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   }
 }
 
+function ttsFailureToast(error: unknown) {
+  const status = error instanceof ApiError ? error.status : 0;
+  toast.error(`Could not read this reply (HTTP ${status || "error"}).`);
+}
+
 export function useGrokMessageListen({
   messageId,
-  bodyRef,
+  content,
   disabled,
   onPlayingChange,
   onCue,
 }: {
   messageId: string;
-  bodyRef: React.RefObject<HTMLElement | null>;
+  content: string;
   disabled?: boolean;
   onPlayingChange?: (active: boolean) => void;
   onCue?: (wordIndex: number | null) => void;
@@ -41,7 +51,9 @@ export function useGrokMessageListen({
   const lastCueRef = useRef<number | null>(null);
   const countsRef = useRef<number[]>([]);
   const timestampsValidRef = useRef(false);
+  const stopRef = useRef<() => void>(() => {});
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
+  const [speed, setSpeed] = useState(readStoredTtsSpeed);
 
   const stopCueLoop = useCallback(() => {
     if (cueRafRef.current != null) {
@@ -89,11 +101,12 @@ export function useGrokMessageListen({
     lastCueRef.current = null;
     emitCue(null);
     timestampsValidRef.current = false;
-    releaseTtsPlayback(stop);
+    releaseTtsPlayback(stopRef.current);
     const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
       audio.pause();
+      audio.currentTime = 0;
     }
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
@@ -103,42 +116,44 @@ export function useGrokMessageListen({
     onPlayingChange?.(false);
   }, [emitCue, onPlayingChange, stopCueLoop]);
 
+  stopRef.current = stop;
+
   useEffect(() => {
     const audio = new Audio();
     applyPlaybackRate(audio, readStoredTtsSpeed());
     audioRef.current = audio;
     return () => {
-      stop();
+      generationRef.current += 1;
+      stopCueLoop();
+      audio.onended = null;
+      audio.pause();
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      releaseTtsPlayback(stopRef.current);
       audioRef.current = null;
     };
-  }, [messageId, stop]);
+  }, [messageId, stopCueLoop]);
 
   useEffect(() => {
-    onPlayingChange?.(phase !== "idle" && phase !== "loading");
+    onPlayingChange?.(phase === "playing" || phase === "paused" || phase === "loading");
   }, [onPlayingChange, phase]);
 
-  const visibleSpeech = useCallback(() => {
-    const root = bodyRef.current;
-    if (!root) return null;
-    return buildVisibleSpeechScript(root);
-  }, [bodyRef]);
+  const speechPayload = useCallback(() => chatSpeechScript(content), [content]);
 
-  const play = useCallback(async () => {
-    if (disabled) return;
-    const payload = visibleSpeech();
-    if (!payload?.script.trim()) {
-      toast.error("Nothing visible to read in this message.");
+  const beginPlayback = useCallback(async () => {
+    const payload = speechPayload();
+    if (!payload.script.trim()) {
+      toast.error("Nothing to read in this reply.");
       return;
     }
-    claimTtsPlayback(stop);
+    claimTtsPlayback(stopRef.current);
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     const voice = readStoredTtsVoice();
-    const speed = readStoredTtsSpeed();
+    const rate = readStoredTtsSpeed();
+    setSpeed(rate);
     setPhase("loading");
-    onPlayingChange?.(true);
     try {
-      const data = await api.messageSpeech(messageId, voice, 0, payload.script);
+      const data = await api.messageSpeech(messageId, voice, 0, content);
       if (generation !== generationRef.current) return;
       const audio = audioRef.current;
       if (!audio) return;
@@ -150,7 +165,7 @@ export function useGrokMessageListen({
       wordOffsetRef.current = data.wordOffset;
       countsRef.current = data.chunkWordCounts.length ? data.chunkWordCounts : [data.words.length || 1];
       timestampsValidRef.current = timestampsMatchChunk(data.words, 0, countsRef.current);
-      applyPlaybackRate(audio, speed);
+      applyPlaybackRate(audio, rate);
       audio.onended = () => {
         if (generation !== generationRef.current) return;
         stop();
@@ -162,89 +177,110 @@ export function useGrokMessageListen({
         syncCueFromAudio();
         startCueLoop();
       }
-      if (payload.visibleWordCount !== data.ttsWordCount) {
-        console.warn("[tts-visible] grok reply word count mismatch", {
-          ttsWordCount: data.ttsWordCount,
-          visibleWordCount: payload.visibleWordCount,
-        });
-      } else {
-        console.info("[tts-visible] grok reply", {
-          ttsWordCount: data.ttsWordCount,
-          visibleWordCount: payload.visibleWordCount,
-        });
-      }
+      console.info("[tts-visible] grok reply", {
+        ttsWordCount: data.ttsWordCount,
+        visibleWordCount: payload.visibleWordCount,
+      });
     } catch (error) {
       if (generation !== generationRef.current) return;
       stop();
-      toast.error(error instanceof ApiError ? error.message : "Could not read that reply aloud");
+      ttsFailureToast(error);
     }
-  }, [disabled, messageId, onPlayingChange, startCueLoop, stop, syncCueFromAudio, visibleSpeech]);
+  }, [content, messageId, speechPayload, startCueLoop, stop, syncCueFromAudio]);
 
-  const toggle = useCallback(() => {
-    if (phase === "playing") {
-      audioRef.current?.pause();
-      stopCueLoop();
-      setPhase("paused");
-      return;
-    }
+  const listen = useCallback(() => {
+    if (disabled) return;
     if (phase === "paused") {
       const audio = audioRef.current;
-      if (audio) {
-        applyPlaybackRate(audio, readStoredTtsSpeed());
-        void audio.play().then(() => {
-          setPhase("playing");
-          startCueLoop();
-        });
-      }
+      if (!audio) return;
+      claimTtsPlayback(stopRef.current);
+      applyPlaybackRate(audio, readStoredTtsSpeed());
+      void audio.play().then(() => {
+        setPhase("playing");
+        startCueLoop();
+      });
       return;
     }
-    if (phase === "idle") void play();
-  }, [phase, play, startCueLoop, stopCueLoop]);
+    if (phase === "idle") void beginPlayback();
+  }, [beginPlayback, disabled, phase, startCueLoop]);
 
-  return { phase, toggle, stop, isActive: phase !== "idle" };
+  const pause = useCallback(() => {
+    if (phase !== "playing") return;
+    audioRef.current?.pause();
+    stopCueLoop();
+    setPhase("paused");
+  }, [phase, stopCueLoop]);
+
+  const changeSpeed = useCallback(
+    (rate: number) => {
+      writeStoredTtsSpeed(rate);
+      setSpeed(rate);
+      const audio = audioRef.current;
+      if (audio) applyPlaybackRate(audio, rate);
+    },
+    [],
+  );
+
+  return {
+    phase,
+    speed,
+    listen,
+    pause,
+    stop,
+    changeSpeed,
+    isActive: phase !== "idle",
+  };
 }
 
-export function GrokListenButton({
+export function GrokListenBar({
   phase,
   disabled,
-  onClick,
+  speed,
+  onListen,
+  onPause,
+  onStop,
+  onSpeedChange,
 }: {
   phase: "idle" | "loading" | "playing" | "paused";
   disabled?: boolean;
-  onClick: () => void;
+  speed: number;
+  onListen: () => void;
+  onPause: () => void;
+  onStop: () => void;
+  onSpeedChange: (rate: number) => void;
 }) {
-  if (phase === "loading") {
-    return (
-      <Button size="xs" variant="outline" disabled>
-        <LoaderCircle className="size-3 animate-spin" />
-        Preparing…
+  const listenLabel = phase === "paused" ? "Resume" : "Listen";
+  const listenDisabled = disabled || phase === "loading" || phase === "playing";
+  const pauseDisabled = phase !== "playing";
+  const stopDisabled = phase === "idle" || phase === "loading";
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-xs">
+      <Button size="xs" variant="outline" disabled={listenDisabled} onClick={onListen}>
+        {phase === "loading" ? <LoaderCircle className="size-3 animate-spin" /> : <Volume2 className="size-3" />}
+        {phase === "loading" ? "Preparing…" : listenLabel}
       </Button>
-    );
-  }
-  if (phase === "playing") {
-    return (
-      <Button size="xs" variant="outline" onClick={onClick}>
+      <Button size="xs" variant="outline" disabled={pauseDisabled} onClick={onPause}>
         <Pause className="size-3" />
         Pause
       </Button>
-    );
-  }
-  return (
-    <Button size="xs" variant="outline" disabled={disabled} onClick={onClick}>
-      <Volume2 className="size-3" />
-      {phase === "paused" ? "Resume" : "Listen"}
-    </Button>
-  );
-}
-
-export function GrokListenStopBar({ onStop }: { onStop: () => void }) {
-  return (
-    <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-2 border-b bg-primary/10 px-3 py-1.5 text-xs">
-      <span className="text-muted-foreground">Reading aloud — Esc to stop</span>
-      <Button size="xs" variant="secondary" onClick={onStop}>
+      <Button size="xs" variant="outline" disabled={stopDisabled} onClick={onStop}>
         <Square className="size-3" />
         Stop
       </Button>
+      <select
+        aria-label="Playback speed"
+        className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+        value={speed}
+        disabled={disabled}
+        onChange={(event) => onSpeedChange(Number(event.target.value))}
+      >
+        {TTS_SPEEDS.map((rate) => (
+          <option key={rate} value={rate}>
+            {rate === 1 ? "1×" : `${rate}×`}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

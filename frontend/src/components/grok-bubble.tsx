@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LoaderCircle, Maximize2, Minimize2, Send, Sparkles, X } from "lucide-react";
 import { GrokChatMessage } from "@/components/grok-chat-message";
-import { GrokListenStopBar } from "@/components/grok-message-listen";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -375,7 +374,6 @@ export function GrokBubble({
           )}
         </span>
       </label>
-      {listening ? <GrokListenStopBar onStop={() => activeListenStopRef.current?.()} /> : null}
       <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
         {messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">

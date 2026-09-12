@@ -15,6 +15,28 @@ export function visibleSpeechText(text: string | null | undefined): string {
     .replace(/<img\b[^>]*>/gi, " ");
 }
 
+/** Plain speakable text from Grok reply markdown (mirrors backend speech_plain). */
+export function chatSpeechPlain(markdown: string | null | undefined): string {
+  let text = markdown || "";
+  text = text.replace(/<img\b[^>]*>/gi, " ");
+  text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, " ");
+  text = text.replace(/==([\s\S]+?)==/g, "$1");
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, " ");
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, " ");
+  text = text.replace(/<[^>]+>/g, " ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
+export function chatSpeechScript(markdown: string | null | undefined): { script: string; visibleWordCount: number } {
+  const body = chatSpeechPlain(markdown);
+  const script = body
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const visibleWordCount = script.match(/\S+/g)?.length ?? 0;
+  return { script, visibleWordCount };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

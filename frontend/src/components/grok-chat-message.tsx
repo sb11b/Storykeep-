@@ -9,7 +9,8 @@ import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
-import { GrokListenButton, useGrokMessageListen } from "@/components/grok-message-listen";
+import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
+import { wrapHtmlWords } from "@/lib/tts-words";
 
 type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
@@ -43,12 +44,12 @@ export function GrokChatMessage({
   useEffect(() => {
     const root = bodyRef.current;
     if (!root || role !== "assistant" || !content) return;
-    root.innerHTML = sanitizeHtml(renderMarkdown(content));
+    root.innerHTML = wrapHtmlWords(sanitizeHtml(renderMarkdown(content)), 0);
   }, [content, role]);
 
   const listen = useGrokMessageListen({
     messageId: id,
-    bodyRef,
+    content,
     disabled: !ttsAvailable || !content.trim(),
     onCue: setActiveWord,
     onPlayingChange: (active) => {
@@ -87,7 +88,17 @@ export function GrokChatMessage({
       )}
       {content ? (
         <div className="mt-2 flex flex-wrap items-center gap-1">
-          <GrokListenButton phase={listen.phase} disabled={!ttsAvailable} onClick={listen.toggle} />
+          {role === "assistant" ? (
+            <GrokListenBar
+              phase={listen.phase}
+              disabled={!ttsAvailable}
+              speed={listen.speed}
+              onListen={listen.listen}
+              onPause={listen.pause}
+              onStop={listen.stop}
+              onSpeedChange={listen.changeSpeed}
+            />
+          ) : null}
           {role === "assistant" ? (
             <>
               <Button
