@@ -15,6 +15,9 @@ import type {
   TtsStatus,
   TtsWord,
   User,
+  Profile,
+  LoginResult,
+  TotpSetup,
   VaultImportResult,
   ChatStatus,
   Correction,
@@ -88,11 +91,55 @@ export type HealthInfo = { status: string; build: string; built_at: string };
 
 export const api = {
   health: () => request<HealthInfo>("/health"),
-  me: () => request<User>("/api/v1/auth/me"),
+  me: () => request<Profile>("/api/v1/auth/me"),
+  profile: () => request<Profile>("/api/v1/auth/profile"),
+  updateProfile: (payload: {
+    display_name?: string | null;
+    birthdate?: string | null;
+    avatar_media_id?: string | null;
+  }) =>
+    request<Profile>("/api/v1/auth/profile", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  changePassword: (payload: { current_password: string; new_password: string; confirm_password: string }) =>
+    request<{ ok: boolean }>("/api/v1/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  requestEmailChange: (new_email: string) =>
+    request<{ ok: boolean }>("/api/v1/auth/change-email/request", {
+      method: "POST",
+      body: JSON.stringify({ new_email }),
+    }),
+  confirmEmailChange: (code: string) =>
+    request<Profile>("/api/v1/auth/change-email/confirm", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  twoFactorStatus: () => request<import("@/lib/types").Profile>("/api/v1/auth/2fa"),
+  setupTotp: () => request<TotpSetup>("/api/v1/auth/2fa/totp/setup", { method: "POST" }),
+  confirmTotp: (code: string) =>
+    request<{ backup_codes: string[] }>("/api/v1/auth/2fa/totp/confirm", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  disableTotp: (code: string) =>
+    request<{ ok: boolean }>("/api/v1/auth/2fa/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  enableEmailOtp: () => request<{ ok: boolean }>("/api/v1/auth/2fa/email/enable", { method: "POST" }),
+  disableEmailOtp: () => request<{ ok: boolean }>("/api/v1/auth/2fa/email/disable", { method: "POST" }),
   login: (email: string, password: string) =>
-    request<{ user: User }>("/api/v1/auth/login", {
+    request<LoginResult>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    }),
+  verifyLogin2fa: (payload: { challenge_id: string; code: string; use_backup_code?: boolean }) =>
+    request<LoginResult>("/api/v1/auth/login/2fa", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
   register: (email: string, password: string, display_name?: string) =>
     request<{ user: User }>("/api/v1/auth/register", {

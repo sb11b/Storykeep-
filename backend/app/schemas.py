@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
@@ -20,10 +20,79 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str | None
+    avatar_url: str | None = None
+    birthdate: date | None = None
     preferences: dict[str, Any]
+    profile_read_only: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProfileOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    display_name: str | None
+    avatar_url: str | None = None
+    birthdate: date | None = None
+    profile_read_only: bool = False
+    totp_enabled: bool = False
+    email_otp_enabled: bool = False
+    email_otp_available: bool = False
+    has_backup_codes: bool = False
+
+
+class ProfilePatchIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    birthdate: date | None = None
+    avatar_media_id: uuid.UUID | None = None
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+    confirm_password: str = Field(min_length=8)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "ChangePasswordIn":
+        if self.new_password != self.confirm_password:
+            raise ValueError("New passwords do not match")
+        return self
+
+
+class ChangeEmailRequestIn(BaseModel):
+    new_email: str = Field(min_length=3)
+
+
+class ChangeEmailConfirmIn(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+
+class TwoFactorStatusOut(BaseModel):
+    totp_enabled: bool
+    email_otp_enabled: bool
+    email_otp_available: bool
+    has_backup_codes: bool
+
+
+class TotpSetupOut(BaseModel):
+    secret: str
+    otpauth_uri: str
+    qr_code_data_url: str
+
+
+class TotpConfirmIn(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+
+class TotpConfirmOut(BaseModel):
+    backup_codes: list[str]
+
+
+class TwoFactorVerifyIn(BaseModel):
+    challenge_id: uuid.UUID
+    code: str = Field(min_length=6, max_length=32)
+    use_backup_code: bool = False
 
 
 class RegisterIn(BaseModel):
@@ -41,6 +110,16 @@ class TokenOut(BaseModel):
     user: UserOut
     access_token: str
     token_type: str = "bearer"
+
+
+class LoginResponseOut(BaseModel):
+    user: UserOut | None = None
+    access_token: str | None = None
+    token_type: str = "bearer"
+    requires_2fa: bool = False
+    challenge_id: uuid.UUID | None = None
+    totp_available: bool = False
+    email_otp_available: bool = False
 
 
 class RssShelfIn(BaseModel):

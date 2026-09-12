@@ -1,17 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { LibraryApp } from "@/components/library-app";
 import { ApiError, api } from "@/lib/api";
 import type { User } from "@/lib/types";
 
 export default function HomePage() {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (pathname !== "/") return;
     api
       .me()
       .then(setUser)
@@ -22,7 +24,7 @@ export default function HomePage() {
         }
         setError(err instanceof Error ? err.message : "Could not reach Storykeep");
       });
-  }, [router]);
+  }, [router, pathname]);
 
   if (error) {
     return (

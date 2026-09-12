@@ -2,8 +2,33 @@ export type User = {
   id: string;
   email: string;
   display_name: string | null;
+  avatar_url: string | null;
+  birthdate: string | null;
   preferences: Record<string, unknown>;
+  profile_read_only: boolean;
   created_at: string;
+};
+
+export type Profile = User & {
+  totp_enabled: boolean;
+  email_otp_enabled: boolean;
+  email_otp_available: boolean;
+  has_backup_codes: boolean;
+};
+
+export type LoginResult = {
+  user?: User;
+  access_token?: string;
+  requires_2fa?: boolean;
+  challenge_id?: string;
+  totp_available?: boolean;
+  email_otp_available?: boolean;
+};
+
+export type TotpSetup = {
+  secret: string;
+  otpauth_uri: string;
+  qr_code_data_url: string;
 };
 
 export type RssShelf = {

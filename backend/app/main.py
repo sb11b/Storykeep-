@@ -116,6 +116,19 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE feeds ADD COLUMN IF NOT EXISTS shelf_id UUID REFERENCES rss_shelves(id) ON DELETE CASCADE")
     _try_sql("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_user_id_name_key")
     _try_sql("CREATE UNIQUE INDEX IF NOT EXISTS categories_shelf_name_idx ON categories (shelf_id, name)")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_media_id UUID REFERENCES note_media(id) ON DELETE SET NULL")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate DATE")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_otp_enabled BOOLEAN DEFAULT FALSE")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS backup_code_hashes JSONB DEFAULT '[]'::jsonb")
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS auth_challenges ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "kind VARCHAR(32) NOT NULL, code_hash TEXT, payload JSONB, "
+        "attempts INTEGER DEFAULT 0, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ DEFAULT now())"
+    )
 
 
 def _seed_in_background() -> None:

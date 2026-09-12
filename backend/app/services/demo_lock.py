@@ -37,3 +37,21 @@ def is_locked(user: User | None) -> bool:
 def reject_locked(user: User) -> None:
     if is_locked(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")
+
+
+def profile_is_read_only(user: User | None) -> bool:
+    return is_locked(user)
+
+
+def reject_profile_mutation(user: User) -> None:
+    if profile_is_read_only(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo account profile is read-only",
+        )
+
+
+def user_requires_2fa(user: User | None) -> bool:
+    if user is None or is_locked(user):
+        return False
+    return bool(getattr(user, "totp_enabled", False) or getattr(user, "email_otp_enabled", False))

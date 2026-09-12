@@ -921,6 +921,7 @@ export function LibraryApp({ user }: { user: User }) {
         await api.logout();
         router.replace("/login");
       }}
+      onProfile={() => router.push("/profile")}
       deployBuild={deployBuild}
     />
   );
@@ -1627,6 +1628,7 @@ function Sidebar({
   onRefresh,
   refreshing,
   onLogout,
+  onProfile,
   deployBuild,
 }: {
   user: User;
@@ -1654,14 +1656,29 @@ function Sidebar({
   onRefresh: () => void;
   refreshing: boolean;
   onLogout: () => void;
+  onProfile: () => void;
   deployBuild: string | null;
 }) {
+  const initials = (user.display_name || user.email).slice(0, 1).toUpperCase();
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-      <div className="shrink-0 px-4 pt-5 pb-3">
+      <button
+        type="button"
+        onClick={onProfile}
+        className="shrink-0 px-4 pt-5 pb-3 text-left hover:bg-sidebar-accent/40 rounded-none transition-colors"
+      >
         <p className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">Storykeep</p>
-        <p className="text-xs text-sidebar-foreground/70 mt-1">{user.display_name || user.email}</p>
-      </div>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="size-8 shrink-0 overflow-hidden rounded-full bg-sidebar-accent">
+            {user.avatar_url ? (
+              <img src={user.avatar_url} alt="" className="size-full object-cover" />
+            ) : (
+              <span className="flex size-full items-center justify-center text-xs font-medium text-sidebar-foreground/80">{initials}</span>
+            )}
+          </div>
+          <p className="min-w-0 truncate text-xs text-sidebar-foreground/70">{user.display_name || user.email}</p>
+        </div>
+      </button>
       <div className="flex shrink-0 gap-2 px-3 pb-3">
         <Button size="sm" className="flex-1" onClick={onAdd}>
           <Plus className="size-3.5" />
@@ -1726,6 +1743,9 @@ function Sidebar({
         ) : null}
       </div>
       <div className="shrink-0 space-y-1 border-t border-sidebar-border p-3">
+        <Button variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onProfile}>
+          Profile
+        </Button>
         <Button variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onBackup}>
           Backup & export
         </Button>

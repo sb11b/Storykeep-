@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     xai_chat_max_tokens: int = 2048
     chat_requests_per_hour: int = 120
     stt_sessions_per_hour: int = 60
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+    login_2fa_challenge_minutes: int = 10
+    login_email_otp_max_attempts: int = 5
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -101,6 +109,10 @@ class Settings(BaseSettings):
         path = self.data_dir / "tts"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host.strip() and self.smtp_from.strip())
 
 
 settings = Settings()
