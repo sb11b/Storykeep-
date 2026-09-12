@@ -90,6 +90,7 @@ import { wordIndexFromSelection } from "@/lib/tts-words";
 import {
   buildVisibleSpeechScript,
   visibleSpeechSections,
+  wrapVisibleSpeechNodes,
 } from "@/lib/tts-visible";
 import type { VisibleSpeechPayload } from "@/lib/tts-visible";
 import type {
@@ -250,6 +251,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const loadingMoreRef = useRef(false);
   const listScrollerRef = useRef<ShelfScrollerHandle>(null);
   const listFeedKeyRef = useRef<string>(shelfKey(shelf));
+  const shelfRef = useRef(shelf);
   const loadListRef = useRef<(() => Promise<void>) | null>(null);
   const [listEpoch, setListEpoch] = useState(0);
   const [listFirstOffset, setListFirstOffset] = useState(0);
@@ -260,6 +262,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   itemsRef.current = items;
   totalRef.current = total;
   selectedIdRef.current = selectedId;
+  shelfRef.current = shelf;
 
   const loadNav = useCallback(async (rssShelfId?: string | null) => {
     const shelves = await api.rssShelves();
@@ -320,7 +323,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       setArticle(preview);
       void loadArticleById(id, preview);
       if (item.is_read) return;
-      const removeFromList = listRemovesOnRead(shelf);
+      const removeFromList = listRemovesOnRead(shelfRef.current);
       if (removeFromList) {
         setItems((current) => {
           const next = current.filter((row) => row.id !== id);
@@ -351,7 +354,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           }
         });
     },
-    [loadArticleById, loadNav, shelf],
+    [loadArticleById, loadNav],
   );
 
   const openArticle = useCallback(
@@ -541,7 +544,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         if (delta > 0 && index >= 0 && selectedIdRef.current) {
           const currentId = selectedIdRef.current;
           const current = list[index];
-          const queueRemovesOnRead = listRemovesOnRead(shelf);
+          const queueRemovesOnRead = listRemovesOnRead(shelfRef.current);
           const markingRead = !current.is_read;
           const shouldRemove = queueRemovesOnRead && markingRead;
 
@@ -610,7 +613,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         if (next) openArticle(next.id);
       })();
     },
-    [clearReaderSelection, loadMore, loadNav, openArticle, shelf],
+    [clearReaderSelection, loadMore, loadNav, openArticle],
   );
 
   useEffect(() => {
@@ -2307,6 +2310,9 @@ function Reader({
     const root = bodyRef.current;
     if (!root) return;
     root.innerHTML = bodyHtml;
+    if (bodyHtml) {
+      wrapVisibleSpeechNodes(root, { skipTitle: article.title, skipAuthor: article.author });
+    }
     if (!findQuery.trim()) {
       findMarksRef.current = [];
       setFindCount(0);
@@ -2317,7 +2323,7 @@ function Reader({
     if (findMarksRef.current.length) {
       focusFindMark(findMarksRef.current, findIndex);
     }
-  }, [bodyHtml, findQuery, article.id]);
+  }, [article.author, article.title, bodyHtml, findQuery, article.id]);
 
   useEffect(() => {
     if (!findMarksRef.current.length) return;

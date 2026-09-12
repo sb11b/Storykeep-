@@ -394,9 +394,11 @@ export const ListenControls = forwardRef<
         applyTimestampValidation(words, chunkIndex, chunkWordCounts);
         applyPlaybackRate(audio, speedRef.current);
         const applySeek = () => {
-          if (seekLocal != null && timestampsValidRef.current && words[seekLocal]) {
-            audio.currentTime = words[seekLocal].start;
-          } else if (seekLocal == null) {
+          if (seekLocal != null && seekLocal > 0) {
+            if (timestampsValidRef.current && words[seekLocal]) {
+              audio.currentTime = words[seekLocal].start;
+            }
+          } else if (seekLocal == null || seekLocal === 0) {
             audio.currentTime = 0;
           }
         };
@@ -460,12 +462,26 @@ export const ListenControls = forwardRef<
         toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
         return;
       }
+      if (wordIndex > 0) {
+        loadedChunkRef.current = null;
+        loadedVoiceRef.current = null;
+        countsRef.current = [];
+        const audio = audioRef.current;
+        if (audio) {
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+        }
+      }
       const voice = voiceRef.current;
       if (opts?.confirm) {
         confirmRef.current = true;
         countsRef.current = [];
         loadedChunkRef.current = null;
         loadedVoiceRef.current = null;
+      }
+      if (!noteMode) {
+        getVisibleSpeech?.();
       }
       if (!confirmRef.current) {
         try {
@@ -525,9 +541,23 @@ export const ListenControls = forwardRef<
       toast.error(noteMode ? "This note has no text to read." : "Extract the full text first, then listen.");
       return;
     }
+    getVisibleSpeech?.();
     const word = getCaretWord?.();
-    void startAtWord(word == null ? 0 : word);
-  }, [getCaretWord, hasText, noteMode, startAtWord]);
+    if (word == null || word < 0) {
+      toast.error("Click or select a word in the article first.");
+      return;
+    }
+    loadedChunkRef.current = null;
+    loadedVoiceRef.current = null;
+    countsRef.current = [];
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    void startAtWord(word);
+  }, [getCaretWord, getVisibleSpeech, hasText, noteMode, startAtWord]);
 
   const togglePlay = useCallback(() => {
     if (!hasText) {

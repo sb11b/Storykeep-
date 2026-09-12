@@ -8,6 +8,9 @@ import {
   RAIL_COLOR_PRESETS,
   TOPBAR_COLOR_PRESETS,
   applyAppearance,
+  baseFontSizePx,
+  fontFamilyCss,
+  FONT_PREVIEW_SAMPLE,
   type AppearanceSettings,
 } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
@@ -147,6 +150,17 @@ export function ProfileAppearancePanel({ appearance, readOnly, onChange, onSaved
                   {option.label}
                 </Button>
               ))}
+            </div>
+            <div
+              className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-foreground"
+              style={{
+                fontFamily: fontFamilyCss(appearance.font_family),
+                fontSize: baseFontSizePx(appearance.base_font_size),
+                lineHeight: 1.5,
+              }}
+              aria-live="polite"
+            >
+              {FONT_PREVIEW_SAMPLE}
             </div>
           </div>
           <div className="space-y-2">

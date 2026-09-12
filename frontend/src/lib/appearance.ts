@@ -59,6 +59,17 @@ export const BASE_FONT_SIZE_OPTIONS: { value: BaseFontSize; label: string; px: s
   { value: "lg", label: "L", px: "18px" },
 ];
 
+export const FONT_PREVIEW_SAMPLE =
+  "The quick brown fox jumps over 123 lazy dogs. Aa Bb Cc — \"Hello!\" (?)";
+
+export function fontFamilyCss(family: FontFamilyChoice): string {
+  return FONT_FAMILY_OPTIONS.find((row) => row.value === family)?.css || FONT_FAMILY_OPTIONS[1].css;
+}
+
+export function baseFontSizePx(size: BaseFontSize): string {
+  return BASE_FONT_SIZE_OPTIONS.find((row) => row.value === size)?.px || "16px";
+}
+
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 export function normalizeHex(value: string | null | undefined): string | null {
