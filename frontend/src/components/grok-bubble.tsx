@@ -220,7 +220,7 @@ export function GrokBubble({
       }
       const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
       const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"], noteDest);
-      toast.success(`Saved to StoryKeep/${DESTINATION_LABEL[noteDest]}. It will be in the next Obsidian pack.`);
+      toast.success(`Saved to StoryKeep/${DESTINATION_LABEL[noteDest]}.`);
       await onSavedNote(article.id, noteDest);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");

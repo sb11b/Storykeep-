@@ -2320,7 +2320,7 @@ function Reader({
             variant="outline"
             onClick={() => void onDownloadPack()}
           >
-            Download Obsidian pack
+            Obsidian overlay pack
           </Button>
           <ArticleShareMenu article={{ id: article.id, title: article.title, url: article.url }} />
           {article.source_kind === "file" ? (
@@ -3454,28 +3454,12 @@ function BackupDialog({
         <DialogHeader>
           <DialogTitle>Backup the archive</DialogTitle>
           <DialogDescription>
-            The Obsidian pack is the only thing that goes back to the vault: Highlights, Additions, Corrections, and Index.md.
-            JSON export is a full archive dump. Database dumps use pg_dump.
+            StoryKeep is the working archive. Primary backup is a dated bundle on Backblaze when configured: Export JSON
+            (archive.json + note media in one zip) or Dump database (pg_dump). Nothing writes to Steve&apos;s Surface Vault on
+            disk. The Obsidian overlay pack is optional if you still want a markdown zip.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await api.downloadObsidianPack();
-                toast.success("Obsidian pack downloaded");
-              } catch (error) {
-                toast.error(error instanceof ApiError ? error.message : "Pack download failed");
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Download Obsidian pack
-          </Button>
           <Button
             disabled={busy}
             onClick={async () => {
@@ -3485,9 +3469,9 @@ function BackupDialog({
                 if (row.status !== "success") {
                   toast.error(row.error || "JSON export failed");
                 } else if (row.destination === "s3") {
-                  toast.success("JSON export saved to Backblaze under storykeep/");
+                  toast.success("Dated export bundle saved to Backblaze under storykeep/");
                 } else {
-                  toast.success("JSON export saved on this server");
+                  toast.success("Dated export bundle saved on this server");
                 }
                 await onCreated();
               } catch (error) {
@@ -3497,7 +3481,7 @@ function BackupDialog({
               }
             }}
           >
-            Export JSON
+            Export JSON bundle
           </Button>
           <Button
             variant="secondary"
@@ -3522,6 +3506,23 @@ function BackupDialog({
             }}
           >
             Dump database
+          </Button>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await api.downloadObsidianPack();
+                toast.success("Obsidian overlay pack downloaded");
+              } catch (error) {
+                toast.error(error instanceof ApiError ? error.message : "Pack download failed");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Obsidian overlay pack (optional)
           </Button>
         </div>
         {backups.length === 0 ? (

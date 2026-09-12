@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.database import parse_database_url
-from app.models import Annotation, Article, Backup, Feed, Tag, User
+from app.models import Annotation, Article, Backup, Feed, Folder, NoteMedia, Tag, User
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +85,16 @@ def _maybe_upload_s3(path: Path) -> str | None:
     return _upload_backup_file(path)
 
 
-def create_json_export(db: Session, user: User) -> Backup:
-    backup = Backup(
-        user_id=user.id,
-        backup_type="export_json",
-        status="pending",
-        destination="s3" if object_store_ready() else "local",
-    )
-    db.add(backup)
-    db.flush()
+def _dated_stamp(when: datetime) -> str:
+    return when.strftime("%Y-%m-%d")
 
+
+def _dated_backup_name(kind: str, backup_id: UUID, when: datetime, suffix: str) -> str:
+    short = str(backup_id).split("-", 1)[0]
+    return f"storykeep-{kind}-{_dated_stamp(when)}-{short}{suffix}"
+
+
+def _build_export_payload(db: Session, user: User, exported_at: datetime) -> dict:
     feeds = db.scalars(
         select(Feed)
         .where(Feed.user_id == user.id)
@@ -101,11 +102,41 @@ def create_json_export(db: Session, user: User) -> Backup:
     ).all()
     tags = db.scalars(select(Tag).where(Tag.user_id == user.id)).all()
     notes = db.scalars(select(Annotation).where(Annotation.user_id == user.id)).all()
+    folders = db.scalars(select(Folder).where(Folder.user_id == user.id).order_by(Folder.shelf, Folder.name)).all()
+    media_rows = db.scalars(select(NoteMedia).where(NoteMedia.user_id == user.id).order_by(NoteMedia.created_at)).all()
 
-    payload = {
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+    media_manifest: list[dict] = []
+    for row in media_rows:
+        src = Path(row.storage_path)
+        suffix = src.suffix or Path(row.filename).suffix or ".bin"
+        archive_path = f"media/{row.id}{suffix}"
+        media_manifest.append(
+            {
+                "id": str(row.id),
+                "filename": row.filename,
+                "content_type": row.content_type,
+                "byte_size": row.byte_size,
+                "archive_path": archive_path,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        )
+
+    return {
+        "format": "storykeep-archive",
+        "format_version": 1,
+        "exported_at": exported_at.isoformat(),
         "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
         "tags": [{"id": str(tag.id), "name": tag.name, "color": tag.color} for tag in tags],
+        "folders": [
+            {
+                "id": str(folder.id),
+                "shelf": folder.shelf,
+                "name": folder.name,
+                "created_at": folder.created_at.isoformat() if folder.created_at else None,
+            }
+            for folder in folders
+        ],
+        "media": media_manifest,
         "feeds": [
             {
                 "id": str(feed.id),
@@ -123,6 +154,11 @@ def create_json_export(db: Session, user: User) -> Backup:
                         "summary": article.summary,
                         "content_text": article.content_text,
                         "content_html": article.content_html,
+                        "destination": getattr(article, "destination", None),
+                        "folder_id": str(article.folder_id) if getattr(article, "folder_id", None) else None,
+                        "is_correction": bool(getattr(article, "is_correction", False)),
+                        "source_kind": getattr(article, "source_kind", None) or "rss",
+                        "obsidian_path": getattr(article, "obsidian_path", None),
                         "is_saved": article.is_saved,
                         "is_starred": article.is_starred,
                         "is_read": article.is_read,
@@ -145,10 +181,36 @@ def create_json_export(db: Session, user: User) -> Backup:
         "annotation_count": len(notes),
     }
 
-    filename = f"storykeep-{user.id}-{backup.id}.json"
+
+def _write_export_bundle(path: Path, payload: dict, media_rows: list[NoteMedia]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("archive.json", json.dumps(payload, ensure_ascii=False, indent=2))
+        for row in media_rows:
+            src = Path(row.storage_path)
+            if not src.is_file():
+                continue
+            suffix = src.suffix or Path(row.filename).suffix or ".bin"
+            zf.write(src, f"media/{row.id}{suffix}")
+
+
+def create_json_export(db: Session, user: User) -> Backup:
+    exported_at = datetime.now(timezone.utc)
+    backup = Backup(
+        user_id=user.id,
+        backup_type="export_json",
+        status="pending",
+        destination="s3" if object_store_ready() else "local",
+    )
+    db.add(backup)
+    db.flush()
+
+    filename = _dated_backup_name("export", backup.id, exported_at, ".zip")
     path = settings.backup_dir / filename
+    media_rows = db.scalars(select(NoteMedia).where(NoteMedia.user_id == user.id)).all()
     try:
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = _build_export_payload(db, user, exported_at)
+        _write_export_bundle(path, payload, media_rows)
         if object_store_ready():
             backup.location = _upload_backup_file(path)
             backup.destination = "s3"
@@ -172,6 +234,7 @@ def create_json_export(db: Session, user: User) -> Backup:
 
 
 def create_db_dump(db: Session, user_id: UUID | None) -> Backup:
+    started_at = datetime.now(timezone.utc)
     backup = Backup(
         user_id=user_id,
         backup_type="db_dump",
@@ -181,7 +244,7 @@ def create_db_dump(db: Session, user_id: UUID | None) -> Backup:
     db.add(backup)
     db.flush()
     conn = parse_database_url(settings.database_url)
-    filename = f"storykeep-db-{backup.id}.sql"
+    filename = _dated_backup_name("db", backup.id, started_at, ".sql")
     path = settings.backup_dir / filename
     env = {**os.environ, "PGPASSWORD": conn.password}
     if conn.connect_args.get("sslmode"):

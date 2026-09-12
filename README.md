@@ -7,15 +7,15 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 ## What you can do
 
 - Add RSS/Atom feeds, grouped into categories
-- Import Steve's Surface Vault (zip). Original markdown stays in Obsidian. StoryKeep never overwrites that folder.
-- One Notes workspace with a destination dropdown: Vault, Additions, Books, Notes, Schoolwork. Changing destination moves the note (no duplicate). Optional “This is a correction of the source” packs to `StoryKeep/Corrections/` instead of `StoryKeep/Additions/`.
-- Highlight, add overlay notes (with in-note highlights and images), then **Download Obsidian pack**
+- Optional one-way import of Steve's Surface Vault (zip). Obsidian is paused; StoryKeep is the working archive. StoryKeep never writes to that folder on disk.
+- One Notes workspace with destination + folder dropdowns: Vault, Additions, Books, Notes, Schoolwork. Edits update the StoryKeep DB row only.
+- Highlight and add overlay notes (with in-note highlights and images). Optional **Obsidian overlay pack** download — not required for backup.
 - Read extracted article text in a dedicated reader, or listen with xAI speech (L from the start, Shift+L from a selected word; long books warn before synth)
 - Save stories for later / for life, star them, mark read
 - Tag articles and write notes
 - Snapshot HTML so a dead original URL still has a copy
 - Full-text search across titles, authors, summaries, and stored bodies
-- Export JSON or dump the database; optional S3 upload when configured
+- **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
 
 ## Stack
 
