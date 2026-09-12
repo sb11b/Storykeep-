@@ -36,6 +36,7 @@ import { CorrectionCheck, DestinationSelect, FolderSelect } from "@/components/d
 import { NoteAttachmentChips } from "@/components/note-attachments";
 import { NoteComposer } from "@/components/note-composer";
 import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
+import { ShelfSwitcher } from "@/components/shelf-switcher";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -728,6 +729,18 @@ export function LibraryApp({ user }: { user: User }) {
     }
   }
 
+  async function onAddCategory() {
+    const name = window.prompt("Category name:")?.trim();
+    if (!name) return;
+    try {
+      const category = await api.createCategory(name);
+      await loadNav();
+      toast.success(`Added ${category.name}`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not add that category");
+    }
+  }
+
   async function onRemoveFeed(feed: Feed, force: boolean) {
     await api.deleteFeed(feed.id, force);
     toast.success(feed.title ? `Removed ${feed.title}` : "Feed removed");
@@ -789,7 +802,7 @@ export function LibraryApp({ user }: { user: User }) {
       user={user}
       stats={stats}
       shelf={shelf}
-      feeds={feeds}
+      categories={categories}
       groupedFeeds={groupedFeeds}
       tags={tags}
       folders={folders}
@@ -805,12 +818,9 @@ export function LibraryApp({ user }: { user: User }) {
         setMobileNav(false);
       }}
       onAdd={() => setAddOpen(true)}
+      onAddCategory={() => void onAddCategory()}
+      onAddFeed={() => setAddOpen(true)}
       onManageTags={() => setTagsOpen(true)}
-      onRemoveFeed={(feed) => {
-        setFeedToRemove(feed);
-        setMobileNav(false);
-      }}
-      onMarkFeedRead={(feed) => void onMarkFeedRead(feed)}
       onBackup={() => setBackupOpen(true)}
       onRefresh={() => void onRefresh()}
       refreshing={refreshing}
@@ -1500,7 +1510,7 @@ function Sidebar({
   user,
   stats,
   shelf,
-  feeds,
+  categories,
   groupedFeeds,
   tags,
   folders,
@@ -1509,9 +1519,9 @@ function Sidebar({
   onRenameFolder,
   onDeleteFolder,
   onAdd,
+  onAddCategory,
+  onAddFeed,
   onManageTags,
-  onRemoveFeed,
-  onMarkFeedRead,
   onBackup,
   onRefresh,
   refreshing,
@@ -1521,7 +1531,7 @@ function Sidebar({
   user: User;
   stats: Stats | null;
   shelf: Shelf;
-  feeds: Feed[];
+  categories: Category[];
   groupedFeeds: { groups: { category: Category; feeds: Feed[] }[]; uncategorized: Feed[] };
   tags: Tag[];
   folders: Folder[];
@@ -1530,9 +1540,9 @@ function Sidebar({
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
   onAdd: () => void;
+  onAddCategory: () => void;
+  onAddFeed: () => void;
   onManageTags: () => void;
-  onRemoveFeed: (feed: Feed) => void;
-  onMarkFeedRead: (feed: Feed) => void;
   onBackup: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -1572,51 +1582,14 @@ function Sidebar({
         <NavButton active={shelf.kind === "starred"} onClick={() => onShelf({ kind: "starred" })} icon={<Star className="size-4" />}>
           Starred
         </NavButton>
-        <p className="px-2 pt-5 pb-1 text-[11px] uppercase tracking-[0.14em] text-sidebar-foreground/50">Feeds</p>
-        {feeds.length === 0 ? (
-          <p className="px-2 text-xs text-sidebar-foreground/60">No feeds yet. Add one to begin the archive.</p>
-        ) : (
-          <>
-            {groupedFeeds.groups.map(({ category, feeds: group }) =>
-              group.length ? (
-                <div key={category.id} className="mb-2">
-                  <button
-                    type="button"
-                    onClick={() => onShelf({ kind: "category", id: category.id })}
-                    className={cn(
-                      "w-full text-left px-2 py-1 text-[11px] uppercase tracking-[0.12em]",
-                      shelf.kind === "category" && shelf.id === category.id
-                        ? "text-sidebar-primary"
-                        : "text-sidebar-foreground/50",
-                    )}
-                  >
-                    {category.name}
-                  </button>
-                  {group.map((feed) => (
-                    <FeedNavItem
-                      key={feed.id}
-                      feed={feed}
-                      active={shelf.kind === "feed" && shelf.id === feed.id}
-                      onSelect={() => onShelf({ kind: "feed", id: feed.id })}
-                      onRemove={() => onRemoveFeed(feed)}
-                      onMarkRead={() => onMarkFeedRead(feed)}
-                    />
-                  ))}
-                </div>
-              ) : null,
-            )}
-            {groupedFeeds.uncategorized.map((feed) => (
-              <FeedNavItem
-                key={feed.id}
-                feed={feed}
-                active={shelf.kind === "feed" && shelf.id === feed.id}
-                onSelect={() => onShelf({ kind: "feed", id: feed.id })}
-                onRemove={() => onRemoveFeed(feed)}
-                onMarkRead={() => onMarkFeedRead(feed)}
-              />
-            ))}
-          </>
-        )}
+        <ShelfSwitcher
+          shelf={shelf}
+          categories={categories}
+          groupedFeeds={groupedFeeds}
+          onShelf={onShelf}
+          onAddCategory={onAddCategory}
+          onAddFeed={onAddFeed}
+        />
         {tags.length > 0 ? (
           <>
             <button
@@ -1652,63 +1625,6 @@ function Sidebar({
           </p>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function FeedNavItem({
-  feed,
-  active,
-  onSelect,
-  onRemove,
-  onMarkRead,
-}: {
-  feed: Feed;
-  active?: boolean;
-  onSelect: () => void;
-  onRemove: () => void;
-  onMarkRead: () => void;
-}) {
-  const fetched = feed.last_fetched_at ? formatRelative(feed.last_fetched_at) : "never fetched";
-  return (
-    <div className="flex items-start gap-0.5">
-      <div className="min-w-0 flex-1">
-        <NavButton active={active} onClick={onSelect} count={feed.unread_count}>
-          {feed.title || feed.url}
-        </NavButton>
-        <p className={cn("px-2 pb-1 text-[11px] leading-tight", feed.last_error ? "text-destructive/80" : "text-sidebar-foreground/55")}>
-          {feed.last_error ? `Error · ${fetched}` : fetched}
-        </p>
-      </div>
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        className="shrink-0 text-sidebar-foreground/45 hover:text-sidebar-foreground"
-        aria-label={`Mark ${feed.title || "feed"} read`}
-        disabled={!feed.unread_count}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onMarkRead();
-        }}
-      >
-        <CheckCheck className="size-3.5" />
-      </Button>
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        className="shrink-0 text-sidebar-foreground/45 hover:text-destructive"
-        aria-label={`Remove ${feed.title || "feed"}`}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onRemove();
-        }}
-      >
-        <Trash2 className="size-3.5" />
-      </Button>
     </div>
   );
 }
