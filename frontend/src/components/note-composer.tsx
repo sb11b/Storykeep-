@@ -7,6 +7,7 @@ import {
   Highlighter,
   ImagePlus,
   Italic,
+  Link2,
   List,
   ListOrdered,
   LoaderCircle,
@@ -22,7 +23,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDictation } from "@/components/dictation";
 import { ApiError, api } from "@/lib/api";
 import { onCodeCopyClick } from "@/lib/code-copy";
-import { normalizeCodeLang, noteMarkdownHtml, prefixSelectedLines, wrapCodeFence, wrapHighlight, wrapInline } from "@/lib/markdown";
+import {
+  normalizeCodeLang,
+  noteMarkdownHtml,
+  prefixSelectedLines,
+  wrapCodeFence,
+  wrapHighlight,
+  wrapInline,
+  wrapWikilink,
+} from "@/lib/markdown";
+import { wikilinkQueryAtCaret } from "@/lib/wikilinks";
 import {
   applyComposerStyle,
   COMPOSER_STYLE_OPTIONS,
@@ -93,6 +103,10 @@ export function NoteComposer({
   const [expanded, setExpanded] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [composerStyle, setComposerStyle] = useState<ComposerStyle>("body");
+  const [wikilinkTitles, setWikilinkTitles] = useState<Array<{ id: string; title: string }>>([]);
+  const [wikilinkPick, setWikilinkPick] = useState<{ query: string; replaceFrom: number; replaceTo: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     if (readComposeFull()) setOpen(true);
@@ -199,6 +213,37 @@ export function NoteComposer({
     }
   }
 
+  useEffect(() => {
+    if (!wikilinkPick) {
+      setWikilinkTitles([]);
+      return;
+    }
+    let cancelled = false;
+    void api.noteTitles(wikilinkPick.query, 12).then((payload) => {
+      if (!cancelled) setWikilinkTitles(payload.items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [wikilinkPick]);
+
+  function syncWikilinkAutocomplete() {
+    const el = areaRef.current;
+    if (!el) return;
+    const caret = el.selectionStart ?? value.length;
+    setWikilinkPick(wikilinkQueryAtCaret(value, caret));
+  }
+
+  function insertWikilinkTitle(title: string) {
+    if (!wikilinkPick) return;
+    const { replaceFrom, replaceTo } = wikilinkPick;
+    const next = `${value.slice(0, replaceFrom)}${title}${value.slice(replaceTo)}`;
+    const caret = replaceFrom + title.length;
+    applyWrap(next, caret, caret);
+    setWikilinkPick(null);
+    setWikilinkTitles([]);
+  }
+
   function insertCodeFence() {
     const el = areaRef.current;
     const start = el?.selectionStart ?? value.length;
@@ -296,6 +341,16 @@ export function NoteComposer({
             type="button"
             size="sm"
             variant="outline"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => runWrap(wrapWikilink)}
+          >
+            <Link2 className="size-3.5" />
+            Link note
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
             disabled={uploadingImage}
             onMouseDown={(event) => {
               event.preventDefault();
@@ -386,7 +441,7 @@ export function NoteComposer({
         {header ? <div className="space-y-2">{header}</div> : null}
         <NoteAttachmentEditorList markdown={value} onChange={onChange} />
       </div>
-      <div className={cn("flex min-h-0 flex-col overflow-hidden", pinned && "min-h-0 flex-1")}>
+      <div className={cn("relative flex min-h-0 flex-col overflow-hidden", pinned && "min-h-0 flex-1")}>
         <Textarea
           id={id}
           ref={(node) => {
@@ -397,16 +452,54 @@ export function NoteComposer({
           required={required}
           rows={rows}
           placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          onSelect={syncComposerStyle}
-          onKeyUp={syncComposerStyle}
-          onClick={syncComposerStyle}
-          onFocus={captureSelection}
+          onChange={(event) => {
+            onChange(event.target.value);
+            requestAnimationFrame(syncWikilinkAutocomplete);
+          }}
+          onSelect={() => {
+            syncComposerStyle();
+            syncWikilinkAutocomplete();
+          }}
+          onKeyUp={() => {
+            syncComposerStyle();
+            syncWikilinkAutocomplete();
+          }}
+          onClick={() => {
+            syncComposerStyle();
+            syncWikilinkAutocomplete();
+          }}
+          onFocus={() => {
+            captureSelection();
+            syncWikilinkAutocomplete();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && wikilinkPick) {
+              event.preventDefault();
+              setWikilinkPick(null);
+              setWikilinkTitles([]);
+            }
+          }}
           className={cn(
             "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
             pinned ? "min-h-0 flex-1" : "min-h-[6rem] max-h-[40vh]",
           )}
         />
+        {wikilinkPick && wikilinkTitles.length > 0 ? (
+          <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-40 overflow-y-auto rounded-md border bg-popover shadow-md">
+            {wikilinkTitles.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => insertWikilinkTitle(item.title)}
+                >
+                  {item.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       <div className="shrink-0 space-y-1.5">
         <div className="flex items-center justify-between gap-2">

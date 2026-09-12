@@ -23,7 +23,13 @@ from app.schemas import (
     ArticlePatch,
     ExtractOut,
     MarkReadIn,
+    NoteTitleOut,
+    NoteTitlesOut,
     Page,
+    ResolveTitleOut,
+    ResolveTitlesIn,
+    ResolveTitlesOut,
+    ResolvedTitleOut,
     SaveUrlIn,
     TagIdsIn,
     TagIn,
@@ -32,6 +38,7 @@ from app.schemas import (
 from app.services.overlay_search import article_search_match
 from app.services import archive as archive_service, changelog, extractor
 from app.services.extractor import ExtractFailedError, _feed_body_valid, _is_dek_only
+from app.services.wikilinks import resolve_note_by_title, resolve_note_titles, search_note_titles
 
 router = APIRouter(tags=["articles"])
 
@@ -134,6 +141,65 @@ def _article_payload(db: Session, user: User, article_id: UUID) -> ArticleOut:
         select(Article).where(Article.parent_id == article.id).order_by(Article.updated_at.desc())
     ).all()
     return article_out(article, children)
+
+
+@router.get("/articles/resolve-title", response_model=ResolveTitleOut | None)
+def resolve_title(
+    title: str = Query(min_length=1),
+    shelf: str | None = None,
+    exclude_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ResolveTitleOut | None:
+    article = resolve_note_by_title(
+        db,
+        user,
+        title,
+        shelf=shelf,
+        exclude_id=str(exclude_id) if exclude_id else None,
+    )
+    if not article:
+        return None
+    return ResolveTitleOut(id=article.id, title=article.title)
+
+
+@router.post("/articles/resolve-titles", response_model=ResolveTitlesOut)
+def resolve_titles(
+    payload: ResolveTitlesIn,
+    exclude_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ResolveTitlesOut:
+    matches = resolve_note_titles(
+        db,
+        user,
+        payload.titles,
+        shelf=payload.shelf,
+        exclude_id=str(exclude_id) if exclude_id else None,
+    )
+    results = [
+        ResolvedTitleOut(
+            query=query,
+            id=article.id if article else None,
+            title=article.title if article else None,
+        )
+        for query, article in matches.items()
+    ]
+    return ResolveTitlesOut(results=results)
+
+
+@router.get("/articles/note-titles", response_model=NoteTitlesOut)
+def note_titles(
+    q: str | None = None,
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> NoteTitlesOut:
+    items = [
+        NoteTitleOut(id=UUID(article_id), title=title)
+        for article_id, title in search_note_titles(db, user, q or "", limit=limit)
+    ]
+    return NoteTitlesOut(items=items)
 
 
 @router.get("/articles", response_model=Page[ArticleListItem])

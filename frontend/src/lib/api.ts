@@ -206,6 +206,27 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ destination, folder_id: folderId ?? null, is_correction: isCorrection }),
     }),
+  resolveNoteTitle: (title: string, shelf?: string, excludeId?: string) => {
+    const params = new URLSearchParams({ title });
+    if (shelf) params.set("shelf", shelf);
+    if (excludeId) params.set("exclude_id", excludeId);
+    return request<{ id: string; title: string } | null>(`/api/v1/articles/resolve-title?${params.toString()}`);
+  },
+  resolveNoteTitles: (titles: string[], shelf?: string, excludeId?: string) => {
+    const params = excludeId ? `?exclude_id=${encodeURIComponent(excludeId)}` : "";
+    return request<{ results: Array<{ query: string; id: string | null; title: string | null }> }>(
+      `/api/v1/articles/resolve-titles${params}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ titles, shelf: shelf || null }),
+      },
+    );
+  },
+  noteTitles: (q?: string, limit = 20) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (q?.trim()) params.set("q", q.trim());
+    return request<{ items: Array<{ id: string; title: string }> }>(`/api/v1/articles/note-titles?${params.toString()}`);
+  },
   uploadNoteMedia,
   uploadNoteImage: uploadNoteMedia,
   deleteNoteMedia: (id: string) =>

@@ -74,6 +74,20 @@ class MarkdownHtmlTests(unittest.TestCase):
         self.assertNotIn("<mark>", html)
         self.assertNotIn("<h1>", html)
 
+    def test_wikilinks_render_as_buttons(self):
+        html = markdown_to_html("See [[Other Note|label]] and [[Missing]]")
+        self.assertIn('class="wikilink wikilink-missing"', html)
+        self.assertIn('data-wikilink-target="Other Note"', html)
+        self.assertIn("label", html)
+        self.assertIn('data-wikilink-target="Missing"', html)
+
+    def test_wikilinks_skip_code_fences(self):
+        source = "Before [[Link]]\n```text\n[[Not a link]]\n```"
+        html = markdown_to_html(source)
+        self.assertIn('data-wikilink-target="Link"', html)
+        self.assertIn("[[Not a link]]", html)
+        self.assertNotIn('data-wikilink-target="Not a link"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

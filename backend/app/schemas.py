@@ -454,3 +454,32 @@ class StatsOut(BaseModel):
     books_count: int = 0
     schoolwork_count: int = 0
     oldest_saved_at: datetime | None
+
+
+class ResolveTitleOut(BaseModel):
+    id: uuid.UUID
+    title: str
+
+
+class ResolveTitlesIn(BaseModel):
+    titles: list[str] = Field(default_factory=list, max_length=50)
+    shelf: str | None = None
+
+
+class ResolvedTitleOut(BaseModel):
+    query: str
+    id: uuid.UUID | None = None
+    title: str | None = None
+
+
+class ResolveTitlesOut(BaseModel):
+    results: list[ResolvedTitleOut]
+
+
+class NoteTitleOut(BaseModel):
+    id: uuid.UUID
+    title: str
+
+
+class NoteTitlesOut(BaseModel):
+    items: list[NoteTitleOut]

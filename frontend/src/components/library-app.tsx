@@ -47,6 +47,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
+  extractWikilinkTargets,
+  onReaderBodyClick,
+  type WikilinkResolution,
+} from "@/lib/wikilinks";
+import {
   articleHeroImageUrl,
   articlePreviewFromListItem,
   articleReaderSource,
@@ -1293,6 +1298,25 @@ export function LibraryApp({ user }: { user: User }) {
                     readerActionError(error, "Could not remove that highlight");
                   }
                 }}
+                onOpenNote={openArticle}
+                onCreateLinkedNote={async (title, shelf, folderId) => {
+                  try {
+                    const created = await api.composeVaultNote(
+                      title,
+                      "",
+                      [],
+                      shelf || "notes",
+                      false,
+                      folderId,
+                    );
+                    void Promise.all([loadNav(), loadList()]);
+                    toast.success(`Created “${title}”`);
+                    return created.id;
+                  } catch (error) {
+                    toast.error(error instanceof ApiError ? error.message : "Could not create that note");
+                    return null;
+                  }
+                }}
               />
             ) : selectedId ? (
               <EmptyState icon={<LoaderCircle className="size-5 animate-spin" />} title="Opening article" body="Loading the stored text, not just the link." />
@@ -1856,6 +1880,8 @@ function Reader({
   onMoveNote,
   onEditComposed,
   onDownloadPack,
+  onOpenNote,
+  onCreateLinkedNote,
   readerScrollToken,
 }: {
   article: Article;
@@ -1883,6 +1909,8 @@ function Reader({
   onMoveNote: (noteId: string, destination: NoteDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
   onEditComposed: (title: string, markdown: string, destination: NoteDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
   onDownloadPack: () => Promise<void>;
+  onOpenNote: (id: string) => void;
+  onCreateLinkedNote: (title: string, shelf: NoteDestination | "", folderId: string | null) => Promise<string | null>;
 }) {
   const [note, setNote] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
@@ -1984,6 +2012,61 @@ function Reader({
   const articleCorrection = article.corrections?.length
     ? article.corrections[article.corrections.length - 1]
     : null;
+  const articleShelf = displayArticleShelf(article);
+  const [wikilinkMap, setWikilinkMap] = useState<Map<string, WikilinkResolution>>(new Map());
+  const wikilinkMarkdownSources = useMemo(() => {
+    const sources = [fallbackBody, articleCorrection?.markdown || ""];
+    for (const item of filedNotes) sources.push(item.markdown);
+    return sources.filter(Boolean).join("\n");
+  }, [fallbackBody, articleCorrection?.markdown, filedNotes]);
+
+  useEffect(() => {
+    const targets = extractWikilinkTargets(wikilinkMarkdownSources);
+    if (!targets.length) {
+      setWikilinkMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    void api
+      .resolveNoteTitles(targets, articleShelf || undefined, article.id)
+      .then((payload) => {
+        if (cancelled) return;
+        const next = new Map<string, WikilinkResolution>();
+        for (const item of payload.results) {
+          if (item.id && item.title) next.set(item.query, { id: item.id, title: item.title });
+        }
+        setWikilinkMap(next);
+      })
+      .catch(() => {
+        if (!cancelled) setWikilinkMap(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [article.id, articleShelf, wikilinkMarkdownSources]);
+
+  const wikilinkResolver = useCallback(
+    (target: string) => wikilinkMap.get(target.trim()) ?? null,
+    [wikilinkMap],
+  );
+
+  const wikilinkClickContext = useMemo(
+    () => ({
+      shelf: articleShelf || null,
+      folderId: article.folder_id ?? null,
+      onOpenNote,
+      onCreateNote: (title: string, shelf: string | null, folderId: string | null) =>
+        onCreateLinkedNote(title, (shelf || "notes") as NoteDestination, folderId),
+      resolveTitle: (title: string, shelf: string | null) =>
+        api.resolveNoteTitle(title, shelf || undefined, article.id).then((item) => item || null),
+    }),
+    [article.id, article.folder_id, articleShelf, onCreateLinkedNote, onOpenNote],
+  );
+
+  const handleReaderBodyClick = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => onReaderBodyClick(event, wikilinkClickContext),
+    [wikilinkClickContext],
+  );
 
   useEffect(() => {
     const marks = article.annotations
@@ -1995,19 +2078,25 @@ function Reader({
         prefix: item.prefix,
         suffix: item.suffix,
       }));
+    if (composed && fallbackBody) {
+      const rendered = applyHighlights(
+        wrapHtmlWords(sanitizeHtml(noteMarkdownHtml(fallbackBody, wikilinkResolver)), titleWordCount),
+        marks,
+      );
+      setBodyHtml(rendered);
+      return;
+    }
     if (html) {
       setBodyHtml(applyHighlights(wrapHtmlWords(html, titleWordCount), marks));
       return;
     }
     if (fallbackBody) {
-      const rendered = composed
-        ? applyHighlights(wrapHtmlWords(sanitizeHtml(noteMarkdownHtml(fallbackBody)), titleWordCount), marks)
-        : applyHighlights(wrapPlainWords(fallbackBody, titleWordCount), marks);
+      const rendered = applyHighlights(wrapPlainWords(fallbackBody, titleWordCount), marks);
       setBodyHtml(rendered);
       return;
     }
     setBodyHtml("");
-  }, [article.id, composed, fallbackBody, html, highlightKey, titleWordCount]);
+  }, [article.id, composed, fallbackBody, html, highlightKey, titleWordCount, wikilinkResolver]);
 
   useEffect(() => {
     setActiveWord(null);
@@ -2502,7 +2591,7 @@ function Reader({
           <div
             ref={bodyRef}
             className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
-            onClick={onCodeCopyClick}
+            onClick={handleReaderBodyClick}
             onMouseUp={() => {
               const next = selectionInRoot(bodyRef.current);
               setPicker(next);
@@ -2557,9 +2646,9 @@ function Reader({
               <p className="text-sm font-medium">Correction on this article</p>
               <div
                 className="note-md text-sm"
-                onClick={onCodeCopyClick}
+                onClick={handleReaderBodyClick}
                 dangerouslySetInnerHTML={{
-                  __html: sanitizeHtml(noteMarkdownHtml(articleCorrection.markdown)),
+                  __html: sanitizeHtml(noteMarkdownHtml(articleCorrection.markdown, wikilinkResolver)),
                 }}
               />
             </div>
@@ -2737,8 +2826,8 @@ function Reader({
                   <NoteAttachmentChips markdown={item.markdown} className="mt-2 mb-2" />
                   <div
                     className="text-sm mt-1 note-md"
-                    onClick={onCodeCopyClick}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(noteMarkdownHtml(item.markdown)) }}
+                    onClick={handleReaderBodyClick}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(noteMarkdownHtml(item.markdown, wikilinkResolver)) }}
                   />
                   {item.markdown.trim() ? (
                     <div className="mt-2">

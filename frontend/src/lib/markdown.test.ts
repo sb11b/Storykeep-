@@ -7,6 +7,7 @@ import {
   wrapCodeFence,
   wrapHighlight,
   wrapInline,
+  wrapWikilink,
 } from "./markdown";
 
 test("wrapHighlight wraps a textarea selection", () => {
@@ -117,4 +118,22 @@ test("wrapCodeFence wraps a selection", () => {
   const source = "before code after";
   const result = wrapCodeFence(source, 7, 11, "js");
   assert.equal(result.text, "before ```js\ncode\n``` after");
+});
+
+test("wikilinks render as buttons and skip fenced code", () => {
+  const resolver = (target: string) =>
+    target === "DAT 325 Project One" ? { id: "note-1", title: "DAT 325 Project One" } : null;
+  const html = renderMarkdown("Open [[DAT 325 Project One]] or [[No Such|typo]]\n```text\n[[Inside]]\n```", resolver);
+  assert.match(html, /class="wikilink" data-wikilink-id="note-1"/);
+  assert.match(html, /class="wikilink wikilink-missing" data-wikilink-target="No Such"/);
+  assert.match(html, /typo/);
+  assert.match(html, /\[\[Inside\]\]/);
+  assert.equal(html.includes('data-wikilink-target="Inside"'), false);
+});
+
+test("wrapWikilink wraps selection as wiki link", () => {
+  const result = wrapWikilink("See Project One here", 4, 15);
+  assert.equal(result.text, "See [[Project One]] here");
+  assert.equal(result.selectionStart, 6);
+  assert.equal(result.selectionEnd, 17);
 });

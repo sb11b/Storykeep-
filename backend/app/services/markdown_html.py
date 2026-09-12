@@ -150,9 +150,12 @@ def _is_media_line(line: str) -> bool:
 
 def _inline(value: str) -> str:
     def wikilink(match: re.Match[str]) -> str:
-        target = match.group(1).strip()
-        label = (match.group(2) or target).strip()
-        return f'<span class="wikilink">{html.escape(label)}</span>'
+        target = html.escape(match.group(1).strip())
+        label = html.escape((match.group(2) or match.group(1)).strip())
+        return (
+            f'<button type="button" class="wikilink wikilink-missing" '
+            f'data-wikilink-target="{target}">{label}</button>'
+        )
 
     pieces: list[str] = []
     cursor = 0

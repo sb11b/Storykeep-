@@ -12,9 +12,37 @@ const MEDIA_LINE = /^(!?\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\))$/;
 const FENCE_OPEN = /^(`{3})([\w-+#.]*)?\s*$/;
 const FENCE_CLOSE = /^(`{3})\s*$/;
 const INDENTED_CODE = /^(?: {4}|\t)/;
+const WIKILINK = /\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g;
 
-function inline(value: string): string {
-  const escaped = escapeHtml(value)
+export type WikilinkResolution = { id: string; title: string };
+export type WikilinkResolver = (target: string) => WikilinkResolution | null | undefined;
+
+function renderWikilink(target: string, label: string, resolver?: WikilinkResolver): string {
+  const trimmedTarget = target.trim();
+  const trimmedLabel = label.trim() || trimmedTarget;
+  const resolved = resolver?.(trimmedTarget);
+  const escLabel = escapeHtml(trimmedLabel);
+  if (resolved) {
+    return `<button type="button" class="wikilink" data-wikilink-id="${escapeHtml(resolved.id)}">${escLabel}</button>`;
+  }
+  return `<button type="button" class="wikilink wikilink-missing" data-wikilink-target="${escapeHtml(trimmedTarget)}">${escLabel}</button>`;
+}
+
+function inlineWithWikilinks(value: string, resolver?: WikilinkResolver): string {
+  const pieces: string[] = [];
+  let cursor = 0;
+  for (const match of value.matchAll(WIKILINK)) {
+    const index = match.index ?? 0;
+    if (index > cursor) pieces.push(escapeHtml(value.slice(cursor, index)));
+    pieces.push(renderWikilink(match[1] || "", match[2] || match[1] || "", resolver));
+    cursor = index + (match[0]?.length ?? 0);
+  }
+  pieces.push(escapeHtml(value.slice(cursor)));
+  return pieces.join("");
+}
+
+function inline(value: string, resolver?: WikilinkResolver): string {
+  const escaped = inlineWithWikilinks(value, resolver)
     .replace(MEDIA_IMAGE, '<img src="$2" alt="$1" />')
     .replace(
       MEDIA_FILE,
@@ -62,6 +90,19 @@ function selectionRange(source: string, start: number, end: number): { from: num
 
 export function wrapHighlight(source: string, start: number, end: number): WrapResult {
   return wrapInline(source, start, end, "==", "==");
+}
+
+export function wrapWikilink(source: string, start: number, end: number): WrapResult {
+  const { from, to } = selectionRange(source, start, end);
+  const inner = source.slice(from, to).trim();
+  const open = "[[";
+  const close = "]]";
+  const wrapped = inner ? `${open}${inner}${close}` : `${open}${close}`;
+  return {
+    text: `${source.slice(0, from)}${wrapped}${source.slice(to)}`,
+    selectionStart: from + open.length,
+    selectionEnd: from + open.length + inner.length,
+  };
 }
 
 export function wrapInline(source: string, start: number, end: number, open: string, close: string): WrapResult {
@@ -147,8 +188,8 @@ export function prefixSelectedLines(
 }
 
 /** Render StoryKeep note markdown for reader, filed notes, and preview. */
-export function noteMarkdownHtml(source: string): string {
-  return renderMarkdown(source);
+export function noteMarkdownHtml(source: string, resolver?: WikilinkResolver): string {
+  return renderMarkdown(source, resolver);
 }
 
 type MarkdownSegment = { kind: "raw"; text: string } | { kind: "highlight"; text: string };
@@ -220,7 +261,7 @@ function splitHighlightSegments(source: string): MarkdownSegment[] {
   return segments.length ? segments : [{ kind: "raw", text: source }];
 }
 
-function renderTextLines(lines: string[]): string {
+function renderTextLines(lines: string[], resolver?: WikilinkResolver): string {
   const html: string[] = [];
   let listKind: "ul" | "ol" | null = null;
   const flushList = () => {
@@ -246,51 +287,51 @@ function renderTextLines(lines: string[]): string {
     if (heading) {
       flushList();
       const level = heading[1].length;
-      html.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      html.push(`<h${level}>${inline(heading[2], resolver)}</h${level}>`);
       continue;
     }
     if (MEDIA_LINE.test(line.trim())) {
       flushList();
-      html.push(inline(line.trim()));
+      html.push(inline(line.trim(), resolver));
       continue;
     }
     const numbered = line.match(/^\d+\.\s+(.*)$/);
     if (numbered) {
       openList("ol");
-      html.push(`<li>${inline(numbered[1])}</li>`);
+      html.push(`<li>${inline(numbered[1], resolver)}</li>`);
       continue;
     }
     const bullet = line.match(/^[-*•]\s+(.*)$/);
     if (bullet) {
       openList("ul");
-      html.push(`<li>${inline(bullet[1])}</li>`);
+      html.push(`<li>${inline(bullet[1], resolver)}</li>`);
       continue;
     }
     flushList();
-    html.push(`<p>${inline(line)}</p>`);
+    html.push(`<p>${inline(line, resolver)}</p>`);
   }
   flushList();
   return html.join("");
 }
 
-function renderMarkdownBlocks(source: string): string {
+function renderMarkdownBlocks(source: string, resolver?: WikilinkResolver): string {
   return parseBlocks(source)
     .map((block) => {
       if (block.kind === "code") return renderCodeBlock(block.lang, block.body);
       return splitHighlightSegments(block.lines.join("\n"))
         .map((segment) => {
           if (segment.kind === "highlight") {
-            const inner = renderMarkdownBlocks(segment.text);
+            const inner = renderMarkdownBlocks(segment.text, resolver);
             return inner ? `<mark class="sk-highlight-block">${inner}</mark>` : "";
           }
-          return renderTextLines(segment.text.split("\n"));
+          return renderTextLines(segment.text.split("\n"), resolver);
         })
         .join("");
     })
     .join("");
 }
 
-export function renderMarkdown(source: string): string {
+export function renderMarkdown(source: string, resolver?: WikilinkResolver): string {
   const normalized = (source || "").replace(/\r\n/g, "\n");
-  return renderMarkdownBlocks(normalized);
+  return renderMarkdownBlocks(normalized, resolver);
 }

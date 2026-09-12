@@ -230,6 +230,28 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.wikilink {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.wikilink-missing {
+  color: var(--muted-foreground);
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+}
+.wikilink:hover {
+  color: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+}
+.wikilink-missing:hover {
+  color: var(--foreground);
+}
 .article-body img,
 .article-hero {
   max-width: 100%;
