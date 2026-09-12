@@ -12,8 +12,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
-export function ProfilePage() {
+type ProfilePageProps = {
+  /** When embedded in library chrome or a modal, use this instead of routing home. */
+  onClose?: () => void;
+  className?: string;
+};
+
+export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
   const router = useRouter();
+  const close = onClose ?? (() => router.push("/"));
   const fileRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -213,7 +220,7 @@ export function ProfilePage() {
 
   if (loading || !profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+      <div className={cn("flex h-full min-h-0 items-center justify-center text-sm text-muted-foreground", className)}>
         Loading profile…
       </div>
     );
@@ -222,18 +229,26 @@ export function ProfilePage() {
   const readOnly = profile.profile_read_only;
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-2xl px-4 py-8 space-y-6">
-        <div className="flex items-center gap-3">
-          <button type="button" className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }))} onClick={() => router.push("/")}>
+    <div className={cn("flex h-full min-h-0 flex-col bg-background", className)}>
+      <header className="sticky top-0 z-10 shrink-0 border-b border-border/80 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mx-auto flex max-w-2xl items-center gap-3">
+          <button type="button" className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }))} onClick={close} aria-label="Close profile">
             <ArrowLeft className="size-4" />
           </button>
-          <div>
-            <h1 className="font-[family-name:var(--font-serif)] text-3xl tracking-tight">Profile</h1>
-            <p className="text-sm text-muted-foreground">Account settings and sign-in security</p>
+          <div className="min-w-0 flex-1">
+            <h1 className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">Profile</h1>
+            <p className="truncate text-sm text-muted-foreground">Account settings and sign-in security</p>
           </div>
+          {!readOnly ? (
+            <Button type="button" size="sm" onClick={() => void saveProfile()} disabled={savingProfile}>
+              {savingProfile ? "Saving…" : "Save profile"}
+            </Button>
+          ) : null}
         </div>
+      </header>
 
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-10">
         {readOnly ? (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Demo account profile is read-only.
@@ -283,11 +298,6 @@ export function ProfilePage() {
               <Label htmlFor="birthdate">Birthdate (optional)</Label>
               <Input id="birthdate" type="date" value={birthdate} disabled={readOnly} onChange={(e) => setBirthdate(e.target.value)} />
             </div>
-            {!readOnly ? (
-              <Button type="button" onClick={() => void saveProfile()} disabled={savingProfile}>
-                {savingProfile ? "Saving…" : "Save profile"}
-              </Button>
-            ) : null}
           </CardContent>
         </Card>
 
@@ -407,6 +417,7 @@ export function ProfilePage() {
             </Card>
           </>
         ) : null}
+        </div>
       </div>
     </div>
   );
