@@ -36,6 +36,7 @@ import { CorrectionCheck, DestinationSelect, FolderSelect } from "@/components/d
 import { NoteAttachmentChips } from "@/components/note-attachments";
 import { NoteComposer } from "@/components/note-composer";
 import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
+import { ProfilePage } from "@/components/profile-page";
 import { ShelfSwitcher } from "@/components/shelf-switcher";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -195,7 +196,7 @@ function shelfKey(shelf: Shelf): string {
 
 const LIST_PAGE = 40;
 
-export function LibraryApp({ user }: { user: User }) {
+export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: (user: User) => void }) {
   const router = useRouter();
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -217,6 +218,7 @@ export function LibraryApp({ user }: { user: User }) {
   const [listError, setListError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedToRemove, setFeedToRemove] = useState<Feed | null>(null);
   const [articleToDelete, setArticleToDelete] = useState<ArticleListItem | null>(null);
@@ -884,6 +886,16 @@ export function LibraryApp({ user }: { user: User }) {
     }
   }
 
+  function openProfile() {
+    setMobileNav(false);
+    setProfileOpen(true);
+  }
+
+  function closeProfile() {
+    setProfileOpen(false);
+    void api.me().then((next) => onUserChange?.(next)).catch(() => {});
+  }
+
   const nav = (
     <Sidebar
       user={user}
@@ -921,7 +933,7 @@ export function LibraryApp({ user }: { user: User }) {
         await api.logout();
         router.replace("/login");
       }}
-      onProfile={() => router.push("/profile")}
+      onProfile={openProfile}
       deployBuild={deployBuild}
     />
   );
@@ -1499,6 +1511,18 @@ export function LibraryApp({ user }: { user: User }) {
           setBackups(await api.backups());
         }}
       />
+      <Dialog open={profileOpen} onOpenChange={(open) => (open ? setProfileOpen(true) : closeProfile())}>
+        <DialogContent
+          showCloseButton={false}
+          className="!top-0 !left-0 !flex h-[100dvh] !max-h-none w-[100vw] !max-w-none !translate-x-0 !translate-y-0 flex-col overflow-hidden rounded-none border-0 bg-background p-0 shadow-none ring-0 sm:max-w-none"
+        >
+          <ProfilePage
+            className="h-full min-h-0 flex-1"
+            onClose={closeProfile}
+            onUpdated={(updated) => onUserChange?.(updated)}
+          />
+        </DialogContent>
+      </Dialog>
       <GrokBubble
         articleId={article?.id ?? null}
         articleTitle={article?.title ?? null}
@@ -1743,7 +1767,7 @@ function Sidebar({
         ) : null}
       </div>
       <div className="shrink-0 space-y-1 border-t border-sidebar-border p-3">
-        <Button variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onProfile}>
+        <Button type="button" variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onProfile}>
           Profile
         </Button>
         <Button variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onBackup}>

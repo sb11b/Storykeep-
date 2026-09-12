@@ -45,5 +45,5 @@ export default function HomePage() {
     );
   }
 
-  return <LibraryApp user={user} />;
+  return <LibraryApp user={user} onUserChange={setUser} />;
 }

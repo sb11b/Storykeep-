@@ -15,10 +15,11 @@ import { cn } from "@/lib/utils";
 type ProfilePageProps = {
   /** When embedded in library chrome or a modal, use this instead of routing home. */
   onClose?: () => void;
+  onUpdated?: (profile: Profile) => void;
   className?: string;
 };
 
-export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
+export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps = {}) {
   const router = useRouter();
   const close = onClose ?? (() => router.push("/"));
   const fileRef = useRef<HTMLInputElement>(null);
@@ -76,6 +77,7 @@ export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
         birthdate: birthdate || null,
       });
       setProfile(updated);
+      onUpdated?.(updated);
       toast.success("Profile updated");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save profile");
@@ -91,6 +93,7 @@ export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
       const uploaded = await api.uploadNoteMedia(file);
       const updated = await api.updateProfile({ avatar_media_id: uploaded.id });
       setProfile(updated);
+      onUpdated?.(updated);
       toast.success("Profile photo updated");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not upload photo");
