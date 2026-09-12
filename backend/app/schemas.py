@@ -229,7 +229,7 @@ class OverlayAdditionOut(BaseModel):
 
 
 class DestinationIn(BaseModel):
-    destination: str
+    destination: str | None = None
     is_correction: bool | None = None
     folder_id: uuid.UUID | None = None
 
@@ -356,6 +356,8 @@ class ArticlePatch(BaseModel):
     is_read: bool | None = None
     is_saved: bool | None = None
     is_starred: bool | None = None
+    destination: str | None = None
+    folder_id: uuid.UUID | None = None
 
 
 class MarkReadIn(BaseModel):

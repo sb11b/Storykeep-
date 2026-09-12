@@ -86,6 +86,7 @@ export type FiledNote = {
   title: string;
   markdown: string;
   destination: string;
+  folder_id?: string | null;
   is_correction?: boolean;
   parent_id?: string | null;
   created_at: string;

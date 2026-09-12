@@ -327,10 +327,18 @@ export const api = {
     return request<Page<Article>>(`/api/v1/articles?${search.toString()}`);
   },
   article: (id: string) => request<Article>(`/api/v1/articles/${id}`),
-  patchArticle: (id: string, body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred">>) =>
+  patchArticle: (
+    id: string,
+    body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred" | "destination" | "folder_id">>,
+  ) =>
     request<Article>(`/api/v1/articles/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+  fileArticle: (articleId: string, destination: string | null, folderId?: string | null) =>
+    request<Article>(`/api/v1/articles/${articleId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ destination, folder_id: folderId ?? null }),
     }),
   deleteArticle: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/articles/${id}`, {

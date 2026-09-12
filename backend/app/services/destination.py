@@ -21,16 +21,30 @@ def is_composed_guid(guid: str | None) -> bool:
     return (guid or "").startswith("storykeep-note:")
 
 
+def is_imported_vault_note(article: Article) -> bool:
+    return (article.guid or "").startswith("obsidian:") and (getattr(article, "source_kind", None) or "") != "textbook"
+
+
+def is_imported_textbook(article: Article) -> bool:
+    return (getattr(article, "source_kind", None) or "") == "textbook" and not is_composed_guid(article.guid)
+
+
+def explicitly_filed_on(shelf: str) -> ColumnElement[bool]:
+    return Article.destination == shelf
+
+
 def composed_clause() -> ColumnElement[bool]:
     return Article.guid.startswith("storykeep-note:")
 
 
 def effective_destination(article: Article) -> str | None:
-    if not is_composed_guid(article.guid):
-        return None
     dest = getattr(article, "destination", None)
     if dest in DESTINATIONS:
         return dest
+    if not is_composed_guid(article.guid):
+        if is_imported_textbook(article):
+            return "books"
+        return None
     if (getattr(article, "source_kind", None) or "") == "textbook":
         return "books"
     return DEFAULT_DESTINATION
@@ -51,18 +65,23 @@ def apply_destination(article: Article, destination: str, is_correction: bool | 
 def shelf_where(shelf: str) -> ColumnElement[bool] | None:
     composed = composed_clause()
     dest = func.coalesce(Article.destination, DEFAULT_DESTINATION)
+    filed = explicitly_filed_on(shelf)
     if shelf == "vault":
         imported = and_(Article.guid.startswith("obsidian:"), Article.source_kind != "textbook")
-        return or_(imported, and_(composed, dest == "vault"))
+        return or_(imported, and_(composed, dest == "vault"), filed)
     if shelf == "additions":
-        return and_(composed, dest == "additions")
+        return or_(and_(composed, dest == "additions"), filed)
     if shelf == "books":
-        imported_book = and_(Article.source_kind == "textbook", ~composed)
-        return or_(imported_book, and_(composed, dest == "books"))
+        imported_book = and_(
+            Article.source_kind == "textbook",
+            ~composed,
+            Article.destination.is_(None),
+        )
+        return or_(imported_book, and_(composed, dest == "books"), filed)
     if shelf == "notes":
-        return and_(composed, dest == "notes")
+        return or_(and_(composed, dest == "notes"), filed)
     if shelf == "schoolwork":
-        return and_(composed, dest == "schoolwork")
+        return or_(and_(composed, dest == "schoolwork"), filed)
     return None
 
 

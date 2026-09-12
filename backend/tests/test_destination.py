@@ -42,6 +42,16 @@ class DestinationTests(unittest.TestCase):
         add = overlay_relpath("addition", None, "calc-notes")
         self.assertTrue(add.startswith("StoryKeep/Additions/"))
 
+    def test_effective_destination_for_filed_rss(self):
+        from app.services.destination import effective_destination
+
+        article = type(
+            "Article",
+            (),
+            {"guid": "https://example.com/story", "source_kind": "rss", "destination": "schoolwork"},
+        )()
+        self.assertEqual(effective_destination(article), "schoolwork")
+
 
 if __name__ == "__main__":
     unittest.main()

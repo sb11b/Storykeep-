@@ -275,6 +275,16 @@ def patch_article(
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
     now = datetime.now(timezone.utc)
+    patch_data = payload.model_dump(exclude_unset=True)
+    if "destination" in patch_data or "folder_id" in patch_data:
+        from app.services.filing import _UNSET, set_article_filing
+
+        dest = patch_data["destination"] if "destination" in patch_data else article.destination
+        folder_id = patch_data["folder_id"] if "folder_id" in patch_data else _UNSET
+        try:
+            set_article_filing(db, user, article, dest, folder_id=folder_id, commit=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if payload.is_read is not None:
         article.is_read = payload.is_read
         article.read_at = now if payload.is_read else None
@@ -294,7 +304,7 @@ def patch_article(
         "article",
         article.id,
         "upsert",
-        payload.model_dump(exclude_unset=True),
+        {k: v for k, v in patch_data.items() if k not in ("destination", "folder_id")},
     )
     db.add(article)
     db.commit()

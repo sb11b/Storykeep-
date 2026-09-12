@@ -154,7 +154,7 @@ def edit_composed_note(
 
 
 @router.patch("/articles/{article_id}/destination", response_model=ArticleOut)
-def move_composed_note(
+def move_article_filing(
     article_id: UUID,
     payload: DestinationIn,
     db: Session = Depends(get_db),
@@ -162,8 +162,15 @@ def move_composed_note(
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
     try:
-        set_composed_destination(
-            db, user, article, payload.destination, payload.is_correction, folder_id=payload.folder_id
+        from app.services.filing import set_article_filing
+
+        set_article_filing(
+            db,
+            user,
+            article,
+            payload.destination,
+            folder_id=payload.folder_id,
+            is_correction=payload.is_correction,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
