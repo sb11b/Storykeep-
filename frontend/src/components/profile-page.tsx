@@ -220,7 +220,7 @@ export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
 
   if (loading || !profile) {
     return (
-      <div className={cn("flex h-full min-h-0 items-center justify-center text-sm text-muted-foreground", className)}>
+      <div className={cn("flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground", className)}>
         Loading profile…
       </div>
     );
@@ -229,8 +229,8 @@ export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
   const readOnly = profile.profile_read_only;
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col bg-background", className)}>
-      <header className="sticky top-0 z-10 shrink-0 border-b border-border/80 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden bg-background", className)}>
+      <header className="z-10 shrink-0 border-b border-border/80 bg-background px-4 py-3">
         <div className="mx-auto flex max-w-2xl items-center gap-3">
           <button type="button" className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }))} onClick={close} aria-label="Close profile">
             <ArrowLeft className="size-4" />
@@ -247,7 +247,7 @@ export function ProfilePage({ onClose, className }: ProfilePageProps = {}) {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]">
         <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-10">
         {readOnly ? (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
