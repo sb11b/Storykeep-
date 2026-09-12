@@ -14,6 +14,7 @@ from app.services.tts import (
     spoken_title,
     visible_speech_script,
     word_count,
+    script_digest,
 )
 
 
@@ -110,6 +111,11 @@ class SpeechPlainTests(unittest.TestCase):
         self.assertEqual(script, "Body text the reader sees.")
         self.assertEqual(word_count(script), 5)
         self.assertNotIn("Hidden title", visible_speech_script("Body text the reader sees."))
+
+    def test_chat_message_digest_is_stable(self):
+        script = visible_speech_script("Short Grok reply for listen.")
+        self.assertEqual(script_digest(script, "eve"), script_digest(script, "eve"))
+        self.assertNotEqual(script_digest(script, "eve"), script_digest(script + " extra", "eve"))
 
     def test_include_notes_appends_overlay_notes_without_changing_article_body(self):
         article = SimpleNamespace(

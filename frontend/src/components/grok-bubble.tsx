@@ -2,22 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Copy, LoaderCircle, Maximize2, Minimize2, NotebookPen, Send, Sparkles, X } from "lucide-react";
+import { LoaderCircle, Maximize2, Minimize2, Send, Sparkles, X } from "lucide-react";
+import { GrokChatMessage } from "@/components/grok-chat-message";
+import { GrokListenStopBar } from "@/components/grok-message-listen";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import { onCodeCopyClick } from "@/lib/code-copy";
 import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
-import { sanitizeHtml } from "@/lib/format";
-import { renderMarkdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 
 type ChatRole = "user" | "assistant";
 type ChatLine = { id: string; role: ChatRole; content: string };
 type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
-const GROK_NOTE_DESTINATIONS: GrokNoteDestination[] = ["notes", "schoolwork"];
 const BUBBLE_KEY = "storykeep-grok-bubble";
 const PANEL_KEY = "storykeep-grok-panel";
 const DEFAULT_PANEL = { w: 380, h: 520 };
@@ -71,6 +69,7 @@ export function GrokBubble({
   sourceRef,
   articleBody,
   onSavedNote,
+  onStopArticleListen,
 }: {
   articleId: string | null;
   articleTitle: string | null;
@@ -78,6 +77,7 @@ export function GrokBubble({
   sourceRef?: string | null;
   articleBody?: string | null;
   onSavedNote: (noteId?: string, destination?: GrokNoteDestination) => Promise<void>;
+  onStopArticleListen?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
@@ -90,7 +90,10 @@ export function GrokBubble({
   const [noteDest, setNoteDest] = useState<GrokNoteDestination>("notes");
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [listening, setListening] = useState(false);
+  const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
   const movedRef = useRef(false);
   const resizeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -115,6 +118,10 @@ export function GrokBubble({
         setEnabled(false);
         setLocked(false);
       });
+    api
+      .tts()
+      .then((row) => setTtsEnabled(row.enabled))
+      .catch(() => setTtsEnabled(false));
   }, []);
 
   useEffect(() => {
@@ -143,6 +150,10 @@ export function GrokBubble({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        if (listening && activeListenStopRef.current) {
+          activeListenStopRef.current();
+          return;
+        }
         if (fullscreen) {
           setFullscreen(false);
           return;
@@ -158,7 +169,12 @@ export function GrokBubble({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [fullscreen, open]);
+  }, [fullscreen, listening, open]);
+
+  function handleActivateListen(stop: (() => void) | null) {
+    activeListenStopRef.current = stop;
+    setListening(Boolean(stop));
+  }
 
   function closePanel() {
     setFullscreen(false);
@@ -359,6 +375,7 @@ export function GrokBubble({
           )}
         </span>
       </label>
+      {listening ? <GrokListenStopBar onStop={() => activeListenStopRef.current?.()} /> : null}
       <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
         {messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -368,62 +385,26 @@ export function GrokBubble({
           </p>
         ) : (
           messages.map((item) => (
-            <div key={item.id} className={cn("rounded-lg px-2.5 py-2 text-sm", item.role === "user" ? "ml-6 bg-primary/10" : "mr-4 bg-muted/60")}>
-              <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {item.role === "user" ? "You" : "Grok"}
-              </p>
-              {item.content ? (
-                item.role === "assistant" ? (
-                  <div
-                    className="note-md"
-                    onClick={onCodeCopyClick}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(renderMarkdown(item.content)) }}
-                  />
-                ) : (
-                  <p className="whitespace-pre-wrap">{item.content}</p>
-                )
-              ) : (
-                <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
-              )}
-              {item.role === "assistant" && item.content ? (
-                <div className="mt-2 flex flex-wrap items-center gap-1">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(item.content);
-                      toast.success("Copied full reply");
-                    }}
-                  >
-                    <Copy className="size-3" />
-                    Copy all
-                  </Button>
-                  <Button size="xs" variant="outline" onClick={() => void addToNotes(item.content)}>
-                    <NotebookPen className="size-3" />
-                    Add to notes
-                  </Button>
-                  {!(articleId && isComposedNote(articleGuid)) ? (
-                    <select
-                      aria-label="Save destination"
-                      value={noteDest}
-                      onChange={(event) => setNoteDest(event.target.value as GrokNoteDestination)}
-                      className="h-7 rounded-md border border-input bg-background px-2 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                    >
-                      {GROK_NOTE_DESTINATIONS.map((dest) => (
-                        <option key={dest} value={dest}>
-                          {DESTINATION_LABEL[dest]}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
+            <GrokChatMessage
+              key={item.id}
+              id={item.id}
+              role={item.role}
+              content={item.content}
+              ttsAvailable={ttsEnabled && !locked}
+              noteDest={noteDest}
+              showNoteDest={!(articleId && isComposedNote(articleGuid)) && item.role === "assistant"}
+              onNoteDestChange={setNoteDest}
+              onAddToNotes={(body) => void addToNotes(body)}
+              onActivateListen={handleActivateListen}
+              onStopArticleListen={onStopArticleListen}
+            />
           ))
         )}
       </div>
       {locked ? (
-        <p className="border-t px-3 py-2 text-xs text-muted-foreground">Demo accounts cannot use chat or dictation.</p>
+        <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+          Demo accounts cannot use chat, dictation, or Listen.
+        </p>
       ) : enabled === false ? (
         <p className="border-t px-3 py-2 text-xs text-muted-foreground">
           Chat is off until XAI_API_KEY is set on Railway. It never lives in the browser.

@@ -1399,6 +1399,7 @@ export function LibraryApp({ user }: { user: User }) {
         articleGuid={article?.guid ?? null}
         sourceRef={article?.source_ref ?? null}
         articleBody={article?.content_text ?? null}
+        onStopArticleListen={() => listenRef.current?.stop()}
         onSavedNote={async (noteId, destination) => {
           await loadNav();
           const currentId = selectedIdRef.current;

@@ -440,6 +440,55 @@ export const api = {
     request<{ ok: boolean }>(`/api/v1/articles/${id}/tts/release?voice_id=${encodeURIComponent(voiceId)}`, {
       method: "POST",
     }),
+  messageSpeech: async (messageId: string, voiceId: string, chunk: number, visibleText: string, confirm = false) => {
+    const search = new URLSearchParams({ chunk: String(chunk) });
+    if (confirm) search.set("confirm", "true");
+    const response = await fetch(`/api/v1/tts/message?${search.toString()}`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message_id: messageId,
+        voice_id: voiceId,
+        visible_text: visibleText,
+      }),
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = (await response.json()) as { detail?: string };
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    const data = (await response.json()) as {
+      audio: string;
+      content_type?: string;
+      chunks: number;
+      word_offset?: number;
+      chunk_word_counts?: number[];
+      duration?: number | null;
+      words?: TtsWord[];
+      content_hash?: string;
+      tts_word_count?: number;
+    };
+    const binary = Uint8Array.from(atob(data.audio), (char) => char.charCodeAt(0));
+    const blob = new Blob([binary], { type: data.content_type || "audio/mpeg" });
+    const chunks = Number(data.chunks || 1);
+    return {
+      blob,
+      chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1,
+      wordOffset: Number(data.word_offset || 0),
+      chunkWordCounts: Array.isArray(data.chunk_word_counts) ? data.chunk_word_counts : [],
+      duration: data.duration ?? null,
+      words: Array.isArray(data.words) ? data.words : [],
+      contentHash: data.content_hash || "",
+      ttsWordCount: Number(data.tts_word_count || 0),
+    };
+  },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   streamChat: async (
     body: { messages: { role: "user" | "assistant"; content: string }[]; article_id: string | null; include_article: boolean },

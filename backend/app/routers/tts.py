@@ -9,7 +9,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Article, User
 from app.routers.articles import _owned_article
-from app.schemas import VisibleSpeechIn
+from app.schemas import ChatSpeechIn, VisibleSpeechIn
 from app.services import tts as tts_service
 from app.services.demo_lock import reject_locked
 
@@ -61,13 +61,13 @@ def _speech_script(
     return tts_service.article_script(article, section_id=section, include_notes=include_notes, extra_notes=extras)
 
 
-def _speech_response(
-    article: Article,
+def _speech_response_for_script(
     script: str,
     voice_id: str,
     chunk: int,
     *,
     confirm: bool,
+    cache_owner_id: str | UUID,
 ) -> dict:
     if len(script) > tts_service.LONG_SCRIPT_CHARS and not confirm:
         raise HTTPException(
@@ -76,12 +76,7 @@ def _speech_response(
         )
     chunks = tts_service.split_chunks(script)
     if not chunks:
-        raise HTTPException(
-            status_code=400,
-            detail="This note has no stored text to read."
-            if tts_service.is_composed_note(article)
-            else "This story has no stored text to read. Open it in the reader, then try Listen again.",
-        )
+        raise HTTPException(status_code=400, detail="There is no text to read aloud.")
     if chunk >= len(chunks):
         raise HTTPException(status_code=400, detail="That speech part does not exist.")
     digest = tts_service.script_digest(script, voice_id)
@@ -89,7 +84,7 @@ def _speech_response(
     timed = tts_service.synthesize_timed(
         chunks[chunk],
         voice_id,
-        article_id=article.id,
+        article_id=cache_owner_id,
         chunk_index=chunk,
         digest=digest,
     )
@@ -105,6 +100,35 @@ def _speech_response(
         "content_hash": digest,
         "tts_word_count": tts_service.word_count(script),
     }
+
+
+def _speech_response(
+    article: Article,
+    script: str,
+    voice_id: str,
+    chunk: int,
+    *,
+    confirm: bool,
+) -> dict:
+    detail = (
+        "This note has no stored text to read."
+        if tts_service.is_composed_note(article)
+        else "This story has no stored text to read. Open it in the reader, then try Listen again."
+    )
+    if not script.strip():
+        raise HTTPException(status_code=400, detail=detail)
+    try:
+        return _speech_response_for_script(
+            script,
+            voice_id,
+            chunk,
+            confirm=confirm,
+            cache_owner_id=article.id,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 400 and exc.detail == "There is no text to read aloud.":
+            raise HTTPException(status_code=400, detail=detail) from exc
+        raise
 
 
 def _speech_plan_payload(
@@ -230,6 +254,29 @@ def speak_article(
     payload = _speech_response(article, script, voice_id, chunk, confirm=confirm)
     payload["include_notes"] = bool(include_notes)
     return payload
+
+
+@router.post("/tts/message")
+def speak_chat_message(
+    payload: ChatSpeechIn,
+    chunk: int = Query(default=0, ge=0, le=200),
+    confirm: bool = Query(default=False),
+    user: User = Depends(get_current_user),
+) -> dict:
+    reject_locked(user)
+    script = tts_service.visible_speech_script(payload.visible_text)
+    if not script.strip():
+        raise HTTPException(status_code=400, detail="There is no visible reply text to read.")
+    cache_owner = f"chat-{user.id}-{payload.message_id}"
+    response = _speech_response_for_script(
+        script,
+        payload.voice_id,
+        chunk,
+        confirm=confirm,
+        cache_owner_id=cache_owner,
+    )
+    response["message_id"] = payload.message_id
+    return response
 
 
 @router.post("/articles/{article_id}/tts")

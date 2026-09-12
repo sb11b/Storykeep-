@@ -7,13 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
 import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
+import {
+  readStoredTtsSpeed,
+  readStoredTtsVoice,
+  TTS_SPEEDS,
+  writeStoredTtsSpeed,
+  writeStoredTtsVoice,
+} from "@/lib/tts-preferences";
+import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
 import { cn } from "@/lib/utils";
 import type { TtsStatus, TtsWord } from "@/lib/types";
 
 const FOLLOW_UNAVAILABLE = "Follow unavailable for this audio.";
-
-const SPEED_KEY = "storykeep-tts-speed";
-const SPEEDS = [0.7, 0.8, 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5, 2.8, 3] as const;
 
 type SpeechPayload = {
   blob: Blob;
@@ -52,13 +57,6 @@ export type ListenControlsHandle = {
 
 function formatSpeed(rate: number): string {
   return `${rate.toFixed(1)}×`;
-}
-
-function readStoredSpeed(): number {
-  if (typeof window === "undefined") return 1;
-  const raw = window.localStorage.getItem(SPEED_KEY);
-  const value = raw ? Number(raw) : 1;
-  return SPEEDS.includes(value as (typeof SPEEDS)[number]) ? value : 1;
 }
 
 function resumeKey(articleId: string) {
@@ -167,7 +165,10 @@ export const ListenControls = forwardRef<
       .then((next) => {
         if (cancelled) return;
         setStatus(next);
-        if (next.voices[0]?.voice_id) setVoiceId(next.voices[0].voice_id);
+        const storedVoice = readStoredTtsVoice(next.voices[0]?.voice_id || "eve");
+        const known = next.voices.some((voice) => voice.voice_id === storedVoice);
+        if (known) setVoiceId(storedVoice);
+        else if (next.voices[0]?.voice_id) setVoiceId(next.voices[0].voice_id);
       })
       .catch(() => {
         if (!cancelled) setStatus({ enabled: false, provider: "xai", voices: [] });
@@ -178,7 +179,7 @@ export const ListenControls = forwardRef<
   }, []);
 
   useEffect(() => {
-    const next = readStoredSpeed();
+    const next = readStoredTtsSpeed();
     setSpeed(next);
     speedRef.current = next;
   }, []);
@@ -265,6 +266,7 @@ export const ListenControls = forwardRef<
   const stop = useCallback(
     (clearResume = false) => {
       generationRef.current += 1;
+      releaseTtsPlayback(stop);
       stopCueLoop();
       if (clearResume) {
         writeResume(articleId, null);
@@ -345,10 +347,15 @@ export const ListenControls = forwardRef<
           });
       if (data.contentHash) contentHashRef.current = data.contentHash;
       if (visible && "ttsWordCount" in data && data.ttsWordCount) {
-        console.info("[tts-visible]", {
+        const payload = {
           ttsWordCount: data.ttsWordCount,
           visibleWordCount: visible.visibleWordCount,
-        });
+        };
+        if (payload.ttsWordCount !== payload.visibleWordCount) {
+          console.warn("[tts-visible] word count mismatch", payload);
+        } else {
+          console.info("[tts-visible]", payload);
+        }
       }
       rememberSpeech(memoryKey(articleId, voice, index, includeNotesRef.current, contentHashRef.current), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
@@ -359,6 +366,7 @@ export const ListenControls = forwardRef<
 
   const playChunk = useCallback(
     async (index: number, voice: string, seekLocal: number | null = null) => {
+      claimTtsPlayback(() => stop());
       const generation = generationRef.current + 1;
       generationRef.current = generation;
       const audio = audioRef.current;
@@ -471,10 +479,15 @@ export const ListenControls = forwardRef<
             : await api.ttsPlan(articleId, voice, { includeNotes: includeNotesRef.current });
           if (nextPlan.content_hash) contentHashRef.current = nextPlan.content_hash;
           if (visible) {
-            console.info("[tts-visible]", {
+            const payload = {
               ttsWordCount: nextPlan.tts_word_count ?? 0,
               visibleWordCount: visible.visibleWordCount,
-            });
+            };
+            if (payload.ttsWordCount !== payload.visibleWordCount) {
+              console.warn("[tts-visible] word count mismatch", payload);
+            } else {
+              console.info("[tts-visible]", payload);
+            }
           }
           if (nextPlan.long) {
             pendingWordRef.current = wordIndex;
@@ -619,6 +632,7 @@ export const ListenControls = forwardRef<
         onChange={(event) => {
           const next = event.target.value;
           setVoiceId(next);
+          writeStoredTtsVoice(next);
           if (phase !== "idle") void playChunk(0, next, null);
         }}
       >
@@ -640,12 +654,12 @@ export const ListenControls = forwardRef<
           const next = Number(event.target.value);
           setSpeed(next);
           speedRef.current = next;
-          window.localStorage.setItem(SPEED_KEY, String(next));
+          writeStoredTtsSpeed(next);
           const audio = audioRef.current;
           if (audio) applyPlaybackRate(audio, next);
         }}
       >
-        {SPEEDS.map((rate) => (
+        {TTS_SPEEDS.map((rate) => (
           <option key={rate} value={String(rate)}>
             {formatSpeed(rate)}
           </option>
