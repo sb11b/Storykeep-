@@ -10,7 +10,7 @@ import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
-import { wrapHtmlWords } from "@/lib/tts-words";
+import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 
 type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
@@ -44,12 +44,13 @@ export function GrokChatMessage({
   useEffect(() => {
     const root = bodyRef.current;
     if (!root || role !== "assistant" || !content) return;
-    root.innerHTML = wrapHtmlWords(sanitizeHtml(renderMarkdown(content)), 0);
+    root.innerHTML = sanitizeHtml(renderMarkdown(content));
+    buildVisibleSpeechScript(root);
   }, [content, role]);
 
   const listen = useGrokMessageListen({
     messageId: id,
-    content,
+    bodyRef,
     disabled: !ttsAvailable || !content.trim(),
     onCue: setActiveWord,
     onPlayingChange: (active) => {
@@ -69,7 +70,10 @@ export function GrokChatMessage({
     root.querySelectorAll(".tts-word-active").forEach((node) => node.classList.remove("tts-word-active"));
     if (activeWord == null) return;
     const current = root.querySelector(`[data-tts-word="${activeWord}"]`);
-    if (current instanceof HTMLElement) current.classList.add("tts-word-active");
+    if (current instanceof HTMLElement) {
+      current.classList.add("tts-word-active");
+      current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
   }, [activeWord, content]);
 
   return (

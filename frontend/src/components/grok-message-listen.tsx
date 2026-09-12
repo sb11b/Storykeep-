@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
-import { chatSpeechScript } from "@/lib/tts-words";
+import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import type { TtsWord } from "@/lib/types";
 
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
@@ -31,13 +31,13 @@ function ttsFailureToast(error: unknown) {
 
 export function useGrokMessageListen({
   messageId,
-  content,
+  bodyRef,
   disabled,
   onPlayingChange,
   onCue,
 }: {
   messageId: string;
-  content: string;
+  bodyRef: RefObject<HTMLElement | null>;
   disabled?: boolean;
   onPlayingChange?: (active: boolean) => void;
   onCue?: (wordIndex: number | null) => void;
@@ -137,12 +137,16 @@ export function useGrokMessageListen({
     onPlayingChange?.(phase === "playing" || phase === "paused" || phase === "loading");
   }, [onPlayingChange, phase]);
 
-  const speechPayload = useCallback(() => chatSpeechScript(content), [content]);
+  const visibleSpeech = useCallback(() => {
+    const root = bodyRef.current;
+    if (!root) return null;
+    return buildVisibleSpeechScript(root);
+  }, [bodyRef]);
 
   const beginPlayback = useCallback(async () => {
-    const payload = speechPayload();
-    if (!payload.script.trim()) {
-      toast.error("Nothing to read in this reply.");
+    const payload = visibleSpeech();
+    if (!payload?.script.trim()) {
+      toast.error("Nothing visible to read in this reply.");
       return;
     }
     claimTtsPlayback(stopRef.current);
@@ -153,7 +157,7 @@ export function useGrokMessageListen({
     setSpeed(rate);
     setPhase("loading");
     try {
-      const data = await api.messageSpeech(messageId, voice, 0, content);
+      const data = await api.messageSpeech(messageId, voice, 0, payload.script);
       if (generation !== generationRef.current) return;
       const audio = audioRef.current;
       if (!audio) return;
@@ -176,17 +180,30 @@ export function useGrokMessageListen({
       if (timestampsValidRef.current) {
         syncCueFromAudio();
         startCueLoop();
+      } else {
+        console.warn("[tts-visible] grok reply word timestamps unavailable", {
+          ttsWordCount: data.ttsWordCount,
+          visibleWordCount: payload.visibleWordCount,
+          timedWords: data.words.length,
+        });
       }
-      console.info("[tts-visible] grok reply", {
-        ttsWordCount: data.ttsWordCount,
-        visibleWordCount: payload.visibleWordCount,
-      });
+      if (payload.visibleWordCount !== data.ttsWordCount) {
+        console.warn("[tts-visible] grok reply word count mismatch", {
+          ttsWordCount: data.ttsWordCount,
+          visibleWordCount: payload.visibleWordCount,
+        });
+      } else {
+        console.info("[tts-visible] grok reply", {
+          ttsWordCount: data.ttsWordCount,
+          visibleWordCount: payload.visibleWordCount,
+        });
+      }
     } catch (error) {
       if (generation !== generationRef.current) return;
       stop();
       ttsFailureToast(error);
     }
-  }, [content, messageId, speechPayload, startCueLoop, stop, syncCueFromAudio]);
+  }, [messageId, startCueLoop, stop, syncCueFromAudio, visibleSpeech]);
 
   const listen = useCallback(() => {
     if (disabled) return;
@@ -194,7 +211,7 @@ export function useGrokMessageListen({
       const audio = audioRef.current;
       if (!audio) return;
       claimTtsPlayback(stopRef.current);
-      applyPlaybackRate(audio, readStoredTtsSpeed());
+      applyPlaybackRate(audio, speed);
       void audio.play().then(() => {
         setPhase("playing");
         startCueLoop();
@@ -202,7 +219,7 @@ export function useGrokMessageListen({
       return;
     }
     if (phase === "idle") void beginPlayback();
-  }, [beginPlayback, disabled, phase, startCueLoop]);
+  }, [beginPlayback, disabled, phase, speed, startCueLoop]);
 
   const pause = useCallback(() => {
     if (phase !== "playing") return;
@@ -272,7 +289,7 @@ export function GrokListenBar({
         aria-label="Playback speed"
         className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
         value={speed}
-        disabled={disabled}
+        disabled={disabled || phase === "loading"}
         onChange={(event) => onSpeedChange(Number(event.target.value))}
       >
         {TTS_SPEEDS.map((rate) => (
