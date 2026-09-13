@@ -299,6 +299,8 @@ def _chat_image_stream(
                 sum(len(part) for part in assistant_parts),
             )
 
+        produce = None
+        saved = False
         try:
             yield chat_service.SSE_PADDING
             await asyncio.sleep(0)
@@ -318,30 +320,56 @@ def _chat_image_stream(
             yield chat_service.encode_sse({"delta": chat_image.GENERATING_DELTA})
             await asyncio.sleep(0)
 
+            logger.info(
+                "junior-image start intent=%s has_source=%s user=%s conversation=%s",
+                intent,
+                bool(source_url),
+                user_id,
+                conversation_id,
+            )
             loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(
+            produce = loop.run_in_executor(
                 None,
                 lambda: chat_image.produce_chat_image(intent, user_text, source_url),
             )
-            while not fut.done():
-                if await request.is_disconnected():
-                    _log("aborted")
-                    return
-                done, _pending = await asyncio.wait({fut}, timeout=8.0)
+            disconnected = False
+            waited = 0
+            while not produce.done():
+                try:
+                    disconnected = await request.is_disconnected()
+                except Exception:
+                    disconnected = True
+                if disconnected:
+                    logger.info("junior-image client disconnected; waiting to save user=%s", user_id)
+                    break
+                done, _pending = await asyncio.wait({produce}, timeout=8.0)
+                waited += 8
                 if done:
                     break
+                # 4KB comment so Railway/proxies flush; tiny heartbeat events get buffered.
+                yield chat_service.SSE_PADDING
                 yield chat_service.encode_sse({"heartbeat": True})
+                if waited == 8 and not disconnected:
+                    note = "This usually takes about a minute.\n\n"
+                    assistant_parts.append(note)
+                    yield chat_service.encode_sse({"delta": note})
                 await asyncio.sleep(0)
 
-            result = await fut
-            assistant_id, markdown_body = await asyncio.to_thread(
-                _persist_chat_image_and_rewrite,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                persist=persist,
-                prefix="".join(assistant_parts),
-                result=result,
+            result = await asyncio.shield(produce)
+            assistant_id, markdown_body = await asyncio.shield(
+                asyncio.to_thread(
+                    _persist_chat_image_and_rewrite,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    persist=persist,
+                    prefix="".join(assistant_parts),
+                    result=result,
+                )
             )
+            saved = True
+            if disconnected:
+                _log("disconnected-saved")
+                return
             assistant_parts.append(markdown_body)
             yield chat_service.encode_sse({"delta": markdown_body})
             if persist and conversation_id and assistant_id:
@@ -366,6 +394,22 @@ def _chat_image_stream(
             )
         except asyncio.CancelledError:
             _log("cancelled")
+            if produce is not None and not saved:
+                try:
+                    result = await asyncio.shield(produce)
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            _persist_chat_image_and_rewrite,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            persist=persist,
+                            prefix="".join(assistant_parts),
+                            result=result,
+                        )
+                    )
+                    _log("cancelled-saved")
+                except Exception:
+                    logger.exception("junior-image save after cancel failed user=%s", user_id)
             raise
         except Exception as exc:
             logger.exception(
@@ -534,9 +578,9 @@ async def chat(
     thread_images = chat_image.collect_thread_images(current_files, history)
     has_thread_image = bool(thread_images)
     intent = chat_image.image_tool_intent(user_text, has_thread_image)
+    if intent == "edit" and not has_thread_image:
+        intent = None
     if intent:
-        if intent == "edit" and not has_thread_image:
-            raise HTTPException(status_code=400, detail=chat_image.MISSING_PHOTO_DETAIL)
         source_url = chat_image.owned_image_data_url(db, user, thread_images[0]) if has_thread_image else None
         imagine_service.require_imagine_key()
         imagine_service.enforce_imagine_rate_limit(user.id)

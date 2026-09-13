@@ -98,6 +98,15 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIn("man with a dark beard", result.prompt)
         generate.assert_called_once()
 
+    def test_produce_falls_back_to_t2i_when_edits_time_out(self):
+        data_url = "data:image/jpeg;base64,abc"
+        with patch("app.services.imagine.edit_image_bytes", side_effect=HTTPException(status_code=504, detail="Timed out waiting for the image.")):
+            with patch("app.services.imagine.describe_image_briefly", return_value="man with a dark beard"):
+                with patch("app.services.imagine.generate_image_bytes", return_value=b"img"):
+                    result = produce_chat_image("edit", "make me look older", data_url)
+        self.assertEqual(result.kind, "inspired")
+        self.assertEqual(result.payload, b"img")
+
     def test_auth_error_does_not_fallback_or_mention_faceapp(self):
         with patch("app.services.imagine.edit_image_bytes", side_effect=HTTPException(status_code=401, detail="xAI auth failed")):
             with self.assertRaises(HTTPException) as raised:

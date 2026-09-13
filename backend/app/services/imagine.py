@@ -251,8 +251,6 @@ def edit_image_bytes(prompt: str, image_data_url: str) -> bytes:
     payload = {
         "model": model,
         "prompt": (prompt or "")[:PROMPT_MAX],
-        "n": 1,
-        "response_format": "b64_json",
         "image": {"url": source, "type": "image_url"},
     }
     return _post_xai_image(url, payload)

@@ -169,6 +169,37 @@ test("readGrokChatStream forwards generating stream_status", async () => {
   assert.deepEqual(parts, ["Generating the image…\n\n"]);
 });
 
+test("generating status extends idle past the 60s text timeout", async () => {
+  const encoder = new TextEncoder();
+  let step = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (step === 0) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"stream_status":"generating","delta":"Generating the image…\\n\\n"}\n\n',
+          ),
+        );
+        step = 1;
+        return;
+      }
+      if (step === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        controller.enqueue(encoder.encode('data: {"delta":"done"}\n\n data: [DONE]\n\n'));
+        step = 2;
+        return;
+      }
+      controller.close();
+    },
+  });
+  const parts: string[] = [];
+  await readGrokChatStream(new Response(stream), { onDelta: (text) => parts.push(text) }, undefined, {
+    firstByteMs: 50,
+    idleAfterMs: 80,
+  });
+  assert.deepEqual(parts, ["Generating the image…\n\n", "done"]);
+});
+
 test("heartbeat does not count as the first token", async () => {
   const hangingChunks = [
     'data: {"heartbeat":true}\n\n',

@@ -5,6 +5,8 @@ import { formatChatError } from "@/lib/grok-chat-error";
 export const GROK_STREAM_FIRST_BYTE_MS = 12_000;
 /** After tokens started, abort only if the stream goes idle this long. */
 export const GROK_STREAM_IDLE_AFTER_MS = 60_000;
+/** Imagine edits/generations regularly take longer than the text-chat idle window. */
+export const GROK_STREAM_IMAGE_IDLE_MS = 180_000;
 /** @deprecated first-byte window; kept so older tests still compile. */
 export const GROK_STREAM_IDLE_MS = GROK_STREAM_FIRST_BYTE_MS;
 /** @deprecated do not hard-kill a stream that is still producing tokens. */
@@ -43,12 +45,20 @@ type StreamPayload = {
   stream_status?: string;
 };
 
-function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta: { value: boolean }) {
+function parseSsePart(
+  part: string,
+  handlers: GrokStreamHandlers,
+  receivedDelta: { value: boolean },
+  idle?: { ms: number },
+) {
   const line = part.split("\n").find((item) => item.startsWith("data:"));
   if (!line) return;
   const data = line.slice(5).trim();
   if (data === "[DONE]") return "done" as const;
   const parsed = JSON.parse(data) as StreamPayload;
+  if (parsed.stream_status === "generating" && idle) {
+    idle.ms = GROK_STREAM_IMAGE_IDLE_MS;
+  }
   if (parsed.error) {
     const status = typeof parsed.status === "number" ? parsed.status : 502;
     const detail =
@@ -103,7 +113,7 @@ export async function readGrokChatStream(
   if (!response.body) throw new ApiError(502, formatChatError(502, "Chat stream was empty"));
 
   const firstByteMs = timeouts?.firstByteMs ?? timeouts?.idleMs ?? GROK_STREAM_FIRST_BYTE_MS;
-  const idleAfterMs = timeouts?.idleAfterMs ?? GROK_STREAM_IDLE_AFTER_MS;
+  const idle = { ms: timeouts?.idleAfterMs ?? GROK_STREAM_IDLE_AFTER_MS };
   const preTokenHardMs = timeouts?.hardMs;
 
   const reader = response.body.getReader();
@@ -123,8 +133,9 @@ export async function readGrokChatStream(
       }
       return;
     }
-    if (now - lastActivityAt >= idleAfterMs) {
-      throw new ApiError(504, formatChatError(504, "Timed out after 60s."), {
+    if (now - lastActivityAt >= idle.ms) {
+      const detail = idle.ms > GROK_STREAM_IDLE_AFTER_MS ? "Timed out waiting for the image." : "Timed out after 60s.";
+      throw new ApiError(504, formatChatError(504, detail), {
         partial: true,
       });
     }
@@ -136,7 +147,7 @@ export async function readGrokChatStream(
       if (signal?.aborted) throw new DOMException("Chat aborted", "AbortError");
       const now = Date.now();
       const remaining = receivedDelta.value
-        ? idleAfterMs - (now - lastActivityAt)
+        ? idle.ms - (now - lastActivityAt)
         : (preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs) - (now - startedAt);
       const waitMs = Math.max(250, Math.min(remaining, 2000));
       const result = await Promise.race([
@@ -164,7 +175,7 @@ export async function readGrokChatStream(
       for (const part of parts) {
         if (!part.trim()) continue;
         try {
-          const outcome = parseSsePart(part, handlers, receivedDelta);
+          const outcome = parseSsePart(part, handlers, receivedDelta, idle);
           if (receivedDelta.value) {
             lastActivityAt = Date.now();
             if (firstDeltaAt == null) firstDeltaAt = lastActivityAt;
@@ -182,7 +193,7 @@ export async function readGrokChatStream(
     }
     if (buffer.trim()) {
       try {
-        parseSsePart(buffer, handlers, receivedDelta);
+        parseSsePart(buffer, handlers, receivedDelta, idle);
         if (receivedDelta.value && firstDeltaAt == null) firstDeltaAt = Date.now();
       } catch (error) {
         if (error instanceof ApiError) throw error;

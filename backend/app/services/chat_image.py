@@ -167,7 +167,7 @@ def inspired_prompt_for(user_text: str, description: str | None) -> str:
 
 
 def _fallback_to_t2i(exc: HTTPException) -> bool:
-    if exc.status_code in (400, 404, 422):
+    if exc.status_code in (400, 404, 422, 504):
         return True
     detail = str(exc.detail or "").lower()
     if exc.status_code == 502 and any(
