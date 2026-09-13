@@ -14,7 +14,7 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
-import { buildVisibleSpeechScript } from "@/lib/tts-visible";
+import { grokReplySpeechScript } from "@/lib/grok-reply-speech";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
@@ -30,6 +30,7 @@ function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
 export function useGrokMessageListen({
   messageId,
   bodyRef,
+  fallbackText,
   voiceId,
   disabled,
   onPlayingChange,
@@ -37,6 +38,8 @@ export function useGrokMessageListen({
 }: {
   messageId: string;
   bodyRef: RefObject<HTMLElement | null>;
+  /** Raw assistant markdown when the DOM body is not mounted yet. */
+  fallbackText?: string | null;
   voiceId: string;
   disabled?: boolean;
   onPlayingChange?: (active: boolean) => void;
@@ -188,9 +191,10 @@ export function useGrokMessageListen({
 
   const visibleSpeech = useCallback(() => {
     const root = bodyRef.current;
-    if (!root) return null;
-    return buildVisibleSpeechScript(root);
-  }, [bodyRef]);
+    const payload = grokReplySpeechScript(root, fallbackText);
+    if (!payload.script.trim()) return null;
+    return payload;
+  }, [bodyRef, fallbackText]);
 
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
@@ -202,6 +206,7 @@ export function useGrokMessageListen({
       if (!script.trim()) {
         throw new Error("Nothing visible to read in this reply.");
       }
+      console.info("[grok-tts] /tts request", { messageId, chunk: index, chars: script.length });
       const data = await api.messageSpeech(messageId, voice, index, script, true);
       chunkCacheRef.current.set(chunkCacheKey(index, voice), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
@@ -310,6 +315,7 @@ export function useGrokMessageListen({
       showTtsErrorToast(new Error("Nothing visible to read in this reply."));
       return;
     }
+    console.info("[grok-tts] speech script", { messageId, chars: payload.script.length });
     scriptRef.current = payload.script;
     resetLoaded();
     const rate = readStoredTtsSpeed();

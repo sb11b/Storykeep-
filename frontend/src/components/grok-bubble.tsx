@@ -145,7 +145,11 @@ export function GrokBubble({
         setCustomShelves(parseCustomNoteShelves(prefs));
         const labels = prefs.grok_pane_labels as Record<string, string> | undefined;
         if (!labels || !Object.keys(labels).length) return;
-        setPanes((current) => mergePreferenceLabels(current, labels));
+        setPanes((current) => {
+          const merged = mergePreferenceLabels(current, labels);
+          saveGrokPanes(merged);
+          return merged;
+        });
       })
       .catch(() => {
         /* ignore */
@@ -293,8 +297,8 @@ export function GrokBubble({
       const existing = scrubDefaultPaneLabels(prefs.grok_pane_labels as Record<string, string> | undefined);
       const merged = scrubDefaultPaneLabels({ ...existing, ...labelsFromPanes(nextPanes) });
       await api.updatePreferences({ grok_pane_labels: merged });
-    } catch {
-      /* ignore */
+    } catch (error) {
+      toastActionError(error, "save pane name", "Could not save that pane name");
     }
   }
 
@@ -358,6 +362,7 @@ export function GrokBubble({
     try {
       await api.deleteChatConversation(row.id);
       setConversations((current) => current.filter((item) => item.id !== row.id));
+      const clearedFocused = focusedPane.conversationId === row.id;
       setPanes((current) =>
         current.map((pane) =>
           pane.conversationId === row.id
@@ -365,6 +370,7 @@ export function GrokBubble({
             : pane,
         ),
       );
+      if (clearedFocused) startNewChat();
       if (renamingId === row.id) {
         setRenamingId(null);
         setRenameDraft("");
@@ -507,24 +513,29 @@ export function GrokBubble({
                           variant="ghost"
                           className="mt-0.5 shrink-0 opacity-60 hover:opacity-100 data-popup-open:opacity-100"
                           aria-label={`Options for ${row.title}`}
+                          onPointerDown={(event) => event.stopPropagation()}
                         >
                           <MoreHorizontal className="size-3 text-muted-foreground" />
                         </Button>
                       }
                     />
-                    <DropdownMenuContent align="start" className="min-w-36">
-                      <DropdownMenuItem onClick={() => startRename(row)}>
+                    <DropdownMenuContent elevated align="start" className="min-w-40">
+                      <DropdownMenuItem
+                        onClick={() => {
+                          startRename(row);
+                        }}
+                      >
                         <Pencil className="size-3.5" />
-                        Rename
+                        Rename thread
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         variant="destructive"
                         onClick={() => {
-                          queueMicrotask(() => void deleteConversation(row));
+                          void deleteConversation(row);
                         }}
                       >
                         <Trash2 className="size-3.5" />
-                        Delete
+                        Delete thread
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -676,10 +687,10 @@ export function GrokBubble({
                 </Button>
               }
             />
-            <DropdownMenuContent align="start" className="min-w-36">
+            <DropdownMenuContent elevated align="start" className="min-w-36">
               <DropdownMenuItem onClick={() => startPaneRename(focusedPaneId)}>
                 <Pencil className="size-3.5" />
-                Rename
+                Rename pane
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

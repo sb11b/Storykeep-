@@ -233,9 +233,15 @@ export function GrokPane({
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [pane.messages]);
 
+  const listenFallbackText =
+    listenTarget?.id != null
+      ? pane.messages.find((item) => item.id === listenTarget.id && item.role === "assistant")?.content
+      : undefined;
+
   const listen = useGrokMessageListen({
     messageId: listenTarget?.id ?? "",
     bodyRef: activeBodyRef,
+    fallbackText: listenFallbackText,
     voiceId,
     disabled: !listenTarget || !ttsEnabled || locked,
     onCue: setActiveWord,
@@ -608,10 +614,10 @@ export function GrokPane({
                   </Button>
                 }
               />
-              <DropdownMenuContent align="start" className="min-w-36">
-                <DropdownMenuItem onClick={() => onStartRename()}>
+              <DropdownMenuContent elevated align="start" className="min-w-36">
+                <DropdownMenuItem onClick={() => onStartRename?.()}>
                   <Pencil className="size-3.5" />
-                  Rename
+                  Rename pane
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
