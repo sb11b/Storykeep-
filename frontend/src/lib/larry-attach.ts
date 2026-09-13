@@ -1,3 +1,6 @@
+import { ApiError } from "@/lib/api";
+import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
+
 export const LARRY_ATTACH_ACCEPT = ".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.gif,.webp,.csv";
 export const LARRY_ATTACH_MAX_BYTES = 10 * 1024 * 1024;
 export const LARRY_ATTACH_MAX_FILES = 5;
@@ -12,6 +15,21 @@ export type LarryAttachment = {
   url: string;
   byte_size?: number | null;
 };
+
+/** Chip shown above the Larry composer before Send. */
+export type PendingAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  url: string;
+  kind: "image" | "file";
+  content_type: string;
+};
+
+/** Copy a live FileList before the input is reset — resetting empties the list in Chrome. */
+export function snapshotFiles(list: FileList | File[] | null | undefined): File[] {
+  return Array.from(list ?? []);
+}
 
 export function formatFileSize(bytes: number | null | undefined): string {
   const size = Number(bytes) || 0;
@@ -53,4 +71,67 @@ export function attachmentMarkdown(files: LarryAttachment[]): string {
         : `[${item.filename}](${item.url || `/api/v1/media/${item.media_id}`})`,
     )
     .join("\n");
+}
+
+export function pendingToMessageFile(item: PendingAttachment): LarryAttachment {
+  return {
+    media_id: item.id,
+    filename: item.name,
+    content_type: item.content_type,
+    kind: item.kind,
+    url: item.url,
+    byte_size: item.size,
+  };
+}
+
+/** POST /api/v1/media with the cookie session. Logs {status, id, name}. */
+export async function uploadLarryAttachment(file: File): Promise<PendingAttachment> {
+  const body = new FormData();
+  body.append("file", file);
+  let status = 0;
+  try {
+    const response = await fetch("/api/v1/media", {
+      method: "POST",
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+    status = response.status;
+    if (!response.ok) {
+      let detail: string | null = null;
+      try {
+        detail = parseErrorPayload(await response.json());
+      } catch {
+        /* ignore */
+      }
+      console.log("larry-attach", { status, id: null, name: file.name });
+      throw new ApiError(status, detail || httpErrorFallback(status));
+    }
+    const uploaded = (await response.json()) as {
+      id?: string;
+      filename?: string;
+      url?: string;
+      kind?: "image" | "file";
+      byte_size?: number | null;
+    };
+    const id = uploaded.id || "";
+    const name = uploaded.filename || file.name;
+    console.log("larry-attach", { status, id, name });
+    if (!id) {
+      throw new ApiError(status, "Upload succeeded but returned no media id.");
+    }
+    return {
+      id,
+      name,
+      size: uploaded.byte_size ?? file.size,
+      url: uploaded.url || `/api/v1/media/${id}`,
+      kind: uploaded.kind === "image" ? "image" : "file",
+      content_type: file.type || "application/octet-stream",
+    };
+  } catch (error) {
+    if (!(error instanceof ApiError)) {
+      console.log("larry-attach", { status: status || "network", id: null, name: file.name });
+    }
+    throw error;
+  }
 }

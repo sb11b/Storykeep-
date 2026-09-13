@@ -327,6 +327,7 @@ export function GrokBubble({
       conversationId: null,
       messages: [],
       recapQuestion: false,
+      pendingAttachments: [],
     }));
   }
 
@@ -353,6 +354,7 @@ export function GrokBubble({
         })),
         draft: "",
         recapQuestion: Boolean(detail.recap_question),
+        pendingAttachments: [],
       }));
     } catch {
       /* ignore */
@@ -368,7 +370,7 @@ export function GrokBubble({
       setPanes((current) =>
         current.map((pane) =>
           pane.conversationId === row.id
-            ? { ...pane, conversationId: null, messages: [], draft: "", recapQuestion: false }
+            ? { ...pane, conversationId: null, messages: [], draft: "", recapQuestion: false, pendingAttachments: [] }
             : pane,
         ),
       );
