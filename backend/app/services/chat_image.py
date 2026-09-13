@@ -8,6 +8,8 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.database import SessionLocal
+from app.models import User
 from app.services import imagine as imagine_service
 from app.services.note_media import owned_media
 
@@ -27,6 +29,8 @@ _VISION_ONLY = tuple(
         r"\bdescribe (?:this|the|my) (?:photo|picture|image|pic|selfie)\b",
         r"\blook at (?:this|the|my) (?:photo|picture|image|pic|selfie)\b",
         r"\bwhat(?:'s| is) in (?:this|the) (?:one|shot|frame)\b",
+        r"\bhow old\b",
+        r"^please look at ",
     )
 )
 
@@ -58,6 +62,9 @@ _GENERATE = tuple(
         r"\bdraw (?:me |an? |this )",
         r"\bmake (?:an? )?(?:image|photo|picture|portrait) of\b",
         r"\bimagine (?:an? )?(?:image|photo|picture|portrait)\b",
+        r"\brecreat(?:e|ing) (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait)",
+        r"\bfrom this (?:photo|picture|image|pic|selfie)\b",
+        r"\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b",
     )
 )
 
@@ -93,6 +100,12 @@ class ChatImageResult:
     prompt: str
 
 
+@dataclass(frozen=True)
+class InterceptedImageTurn:
+    markdown: str
+    assistant_message_id: UUID | None
+
+
 def image_tool_intent(text: str, has_image: bool) -> ImageIntent | None:
     raw = (text or "").strip()
     if not raw:
@@ -103,6 +116,8 @@ def image_tool_intent(text: str, has_image: bool) -> ImageIntent | None:
         return "edit"
     if any(pattern.search(raw) for pattern in _GENERATE):
         return "edit" if has_image else "generate"
+    if has_image and any(pattern.search(raw) for pattern in _AGE):
+        return "edit"
     return None
 
 
@@ -210,3 +225,48 @@ def markdown_for_result(result: ChatImageResult, media_id: UUID) -> str:
     if result.kind == "inspired":
         return imagine_service.assistant_inspired_markdown(result.prompt, media_id)
     return imagine_service.assistant_image_markdown(result.prompt, media_id)
+
+
+def run_intercepted_chat_image(
+    *,
+    user_id: UUID,
+    persist: bool,
+    conversation_id: UUID | None,
+    user_text: str,
+    intent: ImageIntent,
+    thread_images: list[dict[str, Any]],
+) -> InterceptedImageTurn:
+    """Produce a photo on /chat without calling the text model. User turn is already saved."""
+    imagine_service.require_imagine_key()
+    imagine_service.enforce_imagine_rate_limit(user_id)
+    if intent == "edit" and not thread_images:
+        raise HTTPException(status_code=400, detail=MISSING_PHOTO_DETAIL)
+
+    source_url: str | None = None
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Not signed in.")
+        if thread_images:
+            source_url = owned_image_data_url(db, user, thread_images[0])
+
+    result = produce_chat_image(intent, user_text, source_url)
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Not signed in.")
+        media = imagine_service.save_generated_image(db, user, result.prompt, result.payload)
+        markdown = markdown_for_result(result, media.id)
+        assistant_id: UUID | None = None
+        if persist and conversation_id:
+            assistant = imagine_service.persist_generated_assistant(
+                db,
+                user,
+                conversation_id=conversation_id,
+                markdown=markdown,
+                media=media,
+                last_model=IMAGE_JOB_MODEL,
+                last_reasoning=IMAGE_JOB_REASONING,
+            )
+            assistant_id = assistant.id
+        return InterceptedImageTurn(markdown=markdown, assistant_message_id=assistant_id)

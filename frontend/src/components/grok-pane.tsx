@@ -795,8 +795,7 @@ export function GrokPane({
         {
           prompt,
           conversation_id: pane.conversationId,
-          media_ids:
-            pendingImages.length && imageToolIntent(prompt, true) === "edit" ? pendingImages : undefined,
+          media_ids: pendingImages.length ? pendingImages : undefined,
         },
         controller.signal,
       );

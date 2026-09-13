@@ -264,6 +264,101 @@ def _sse_headers() -> dict[str, str]:
     }
 
 
+def _image_tool_events(
+    request: Request,
+    *,
+    user_id: UUID,
+    persist: bool,
+    conversation_id: UUID | None,
+    user_message_id: UUID | None,
+    user_text: str,
+    intent: chat_image.ImageIntent,
+    thread_images: list[dict],
+):
+    async def events():
+        yield chat_service.SSE_PADDING
+        await asyncio.sleep(0)
+        meta = {
+            "conversation_id": str(conversation_id) if conversation_id else None,
+            "user_message_id": str(user_message_id) if user_message_id else None,
+            "model": chat_image.IMAGE_JOB_MODEL,
+            "model_choice": chat_service.MODEL_AUTO,
+            "reasoning_effort": chat_image.IMAGE_JOB_REASONING,
+            "stream_status": "generating",
+            "delta": chat_image.GENERATING_DELTA,
+        }
+        yield chat_service.encode_sse({key: value for key, value in meta.items() if value is not None})
+        await asyncio.sleep(0)
+
+        job = asyncio.create_task(
+            asyncio.to_thread(
+                chat_image.run_intercepted_chat_image,
+                user_id=user_id,
+                persist=persist,
+                conversation_id=conversation_id,
+                user_text=user_text,
+                intent=intent,
+                thread_images=thread_images,
+            )
+        )
+
+        async def _finish_job() -> None:
+            try:
+                await asyncio.shield(job)
+            except Exception:
+                logger.exception(
+                    "chat image job failed after disconnect user=%s conversation=%s",
+                    user_id,
+                    conversation_id,
+                )
+
+        try:
+            while not job.done():
+                if await request.is_disconnected():
+                    await _finish_job()
+                    return
+                try:
+                    await asyncio.wait_for(asyncio.shield(job), timeout=8.0)
+                except asyncio.TimeoutError:
+                    yield chat_service.SSE_PADDING
+                    yield chat_service.encode_sse({"heartbeat": True})
+                    await asyncio.sleep(0)
+            turn = job.result()
+            yield chat_service.encode_sse({"delta": turn.markdown})
+            done_meta = {
+                "conversation_id": str(conversation_id) if conversation_id else None,
+                "assistant_message_id": str(turn.assistant_message_id) if turn.assistant_message_id else None,
+                "model": chat_image.IMAGE_JOB_MODEL,
+                "model_choice": chat_service.MODEL_AUTO,
+                "reasoning_effort": chat_image.IMAGE_JOB_REASONING,
+            }
+            yield chat_service.encode_sse({key: value for key, value in done_meta.items() if value is not None})
+            yield chat_service.encode_sse("[DONE]")
+        except HTTPException as exc:
+            status_code, detail = chat_service.http_exception_detail(exc)
+            logger.info(
+                "chat image intercept http-%s user=%s conversation=%s",
+                status_code,
+                user_id,
+                conversation_id,
+            )
+            yield chat_service.encode_sse(chat_service.stream_error_event(status_code, detail))
+        except asyncio.CancelledError:
+            await _finish_job()
+            raise
+        except Exception as exc:
+            logger.exception(
+                "chat image intercept error user=%s conversation=%s",
+                user_id,
+                conversation_id,
+            )
+            yield chat_service.encode_sse(
+                chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__)
+            )
+
+    return events()
+
+
 @router.post("/chat")
 async def chat(
     payload: ChatIn,
@@ -414,6 +509,23 @@ async def chat(
 
     if history:
         current_files = history[-1].get("files") or current_files
+    thread_images = chat_image.collect_thread_images(current_files, history)
+    image_intent = chat_image.image_tool_intent(user_text, bool(thread_images))
+    if image_intent:
+        return StreamingResponse(
+            _image_tool_events(
+                request,
+                user_id=user_id,
+                persist=persist,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                user_text=user_text,
+                intent=image_intent,
+                thread_images=thread_images,
+            ),
+            media_type="text/event-stream",
+            headers=_sse_headers(),
+        )
     route_text = chat_attachments.merge_attachment_text(user_text, current_files, include_extracts=True)
     history_for_route = chat_service.drop_trailing_assistants(
         [{"role": item.get("role"), "content": item.get("content") or ""} for item in history]

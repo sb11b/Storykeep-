@@ -6,6 +6,8 @@ const VISION_ONLY = [
   /\bwhat (?:do you |can you )?see\b/i,
   /\bdescribe (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
   /\blook at (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
+  /\bhow old\b/i,
+  /^please look at /i,
 ];
 
 const EDIT = [
@@ -29,6 +31,18 @@ const GENERATE = [
   /\bdraw (?:me |an? |this )/i,
   /\bmake (?:an? )?(?:image|photo|picture|portrait) of\b/i,
   /\bimagine (?:an? )?(?:image|photo|picture|portrait)\b/i,
+  /\brecreat(?:e|ing) (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait)/i,
+  /\bfrom this (?:photo|picture|image|pic|selfie)\b/i,
+  /\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b/i,
+];
+
+const AGE = [
+  /\bolder\b/i,
+  /\bage(?:ing)?\b/i,
+  /\bgray(?:er)?\b/i,
+  /\bgrey(?:er)?\b/i,
+  /\bwrinkl/i,
+  /\btemples\b/i,
 ];
 
 export type ImageToolIntent = "edit" | "generate";
@@ -39,6 +53,7 @@ export function imageToolIntent(text: string, hasImage: boolean): ImageToolInten
   if (VISION_ONLY.some((pattern) => pattern.test(raw))) return null;
   if (EDIT.some((pattern) => pattern.test(raw))) return "edit";
   if (GENERATE.some((pattern) => pattern.test(raw))) return hasImage ? "edit" : "generate";
+  if (hasImage && AGE.some((pattern) => pattern.test(raw))) return "edit";
   return null;
 }
 

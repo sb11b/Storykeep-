@@ -13,6 +13,7 @@ from app.services.chat_image import (
     inspired_prompt_for,
     markdown_for_result,
     produce_chat_image,
+    run_intercepted_chat_image,
     ChatImageResult,
 )
 
@@ -38,6 +39,25 @@ class ChatImageIntentTests(unittest.TestCase):
 
     def test_generate_with_image_is_edit(self):
         self.assertEqual(image_tool_intent("generate an image in this style", True), "edit")
+
+    def test_recreate_with_photo_is_edit(self):
+        self.assertEqual(image_tool_intent("recreating an image", True), "edit")
+        self.assertEqual(image_tool_intent("recreate this photo older", True), "edit")
+        self.assertEqual(image_tool_intent("from this photo make me older", True), "edit")
+
+    def test_recreate_without_photo_is_generate(self):
+        self.assertEqual(image_tool_intent("recreating an image", False), "generate")
+
+    def test_older_with_attached_photo_is_edit(self):
+        self.assertEqual(image_tool_intent("older", True), "edit")
+        self.assertEqual(image_tool_intent("make them look older", True), "edit")
+
+    def test_how_old_stays_vision(self):
+        self.assertIsNone(image_tool_intent("how old is this person", True))
+        self.assertIsNone(image_tool_intent("Please look at selfie.jpg.", True))
+
+    def test_recreate_a_function_is_not_image_gen(self):
+        self.assertIsNone(image_tool_intent("recreate this function in python", False))
 
     def test_school_coding_imagine_is_not_image_gen(self):
         self.assertIsNone(image_tool_intent("imagine we have a linked list", False))
@@ -118,6 +138,22 @@ class ChatImageIntentTests(unittest.TestCase):
         text = inspired_prompt_for("make me look older", "a man with a beard")
         self.assertNotIn("FaceApp", text)
         self.assertIn("looking older", text)
+
+    def test_intercepted_edit_without_photo_asks_for_attachment(self):
+        with patch("app.services.imagine.require_imagine_key", return_value="xai-test"):
+            with patch("app.services.imagine.enforce_imagine_rate_limit"):
+                with self.assertRaises(HTTPException) as raised:
+                    run_intercepted_chat_image(
+                        user_id=uuid4(),
+                        persist=False,
+                        conversation_id=None,
+                        user_text="make me look older",
+                        intent="edit",
+                        thread_images=[],
+                    )
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("Attach a photo", str(raised.exception.detail))
+        self.assertNotIn("FaceApp", str(raised.exception.detail))
 
 
 if __name__ == "__main__":
