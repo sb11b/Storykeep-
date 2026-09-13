@@ -17,7 +17,7 @@ import { ApiError, api } from "@/lib/api";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import type { NoteDestination } from "@/lib/destinations";
 import { folderById } from "@/lib/folders";
-import { formatChatError } from "@/lib/grok-chat-error";
+import { formatChatError, withAssistantName } from "@/lib/grok-chat-error";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { grokModelLabel } from "@/lib/grok-model";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
@@ -416,8 +416,9 @@ export function GrokPane({
       }
       const status = error instanceof ApiError ? error.status : 502;
       const detail = error instanceof ApiError ? error.message : `${label} did not reply`;
-      const formatted =
-        detail.startsWith("Chat failed (HTTP") ? detail : formatChatError(status, detail);
+      const formatted = detail.startsWith("Chat failed (HTTP")
+        ? withAssistantName(detail, label)
+        : formatChatError(status, detail, label);
       onUpdate((current) => ({
         ...current,
         messages: current.messages.map((item) =>

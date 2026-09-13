@@ -273,7 +273,7 @@ def chat(
                 assistant_parts.append(piece)
                 yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"
             if persist and conversation_id:
-                assistant_text = "".join(assistant_parts).strip() or "Grok did not return a reply."
+                assistant_text = "".join(assistant_parts).strip() or "No reply came back."
                 with SessionLocal() as stream_db:
                     conversation = grok_store.owned_conversation_for_user(stream_db, user_id, conversation_id)
                     assistant_row = grok_store.append_message(

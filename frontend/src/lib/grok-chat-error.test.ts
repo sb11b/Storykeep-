@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatChatError } from "./grok-chat-error";
+import { formatChatError, withAssistantName } from "./grok-chat-error";
 
 test("formatChatError includes HTTP status and detail", () => {
   assert.equal(
@@ -11,4 +11,16 @@ test("formatChatError includes HTTP status and detail", () => {
     formatChatError(502, "xAI HTTP 429: rate limit exceeded"),
     "Chat failed (HTTP 502): xAI HTTP 429: rate limit exceeded",
   );
+});
+
+test("formatChatError shows the pane name instead of the upstream model name", () => {
+  assert.equal(
+    formatChatError(504, "Grok timed out after 90s.", "Larry (the asparagus)"),
+    "Chat failed (HTTP 504): Larry (the asparagus) timed out after 90s.",
+  );
+});
+
+test("withAssistantName leaves a message alone when there is no pane name", () => {
+  assert.equal(withAssistantName("Grok timed out."), "Grok timed out.");
+  assert.equal(withAssistantName("Grokking is fine", "Larry"), "Grokking is fine");
 });
