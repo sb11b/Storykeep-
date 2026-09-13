@@ -47,7 +47,7 @@ function mediaImageHtml(alt: string, url: string): string {
   return (
     `<figure class="sk-chat-image">` +
     `<img src="${url}" alt="${alt}" />` +
-    `<a class="sk-chat-image-download" href="${url}?download=1" download="${name}" data-media-id="${id}">Download picture</a>` +
+    `<a class="sk-chat-image-download" href="${url}" download="${name}" data-media-id="${id}">Download picture</a>` +
     `</figure>`
   );
 }

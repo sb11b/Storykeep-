@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.services.note_media import (
     owned_media,
     save_note_image,
     save_note_media,
+    sniff_image_media_type,
     storykeep_download_filename,
 )
 from app.services.overlay_pack import build_obsidian_pack
@@ -205,23 +206,22 @@ def get_note_media(
     media_id: UUID,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    download: bool = Query(default=False),
 ) -> FileResponse:
     row = owned_media(db, user, media_id)
     path = Path(row.storage_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File is missing.")
-    filename = (
-        storykeep_download_filename(row.id, row.content_type, row.filename) if download else row.filename
-    )
+    media_type = sniff_image_media_type(path, row.content_type)
+    filename = storykeep_download_filename(row.id, media_type, row.filename)
     return FileResponse(
         path,
-        media_type=row.content_type,
+        media_type=media_type,
         filename=filename,
-        content_disposition_type="attachment" if download else "inline",
-        # Media ids are immutable, so a private long cache is safe and keeps the
-        # sidebar avatar from refetching (and briefly blanking) on every reload.
-        headers={"Cache-Control": "private, max-age=86400"},
+        content_disposition_type="attachment",
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

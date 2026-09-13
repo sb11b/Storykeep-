@@ -145,5 +145,6 @@ test("Junior Imagine markdown renders a media image with Download picture", () =
   assert.match(html, new RegExp(`<img src="/api/v1/media/${id}" alt="a red notebook on a desk" />`));
   assert.match(html, /Download picture/);
   assert.match(html, new RegExp(`download="storykeep-${id}\\.jpg"`));
-  assert.match(html, new RegExp(`href="/api/v1/media/${id}\\?download=1"`));
+  assert.match(html, new RegExp(`href="/api/v1/media/${id}"`));
+  assert.doesNotMatch(html, /\?download=/);
 });

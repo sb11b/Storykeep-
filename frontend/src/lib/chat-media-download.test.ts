@@ -17,5 +17,5 @@ test("download names use storykeep-{id} plus a real extension", () => {
 test("media ids come from the stable /media URL", () => {
   const id = "11111111-1111-4111-8111-111111111111";
   assert.equal(mediaIdFromUrl(`/api/v1/media/${id}`), id);
-  assert.equal(mediaDownloadUrl(id), `/api/v1/media/${id}?download=1`);
+  assert.equal(mediaDownloadUrl(id), `/api/v1/media/${id}`);
 });

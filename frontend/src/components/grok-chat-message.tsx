@@ -3,9 +3,9 @@
 import { type MouseEvent, useEffect, useRef } from "react";
 import { Copy, Download, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
-import { downloadChatPicture } from "@/lib/chat-media-download";
+import { mediaDownloadUrl, storykeepDownloadFilename } from "@/lib/chat-media-download";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
@@ -14,22 +14,11 @@ import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
 function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
-  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>("a.sk-chat-image-download");
-  if (link) {
-    event.preventDefault();
-    event.stopPropagation();
-    const mediaId = link.getAttribute("data-media-id") || "";
-    void downloadChatPicture({ mediaId, url: link.getAttribute("href") }).catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Could not download that picture.");
-    });
-    return;
-  }
   onCodeCopyClick(event);
 }
 
 function ChatPicture({
   mediaId,
-  url,
   alt,
   contentType,
 }: {
@@ -38,24 +27,19 @@ function ChatPicture({
   alt: string;
   contentType?: string | null;
 }) {
+  const src = mediaDownloadUrl(mediaId);
   return (
     <figure className="sk-chat-image mt-2">
-      <img src={url} alt={alt} className="max-h-80 w-auto max-w-full rounded-md border" />
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        className="mt-1.5"
+      <img src={src} alt={alt} className="max-h-80 w-auto max-w-full rounded-md border" />
+      <a
+        className={cn(buttonVariants({ size: "xs", variant: "outline" }), "mt-1.5 no-underline")}
+        href={src}
+        download={storykeepDownloadFilename(mediaId, contentType)}
         aria-label="Download picture"
-        onClick={() => {
-          void downloadChatPicture({ mediaId, url, contentType }).catch((error) => {
-            toast.error(error instanceof Error ? error.message : "Could not download that picture.");
-          });
-        }}
       >
         <Download className="size-3" />
         Download picture
-      </Button>
+      </a>
     </figure>
   );
 }

@@ -1,8 +1,16 @@
+import tempfile
 import unittest
+from pathlib import Path
 from uuid import uuid4
 
 from app.models import NoteMedia
-from app.services.note_media import markdown_attachment, markdown_for_media, media_ids_in_markdown, storykeep_download_filename
+from app.services.note_media import (
+    markdown_attachment,
+    markdown_for_media,
+    media_ids_in_markdown,
+    sniff_image_media_type,
+    storykeep_download_filename,
+)
 
 
 class NoteMediaTests(unittest.TestCase):
@@ -34,6 +42,16 @@ class NoteMediaTests(unittest.TestCase):
             f"storykeep-{media_id}.png",
         )
         self.assertNotEqual(storykeep_download_filename(media_id, "image/jpeg"), "download")
+
+    def test_sniff_jpeg_header(self):
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as handle:
+            handle.write(b"\xff\xd8\xff\xe0" + b"\x00" * 12)
+            path = Path(handle.name)
+        try:
+            self.assertEqual(sniff_image_media_type(path, "application/octet-stream"), "image/jpeg")
+            self.assertEqual(sniff_image_media_type(path, "image/jpeg"), "image/jpeg")
+        finally:
+            path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

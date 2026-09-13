@@ -79,6 +79,27 @@ def storykeep_download_filename(media_id: UUID, content_type: str | None, filena
     return f"storykeep-{media_id}{suffix}"
 
 
+def sniff_image_media_type(path: Path, declared: str | None) -> str:
+    declared_type = (declared or "").split(";", 1)[0].strip().lower()
+    if declared_type.startswith("image/"):
+        if declared_type in {"image/jpg", "image/jpeg"}:
+            return "image/jpeg"
+        return declared_type
+    try:
+        head = path.read_bytes()[:16]
+    except OSError:
+        return declared_type or "application/octet-stream"
+    if head[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if head[:6] in {b"GIF87a", b"GIF89a"}:
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return declared_type or "application/octet-stream"
+
+
 def is_image_media(row: NoteMedia) -> bool:
     suffix = Path(row.filename).suffix.lower()
     if suffix == ".jpeg":
