@@ -10,8 +10,11 @@ from fastapi import HTTPException
 
 from app.services.imagine import (
     _imagine_hits,
+    assistant_edit_markdown,
     assistant_image_markdown,
+    assistant_inspired_markdown,
     decode_b64_image,
+    edit_image_bytes,
     enforce_imagine_rate_limit,
     extract_image_bytes,
     image_alt,
@@ -38,6 +41,53 @@ class ImagineServiceTests(unittest.TestCase):
         self.assertIn("Here's the image.", text)
         self.assertIn(f"/api/v1/media/{media_id}", text)
         self.assertIn("![a red notebook on a desk]", text)
+        edited = assistant_edit_markdown("make me look older", media_id)
+        self.assertIn("Here's the edited image.", edited)
+        inspired = assistant_inspired_markdown("older portrait", media_id)
+        self.assertIn("inspired by your photo", inspired)
+        self.assertNotIn("FaceApp", inspired)
+
+    def test_edit_image_posts_owned_data_uri(self):
+        out = b"\x89PNG\r\n\x1a\n" + b"older"
+        encoded_out = base64.b64encode(out).decode("ascii")
+        data_url = "data:image/jpeg;base64,abc"
+        captured: dict = {}
+
+        class FakeResp:
+            status_code = 200
+
+            def json(self):
+                return {"data": [{"b64_json": encoded_out}]}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, headers=None, json=None):
+                captured["url"] = url
+                captured["json"] = json
+                return FakeResp()
+
+        with patch("app.services.imagine.httpx.Client", FakeClient):
+            with patch("app.services.imagine.require_imagine_key", return_value="xai-test"):
+                payload = edit_image_bytes("make me look older", data_url)
+        self.assertEqual(payload, out)
+        self.assertTrue(str(captured["url"]).endswith("/images/edits"))
+        self.assertEqual(captured["json"]["image"]["url"], data_url)
+        self.assertEqual(captured["json"]["image"]["type"], "image_url")
+        self.assertNotIn("http://", captured["json"]["image"]["url"])
+
+    def test_edit_image_rejects_remote_urls(self):
+        with self.assertRaises(HTTPException) as raised:
+            edit_image_bytes("make me look older", "https://example.com/selfie.jpg")
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("uploaded in this thread", raised.exception.detail)
 
     def test_decode_b64_accepts_data_uri(self):
         raw = b"\x89PNG\r\n\x1a\n" + b"hello"

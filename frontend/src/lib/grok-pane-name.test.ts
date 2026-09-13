@@ -28,4 +28,5 @@ test("status lines use the pane name", () => {
   assert.equal(chatStatusLine("Junior", "working"), "Junior is working…");
   assert.equal(chatStatusLine("Junior", "thinking"), "Junior is thinking…");
   assert.equal(chatStatusLine("Junior", "writing"), "Junior is writing…");
+  assert.equal(chatStatusLine("Junior", "generating"), "Junior is generating…");
 });

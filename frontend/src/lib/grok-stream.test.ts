@@ -150,6 +150,25 @@ test("readGrokChatStream parses a leftover event without a blank line", async ()
   assert.deepEqual(parts, ["Hi"]);
 });
 
+test("readGrokChatStream forwards generating stream_status", async () => {
+  const meta: Array<{ stream_status?: string; reasoning_effort?: string }> = [];
+  const parts: string[] = [];
+  await readGrokChatStream(
+    sseResponse([
+      'data: {"stream_status":"generating","model":"grok-4.6","reasoning_effort":"low"}\n\n',
+      'data: {"delta":"Generating the image…\\n\\n"}\n\n',
+      "data: [DONE]\n\n",
+    ]),
+    {
+      onDelta: (text) => parts.push(text),
+      onMeta: (item) => meta.push(item),
+    },
+  );
+  assert.equal(meta[0]?.stream_status, "generating");
+  assert.equal(meta[0]?.reasoning_effort, "low");
+  assert.deepEqual(parts, ["Generating the image…\n\n"]);
+});
+
 test("heartbeat does not count as the first token", async () => {
   const hangingChunks = [
     'data: {"heartbeat":true}\n\n',

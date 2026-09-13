@@ -46,6 +46,17 @@ def assistant_image_markdown(prompt: str, media_id: UUID) -> str:
     return f"Here's the image.\n\n![{image_alt(prompt)}](/api/v1/media/{media_id})"
 
 
+def assistant_edit_markdown(prompt: str, media_id: UUID) -> str:
+    return f"Here's the edited image.\n\n![{image_alt(prompt)}](/api/v1/media/{media_id})"
+
+
+def assistant_inspired_markdown(prompt: str, media_id: UUID) -> str:
+    return (
+        "Here's a new generated portrait inspired by your photo — not a pixel-perfect edit.\n\n"
+        f"![{image_alt(prompt)}](/api/v1/media/{media_id})"
+    )
+
+
 def require_imagine_key() -> str:
     try:
         return chat_service.require_key()
@@ -147,25 +158,21 @@ def extract_image_bytes(body: dict[str, Any], client: httpx.Client | None = None
     raise HTTPException(status_code=502, detail="xAI did not return an image.")
 
 
-def generate_image_bytes(prompt: str) -> bytes:
-    key = require_imagine_key()
-    model = (settings.xai_imagine_model or "grok-imagine-image-2.0").strip()
-    url = (settings.xai_image_url or "https://api.x.ai/v1/images/generations").strip()
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "n": 1,
-        "response_format": "b64_json",
-    }
-    timeout = httpx.Timeout(
+def _image_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
         IMAGINE_TIMEOUT_SEC,
         connect=IMAGINE_CONNECT_TIMEOUT_SEC,
         read=IMAGINE_TIMEOUT_SEC,
         write=30.0,
         pool=10.0,
     )
+
+
+def _post_xai_image(url: str, payload: dict[str, Any]) -> bytes:
+    key = require_imagine_key()
+    model = str(payload.get("model") or (settings.xai_imagine_model or "grok-imagine-image-2.0").strip())
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=_image_timeout()) as client:
             response = client.post(url, headers=chat_service._auth_headers(key), json=payload)
             if response.status_code >= 400:
                 raise map_imagine_http_error(response.status_code, _xai_error_text(response), model)
@@ -185,6 +192,143 @@ def generate_image_bytes(prompt: str) -> bytes:
         ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Could not reach xAI for image generation: {exc}") from exc
+
+
+def generate_image_bytes(prompt: str) -> bytes:
+    model = (settings.xai_imagine_model or "grok-imagine-image-2.0").strip()
+    url = (settings.xai_image_url or "https://api.x.ai/v1/images/generations").strip()
+    payload = {
+        "model": model,
+        "prompt": prompt[:PROMPT_MAX],
+        "n": 1,
+        "response_format": "b64_json",
+    }
+    return _post_xai_image(url, payload)
+
+
+MAX_EDIT_RAW_BYTES = 1_500_000
+MAX_EDIT_SIDE = 2048
+
+
+def edit_source_data_url(payload: bytes, content_type: str) -> str:
+    """Encode an owned upload as a data URI. Never fetch a remote URL."""
+    if not payload:
+        raise HTTPException(status_code=400, detail="That photo is empty.")
+    mime = (content_type or "image/jpeg").split(";")[0].strip() or "image/jpeg"
+    if not mime.startswith("image/"):
+        mime = "image/jpeg"
+    if len(payload) <= MAX_EDIT_RAW_BYTES and mime.startswith("image/"):
+        encoded = base64.b64encode(payload).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+    try:
+        from PIL import Image
+        import io
+
+        image = Image.open(io.BytesIO(payload))
+        image = image.convert("RGB")
+        image.thumbnail((MAX_EDIT_SIDE, MAX_EDIT_SIDE))
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=88, optimize=True)
+        data = buf.getvalue()
+    except Exception as exc:
+        logger.exception("Could not compress chat image for Imagine edit")
+        raise HTTPException(status_code=400, detail="Could not read that photo.") from exc
+    if not data:
+        raise HTTPException(status_code=400, detail="Could not read that photo.")
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def edit_image_bytes(prompt: str, image_data_url: str) -> bytes:
+    source = (image_data_url or "").strip()
+    if not source.startswith("data:image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only photos already uploaded in this thread can be edited.",
+        )
+    model = (settings.xai_imagine_model or "grok-imagine-image-2.0").strip()
+    url = (settings.xai_image_edit_url or "https://api.x.ai/v1/images/edits").strip()
+    payload = {
+        "model": model,
+        "prompt": (prompt or "")[:PROMPT_MAX],
+        "n": 1,
+        "response_format": "b64_json",
+        "image": {"url": source, "type": "image_url"},
+    }
+    return _post_xai_image(url, payload)
+
+
+DESCRIBE_TIMEOUT_SEC = 20.0
+DESCRIBE_PROMPT = (
+    "Describe this portrait in 80 words for an image generator: apparent age, hair, beard or "
+    "facial hair, skin, clothing, pose, camera framing, lighting, and background. No commentary."
+)
+
+
+def describe_image_briefly(image_data_url: str) -> str:
+    source = (image_data_url or "").strip()
+    if not source.startswith("data:image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only photos already uploaded in this thread can be described.",
+        )
+    key = require_imagine_key()
+    url = (settings.xai_chat_url or "https://api.x.ai/v1/chat/completions").strip()
+    payload = {
+        "model": (settings.xai_chat_model or "grok-4.6").strip(),
+        "reasoning_effort": "low",
+        "max_tokens": 220,
+        "temperature": 0.2,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": DESCRIBE_PROMPT},
+                    {"type": "image_url", "image_url": {"url": source, "detail": "low"}},
+                ],
+            }
+        ],
+    }
+    timeout = httpx.Timeout(
+        DESCRIBE_TIMEOUT_SEC,
+        connect=IMAGINE_CONNECT_TIMEOUT_SEC,
+        read=DESCRIBE_TIMEOUT_SEC,
+        write=15.0,
+        pool=10.0,
+    )
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, headers=chat_service._auth_headers(key), json=payload)
+            if response.status_code >= 400:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not look at that photo to generate a new image.",
+                )
+            body = response.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not look at that photo to generate a new image.",
+        ) from exc
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise HTTPException(status_code=502, detail="Could not look at that photo.")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str) and content.strip():
+        return content.strip()[:800]
+    if isinstance(content, list):
+        parts = [
+            str(part.get("text") or "").strip()
+            for part in content
+            if isinstance(part, dict) and part.get("type") in (None, "text")
+        ]
+        joined = " ".join(item for item in parts if item).strip()
+        if joined:
+            return joined[:800]
+    raise HTTPException(status_code=502, detail="Could not look at that photo.")
 
 
 def save_generated_image(db: Any, user: User, prompt: str, payload: bytes) -> NoteMedia:
@@ -245,3 +389,45 @@ def persist_imagine_turn(
         raise HTTPException(status_code=500, detail="Could not save that image in the thread.")
     conversation = grok_store.owned_conversation(db, user, conversation.id)
     return conversation, user_row, assistant_row
+
+
+def persist_generated_assistant(
+    db: Any,
+    user: User,
+    *,
+    conversation_id: UUID,
+    markdown: str,
+    media: NoteMedia,
+    last_model: str | None = None,
+    last_reasoning: str | None = None,
+) -> GrokMessage:
+    conversation = grok_store.owned_conversation(db, user, conversation_id)
+    assistant_row = grok_store.append_message(
+        db,
+        conversation,
+        role="assistant",
+        content=markdown,
+    )
+    chat_attachments.attach_to_message(
+        db,
+        user,
+        assistant_row,
+        [media.id],
+        allow_assistant=True,
+    )
+    grok_store.patch_conversation_for_user(
+        db,
+        user.id,
+        conversation_id,
+        last_model=last_model,
+        last_reasoning=last_reasoning,
+    )
+    db.commit()
+    assistant_row = db.scalar(
+        select(GrokMessage)
+        .options(selectinload(GrokMessage.files))
+        .where(GrokMessage.id == assistant_row.id)
+    )
+    if assistant_row is None:
+        raise HTTPException(status_code=500, detail="Could not save that image in the thread.")
+    return assistant_row

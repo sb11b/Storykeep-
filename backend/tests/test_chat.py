@@ -45,6 +45,19 @@ class ChatGuardTests(unittest.TestCase):
         self.assertIn("school coding", system)
         self.assertIn("fenced markdown", system)
         self.assertIn("```python", messages[0]["content"])
+        self.assertNotIn("cannot generate images", system)
+        self.assertNotIn("faceapp", system)
+        self.assertIn("imagine", system)
+
+    def test_system_prompt_does_not_claim_no_image_tools(self):
+        from app.services.chat import SYSTEM_PROMPT
+
+        lower = SYSTEM_PROMPT.lower()
+        self.assertNotIn("doesn't have image tools", lower)
+        self.assertNotIn("does not have image tools", lower)
+        self.assertNotIn("cannot generate images", lower)
+        self.assertNotIn("faceapp", lower)
+        self.assertIn("imagine", lower)
 
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"

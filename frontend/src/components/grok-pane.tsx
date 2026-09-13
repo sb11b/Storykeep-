@@ -201,6 +201,7 @@ export function GrokPane({
   const [savingChat, setSavingChat] = useState(false);
   const thinkingTimerRef = useRef<number | null>(null);
   const gotDeltaRef = useRef(false);
+  const generatingRef = useRef(false);
   const pendingListenRef = useRef(false);
   const listenTargetRef = useRef<ListenTarget | null>(null);
   const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
@@ -215,12 +216,13 @@ export function GrokPane({
 
   const applyStreamStatus = useCallback(
     (kind: ChatStatusKind | null) => {
-      if (kind === "writing" || kind == null) {
+      if (kind === "writing" || kind === "generating" || kind == null) {
         if (thinkingTimerRef.current != null) {
           window.clearTimeout(thinkingTimerRef.current);
           thinkingTimerRef.current = null;
         }
       }
+      generatingRef.current = kind === "generating";
       if (kind === "working") gotDeltaRef.current = false;
       if (kind === "writing") gotDeltaRef.current = true;
       setStreamStatus(kind);
@@ -449,10 +451,11 @@ export function GrokPane({
           media_ids: retry ? undefined : options.mediaIds,
         },
         (delta) => {
-          markWriting();
+          const generating = generatingRef.current;
+          if (!generating) markWriting();
           onUpdate((current) => ({
             ...current,
-            streamStatus: "writing",
+            streamStatus: generating ? "generating" : "writing",
             messages: current.messages.map((item) =>
               item.id === assistantId
                 ? {
@@ -467,7 +470,11 @@ export function GrokPane({
           }));
         },
         (meta) => {
-          if (!gotDeltaRef.current) applyStreamStatus("thinking");
+          if (meta.stream_status === "generating") {
+            applyStreamStatus("generating");
+          } else if (!gotDeltaRef.current) {
+            applyStreamStatus("thinking");
+          }
           onUpdate((current) => {
             let next = current;
             if (meta.conversation_id && meta.conversation_id !== current.conversationId) {

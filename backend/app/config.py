@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     xai_chat_max_tokens: int = 2048
     chat_requests_per_hour: int = 120
     xai_image_url: str = "https://api.x.ai/v1/images/generations"
+    xai_image_edit_url: str = "https://api.x.ai/v1/images/edits"
     xai_imagine_model: str = "grok-imagine-image-2.0"
     imagine_requests_per_hour: int = 10
     stt_sessions_per_hour: int = 60
