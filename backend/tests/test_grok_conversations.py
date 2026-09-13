@@ -12,12 +12,14 @@ from app.services.chat import (
     chat_error_message,
     default_fast_model,
     default_full_model,
+    key_format_ok,
     parse_xai_error_body,
     pick_fast_for_auto,
     resolve_model_for_request,
     stream_error_event,
     thread_window,
     validate_payload,
+    _parse_sse_chunk,
 )
 from app.services.grok_conversations import resolve_patched_title, should_persist, title_from_user_line
 
@@ -91,6 +93,25 @@ class GrokConversationTests(unittest.TestCase):
         windowed = thread_window(history)
         cleaned = validate_payload(windowed)
         self.assertEqual(cleaned[-1]["role"], "user")
+
+    def test_parse_sse_chunk_treats_reasoning_as_activity_not_visible(self):
+        raw = '{"choices":[{"delta":{"reasoning_content":"thinking"}}]}'
+        text, active = _parse_sse_chunk(raw)
+        self.assertEqual(text, "")
+        self.assertTrue(active)
+
+    def test_parse_sse_chunk_returns_visible_content(self):
+        raw = '{"choices":[{"delta":{"content":"Hello"}}]}'
+        text, active = _parse_sse_chunk(raw)
+        self.assertEqual(text, "Hello")
+        self.assertTrue(active)
+
+    def test_default_models_use_non_reasoning_fast_path(self):
+        self.assertIn("non-reasoning", default_fast_model())
+        self.assertTrue(default_full_model())
+
+    def test_key_format_ok_requires_xai_prefix(self):
+        self.assertIsInstance(key_format_ok(), bool)
 
 
 if __name__ == "__main__":

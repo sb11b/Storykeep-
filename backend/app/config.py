@@ -35,9 +35,10 @@ class Settings(BaseSettings):
     extract_on_import: bool = True
     secure_cookies: bool = False
     xai_api_key: str = ""
-    xai_chat_model: str = "grok-4"
-    xai_chat_models: str = "grok-4,grok-4-fast"
-    xai_chat_fast_model: str = "grok-4-fast"
+    xai_chat_url: str = "https://api.x.ai/v1/chat/completions"
+    xai_chat_model: str = "grok-4.6"
+    xai_chat_models: str = "grok-4.6,grok-4-fast-non-reasoning,grok-4,grok-4-fast"
+    xai_chat_fast_model: str = "grok-4-fast-non-reasoning"
     xai_chat_max_tokens: int = 2048
     chat_requests_per_hour: int = 120
     stt_sessions_per_hour: int = 60

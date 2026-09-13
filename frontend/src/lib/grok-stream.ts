@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import { formatChatError } from "@/lib/grok-chat-error";
 
-export const GROK_STREAM_IDLE_MS = 15_000;
+export const GROK_STREAM_IDLE_MS = 22_000;
 export const GROK_STREAM_HARD_MS = 60_000;
 
 export type GrokStreamMeta = {

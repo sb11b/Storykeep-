@@ -17,9 +17,10 @@ from app.models import Article
 logger = logging.getLogger(__name__)
 
 MODEL_AUTO = "auto"
-XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
 CHAT_STREAM_TIMEOUT_SEC = 60.0
-CHAT_CONNECT_TIMEOUT_SEC = 15.0
+CHAT_CONNECT_TIMEOUT_SEC = 8.0
+CHAT_FIRST_BYTE_TIMEOUT_SEC = 20.0
+CHAT_HEALTH_TIMEOUT_SEC = 10.0
 CODE_KEYWORDS = (
     "python",
     "javascript",
@@ -94,8 +95,18 @@ _rate_lock = threading.Lock()
 _rate_hits: dict[str, deque[float]] = defaultdict(deque)
 
 
+def chat_url() -> str:
+    url = (settings.xai_chat_url or "https://api.x.ai/v1/chat/completions").strip()
+    return url or "https://api.x.ai/v1/chat/completions"
+
+
+def key_format_ok() -> bool:
+    key = (settings.xai_api_key or "").strip()
+    return bool(key) and key.startswith("xai-")
+
+
 def key_configured() -> bool:
-    return bool((settings.xai_api_key or "").strip())
+    return key_format_ok()
 
 
 def available_models() -> list[str]:
@@ -104,8 +115,8 @@ def available_models() -> list[str]:
         models = [part.strip() for part in raw.split(",") if part.strip()]
         if models:
             return models
-    full = (settings.xai_chat_model or "grok-4").strip()
-    fast = (settings.xai_chat_fast_model or "grok-4-fast").strip()
+    full = (settings.xai_chat_model or "grok-4.6").strip()
+    fast = (settings.xai_chat_fast_model or "grok-4-fast-non-reasoning").strip()
     ordered = [full]
     if fast and fast not in ordered:
         ordered.append(fast)
@@ -114,14 +125,14 @@ def available_models() -> list[str]:
 
 def default_full_model() -> str:
     models = available_models()
-    preferred = (settings.xai_chat_model or "grok-4").strip()
+    preferred = (settings.xai_chat_model or "grok-4.6").strip()
     if preferred in models:
         return preferred
     return models[0]
 
 
 def default_fast_model() -> str:
-    preferred = (settings.xai_chat_fast_model or "grok-4-fast").strip()
+    preferred = (settings.xai_chat_fast_model or "grok-4-fast-non-reasoning").strip()
     models = available_models()
     if preferred in models:
         return preferred
@@ -224,7 +235,78 @@ def require_key() -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Chat is off until XAI_API_KEY is set on the server (Railway variables).",
         )
+    if not key.startswith("xai-"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="XAI_API_KEY must start with xai- (check Railway variables).",
+        )
     return key
+
+
+def _chat_timeout(*, streaming: bool) -> httpx.Timeout:
+    if streaming:
+        return httpx.Timeout(
+            connect=CHAT_CONNECT_TIMEOUT_SEC,
+            read=CHAT_STREAM_TIMEOUT_SEC,
+            write=10.0,
+            pool=10.0,
+        )
+    return httpx.Timeout(CHAT_HEALTH_TIMEOUT_SEC, connect=CHAT_CONNECT_TIMEOUT_SEC)
+
+
+def _auth_headers(key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def _transport_error_detail(exc: httpx.HTTPError) -> str:
+    if isinstance(exc, httpx.ConnectTimeout):
+        return f"xAI unreachable: connection timed out after {int(CHAT_CONNECT_TIMEOUT_SEC)}s"
+    if isinstance(exc, httpx.ConnectError):
+        return f"xAI unreachable: {exc}"
+    if isinstance(exc, httpx.ReadTimeout):
+        return f"xAI stopped responding after {int(CHAT_STREAM_TIMEOUT_SEC)}s"
+    return f"xAI unreachable: {exc}"
+
+
+def ping_xai() -> dict[str, object]:
+    """One-token non-streaming probe for /chat/health."""
+    key = require_key()
+    model = default_fast_model()
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "stream": False,
+        "max_tokens": 1,
+        "temperature": 0,
+    }
+    started = time.perf_counter()
+    try:
+        with httpx.Client(timeout=_chat_timeout(streaming=False)) as client:
+            response = client.post(chat_url(), json=payload, headers=_auth_headers(key))
+            ms = int((time.perf_counter() - started) * 1000)
+            if response.status_code >= 400:
+                detail = parse_xai_error_body(response.text, response.status_code)
+                logger.warning(
+                    "xAI health ping HTTP %s model=%s ms=%s detail=%s",
+                    response.status_code,
+                    model,
+                    ms,
+                    detail,
+                )
+                return {
+                    "ok": False,
+                    "model": model,
+                    "ms": ms,
+                    "status": response.status_code,
+                    "error": detail,
+                }
+            logger.info("xAI health ping ok model=%s status=%s ms=%s", model, response.status_code, ms)
+            return {"ok": True, "model": model, "ms": ms, "status": response.status_code}
+    except httpx.HTTPError as exc:
+        ms = int((time.perf_counter() - started) * 1000)
+        detail = _transport_error_detail(exc)
+        logger.warning("xAI health ping failed model=%s ms=%s detail=%s", model, ms, detail)
+        return {"ok": False, "model": model, "ms": ms, "error": detail}
 
 
 def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
@@ -322,22 +404,44 @@ def stream_completion(
         "max_tokens": max_tokens,
         "temperature": 0.6,
     }
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    started = time.perf_counter()
+    first_byte_at: float | None = None
     try:
-        with httpx.Client(
-            timeout=httpx.Timeout(CHAT_STREAM_TIMEOUT_SEC, connect=CHAT_CONNECT_TIMEOUT_SEC),
-        ) as client:
-            with client.stream("POST", XAI_CHAT_URL, json=payload, headers=headers) as response:
-                if response.status_code >= 400:
+        with httpx.Client(timeout=_chat_timeout(streaming=True)) as client:
+            with client.stream(
+                "POST",
+                chat_url(),
+                json=payload,
+                headers=_auth_headers(key),
+            ) as response:
+                status_code = response.status_code
+                if status_code >= 400:
                     body = response.read().decode("utf-8", errors="replace")
-                    detail = parse_xai_error_body(body, response.status_code)
-                    logger.warning("xAI chat HTTP %s model=%s: %s", response.status_code, model, detail)
+                    detail = parse_xai_error_body(body, status_code)
+                    logger.warning(
+                        "xAI chat HTTP %s model=%s ttfb=%.2fs detail=%s",
+                        status_code,
+                        model,
+                        time.perf_counter() - started,
+                        detail,
+                    )
                     raise HTTPException(
                         status_code=502,
-                        detail=f"xAI HTTP {response.status_code}: {detail}",
+                        detail=f"xAI HTTP {status_code}: {detail}",
                     )
                 for line in response.iter_lines():
+                    elapsed = time.perf_counter() - started
+                    if elapsed >= CHAT_STREAM_TIMEOUT_SEC:
+                        raise HTTPException(
+                            status_code=504,
+                            detail=f"Grok timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s.",
+                        )
                     if not line:
+                        if first_byte_at is None and elapsed >= CHAT_FIRST_BYTE_TIMEOUT_SEC:
+                            raise HTTPException(
+                                status_code=504,
+                                detail="No response from xAI (timeout waiting for first token).",
+                            )
                         continue
                     if line.startswith("data:"):
                         data = line[5:].strip()
@@ -345,42 +449,69 @@ def stream_completion(
                         data = line.strip()
                     if data == "[DONE]":
                         break
-                    text = _delta_text(data)
+                    text, active = _parse_sse_chunk(data)
+                    if active and first_byte_at is None:
+                        first_byte_at = time.perf_counter()
+                        logger.info(
+                            "xAI chat first_byte model=%s status=%s ttfb=%.2fs user=%s",
+                            model,
+                            status_code,
+                            first_byte_at - started,
+                            user_id,
+                        )
+                    if not active:
+                        if first_byte_at is None and elapsed >= CHAT_FIRST_BYTE_TIMEOUT_SEC:
+                            raise HTTPException(
+                                status_code=504,
+                                detail="No response from xAI (timeout waiting for first token).",
+                            )
+                        continue
                     if text:
                         yield text
+                if first_byte_at is None:
+                    raise HTTPException(
+                        status_code=504,
+                        detail="No response from xAI (empty stream).",
+                    )
     except HTTPException:
         raise
-    except httpx.TimeoutException as exc:
+    except httpx.HTTPError as exc:
+        detail = _transport_error_detail(exc)
         logger.warning(
-            "xAI chat timed out after %.0fs model=%s user=%s",
-            CHAT_STREAM_TIMEOUT_SEC,
+            "xAI chat transport error model=%s user=%s ttfb=%.2fs detail=%s",
             model,
             user_id,
+            time.perf_counter() - started,
+            detail,
         )
-        raise HTTPException(
-            status_code=504,
-            detail=f"Grok timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s.",
-        ) from exc
-    except httpx.HTTPError as exc:
-        logger.warning("xAI chat transport error model=%s user=%s: %s", model, user_id, exc)
-        raise HTTPException(status_code=502, detail=f"Could not reach xAI chat: {exc}") from exc
+        raise HTTPException(status_code=502, detail=detail) from exc
 
 
-def _delta_text(raw: str) -> str:
+def _parse_sse_chunk(raw: str) -> tuple[str, bool]:
+    """Return (user-visible text, whether xAI sent any token activity)."""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return ""
+        return "", False
     choices = parsed.get("choices") or []
     if not choices:
-        return ""
+        return "", False
     delta = choices[0].get("delta") or {}
     content = delta.get("content")
-    if isinstance(content, str):
-        return content
-    message = choices[0].get("message") or {}
-    fallback = message.get("content")
-    return fallback if isinstance(fallback, str) else ""
+    visible = content if isinstance(content, str) and content else ""
+    if not visible:
+        message = choices[0].get("message") or {}
+        fallback = message.get("content")
+        if isinstance(fallback, str) and fallback:
+            visible = fallback
+    reasoning = delta.get("reasoning_content")
+    active = bool(visible) or (isinstance(reasoning, str) and bool(reasoning))
+    return visible, active
+
+
+def _delta_text(raw: str) -> str:
+    text, _ = _parse_sse_chunk(raw)
+    return text
 
 
 def _strip_tags(html: str) -> str:

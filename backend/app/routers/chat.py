@@ -64,7 +64,22 @@ def chat_status(user: User = Depends(get_current_user)) -> dict:
         "fast_model": chat_service.default_fast_model(),
         "requests_per_hour": int(settings.chat_requests_per_hour or 120),
         "persist": grok_store.should_persist(user),
+        "key_configured": chat_service.key_configured(),
+        "key_format_ok": chat_service.key_format_ok(),
     }
+
+
+@router.get("/chat/health")
+def chat_health(user: User = Depends(get_current_user)) -> dict:
+    """Ping xAI with a 1-token request. Auth required; does not consume chat quota."""
+    if not chat_service.key_configured():
+        return {
+            "ok": False,
+            "model": chat_service.default_fast_model(),
+            "ms": 0,
+            "error": "XAI_API_KEY is not set or must start with xai-.",
+        }
+    return chat_service.ping_xai()
 
 
 @router.get("/chat/conversations", response_model=list[GrokConversationOut])
