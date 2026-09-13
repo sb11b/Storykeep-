@@ -249,7 +249,7 @@ Empty `q` returns 400.
 ### `GET /archives/{id}`  — HTML/readability returns stored text; `type=pdf` returns `download_url`
 ### `GET /archives/{id}/file`  — authenticated PDF bytes (`application/pdf`). Same cookie as other user data.
 
-`type=pdf` writes `{DATA_DIR}/archives/{article_id}/{archive_id}.pdf` (Railway volume `/app/var`) and copies to S3/B2 under `{prefix}/pdf-snapshots/` when the object store is configured. HTML snapshots stay in Postgres.
+`type=pdf` renders sanitized article HTML with WeasyPrint (block layout: p/h1–h3/li/br) to `{DATA_DIR}/archives/{article_id}/{archive_id}.pdf` (Railway volume `/app/var`) and copies to S3/B2 under `{prefix}/pdf-snapshots/` when the object store is configured. HTML snapshots stay in Postgres. PDF restore sets `offline_view=pdf` only and does not change `content_html`.
 
 ---
 

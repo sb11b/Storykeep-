@@ -161,6 +161,45 @@ function snapshotStamp(iso: string): string {
   return parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
+  const fileUrl = `/api/v1/archives/${archiveId}/file`;
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let created: string | null = null;
+    setError(null);
+    setObjectUrl(null);
+    void fetch(fileUrl, { credentials: "include", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
+        }
+        const blob = await response.blob();
+        created = URL.createObjectURL(blob);
+        if (!cancelled) setObjectUrl(created);
+      })
+      .catch((caught) => {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load the PDF snapshot.");
+      });
+    return () => {
+      cancelled = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [fileUrl]);
+
+  const src = objectUrl || fileUrl;
+  return (
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-muted">
+      {error ? <p className="px-3 py-2 text-sm text-destructive">{error}</p> : null}
+      <object data={src} type="application/pdf" className="min-h-0 h-full w-full flex-1">
+        <iframe title="PDF snapshot" src={src} className="h-full min-h-0 w-full flex-1 border-0" />
+      </object>
+    </div>
+  );
+}
+
 function readerActionError(error: unknown, fallback: string): never {
   toastErrorFromUnknown(error, fallback);
   throw error;
@@ -2469,6 +2508,7 @@ function Reader({
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;
+    if (pdfOffline) return;
     root.innerHTML = bodyHtml;
     if (bodyHtml) {
       wrapVisibleSpeechNodes(root, { skipTitle: article.title, skipAuthor: article.author });
@@ -2483,7 +2523,7 @@ function Reader({
     if (findMarksRef.current.length) {
       focusFindMark(findMarksRef.current, findIndex);
     }
-  }, [article.author, article.title, bodyHtml, findQuery, article.id]);
+  }, [article.author, article.title, bodyHtml, findQuery, article.id, pdfOffline]);
 
   useEffect(() => {
     if (!findMarksRef.current.length) return;
@@ -2713,8 +2753,22 @@ function Reader({
           </label>
         </div>
       </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <article ref={articleRef} className={cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl")}>
+      <div
+        ref={scrollRef}
+        className={cn(
+          "min-h-0 flex-1",
+          pdfOffline ? "flex flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
+        )}
+      >
+      <article
+        ref={articleRef}
+        className={cn(
+          "px-5 py-6",
+          pdfOffline
+            ? "flex h-full min-h-0 w-full max-w-none flex-1 flex-col"
+            : cn("mx-auto", readerFull ? "max-w-4xl" : "max-w-3xl"),
+        )}
+      >
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <Button variant="ghost" className="lg:hidden -ml-2" onClick={onBack}>
             Back to list
@@ -2960,16 +3014,12 @@ function Reader({
           </div>
         ) : null}
         {composed ? <NoteAttachmentChips markdown={composedNoteMarkdown(article)} className="mb-4" /> : null}
-        {pdfOffline ? (
-          <div className="mt-2 flex min-h-[70vh] flex-col overflow-hidden rounded-lg border">
-            <p className="border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        {pdfOffline && article.offline_archive_id ? (
+          <div className="mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border">
+            <p className="shrink-0 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               Offline view is this PDF snapshot. The article text was not replaced.
             </p>
-            <iframe
-              title="PDF snapshot"
-              className="min-h-[70vh] w-full flex-1 bg-muted"
-              src={`/api/v1/archives/${article.offline_archive_id}/file`}
-            />
+            <PdfSnapshotViewer archiveId={article.offline_archive_id} />
           </div>
         ) : bodyHtml ? (
           <div
@@ -2997,6 +3047,8 @@ function Reader({
             body="The original page has not been extracted yet. Use Re-extract to pull the full article, or Snapshot to keep a copy."
           />
         )}
+        {!pdfOffline ? (
+          <>
         <Separator className="my-8" />
         <section className="space-y-4 pb-10">
           <h2 className="font-[family-name:var(--font-serif)] text-xl">Notes</h2>
@@ -3276,6 +3328,8 @@ function Reader({
             </div>
           ) : null}
         </section>
+          </>
+        ) : null}
       </article>
       {picker ? (
         <div

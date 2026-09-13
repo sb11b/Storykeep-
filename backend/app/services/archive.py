@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import logging
 import re
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
+from weasyprint import HTML as WeasyHTML
 
 from app.config import settings
 from app.models import Archive, Article
@@ -17,6 +19,27 @@ from app.services.backup import object_store_ready, upload_object_file
 logger = logging.getLogger(__name__)
 _HTTP_URL = re.compile(r"^https?://", re.I)
 PDF_SNAPSHOT_TYPES = {"pdf"}
+PDF_RENDERER = "weasyprint"
+
+_PDF_PAGE_CSS = """
+@page { size: letter; margin: 0.85in; }
+html, body {
+  font-family: "DejaVu Sans", "Noto Sans", sans-serif;
+  font-size: 12pt;
+  line-height: 1.45;
+  color: #111;
+  width: 6.8in;
+}
+h1 { font-size: 20pt; font-weight: 700; margin: 0 0 14pt; line-height: 1.25; }
+h2 { font-size: 16pt; font-weight: 700; margin: 16pt 0 10pt; line-height: 1.3; }
+h3 { font-size: 13pt; font-weight: 700; margin: 14pt 0 8pt; line-height: 1.3; }
+p { margin: 0 0 10pt; }
+ul, ol { margin: 0 0 10pt; padding-left: 22pt; }
+li { margin: 0 0 6pt; }
+br { display: block; margin: 0 0 4pt; content: ""; }
+blockquote { margin: 0 0 10pt; padding-left: 12pt; }
+img { max-width: 100%; }
+"""
 
 
 def pdf_snapshot_path(article_id: UUID, archive_id: UUID) -> Path:
@@ -25,92 +48,32 @@ def pdf_snapshot_path(article_id: UUID, archive_id: UUID) -> Path:
     return folder / f"{archive_id}.pdf"
 
 
-def _pdf_escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+def article_html_for_pdf(article: Article) -> str:
+    """Sanitized article HTML for PDF layout. Does not mutate the article."""
+    raw = (getattr(article, "content_html", None) or "").strip()
+    if raw:
+        return extractor._sanitize_html(raw)
+    text = (getattr(article, "content_text", None) or getattr(article, "summary", None) or "").strip()
+    if not text:
+        return ""
+    blocks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()] or [text]
+    pieces = [f"<p>{html_lib.escape(block).replace(chr(10), '<br/>')}</p>" for block in blocks]
+    return extractor._sanitize_html("".join(pieces))
 
 
-def _latin1(text: str) -> str:
-    return (text or "").encode("latin-1", "replace").decode("latin-1")
-
-
-def _wrap_lines(text: str, width: int = 90) -> list[str]:
-    lines: list[str] = []
-    for paragraph in (text or "").splitlines() or [""]:
-        safe = _latin1(paragraph)
-        if not safe:
-            lines.append("")
-            continue
-        while len(safe) > width:
-            cut = safe.rfind(" ", 0, width)
-            if cut < 20:
-                cut = width
-            lines.append(safe[:cut].rstrip())
-            safe = safe[cut:].lstrip()
-        lines.append(safe)
-    return lines or [""]
-
-
-def render_article_pdf(title: str, body: str) -> bytes:
-    """Minimal PDF 1.4 of the stored article text. Helvetica / Latin-1."""
-    heading = _wrap_lines(title or "Untitled", 80)
-    body_lines = _wrap_lines(body or "", 90)
-    lines = heading + [""] + body_lines
-    per_page = 58
-    page_chunks = [lines[index : index + per_page] for index in range(0, max(len(lines), 1), per_page)] or [[""]]
-
-    content_streams: list[bytes] = []
-    for page_lines in page_chunks:
-        commands = ["BT", "/F1 11 Tf", "14 TL", "48 780 Td"]
-        first = True
-        for line in page_lines:
-            if not first:
-                commands.append("T*")
-            first = False
-            commands.append(f"({_pdf_escape(line)}) Tj")
-        commands.append("ET")
-        content_streams.append("\n".join(commands).encode("latin-1"))
-
-    font_obj = 3
-    page_count = len(content_streams)
-    page_objs = list(range(4, 4 + page_count * 2, 2))
-    content_objs = [num + 1 for num in page_objs]
-    pages_obj = 2
-    catalog_obj = 1
-
-    body_objects: dict[int, bytes] = {
-        catalog_obj: f"<< /Type /Catalog /Pages {pages_obj} 0 R >>".encode("latin-1"),
-        pages_obj: (
-            f"<< /Type /Pages /Count {page_count} /Kids [{' '.join(f'{n} 0 R' for n in page_objs)}] >>"
-        ).encode("latin-1"),
-        font_obj: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    }
-    for page_obj, content_obj, stream in zip(page_objs, content_objs, content_streams):
-        body_objects[page_obj] = (
-            f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
-            f"/Contents {content_obj} 0 R /Resources << /Font << /F1 {font_obj} 0 R >> >> >>"
-        ).encode("latin-1")
-        body_objects[content_obj] = (
-            f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1") + stream + b"\nendstream"
-        )
-
-    max_obj = max(body_objects)
-    out = bytearray(b"%PDF-1.4\n")
-    offsets = [0]
-    for number in range(1, max_obj + 1):
-        offsets.append(len(out))
-        payload = body_objects[number]
-        out.extend(f"{number} 0 obj\n".encode("latin-1"))
-        out.extend(payload)
-        out.extend(b"\nendobj\n")
-    startxref = len(out)
-    out.extend(f"xref\n0 {max_obj + 1}\n".encode("latin-1"))
-    out.extend(b"0000000000 65535 f \n")
-    for pos in offsets[1:]:
-        out.extend(f"{pos:010d} 00000 n \n".encode("latin-1"))
-    out.extend(
-        f"trailer << /Size {max_obj + 1} /Root {catalog_obj} 0 R >>\nstartxref\n{startxref}\n%%EOF\n".encode("latin-1")
+def render_article_pdf(title: str, html: str) -> bytes:
+    """Print sanitized article HTML with block layout via WeasyPrint."""
+    heading = html_lib.escape(title or "Untitled")
+    body = (html or "").strip() or "<p></p>"
+    document = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'/>"
+        f"<style>{_PDF_PAGE_CSS}</style></head><body>"
+        f"<h1>{heading}</h1>{body}</body></html>"
     )
-    return bytes(out)
+    payload = WeasyHTML(string=document, base_url=".").write_pdf()
+    if not payload or not payload.startswith(b"%PDF"):
+        raise RuntimeError("WeasyPrint did not produce a PDF")
+    return payload
 
 
 def snapshot_article(db: Session, article: Article, archive_type: str = "html") -> Archive | None:
@@ -153,20 +116,11 @@ def _snapshot_html(db: Session, article: Article, archive_type: str) -> Archive 
 
 
 def _snapshot_pdf(db: Session, article: Article) -> Archive | None:
-    html = article.content_html
-    text = article.content_text
-    if (not html or not text) and _HTTP_URL.match((article.url or "").strip()):
-        extractor.fill_article(db, article, force=True)[0]
-        html = article.content_html
-        text = article.content_text
-    body = (text or "").strip() or (article.summary or "").strip()
-    if not body and html:
-        body = re.sub(r"<[^>]+>", " ", html)
-        body = re.sub(r"\s+", " ", body).strip()
-    if not body:
+    html = article_html_for_pdf(article)
+    if not html.strip():
         logger.info("skip pdf snapshot for article %s: no storable body", article.id)
         return None
-    payload = render_article_pdf(article.title or "Untitled", body)
+    payload = render_article_pdf(article.title or "Untitled", html)
     digest = hashlib.sha256(payload).hexdigest()
     existing = next(
         (row for row in (article.archives or []) if row.archive_type == "pdf" and row.checksum == digest),
@@ -208,8 +162,8 @@ def restore_article_from_archive(db: Session, article: Article, row: Archive) ->
     """Apply a snapshot as the article's offline view.
 
     HTML: snapshot the current body first, then load the chosen snapshot
-    through the extractor sanitizer. PDF: keep content_html, switch the
-    offline view to the stored file.
+    through the extractor sanitizer. PDF: set offline_view=pdf only;
+    content_html and content_text are not modified.
     """
     if getattr(row, "archive_type", None) == "pdf":
         path = Path(row.storage_path or "")

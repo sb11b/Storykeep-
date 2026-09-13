@@ -67,7 +67,7 @@ Passwords hashed with bcrypt. Access tokens last 14 days (personal instance; ref
 ## Phase boundaries
 
 - **Shipped now:** schema, API, web reader, search, tags, notes, save/archive, local backup/export, delta sync endpoint.
-- **Phase 3 shipped:** scheduled S3/B2 database dumps (`BACKUP_INTERVAL_HOURS`, default 24); PDF snapshots (`POST /articles/{id}/archive` `{ "type": "pdf" }`); one-click restore UI (`GET /articles/{id}/archives`, `POST /articles/{id}/restore`).
+- **Phase 3 shipped:** scheduled S3/B2 database dumps (`BACKUP_INTERVAL_HOURS`, default 24); PDF snapshots via WeasyPrint (`POST /articles/{id}/archive` `{ "type": "pdf" }`); one-click restore UI (`GET /articles/{id}/archives`, `POST /articles/{id}/restore`).
 - **Phase 4:** Android client using `/sync/delta` + offline `content_html`.
 - **Phase 5:** extraction quality pass, integrity checks, unread-performance indexes under large archives.
 

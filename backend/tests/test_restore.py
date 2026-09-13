@@ -79,8 +79,10 @@ class RestoreSnapshotTests(unittest.TestCase):
                 self.assertIsNotNone(row)
                 assert row is not None
                 original_html = article.content_html
+                original_text = article.content_text
                 restore_article_from_archive(db, article, row)
-                self.assertEqual(article.content_html, original_html)
+                self.assertIs(article.content_html, original_html)
+                self.assertIs(article.content_text, original_text)
                 self.assertEqual(article.offline_view, "pdf")
                 self.assertEqual(article.offline_archive_id, row.id)
                 self.assertTrue(Path(row.storage_path or "").read_bytes().startswith(b"%PDF"))
@@ -151,10 +153,12 @@ class RestoreApiTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 404)
 
     def test_unauth_list_and_restore_are_401_json(self):
-        from app.routers.articles import router
+        from app.routers.articles import router as articles_router
+        from app.routers.library import router as library_router
 
         app = FastAPI()
-        app.include_router(router, prefix="/api/v1")
+        app.include_router(articles_router, prefix="/api/v1")
+        app.include_router(library_router, prefix="/api/v1")
 
         def fake_db():
             yield MagicMock()
@@ -162,15 +166,19 @@ class RestoreApiTests(unittest.TestCase):
         app.dependency_overrides[get_db] = fake_db
         client = TestClient(app)
         article_id = uuid.uuid4()
+        archive_id = uuid.uuid4()
         listed = client.get(f"/api/v1/articles/{article_id}/archives")
         self.assertEqual(listed.status_code, 401)
         self.assertEqual(listed.json(), {"detail": "Not authenticated"})
         restored = client.post(
             f"/api/v1/articles/{article_id}/restore",
-            json={"archive_id": str(uuid.uuid4())},
+            json={"archive_id": str(archive_id)},
         )
         self.assertEqual(restored.status_code, 401)
         self.assertEqual(restored.json(), {"detail": "Not authenticated"})
+        pdf_file = client.get(f"/api/v1/archives/{archive_id}/file")
+        self.assertEqual(pdf_file.status_code, 401)
+        self.assertEqual(pdf_file.json(), {"detail": "Not authenticated"})
 
     def test_archive_out_pdf_download_query(self):
         row = SimpleNamespace(

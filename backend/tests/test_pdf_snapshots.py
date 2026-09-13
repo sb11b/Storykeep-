@@ -14,8 +14,26 @@ from app.services.archive import pdf_snapshot_path, render_article_pdf, snapshot
 
 
 class PdfSnapshotTests(unittest.TestCase):
+    def test_render_article_pdf_keeps_paragraph_breaks(self):
+        html = (
+            "<p>Sunday.</p>"
+            "<p>Josh Allen</p>"
+            "<p>stuff:</p>"
+            "<p>It means “curly” punctuation.</p>"
+        )
+        payload = render_article_pdf("Fusion reactor notes", html)
+        self.assertTrue(payload.startswith(b"%PDF"))
+        reader = PdfReader(__import__("io").BytesIO(payload))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        self.assertIn("Fusion reactor notes", text)
+        self.assertIn("Sunday.", text)
+        self.assertIn("Josh Allen", text)
+        self.assertNotIn("Sunday.Josh", text)
+        self.assertNotIn("stuff:It", text)
+        self.assertIn("curly", text)
+
     def test_render_article_pdf_is_a_readable_pdf(self):
-        payload = render_article_pdf("Fusion reactor notes", "The tokamak stayed online overnight.")
+        payload = render_article_pdf("Fusion reactor notes", "<p>The tokamak stayed online overnight.</p>")
         self.assertTrue(payload.startswith(b"%PDF"))
         reader = PdfReader(__import__("io").BytesIO(payload))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -40,8 +58,8 @@ class PdfSnapshotTests(unittest.TestCase):
             id=uuid.uuid4(),
             url="https://example.com/fusion",
             title="Fusion reactor notes",
-            content_html="<p>The tokamak stayed online overnight.</p>",
-            content_text="The tokamak stayed online overnight.",
+            content_html="<p>Sunday.</p><p>Josh Allen</p><p>stuff:</p><p>It means a lot.</p>",
+            content_text="Sunday.\n\nJosh Allen\n\nstuff:\n\nIt means a lot.",
             summary="",
             archives=[],
             is_saved=True,
@@ -66,6 +84,16 @@ class PdfSnapshotTests(unittest.TestCase):
                 self.assertEqual(path.name, f"{row.id}.pdf")
                 self.assertTrue(path.read_bytes().startswith(b"%PDF"))
                 self.assertEqual(path.parent, Path(tmp) / "archives" / str(article.id))
+                extracted = "\n".join(
+                    page.extract_text() or "" for page in PdfReader(path).pages
+                )
+                self.assertIn("Sunday.", extracted)
+                self.assertIn("Josh Allen", extracted)
+                self.assertNotIn("Sunday.Josh", extracted)
+                self.assertEqual(
+                    article.content_html,
+                    "<p>Sunday.</p><p>Josh Allen</p><p>stuff:</p><p>It means a lot.</p>",
+                )
             finally:
                 settings.data_dir = previous
 

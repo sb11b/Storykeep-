@@ -114,7 +114,11 @@ def _display_body(article: Article) -> tuple[str | None, str | None]:
 
 
 def article_out(article: Article, filed_notes: list[Article] | None = None) -> ArticleOut:
-    content_text, content_html = _display_body(article)
+    if getattr(article, "offline_view", None) == "pdf":
+        content_html = article.content_html
+        content_text = article.content_text
+    else:
+        content_text, content_html = _display_body(article)
     has_feed_text = bool(article.feed_html) or bool(
         article.summary and len((article.summary or "").strip()) > 120
     )
