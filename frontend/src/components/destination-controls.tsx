@@ -2,7 +2,7 @@
 
 import { DESTINATION_LABEL, NOTE_DESTINATIONS, type NoteDestination } from "@/lib/destinations";
 import type { CustomNoteShelf, FilingDestination } from "@/lib/custom-note-shelves";
-import { foldersForShelf } from "@/lib/folders";
+import { foldersForShelf, folderValueOnShelf } from "@/lib/folders";
 import type { Folder, RssShelf } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -124,12 +124,13 @@ export function FolderSelect({
   disabled?: boolean;
 }) {
   const options = foldersForShelf(folders, shelf);
+  const valueOnShelf = folderValueOnShelf(folders, shelf, value);
   return (
     <select
       id={id}
       aria-label="Folder"
       disabled={disabled}
-      value={value ?? ""}
+      value={valueOnShelf}
       onChange={(event) => {
         const next = event.target.value;
         if (next === "__new__") {
@@ -149,7 +150,7 @@ export function FolderSelect({
           {folder.name}
         </option>
       ))}
-      <option value="__new__">New folder…</option>
+      <option value="__new__">New folder on this shelf…</option>
     </select>
   );
 }

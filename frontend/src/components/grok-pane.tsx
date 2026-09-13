@@ -829,7 +829,7 @@ export function GrokPane({
   }
 
   async function createNoteFolder() {
-    const name = window.prompt("New folder name");
+    const name = window.prompt(`New folder on ${destinationLabel(pane.noteDest, customShelves)}`);
     if (!name?.trim()) return;
     try {
       const row = await api.createFolder(pane.noteDest, name.trim());
@@ -1244,15 +1244,19 @@ export function GrokPane({
               <Button
                 type="button"
                 size="icon"
-                variant={dictation?.listening && !dictation.sessionContinuous ? "destructive" : "outline"}
+                variant={dictation?.listening ? "destructive" : "outline"}
                 className="size-9"
-                aria-label={dictation?.listening && !dictation.sessionContinuous ? "Stop dictation" : "Tap to talk"}
-                title="Tap to talk (one utterance)"
+                aria-label={dictation?.listening ? "Stop dictation" : "Tap to talk"}
+                title={
+                  dictation?.continuous
+                    ? "Tap to talk (continuous until Stop)"
+                    : "Tap to talk (one utterance)"
+                }
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   const el = draftRef.current;
                   if (!el) return;
-                  dictation?.startFor(el, { continuous: false });
+                  dictation?.startFor(el);
                 }}
               >
                 <Mic className="size-4" />
@@ -1260,28 +1264,19 @@ export function GrokPane({
               <Button
                 type="button"
                 size="icon"
-                variant={dictation?.listening && dictation.sessionContinuous ? "destructive" : "outline"}
+                variant={dictation?.continuous ? "default" : "outline"}
                 className="size-9"
-                aria-label={
-                  dictation?.listening && dictation.sessionContinuous ? "Stop continuous dictation" : "Continuous dictation"
+                aria-pressed={Boolean(dictation?.continuous)}
+                aria-label={dictation?.continuous ? "Continuous dictation on" : "Continuous dictation off"}
+                title={
+                  dictation?.continuous
+                    ? "Continuous on — keep listening across pauses until Stop"
+                    : "Continuous off — one utterance then stop"
                 }
-                title="Continuous (stays open until Stop)"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  const el = draftRef.current;
-                  if (!el) return;
-                  if (dictation?.listening && dictation.sessionContinuous) {
-                    dictation.stop();
-                    return;
-                  }
-                  dictation?.startFor(el, { continuous: true });
-                }}
+                onClick={() => dictation?.setContinuous(!dictation.continuous)}
               >
-                {dictation?.listening && dictation.sessionContinuous ? (
-                  <Square className="size-3.5 fill-current" />
-                ) : (
-                  <span className="text-[9px] font-semibold leading-none">Cont</span>
-                )}
+                <span className="text-[9px] font-semibold leading-none">Cont</span>
               </Button>
             </div>
           ) : null}
@@ -1314,7 +1309,9 @@ export function GrokPane({
         </div>
         {dictation?.listening && sttEnabled && !locked ? (
           <p className="text-[10px] text-muted-foreground">
-            {dictation.sessionContinuous ? "Continuous — speak, then pause; Stop when done." : "Listening — one utterance…"}
+            {dictation.continuous || dictation.sessionContinuous
+              ? "Listening — continuous; pauses restart until Stop."
+              : "Listening — one utterance…"}
           </p>
         ) : null}
         {dragOver ? (

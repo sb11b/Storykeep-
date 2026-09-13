@@ -14,6 +14,17 @@ export function foldersForShelf(folders: Folder[], shelf: FilingDestination): Fo
   return folders.filter((row) => row.shelf === shelf);
 }
 
+export function folderValueOnShelf(
+  folders: Folder[],
+  shelf: FilingDestination,
+  folderId: string | null | undefined,
+): string {
+  const selected = folderById(folders, folderId);
+  if (!selected) return "";
+  if (selected.shelf === shelf) return selected.id;
+  return matchFolderByName(folders, shelf, selected.name)?.id ?? "";
+}
+
 export function folderById(folders: Folder[], id: string | null | undefined): Folder | undefined {
   if (!id) return undefined;
   return folders.find((row) => row.id === id);

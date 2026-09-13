@@ -85,6 +85,11 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS feed_html TEXT")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS feed_text TEXT")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS folder_id UUID")
+    _try_sql("ALTER TABLE folders DROP CONSTRAINT IF EXISTS folders_user_id_name_key")
+    _try_sql("DROP INDEX IF EXISTS folders_user_id_name_key")
+    _try_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS folders_user_shelf_name_idx ON folders (user_id, shelf, name)"
+    )
     _try_sql(
         "UPDATE articles SET feed_html = summary "
         "WHERE feed_html IS NULL AND source_kind = 'rss' AND summary IS NOT NULL AND length(summary) > 120"

@@ -19,6 +19,8 @@ type Field = HTMLInputElement | HTMLTextAreaElement;
 type StartOptions = {
   /** When true, keep the session open across utterances until Stop. */
   continuous?: boolean;
+  /** Internal: reconnect after Chrome/xAI idle without wiping committed text. */
+  resume?: boolean;
 };
 
 type DictationApi = {
@@ -117,6 +119,9 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const stopTimerRef = useRef<number | null>(null);
   const startingRef = useRef(false);
   const closedCleanlyRef = useRef(false);
+  const restartingRef = useRef(false);
+  const restartTimerRef = useRef<number | null>(null);
+  const startForRef = useRef<(field: Field, options?: StartOptions) => void>(() => {});
   useEffect(() => {
     continuousRef.current = continuous;
     listeningRef.current = listening;
@@ -129,16 +134,22 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const teardown = useCallback(() => {
+  const clearRestartTimer = () => {
+    if (restartTimerRef.current != null) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  };
+
+  const disconnectEngine = useCallback((opts?: { keepUi?: boolean }) => {
     closedCleanlyRef.current = true;
     clearStopTimer();
-    listeningRef.current = false;
-    stoppingRef.current = false;
     startingRef.current = false;
-    setListening(false);
-    setSessionContinuousMode(false);
+    if (!opts?.keepUi) {
+      listeningRef.current = false;
+      setListening(false);
+    }
     interimRef.current = "";
-    committedRef.current = "";
     lastRawFinalRef.current = "";
     setInterim("");
     const audio = audioRef.current;
@@ -162,6 +173,38 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const teardown = useCallback(() => {
+    clearRestartTimer();
+    restartingRef.current = false;
+    stoppingRef.current = false;
+    disconnectEngine();
+    setSessionContinuousMode(false);
+    sessionContinuousRef.current = false;
+    committedRef.current = "";
+  }, [disconnectEngine]);
+
+  const scheduleRestart = useCallback(() => {
+    if (stoppingRef.current || !sessionContinuousRef.current || !continuousRef.current) return;
+    const field = fieldRef.current;
+    if (!field) return;
+    clearRestartTimer();
+    restartingRef.current = true;
+    disconnectEngine({ keepUi: true });
+    restartTimerRef.current = window.setTimeout(() => {
+      restartTimerRef.current = null;
+      if (stoppingRef.current || !sessionContinuousRef.current || !continuousRef.current) {
+        restartingRef.current = false;
+        return;
+      }
+      const next = fieldRef.current;
+      if (!next) {
+        restartingRef.current = false;
+        return;
+      }
+      startForRef.current(next, { resume: true });
+    }, 250);
+  }, [disconnectEngine]);
+
   const commitFinal = useCallback((raw: string) => {
     const el = fieldRef.current;
     const piece = newFinalSegment(raw, committedRef.current, el?.value ?? "");
@@ -173,12 +216,14 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requestStop = useCallback(() => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    clearRestartTimer();
+    restartingRef.current = false;
     if (!listeningRef.current && !startingRef.current) {
       teardown();
       return;
     }
-    if (stoppingRef.current) return;
-    stoppingRef.current = true;
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       try {
@@ -201,8 +246,11 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const startFor = useCallback(
     (field: Field, options?: StartOptions) => {
       const live = socketRef.current;
-      if (listeningRef.current || startingRef.current || (live && live.readyState <= WebSocket.OPEN)) {
-        if (listeningRef.current && fieldRef.current === field) {
+      const resuming = Boolean(options?.resume);
+      const busy =
+        listeningRef.current || startingRef.current || restartingRef.current || (live != null && live.readyState <= WebSocket.OPEN);
+      if (!resuming && busy) {
+        if (fieldRef.current === field) {
           requestStop();
           return;
         }
@@ -210,16 +258,20 @@ export function DictationProvider({ children }: { children: ReactNode }) {
         field.focus();
         return;
       }
+      restartingRef.current = false;
       fieldRef.current = field;
       field.focus();
       startingRef.current = true;
+      stoppingRef.current = false;
       const sessionContinuous = options?.continuous ?? continuousRef.current;
       sessionContinuousRef.current = sessionContinuous;
       setSessionContinuousMode(sessionContinuous);
-      committedRef.current = "";
-      lastRawFinalRef.current = "";
-      interimRef.current = "";
-      setInterim("");
+      if (!resuming) {
+        committedRef.current = "";
+        lastRawFinalRef.current = "";
+        interimRef.current = "";
+        setInterim("");
+      }
       void (async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -271,13 +323,19 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "error" || msg.type === "timeout" || msg.type === "idle") {
-                const label =
-                  msg.type === "timeout"
-                    ? msg.message || "STT timeout"
-                    : msg.type === "idle"
-                      ? msg.message || "Mic idle, tap to resume"
-                      : msg.message || "STT failed";
-                sttToast(label);
+                if (msg.type !== "idle" || !sessionContinuousRef.current) {
+                  const label =
+                    msg.type === "timeout"
+                      ? msg.message || "STT timeout"
+                      : msg.type === "idle"
+                        ? msg.message || "Stopped after silence."
+                        : msg.message || "STT failed";
+                  sttToast(label);
+                }
+                if (sessionContinuousRef.current && !stoppingRef.current && (msg.type === "idle" || msg.type === "timeout")) {
+                  scheduleRestart();
+                  return;
+                }
                 teardown();
               }
             } catch {
@@ -285,6 +343,10 @@ export function DictationProvider({ children }: { children: ReactNode }) {
             }
           };
           socket.onerror = () => {
+            if (sessionContinuousRef.current && !stoppingRef.current) {
+              scheduleRestart();
+              return;
+            }
             sttToast("STT connection failed");
             teardown();
           };
@@ -293,11 +355,22 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               closedCleanlyRef.current = false;
               return;
             }
-            if (!listeningRef.current && !startingRef.current) return;
+            const fatal =
+              event.code === 4403 || event.code === 4503 || event.code === 4409 || event.code === 4429;
             if (event.code === 4403) sttToast("Demo account — dictation is off");
             else if (event.code === 4503) sttToast("STT is off until XAI_API_KEY is set on the server");
             else if (event.code === 4409) sttToast("Dictation is already open in another tab");
             else if (event.code === 4429) sttToast("STT rate limit reached");
+            if (fatal) {
+              stoppingRef.current = true;
+              teardown();
+              return;
+            }
+            if (sessionContinuousRef.current && !stoppingRef.current) {
+              scheduleRestart();
+              return;
+            }
+            if (!listeningRef.current && !startingRef.current && !restartingRef.current) return;
             teardown();
           };
           await new Promise<void>((resolve, reject) => {
@@ -324,8 +397,18 @@ export function DictationProvider({ children }: { children: ReactNode }) {
         }
       })();
     },
-    [commitFinal, requestStop, teardown],
+    [commitFinal, requestStop, scheduleRestart, teardown],
   );
+  startForRef.current = startFor;
+
+  const setContinuousMode = useCallback((value: boolean) => {
+    setContinuous(value);
+    continuousRef.current = value;
+    if (listeningRef.current || startingRef.current) {
+      sessionContinuousRef.current = value;
+      setSessionContinuousMode(value);
+    }
+  }, []);
 
   const attach = useCallback((field: Field | null) => {
     if (!field) return;
@@ -377,7 +460,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     listening,
     sessionContinuous: sessionContinuousMode,
     continuous,
-    setContinuous,
+    setContinuous: setContinuousMode,
     startFor,
     stop: requestStop,
     attach,
@@ -387,7 +470,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     <DictationContext.Provider value={api}>
       {children}
       {listening ? (
-        <div className="fixed bottom-4 left-4 z-[75] flex max-w-[min(36rem,calc(100vw-2rem))] items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs shadow-md">
+        <div className="pointer-events-auto fixed bottom-4 left-4 z-[80] flex max-w-[min(36rem,calc(100vw-2rem))] items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs shadow-md">
           <span className="size-2 shrink-0 rounded-full bg-red-600" />
           <span className="font-medium shrink-0">Listening</span>
           {interim ? (
@@ -397,15 +480,17 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           ) : (
             <span className="text-muted-foreground">Waiting…</span>
           )}
-          <label className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          <label className="flex shrink-0 cursor-pointer items-center gap-1 text-muted-foreground">
             <input
               type="checkbox"
               checked={continuous}
-              onChange={(event) => setContinuous(event.target.checked)}
+              onChange={(event) => setContinuousMode(event.target.checked)}
+              className="pointer-events-auto"
+              aria-label="Continuous dictation"
             />
             Continuous
           </label>
-          <button type="button" className="shrink-0 rounded-md border px-2 py-0.5" onClick={requestStop}>
+          <button type="button" className="pointer-events-auto shrink-0 rounded-md border px-2 py-0.5" onClick={requestStop}>
             Stop
           </button>
         </div>

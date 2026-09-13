@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Article, Feed, Folder, User
@@ -53,19 +54,35 @@ def list_folders(db: Session, user: User, shelf: str | None = None) -> list[tupl
     return [(row, folder_item_count(db, user, row)) for row in rows]
 
 
-def create_folder(db: Session, user: User, shelf: str, name: str) -> Folder:
+def ensure_folder_on_shelf(db: Session, user: User, shelf: str, name: str, *, commit: bool = False) -> Folder:
+    """Return the folder named `name` on this shelf, creating it if needed. Never reuse another shelf."""
     shelf_norm = normalize_folder_shelf(shelf, user)
     label = normalize_folder_name(name)
     existing = db.scalar(
         select(Folder).where(Folder.user_id == user.id, Folder.shelf == shelf_norm, Folder.name == label)
     )
     if existing:
-        raise ValueError("A folder with that name already exists on this shelf.")
+        return existing
     row = Folder(user_id=user.id, shelf=shelf_norm, name=label)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError as exc:
+        raced = db.scalar(
+            select(Folder).where(Folder.user_id == user.id, Folder.shelf == shelf_norm, Folder.name == label)
+        )
+        if raced:
+            return raced
+        raise ValueError("Could not create that folder on this shelf.") from exc
+    if commit:
+        db.commit()
+        db.refresh(row)
     return row
+
+
+def create_folder(db: Session, user: User, shelf: str, name: str) -> Folder:
+    return ensure_folder_on_shelf(db, user, shelf, name, commit=True)
 
 
 def rename_folder(db: Session, user: User, folder_id: UUID, name: str) -> Folder:
@@ -109,9 +126,10 @@ def resolve_folder_id(db: Session, user: User, destination: str, folder_id: UUID
     if not row:
         raise ValueError("Folder not found.")
     dest = normalize_destination(destination, user)
-    if row.shelf != dest:
-        raise ValueError("That folder belongs to a different shelf.")
-    return row.id
+    if row.shelf == dest:
+        return row.id
+    # Folder is on another shelf. Do not move the note; use or create the same name here.
+    return ensure_folder_on_shelf(db, user, dest, row.name, commit=False).id
 
 
 def match_folder_by_name(db: Session, user: User, shelf: str, name: str | None) -> UUID | None:

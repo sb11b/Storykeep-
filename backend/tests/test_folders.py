@@ -14,12 +14,47 @@ class FolderServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_folder_shelf("inbox")
 
-    def test_create_folder_rejects_duplicate_name(self) -> None:
+    def test_create_folder_returns_existing_on_this_shelf(self) -> None:
         user = SimpleNamespace(id=uuid.uuid4())
+        existing = SimpleNamespace(id=uuid.uuid4(), shelf="schoolwork", name="DAT-325")
         db = MagicMock()
-        db.scalar.return_value = SimpleNamespace(id=uuid.uuid4())
-        with self.assertRaises(ValueError):
-            create_folder(db, user, "schoolwork", "DAT-325")
+        db.scalar.return_value = existing
+        row = create_folder(db, user, "schoolwork", "DAT-325")
+        self.assertIs(row, existing)
+        db.add.assert_not_called()
+
+    def test_resolve_folder_id_stays_on_requested_shelf(self) -> None:
+        from app.services.folders import resolve_folder_id
+
+        user = SimpleNamespace(
+            id=uuid.uuid4(),
+            preferences={"custom_note_shelves": [{"id": "junior", "name": "Junior"}, {"id": "editions", "name": "Editions"}]},
+        )
+        other = SimpleNamespace(id=uuid.uuid4(), user_id=user.id, shelf="editions", name="transfer block")
+        local = SimpleNamespace(id=uuid.uuid4(), user_id=user.id, shelf="junior", name="transfer block")
+        db = MagicMock()
+        db.scalar.side_effect = [other, local]
+        resolved = resolve_folder_id(db, user, "junior", other.id)
+        self.assertEqual(resolved, local.id)
+        db.add.assert_not_called()
+
+    def test_resolve_folder_id_creates_on_requested_shelf_when_missing(self) -> None:
+        from app.services import folders as folders_mod
+
+        user = SimpleNamespace(
+            id=uuid.uuid4(),
+            preferences={"custom_note_shelves": [{"id": "junior", "name": "Junior"}, {"id": "editions", "name": "Editions"}]},
+        )
+        other = SimpleNamespace(id=uuid.uuid4(), user_id=user.id, shelf="editions", name="transfer block")
+        created = SimpleNamespace(id=uuid.uuid4(), user_id=user.id, shelf="junior", name="transfer block")
+        db = MagicMock()
+        db.scalar.side_effect = [other]
+        with patch.object(folders_mod, "ensure_folder_on_shelf", return_value=created) as ensure:
+            resolved = folders_mod.resolve_folder_id(db, user, "junior", other.id)
+        self.assertEqual(resolved, created.id)
+        ensure.assert_called_once()
+        self.assertEqual(ensure.call_args.args[2], "junior")
+        self.assertEqual(ensure.call_args.args[3], "transfer block")
 
     def test_delete_folder_clears_article_links(self):
         user = SimpleNamespace(id=uuid.uuid4())

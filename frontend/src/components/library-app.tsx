@@ -88,7 +88,7 @@ import {
   writeArticleTextSize,
   type ArticleTextSize,
 } from "@/lib/reader-text-size";
-import { asDestination, DESTINATION_LABEL, NOTE_DESTINATIONS, type NoteDestination } from "@/lib/destinations";
+import { asFilingDestination, DESTINATION_LABEL } from "@/lib/destinations";
 import {
   destinationLabel,
   parseCustomNoteShelves,
@@ -142,10 +142,7 @@ const RSS_SHELF_KEY = "storykeep-rss-shelf-id";
 
 function displayArticleShelf(article: Article): FilingDestination | "" {
   if (article.destination) {
-    if (NOTE_DESTINATIONS.includes(article.destination as NoteDestination)) {
-      return asDestination(article.destination, "notes");
-    }
-    return article.destination;
+    return asFilingDestination(article.destination, article.destination);
   }
   if (article.source_kind === "textbook") return "books";
   return "";
@@ -1018,7 +1015,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
 
   async function createFolderOnShelf(shelfKind: FilingDestination) {
     const label = destinationLabel(shelfKind, customNoteShelves);
-    const name = window.prompt(`Name for the new ${label} folder:`)?.trim();
+    const name = window.prompt(`New folder on ${label}:`)?.trim();
     if (!name) return null;
     try {
       const row = await api.createFolder(shelfKind, name);
@@ -2186,7 +2183,7 @@ function Reader({
   const [editTitle, setEditTitle] = useState(article.title);
   const [editBody, setEditBody] = useState(article.content_text || "");
   const [editDest, setEditDest] = useState<FilingDestination>(
-    (article.destination as FilingDestination | null) || asDestination(article.destination, "additions"),
+    asFilingDestination(article.destination, "additions") as FilingDestination,
   );
   const [editFolder, setEditFolder] = useState<string | null>(article.folder_id ?? null);
   const [editCorrection, setEditCorrection] = useState(Boolean(article.is_correction));
@@ -2223,7 +2220,10 @@ function Reader({
 
   async function handleCreateEditFolder() {
     const created = await onCreateFolder(editDest);
-    if (created) setEditFolder(created);
+    if (created) {
+      setEditFolder(created);
+      void moveComposedShelf(editDest, editCorrection, created);
+    }
   }
 
   async function handleCreateFileFolder() {
@@ -2331,7 +2331,7 @@ function Reader({
       folderId: article.folder_id ?? null,
       onOpenNote,
       onCreateNote: (title: string, shelf: string | null, folderId: string | null) =>
-        onCreateLinkedNote(title, (shelf || "notes") as NoteDestination, folderId),
+        onCreateLinkedNote(title, (shelf || "notes") as FilingDestination, folderId),
       resolveTitle: (title: string, shelf: string | null) =>
         api.resolveNoteTitle(title, shelf || undefined, article.id).then((item) => item || null),
     }),
@@ -2392,7 +2392,7 @@ function Reader({
     setTag("");
     setEditTitle(article.title);
     setEditBody(composedNoteMarkdown(article) || article.content_text || "");
-    setEditDest(asDestination(article.destination, "additions"));
+    setEditDest(asFilingDestination(article.destination, "additions") as FilingDestination);
     setEditFolder(article.folder_id ?? null);
     setEditCorrection(Boolean(article.is_correction));
     setFileDest(displayArticleShelf(article));
@@ -2405,7 +2405,7 @@ function Reader({
   }, [article.id]);
 
   useEffect(() => {
-    setEditDest(asDestination(article.destination, "additions"));
+    setEditDest(asFilingDestination(article.destination, "additions") as FilingDestination);
     setEditFolder(article.folder_id ?? null);
     setEditCorrection(Boolean(article.is_correction));
     setFileDest(displayArticleShelf(article));
