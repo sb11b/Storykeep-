@@ -37,6 +37,7 @@ function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
 
 function ChatPicture({
   mediaId,
+  url,
   alt,
   contentType,
 }: {
