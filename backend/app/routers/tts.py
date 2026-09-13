@@ -1,7 +1,9 @@
 from uuid import UUID
 import base64
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -170,6 +172,11 @@ def _speech_plan_payload(
     }
 
 
+def _speech_failure(status: int, message: str) -> JSONResponse:
+    """`message` for humans, `detail` for the existing error parser."""
+    return JSONResponse(status_code=status, content={"ok": False, "message": message, "detail": message})
+
+
 @router.get("/tts")
 def tts_status(user: User = Depends(get_current_user)) -> dict:
     reject_locked(user)
@@ -186,6 +193,43 @@ def tts_voices(user: User = Depends(get_current_user)) -> dict:
     reject_locked(user)
     _ = user
     return {"voices": tts_service.list_voices()}
+
+
+@router.get("/tts/health")
+def tts_health(
+    voice_id: str = Query(default="eve", max_length=64),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """One-word synthesis against the live voice service, timed, never cached."""
+    reject_locked(user)
+    _ = user
+    if not tts_service.key_configured():
+        return {"ok": False, "ms": 0, "bytes": 0, "message": "No xAI API key is configured."}
+    started = time.monotonic()
+    try:
+        audio = tts_service.synthesize("Hello.", voice_id)
+    except HTTPException as exc:
+        return {
+            "ok": False,
+            "ms": int((time.monotonic() - started) * 1000),
+            "bytes": 0,
+            "status": exc.status_code,
+            "message": str(exc.detail),
+        }
+    except Exception as exc:  # never hang or 500 a health probe
+        return {
+            "ok": False,
+            "ms": int((time.monotonic() - started) * 1000),
+            "bytes": 0,
+            "message": f"{type(exc).__name__}: {exc}",
+        }
+    elapsed = int((time.monotonic() - started) * 1000)
+    return {
+        "ok": bool(audio),
+        "ms": elapsed,
+        "bytes": len(audio),
+        "message": "ok" if audio else "xAI returned empty audio.",
+    }
 
 
 @router.get("/articles/{article_id}/tts/plan")
@@ -273,15 +317,20 @@ def speak_chat_message(
     reject_locked(user)
     script = tts_service.visible_speech_script(payload.visible_text)
     if not script.strip():
-        raise HTTPException(status_code=400, detail="There is no visible reply text to read.")
+        return _speech_failure(400, "There is no visible reply text to read.")
     cache_owner = f"chat-{user.id}-{payload.message_id}"
-    response = _speech_response_for_script(
-        script,
-        payload.voice_id,
-        chunk,
-        confirm=confirm,
-        cache_owner_id=cache_owner,
-    )
+    try:
+        response = _speech_response_for_script(
+            script,
+            payload.voice_id,
+            chunk,
+            confirm=confirm,
+            cache_owner_id=cache_owner,
+        )
+    except HTTPException as exc:
+        return _speech_failure(exc.status_code, str(exc.detail))
+    except Exception as exc:  # a readable answer beats a platform 504
+        return _speech_failure(502, f"{type(exc).__name__}: {exc}")
     response["message_id"] = payload.message_id
     return response
 

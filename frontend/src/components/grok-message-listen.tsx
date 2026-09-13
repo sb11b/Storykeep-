@@ -18,7 +18,7 @@ import type { TtsWord } from "@/lib/types";
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
 
 /** Preparing is allowed to take a moment, never minutes. */
-const PREPARE_TIMEOUT_MS = 15_000;
+const PREPARE_TIMEOUT_MS = 20_000;
 
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   audio.playbackRate = rate;
@@ -79,6 +79,14 @@ export function useGrokMessageListen({
     inflightRef.current?.abort();
     inflightRef.current = null;
   }, []);
+
+  // Held in a ref: an inline callback would otherwise re-fire the phase effect
+  // on every parent render, and that reported "not playing" mid-request.
+  const playingChangeRef = useRef(onPlayingChange);
+
+  useEffect(() => {
+    playingChangeRef.current = onPlayingChange;
+  }, [onPlayingChange]);
 
   useEffect(() => {
     voiceRef.current = voiceId;
@@ -181,13 +189,12 @@ export function useGrokMessageListen({
     }
     resetLoaded();
     setPhase("idle");
-    onPlayingChange?.(false);
+    playingChangeRef.current?.(false);
   }, [
     abortInflight,
     clearWatchdog,
     emitCue,
     markTimestampsUnavailable,
-    onPlayingChange,
     resetLoaded,
     stopCueLoop,
   ]);
@@ -215,6 +222,8 @@ export function useGrokMessageListen({
     }, PREPARE_TIMEOUT_MS);
   }, [clearWatchdog]);
 
+  // One audio element for the life of the pane. Rebuilding it when the target
+  // message changed used to abort the request that was still in flight.
   useEffect(() => {
     const audio = new Audio();
     applyPlaybackRate(audio, readStoredTtsSpeed());
@@ -230,11 +239,11 @@ export function useGrokMessageListen({
       releaseTtsPlayback(stopRef.current);
       audioRef.current = null;
     };
-  }, [abortInflight, clearWatchdog, messageId, stopCueLoop]);
+  }, [abortInflight, clearWatchdog, stopCueLoop]);
 
   useEffect(() => {
-    onPlayingChange?.(phase === "playing" || phase === "paused" || phase === "loading");
-  }, [onPlayingChange, phase]);
+    playingChangeRef.current?.(phase === "playing" || phase === "paused" || phase === "loading");
+  }, [phase]);
 
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
@@ -348,6 +357,9 @@ export function useGrokMessageListen({
         await seekAndPlay(data, index);
         prefetchChunk(index + 1, voice, data.chunks);
       } catch (error) {
+        // Preparing must end even for an attempt that was superseded.
+        clearWatchdog();
+        setPhase((current) => (current === "loading" ? "idle" : current));
         if (generation !== generationRef.current) return;
         stop();
         showTtsErrorToast(error);
@@ -387,6 +399,8 @@ export function useGrokMessageListen({
 
   const listen = useCallback(() => {
     if (disabled) return;
+    // Extra clicks while a request is out would stack requests, not help.
+    if (phase === "loading") return;
     if (phase === "paused") {
       const audio = audioRef.current;
       if (!audio) return;

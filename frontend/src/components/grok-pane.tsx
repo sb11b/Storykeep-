@@ -259,8 +259,8 @@ export function GrokPane({
         onStopArticleListen?.();
         onActivateListen(() => stopRef.current());
       } else {
+        // Keep the target: clearing it here tore down the request mid-flight.
         onActivateListen(null);
-        setListenTarget(null);
         setActiveWord(null);
       }
     },
