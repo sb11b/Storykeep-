@@ -6,7 +6,7 @@ import { LibraryApp } from "@/components/library-app";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
 import type { Profile, User } from "@/lib/types";
-import { mergeUserProfile } from "@/lib/user-profile";
+import { avatarMediaUrl, mergeUserProfile } from "@/lib/user-profile";
 
 export default function HomePage() {
   const router = useRouter();
@@ -20,7 +20,11 @@ export default function HomePage() {
       .me()
       .then((next) => {
         applyAppearanceFromUser(next);
-        setUser(next);
+        setUser({
+          ...next,
+          avatar_media_id: next.avatar_media_id ?? null,
+          avatar_url: avatarMediaUrl(next.avatar_media_id) ?? next.avatar_url ?? null,
+        });
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {

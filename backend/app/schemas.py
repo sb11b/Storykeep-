@@ -20,6 +20,7 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str | None
+    avatar_media_id: uuid.UUID | None = None
     avatar_url: str | None = None
     birthdate: date | None = None
     preferences: dict[str, Any]
@@ -33,10 +34,12 @@ class ProfileOut(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str | None
+    avatar_media_id: uuid.UUID | None = None
     avatar_url: str | None = None
     birthdate: date | None = None
     preferences: dict[str, Any] = Field(default_factory=dict)
     profile_read_only: bool = False
+    created_at: datetime
     totp_enabled: bool = False
     email_otp_enabled: bool = False
     email_otp_available: bool = False

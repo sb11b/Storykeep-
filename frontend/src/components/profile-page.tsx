@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Camera, Loader2 } from "lucide-react";
 import { appearanceFromPreferences, type AppearanceSettings } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import { avatarMediaUrl } from "@/lib/user-profile";
 import type { Profile, TotpSetup } from "@/lib/types";
 import { ProfileAppearancePanel } from "@/components/profile-appearance-panel";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -314,8 +315,12 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
               <div className="relative size-16 overflow-hidden rounded-full bg-muted">
-                {profile.avatar_url ? (
-                  <img src={profile.avatar_url} alt="" className="size-full object-cover" />
+                {avatarMediaUrl(profile.avatar_media_id) || profile.avatar_url ? (
+                  <img
+                    src={avatarMediaUrl(profile.avatar_media_id) || profile.avatar_url || ""}
+                    alt=""
+                    className="size-full object-cover"
+                  />
                 ) : (
                   <div className="flex size-full items-center justify-center text-lg font-medium text-muted-foreground">
                     {(profile.display_name || profile.email).slice(0, 1).toUpperCase()}

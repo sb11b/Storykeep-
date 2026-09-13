@@ -143,6 +143,20 @@ export function appearanceFromPreferences(preferences: Record<string, unknown> |
 }
 
 /** Payload for PATCH /api/v1/me — pageBg, topBar, and rail stored together. */
+export function surfaceIsDark(color: string): boolean {
+  const oklch = color.match(/oklch\(\s*([0-9.]+)/i);
+  if (oklch) return parseFloat(oklch[1]) < 0.55;
+  const hex = normalizeHex(color);
+  if (hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return lum < 0.45;
+  }
+  return false;
+}
+
 export function appearanceToMePatch(settings: AppearanceSettings): Record<string, unknown> {
   return {
     pageBg: { preset: settings.page_preset, ...(settings.page_custom ? { custom: settings.page_custom } : {}) },
@@ -162,15 +176,22 @@ export function applyAppearance(settings: AppearanceSettings) {
   const font = FONT_FAMILY_OPTIONS.find((row) => row.value === settings.font_family)?.css || FONT_FAMILY_OPTIONS[1].css;
   const size = BASE_FONT_SIZE_OPTIONS.find((row) => row.value === settings.base_font_size)?.px || "16px";
 
+  const darkPage = surfaceIsDark(page);
+  const pageFg = darkPage ? "oklch(0.93 0.02 88)" : "oklch(0.24 0.02 55)";
+  const pageMuted = darkPage ? "oklch(0.74 0.03 80)" : "oklch(0.5 0.03 55)";
+
   root.style.setProperty("--storykeep-page-bg", page);
   root.style.setProperty("--storykeep-top-bar", topbar);
   root.style.setProperty("--storykeep-rail", rail);
+  root.style.setProperty("--storykeep-page-fg", pageFg);
+  root.style.setProperty("--storykeep-page-muted", pageMuted);
   root.style.setProperty("--background", page);
   root.style.setProperty("--sidebar", rail);
   root.style.setProperty("--card", topbar);
   root.style.setProperty("--popover", topbar);
   root.style.setProperty("--storykeep-body-font", font);
   root.style.fontSize = size;
+  root.dataset.pageTheme = darkPage ? "dark" : "light";
 }
 
 export function applyAppearanceFromUser(user: User | null | undefined) {

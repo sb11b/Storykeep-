@@ -48,6 +48,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import { avatarMediaUrl } from "@/lib/user-profile";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   extractWikilinkTargets,
@@ -1181,7 +1182,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         </header>
 
         <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
-          <section className={cn("flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
+          <section className={cn("sk-page-surface flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -1336,7 +1337,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </ShelfScroller>
           </section>
 
-          <section className={cn("flex min-h-0 flex-col overflow-hidden bg-card", !selectedId && "hidden lg:flex", readerFull && "flex")}>
+          <section className={cn("sk-page-surface flex min-h-0 flex-col overflow-hidden", !selectedId && "hidden lg:flex", readerFull && "flex")}>
             {selectedId && article ? (
               <Reader
                 article={article}
@@ -1812,8 +1813,12 @@ function Sidebar({
         <p className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">Storykeep</p>
         <div className="mt-2 flex items-center gap-2">
           <div className="size-8 shrink-0 overflow-hidden rounded-full bg-sidebar-accent">
-            {user.avatar_url ? (
-              <img src={user.avatar_url} alt="" className="size-full object-cover" />
+            {avatarMediaUrl(user.avatar_media_id) || user.avatar_url ? (
+              <img
+                src={avatarMediaUrl(user.avatar_media_id) || user.avatar_url || ""}
+                alt=""
+                className="size-full object-cover"
+              />
             ) : (
               <span className="flex size-full items-center justify-center text-xs font-medium text-sidebar-foreground/80">{initials}</span>
             )}
@@ -2489,7 +2494,7 @@ function Reader({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="tts-player-bar sticky top-0 z-30 shrink-0 border-b bg-card/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <div className="sticky top-0 z-30 shrink-0 border-b border-border bg-[var(--storykeep-top-bar)] px-5 py-2">
         <ListenControls
           ref={listenRef}
           articleId={article.id}

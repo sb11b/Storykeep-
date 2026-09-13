@@ -51,6 +51,8 @@
 :root {
   --storykeep-body-font: var(--font-sans), ui-sans-serif, sans-serif;
   --storykeep-page-bg: oklch(0.965 0.018 88);
+  --storykeep-page-fg: oklch(0.24 0.02 55);
+  --storykeep-page-muted: oklch(0.5 0.03 55);
   --storykeep-top-bar: oklch(0.985 0.01 88);
   --storykeep-rail: oklch(0.23 0.02 55);
   --background: var(--storykeep-page-bg);
@@ -150,6 +152,14 @@
   text-decoration: underline;
   text-underline-offset: 3px;
   font-weight: 500;
+}
+
+.sk-page-surface {
+  background-color: var(--storykeep-page-bg);
+  color: var(--storykeep-page-fg, var(--foreground));
+  --foreground: var(--storykeep-page-fg, var(--foreground));
+  --muted-foreground: var(--storykeep-page-muted, var(--muted-foreground));
+  --card-foreground: var(--storykeep-page-fg, var(--foreground));
 }
 
 @layer base {

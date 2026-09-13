@@ -9,6 +9,7 @@ import {
   fontFamilyCss,
   normalizeHex,
   resolvePresetColor,
+  surfaceIsDark,
   PAGE_COLOR_PRESETS,
 } from "./appearance";
 
@@ -55,6 +56,12 @@ test("appearanceFromPreferences merges defaults", () => {
   assert.equal(settings.page_preset, DEFAULT_APPEARANCE.page_preset);
 });
 
+test("surfaceIsDark detects dark page colors", () => {
+  assert.equal(surfaceIsDark("oklch(0.2 0.02 55)"), true);
+  assert.equal(surfaceIsDark("oklch(0.96 0.02 88)"), false);
+  assert.equal(surfaceIsDark("#111111"), true);
+});
+
 test("appearanceToMePatch includes pageBg topBar and rail", () => {
   const payload = appearanceToMePatch({
     ...DEFAULT_APPEARANCE,
@@ -76,6 +83,7 @@ test("applyAppearance sets CSS variables on document root", () => {
         props[name] = value;
       },
     },
+    dataset: {} as DOMStringMap,
   };
   const previous = globalThis.document;
   globalThis.document = { documentElement: root } as Document;
@@ -90,6 +98,7 @@ test("applyAppearance sets CSS variables on document root", () => {
       base_font_size: "sm",
     });
     assert.equal(props["--storykeep-page-bg"], "#111122");
+    assert.equal(props["--storykeep-page-fg"], "oklch(0.93 0.02 88)");
     assert.equal(props["--storykeep-top-bar"], "#334455");
     assert.equal(props["--storykeep-rail"], "#445566");
     assert.equal(props["--background"], "#111122");
