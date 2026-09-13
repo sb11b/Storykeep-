@@ -5,9 +5,10 @@ import logging
 import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import select, text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -185,6 +186,21 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Storykeep", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_with_message(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """TTS routes expose {message} for readable client toasts."""
+    detail = exc.detail
+    if isinstance(detail, list):
+        message = "; ".join(str(item) for item in detail)
+    else:
+        message = str(detail)
+    if "/tts" in request.url.path:
+        return JSONResponse(status_code=exc.status_code, content={"message": message, "detail": detail})
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+
+
 app.add_middleware(NormalizeApiPathMiddleware)
 
 app.add_middleware(

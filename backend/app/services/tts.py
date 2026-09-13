@@ -357,6 +357,8 @@ def synthesize_timed(
         "with_timestamps": True,
         "output_format": {"codec": "mp3", "sample_rate": 24000, "bit_rate": 128000},
     }
+    from app.services.tts_errors import log_tts_failure, raise_for_xai_tts
+
     try:
         with httpx.Client(timeout=120.0) as client:
             response = client.post(
@@ -367,14 +369,32 @@ def synthesize_timed(
                 },
                 json=payload,
             )
+    except httpx.TimeoutException as exc:
+        log_tts_failure(
+            context="synthesize",
+            status=504,
+            body_snippet="timeout",
+            owner_id=str(article_id) if article_id is not None else None,
+            chunk_index=chunk_index,
+        )
+        raise HTTPException(status_code=504, detail="xAI speech service timed out.") from exc
     except httpx.HTTPError as exc:
-        logger.warning("xAI TTS network error: %s", exc)
+        log_tts_failure(
+            context="synthesize",
+            status=502,
+            body_snippet=str(exc),
+            owner_id=str(article_id) if article_id is not None else None,
+            chunk_index=chunk_index,
+        )
         raise HTTPException(status_code=502, detail="Could not reach the xAI speech service.") from exc
 
     if response.status_code >= 400:
-        detail = _xai_error_detail(response)
-        code = 401 if response.status_code in {400, 401, 403} else 502
-        raise HTTPException(status_code=code, detail=detail)
+        raise_for_xai_tts(
+            response,
+            context="synthesize",
+            owner_id=str(article_id) if article_id is not None else None,
+            chunk_index=chunk_index,
+        )
 
     content_type = response.headers.get("content-type", "")
     if "json" in content_type:

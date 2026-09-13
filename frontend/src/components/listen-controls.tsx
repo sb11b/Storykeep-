@@ -5,7 +5,8 @@ import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { showTtsErrorToast } from "@/lib/tts-error-toast";
 import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
 import {
   readStoredTtsSpeed,
@@ -450,7 +451,7 @@ export const ListenControls = forwardRef<
       } catch (err) {
         if (generation !== generationRef.current) return;
         stop();
-        toast.error(err instanceof ApiError ? err.message : "Could not start speech");
+        showTtsErrorToast(err);
       }
     },
     [applyTimestampValidation, articleId, loadChunk, startCueLoop, stop, syncCueFromAudio],

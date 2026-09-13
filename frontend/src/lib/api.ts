@@ -27,6 +27,7 @@ import type {
 } from "./types";
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
+import { fetchSpeechChunk } from "@/lib/tts-speech-client";
 import { formatChatError } from "@/lib/grok-chat-error";
 import { readGrokChatStream, type GrokStreamMeta } from "@/lib/grok-stream";
 
@@ -553,51 +554,19 @@ export const api = {
   messageSpeech: async (messageId: string, voiceId: string, chunk: number, visibleText: string, confirm = false) => {
     const search = new URLSearchParams({ chunk: String(chunk) });
     if (confirm) search.set("confirm", "true");
-    const response = await fetch(`/api/v1/tts/message?${search.toString()}`, {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message_id: messageId,
-        voice_id: voiceId,
-        visible_text: visibleText,
-      }),
-    });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    const data = (await response.json()) as {
-      audio: string;
-      content_type?: string;
-      chunks: number;
-      word_offset?: number;
-      chunk_word_counts?: number[];
-      duration?: number | null;
-      words?: TtsWord[];
-      content_hash?: string;
-      tts_word_count?: number;
-    };
-    const binary = Uint8Array.from(atob(data.audio), (char) => char.charCodeAt(0));
-    const blob = new Blob([binary], { type: data.content_type || "audio/mpeg" });
-    const chunks = Number(data.chunks || 1);
-    return {
-      blob,
-      chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1,
-      wordOffset: Number(data.word_offset || 0),
-      chunkWordCounts: Array.isArray(data.chunk_word_counts) ? data.chunk_word_counts : [],
-      duration: data.duration ?? null,
-      words: Array.isArray(data.words) ? data.words : [],
-      contentHash: data.content_hash || "",
-      ttsWordCount: Number(data.tts_word_count || 0),
-    };
+    return fetchSpeechChunk(
+      `/api/v1/tts/message?${search.toString()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message_id: messageId,
+          voice_id: voiceId,
+          visible_text: visibleText,
+        }),
+      },
+      "chat",
+    );
   },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
@@ -652,52 +621,20 @@ export const api = {
   ) => {
     const search = new URLSearchParams({ chunk: String(chunk) });
     if (opts?.confirm) search.set("confirm", "true");
-    const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        visible_text: body.visibleText,
-        notes_text: body.notesText ?? null,
-        voice_id: voiceId,
-        include_notes: Boolean(body.includeNotes),
-      }),
-    });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    const data = (await response.json()) as {
-      audio: string;
-      content_type?: string;
-      chunks: number;
-      word_offset?: number;
-      chunk_word_counts?: number[];
-      duration?: number | null;
-      words?: TtsWord[];
-      content_hash?: string;
-      tts_word_count?: number;
-    };
-    const binary = Uint8Array.from(atob(data.audio), (char) => char.charCodeAt(0));
-    const blob = new Blob([binary], { type: data.content_type || "audio/mpeg" });
-    const chunks = Number(data.chunks || 1);
-    return {
-      blob,
-      chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1,
-      wordOffset: Number(data.word_offset || 0),
-      chunkWordCounts: Array.isArray(data.chunk_word_counts) ? data.chunk_word_counts : [],
-      duration: data.duration ?? null,
-      words: Array.isArray(data.words) ? data.words : [],
-      contentHash: data.content_hash || "",
-      ttsWordCount: Number(data.tts_word_count || 0),
-    };
+    return fetchSpeechChunk(
+      `/api/v1/articles/${id}/tts?${search.toString()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visible_text: body.visibleText,
+          notes_text: body.notesText ?? null,
+          voice_id: voiceId,
+          include_notes: Boolean(body.includeNotes),
+        }),
+      },
+      "article",
+    );
   },
   articleSpeech: async (
     id: string,
@@ -708,41 +645,6 @@ export const api = {
     const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
     if (opts?.confirm) search.set("confirm", "true");
     if (opts?.includeNotes) search.set("include_notes", "true");
-    const response = await fetch(`/api/v1/articles/${id}/tts?${search.toString()}`, {
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    const data = (await response.json()) as {
-      audio: string;
-      content_type?: string;
-      chunks: number;
-      word_offset?: number;
-      chunk_word_counts?: number[];
-      duration?: number | null;
-      words?: TtsWord[];
-      content_hash?: string;
-    };
-    const binary = Uint8Array.from(atob(data.audio), (char) => char.charCodeAt(0));
-    const blob = new Blob([binary], { type: data.content_type || "audio/mpeg" });
-    const chunks = Number(data.chunks || 1);
-    return {
-      blob,
-      chunks: Number.isFinite(chunks) && chunks > 0 ? chunks : 1,
-      wordOffset: Number(data.word_offset || 0),
-      chunkWordCounts: Array.isArray(data.chunk_word_counts) ? data.chunk_word_counts : [],
-      duration: data.duration ?? null,
-      words: Array.isArray(data.words) ? data.words : [],
-      contentHash: data.content_hash || "",
-    };
+    return fetchSpeechChunk(`/api/v1/articles/${id}/tts?${search.toString()}`, { method: "GET" }, "article");
   },
 };

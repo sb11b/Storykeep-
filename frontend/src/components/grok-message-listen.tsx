@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { showTtsErrorToast } from "@/lib/tts-error-toast";
 import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
 import {
   readStoredTtsSpeed,
@@ -24,11 +25,6 @@ function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   if ("preservesPitch" in audio) {
     (audio as HTMLAudioElement & { preservesPitch: boolean }).preservesPitch = true;
   }
-}
-
-function ttsFailureToast(error: unknown) {
-  const status = error instanceof ApiError ? error.status : 0;
-  toast.error(`Could not read this reply (HTTP ${status || "error"}).`);
 }
 
 export function useGrokMessageListen({
@@ -292,7 +288,7 @@ export function useGrokMessageListen({
       } catch (error) {
         if (generation !== generationRef.current) return;
         stop();
-        ttsFailureToast(error);
+        showTtsErrorToast(error);
       }
     },
     [
@@ -311,7 +307,7 @@ export function useGrokMessageListen({
   const beginPlayback = useCallback(async () => {
     const payload = visibleSpeech();
     if (!payload?.script.trim()) {
-      toast.error("Nothing visible to read in this reply.");
+      showTtsErrorToast(new Error("Nothing visible to read in this reply."));
       return;
     }
     scriptRef.current = payload.script;

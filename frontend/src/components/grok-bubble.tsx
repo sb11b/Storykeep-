@@ -22,6 +22,7 @@ import {
   loadSavedGrokPanes,
   mergePreferenceLabels,
   saveGrokPanes,
+  scrubDefaultPaneLabels,
 } from "@/lib/grok-pane-storage";
 import { cn } from "@/lib/utils";
 
@@ -288,10 +289,9 @@ export function GrokBubble({
     saveGrokPanes(nextPanes);
     try {
       const prefs = await api.getPreferences();
-      const existing = (prefs.grok_pane_labels as Record<string, string> | undefined) || {};
-      await api.updatePreferences({
-        grok_pane_labels: { ...existing, ...labelsFromPanes(nextPanes) },
-      });
+      const existing = scrubDefaultPaneLabels(prefs.grok_pane_labels as Record<string, string> | undefined);
+      const merged = scrubDefaultPaneLabels({ ...existing, ...labelsFromPanes(nextPanes) });
+      await api.updatePreferences({ grok_pane_labels: merged });
     } catch {
       /* ignore */
     }

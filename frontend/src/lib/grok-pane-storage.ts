@@ -55,16 +55,37 @@ export function mergePreferenceLabels(
   labels: Record<string, string> | undefined,
 ): GrokPaneState[] {
   if (!labels || !Object.keys(labels).length) return panes;
-  return panes.map((pane, index) => ({
-    ...pane,
-    displayName: labelFromPreferences(labels, index, pane.displayName || defaultGrokPaneName(index)),
-  }));
+  return panes.map((pane, index) => {
+    const defaultName = defaultGrokPaneName(index);
+    const fromPref = labels[String(index)]?.trim();
+    const fromPane = pane.displayName?.trim() || defaultName;
+    const prefIsCustom = Boolean(fromPref && fromPref !== defaultName);
+    const paneIsCustom = fromPane !== defaultName;
+    if (prefIsCustom) return { ...pane, displayName: fromPref! };
+    if (paneIsCustom) return pane;
+    return { ...pane, displayName: fromPref || defaultName };
+  });
 }
 
+/** Only persist names that differ from the default Grok / Grok panel N label. */
 export function labelsFromPanes(panes: GrokPaneState[]): Record<string, string> {
   const out: Record<string, string> = {};
   panes.forEach((pane, index) => {
-    out[String(index)] = pane.displayName?.trim() || defaultGrokPaneName(index);
+    const name = pane.displayName?.trim() || defaultGrokPaneName(index);
+    if (name !== defaultGrokPaneName(index)) out[String(index)] = name;
   });
+  return out;
+}
+
+export function scrubDefaultPaneLabels(labels: Record<string, string> | undefined): Record<string, string> {
+  if (!labels) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(labels)) {
+    const index = Number(key);
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    if (!Number.isNaN(index) && trimmed === defaultGrokPaneName(index)) continue;
+    out[key] = trimmed;
+  }
   return out;
 }

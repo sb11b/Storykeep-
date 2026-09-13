@@ -21,3 +21,14 @@ test("labelsFromPanes exports index map", () => {
   const panes = [{ ...createGrokPane(0), displayName: "Larry (the asparagus)" }];
   assert.deepEqual(labelsFromPanes(panes), { "0": "Larry (the asparagus)" });
 });
+
+test("labelsFromPanes skips default Grok label", () => {
+  const panes = [createGrokPane(0)];
+  assert.deepEqual(labelsFromPanes(panes), {});
+});
+
+test("mergePreferenceLabels keeps local custom name over default preference", () => {
+  const panes = [{ ...createGrokPane(0), displayName: "Larry (the asparagus)" }];
+  const merged = mergePreferenceLabels(panes, { "0": "Grok" });
+  assert.equal(merged[0]!.displayName, "Larry (the asparagus)");
+});
