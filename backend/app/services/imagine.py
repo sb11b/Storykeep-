@@ -6,11 +6,14 @@ import re
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.models import GrokMessage, NoteMedia, User
@@ -206,18 +209,21 @@ def persist_imagine_turn(
     else:
         conversation = grok_store.create_conversation(db, user)
         is_first = True
+    now = datetime.now(timezone.utc)
     user_row = grok_store.append_message(
         db,
         conversation,
         role="user",
         content=prompt,
         set_title_from_user=is_first,
+        created_at=now,
     )
     assistant_row = grok_store.append_message(
         db,
         conversation,
         role="assistant",
         content=assistant_image_markdown(prompt, media.id),
+        created_at=now + timedelta(milliseconds=1),
     )
     chat_attachments.attach_to_message(
         db,
@@ -227,8 +233,15 @@ def persist_imagine_turn(
         allow_assistant=True,
     )
     db.commit()
-    detail = grok_store.get_conversation(db, user, conversation.id)
-    messages = list(detail.messages or [])
-    if len(messages) < 2:
+    user_row = db.scalar(
+        select(GrokMessage).options(selectinload(GrokMessage.files)).where(GrokMessage.id == user_row.id)
+    )
+    assistant_row = db.scalar(
+        select(GrokMessage)
+        .options(selectinload(GrokMessage.files))
+        .where(GrokMessage.id == assistant_row.id)
+    )
+    if user_row is None or assistant_row is None:
         raise HTTPException(status_code=500, detail="Could not save that image in the thread.")
-    return detail, messages[-2], messages[-1]
+    conversation = grok_store.owned_conversation(db, user, conversation.id)
+    return conversation, user_row, assistant_row

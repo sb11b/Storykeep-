@@ -386,7 +386,7 @@ class GrokConversation(Base):
     messages: Mapped[list["GrokMessage"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
-        order_by="GrokMessage.created_at",
+        order_by="GrokMessage.created_at, GrokMessage.id",
     )
 
 

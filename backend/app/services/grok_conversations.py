@@ -88,11 +88,17 @@ def append_message(
     content: str,
     set_title_from_user: bool = False,
     title_filenames: list[str] | None = None,
+    created_at: datetime | None = None,
 ) -> GrokMessage:
-    message = GrokMessage(conversation_id=conversation.id, role=role, content=content)
+    stamp = created_at or datetime.now(timezone.utc)
+    message = GrokMessage(
+        conversation_id=conversation.id,
+        role=role,
+        content=content,
+        created_at=stamp,
+    )
     db.add(message)
-    now = datetime.now(timezone.utc)
-    conversation.updated_at = now
+    conversation.updated_at = stamp
     if set_title_from_user and role == "user":
         conversation.title = title_from_user_line(content, title_filenames)
     db.add(conversation)
@@ -104,7 +110,7 @@ def first_user_message_content(db: Session, conversation_id: UUID) -> str | None
     row = db.scalar(
         select(GrokMessage)
         .where(GrokMessage.conversation_id == conversation_id, GrokMessage.role == "user")
-        .order_by(GrokMessage.created_at.asc())
+        .order_by(GrokMessage.created_at.asc(), GrokMessage.id.asc())
         .limit(1)
     )
     if not row:
@@ -205,7 +211,7 @@ def conversation_history(db: Session, conversation_id: UUID) -> list[dict]:
             select(GrokMessage)
             .options(selectinload(GrokMessage.files))
             .where(GrokMessage.conversation_id == conversation_id)
-            .order_by(GrokMessage.created_at.asc())
+            .order_by(GrokMessage.created_at.asc(), GrokMessage.id.asc())
         ).all()
     )
     return [
@@ -235,7 +241,7 @@ def pending_user_turn(db: Session, conversation_id: UUID) -> GrokMessage | None:
             select(GrokMessage)
             .options(selectinload(GrokMessage.files))
             .where(GrokMessage.conversation_id == conversation_id)
-            .order_by(GrokMessage.created_at.asc())
+            .order_by(GrokMessage.created_at.asc(), GrokMessage.id.asc())
         ).all()
     )
     for row in reversed(rows):
@@ -249,7 +255,7 @@ def trim_trailing_assistants(db: Session, conversation_id: UUID) -> None:
         db.scalars(
             select(GrokMessage)
             .where(GrokMessage.conversation_id == conversation_id)
-            .order_by(GrokMessage.created_at.asc())
+            .order_by(GrokMessage.created_at.asc(), GrokMessage.id.asc())
         ).all()
     )
     changed = False
