@@ -655,11 +655,21 @@ class GrokConversationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class GrokMessageFileOut(BaseModel):
+    media_id: uuid.UUID
+    filename: str
+    content_type: str
+    kind: str
+    url: str
+    byte_size: int | None = None
+
+
 class GrokMessageOut(BaseModel):
     id: uuid.UUID
     role: str
     content: str
     created_at: datetime
+    files: list[GrokMessageFileOut] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

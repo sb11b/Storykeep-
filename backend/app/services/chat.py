@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Iterator
+from typing import Any, Iterator
 from uuid import UUID
 
 import httpx
@@ -56,7 +56,9 @@ CODE_KEYWORDS = (
     "fix this",
 )
 ARTICLE_CHAR_CAP = 12_000
+ATTACHMENT_CHAR_CAP = 12_000
 MESSAGE_CHAR_CAP = 8_000
+MERGED_MESSAGE_CHAR_CAP = MESSAGE_CHAR_CAP + ATTACHMENT_CHAR_CAP
 MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
 TOTAL_CHAR_CAP = 48_000
@@ -95,6 +97,13 @@ Steve disconnected the current article (or has no article open). You are in gene
 - Do not refuse questions because no article is attached. Do not say you can only discuss the open article.
 - You are not browsing the live web; if something needs up-to-the-minute data, say so briefly and still share what you know.
 - If Steve later reconnects the article, you may use that excerpt when provided.
+"""
+
+ATTACHMENT_MODE_APPEND = """
+Steve attached files to this turn.
+- Prefer the extracted file text as source when the question is about those files.
+- If an image is included as pixels in the latest user message, look at it. If you only have a filename, say so and do not invent the picture.
+- Do not claim you received a raw upload you cannot read.
 """
 
 _rate_lock = threading.Lock()
@@ -401,30 +410,51 @@ def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
         hits.append(stamp)
 
 
-def thread_window(messages: list[dict[str, str]], limit: int = XAI_CONTEXT_MESSAGES) -> list[dict[str, str]]:
+def thread_window(messages: list[dict], limit: int = XAI_CONTEXT_MESSAGES) -> list[dict]:
     if len(messages) <= limit:
         return messages
     return messages[-limit:]
 
 
-def validate_payload(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        return " ".join(parts)
+    return ""
+
+
+def validate_payload(messages: list[dict]) -> list[dict]:
     if not messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
     if len(messages) > MAX_MESSAGES:
         raise HTTPException(status_code=400, detail="That conversation is too long. Start a new chat.")
-    cleaned: list[dict[str, str]] = []
+    cleaned: list[dict] = []
     total = 0
     for item in messages:
         role = (item.get("role") or "").strip()
         if role not in {"user", "assistant"}:
             raise HTTPException(status_code=400, detail="Messages must be from user or assistant.")
-        content = (item.get("content") or "").strip()
-        if not content:
+        content = item.get("content")
+        text = _content_text(content).strip()
+        if isinstance(content, list):
+            if not text and not any(isinstance(part, dict) and part.get("type") == "image_url" for part in content):
+                raise HTTPException(status_code=400, detail="Empty messages are not allowed.")
+            if len(text) > MERGED_MESSAGE_CHAR_CAP:
+                raise HTTPException(status_code=400, detail="A message is too long.")
+            total += len(text)
+            cleaned.append({"role": role, "content": content})
+            continue
+        if not text:
             raise HTTPException(status_code=400, detail="Empty messages are not allowed.")
-        if len(content) > MESSAGE_CHAR_CAP:
+        if len(text) > MERGED_MESSAGE_CHAR_CAP:
             raise HTTPException(status_code=400, detail="A message is too long.")
-        total += len(content)
-        cleaned.append({"role": role, "content": content})
+        total += len(text)
+        cleaned.append({"role": role, "content": text})
     if total > TOTAL_CHAR_CAP:
         raise HTTPException(status_code=400, detail="That chat payload is too large.")
     if cleaned[-1]["role"] != "user":
@@ -445,24 +475,61 @@ def article_excerpt(article: Article, limit: int = ARTICLE_CHAR_CAP) -> str:
 
 
 def build_xai_messages(
-    history: list[dict[str, str]],
+    history: list[dict],
     excerpt: str | None,
     *,
     include_article: bool,
     recap_question: bool = False,
-) -> list[dict[str, str]]:
+    has_attachments: bool = False,
+) -> list[dict]:
     if include_article and excerpt:
         system = SYSTEM_PROMPT + ARTICLE_MODE_APPEND + "\n\nCurrent article excerpt (truncated):\n" + excerpt
     else:
         system = SYSTEM_PROMPT + GENERAL_MODE_APPEND
     if recap_question:
         system += RECAP_MODE_APPEND
+    if has_attachments:
+        system += ATTACHMENT_MODE_APPEND
     windowed = thread_window(history)
     return [{"role": "system", "content": system}, *windowed]
 
 
+def messages_for_xai(
+    history: list[dict],
+    *,
+    model: str,
+    db: Any = None,
+    user: Any = None,
+) -> list[dict]:
+    from app.services.chat_attachments import merge_attachment_text, model_supports_vision, vision_parts
+
+    windowed = thread_window(history)
+    vision = model_supports_vision(model) and db is not None and user is not None
+    last = len(windowed) - 1
+    prepared: list[dict] = []
+    for index, item in enumerate(windowed):
+        files = item.get("files") or []
+        full = index == last and item.get("role") == "user"
+        text = merge_attachment_text(item.get("content") or "", files, include_extracts=full)
+        if full and vision and files:
+            parts = vision_parts(db, user, files)
+            if parts:
+                prepared.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": text or "Steve attached an image."},
+                            *parts,
+                        ],
+                    }
+                )
+                continue
+        prepared.append({"role": item.get("role") or "user", "content": text})
+    return prepared
+
+
 def stream_completion(
-    history: list[dict[str, str]],
+    history: list[dict],
     excerpt: str | None,
     *,
     include_article: bool,
@@ -470,16 +537,17 @@ def stream_completion(
     model: str,
     model_choice: str = MODEL_AUTO,
     user_id: UUID | None = None,
+    has_attachments: bool = False,
 ) -> Iterator[str]:
     key = require_key()
     validate_xai_model(model)
-    latest_user = next((item["content"] for item in reversed(history) if item.get("role") == "user"), "")
+    latest_user = next((_content_text(item.get("content")) for item in reversed(history) if item.get("role") == "user"), "")
     logger.info(
         "xAI chat start model=%s choice=%s user=%s chars=%s",
         model,
         model_choice,
         user_id,
-        len(latest_user),
+        len(latest_user or ""),
     )
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
     payload = {
@@ -489,6 +557,7 @@ def stream_completion(
             excerpt,
             include_article=include_article,
             recap_question=recap_question,
+            has_attachments=has_attachments,
         ),
         "stream": True,
         "max_tokens": max_tokens,

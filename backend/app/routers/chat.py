@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -16,8 +16,9 @@ from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models import User
 from app.routers.articles import _owned_article
-from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConversationPatchIn, GrokMessageOut
+from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConversationPatchIn, GrokMessageFileOut, GrokMessageOut
 from app.services import chat as chat_service
+from app.services import chat_attachments
 from app.services import grok_conversations as grok_store
 from app.services.demo_lock import is_locked, reject_locked
 
@@ -25,13 +26,43 @@ router = APIRouter(tags=["chat"])
 
 
 class ChatIn(BaseModel):
-    message: str = Field(min_length=1, max_length=8000)
+    message: str = Field(default="", max_length=8000)
     conversation_id: UUID | None = None
     model: str | None = None
     article_id: UUID | None = None
     include_article: bool = False
     recap_question: bool = False
     retry: bool = False
+    media_ids: list[UUID] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def require_text_or_files(self) -> "ChatIn":
+        if self.retry:
+            return self
+        if not self.message.strip() and not self.media_ids:
+            raise ValueError("Type a message or attach a file.")
+        return self
+
+
+def _file_out(row) -> GrokMessageFileOut:
+    return GrokMessageFileOut(
+        media_id=row.media_id,
+        filename=row.filename,
+        content_type=row.content_type,
+        kind=row.kind,
+        url=f"/api/v1/media/{row.media_id}",
+        byte_size=row.byte_size,
+    )
+
+
+def _message_out(row) -> GrokMessageOut:
+    return GrokMessageOut(
+        id=row.id,
+        role=row.role,
+        content=row.content,
+        created_at=row.created_at,
+        files=[_file_out(item) for item in (row.files or [])],
+    )
 
 
 def _conversation_out(row) -> GrokConversationOut:
@@ -48,7 +79,7 @@ def _conversation_detail(row) -> GrokConversationDetailOut:
         recap_question=bool(row.recap_question),
         created_at=row.created_at,
         updated_at=row.updated_at,
-        messages=[GrokMessageOut.model_validate(item) for item in row.messages],
+        messages=[_message_out(item) for item in row.messages],
     )
 
 
@@ -166,6 +197,8 @@ def chat(
     recap_question = bool(payload.recap_question)
 
     user_text = payload.message.strip()
+    media_ids = list(payload.media_ids or [])
+    current_files: list[dict] = []
 
     if persist:
         if payload.retry:
@@ -177,6 +210,18 @@ def chat(
                 raise HTTPException(status_code=400, detail="Nothing to retry on this thread.")
             user_text = pending.content.strip()
             user_message_id = pending.id
+            current_files = [
+                {
+                    "media_id": item.media_id,
+                    "filename": item.filename,
+                    "content_type": item.content_type,
+                    "kind": item.kind,
+                    "extract_text": item.extract_text or "",
+                    "byte_size": item.byte_size,
+                    "url": f"/api/v1/media/{item.media_id}",
+                }
+                for item in (pending.files or [])
+            ]
             model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
             if payload.model:
                 model_choice = chat_service.normalize_model_choice(payload.model)
@@ -194,13 +239,20 @@ def chat(
             conversation.recap_question = recap_question
             db.add(conversation)
             is_first = not conversation.messages
+            filenames = None
+            if media_ids:
+                preview = chat_attachments.preview_files(db, user, media_ids)
+                filenames = [item["filename"] for item in preview]
             user_row = grok_store.append_message(
                 db,
                 conversation,
                 role="user",
                 content=user_text,
                 set_title_from_user=is_first,
+                title_filenames=filenames,
             )
+            if media_ids:
+                chat_attachments.attach_to_message(db, user, user_row, media_ids)
             user_message_id = user_row.id
             db.commit()
             history = grok_store.conversation_history(db, conversation_id)
@@ -212,27 +264,43 @@ def chat(
             db.add(conversation)
             conversation_id = conversation.id
             is_first = True
+            filenames = None
+            if media_ids:
+                preview = chat_attachments.preview_files(db, user, media_ids)
+                filenames = [item["filename"] for item in preview]
             user_row = grok_store.append_message(
                 db,
                 conversation,
                 role="user",
                 content=user_text,
                 set_title_from_user=is_first,
+                title_filenames=filenames,
             )
+            if media_ids:
+                chat_attachments.attach_to_message(db, user, user_row, media_ids)
             user_message_id = user_row.id
             db.commit()
             history = grok_store.conversation_history(db, conversation_id)
     else:
         if payload.model:
             model_choice = chat_service.normalize_model_choice(payload.model)
-        history = [{"role": "user", "content": user_text}]
+        current_files = chat_attachments.preview_files(db, user, media_ids) if media_ids else []
+        history = [{"role": "user", "content": user_text, "files": current_files}]
 
-    history_for_xai = chat_service.validate_payload(chat_service.thread_window(history))
+    if history:
+        current_files = history[-1].get("files") or current_files
+    route_text = chat_attachments.merge_attachment_text(user_text, current_files, include_extracts=True)
+    history_for_route = [
+        {"role": item.get("role"), "content": item.get("content") or ""} for item in history
+    ]
+    history_window = chat_service.thread_window(history_for_route)
     resolved_model = chat_service.resolve_model_for_request(
         model_choice,
-        user_text,
-        history_for_xai,
+        route_text or user_text or "attached file",
+        history_window,
     )
+    prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
+    history_for_xai = chat_service.validate_payload(prepared)
     excerpt = None
     include_article = bool(payload.include_article)
     if include_article:
@@ -240,6 +308,7 @@ def chat(
             raise HTTPException(status_code=400, detail="Open an article before attaching it to chat.")
         article = _owned_article(db, user, payload.article_id)
         excerpt = chat_service.article_excerpt(article)
+    has_attachments = any(item.get("files") for item in history)
 
     def events():
         assistant_parts: list[str] = []
@@ -269,6 +338,7 @@ def chat(
                 model=resolved_model,
                 model_choice=model_choice,
                 user_id=user_id,
+                has_attachments=has_attachments,
             ):
                 assistant_parts.append(piece)
                 yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Mic, Pencil, Send, Square, X } from "lucide-react";
+import { LoaderCircle, Mic, Paperclip, Pencil, Send, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -18,6 +18,14 @@ import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "
 import type { NoteDestination } from "@/lib/destinations";
 import { folderById } from "@/lib/folders";
 import { formatChatError, withAssistantName } from "@/lib/grok-chat-error";
+import {
+  attachmentMarkdown,
+  formatFileSize,
+  LARRY_ATTACH_ACCEPT,
+  LARRY_ATTACH_MAX_FILES,
+  rejectLarryFile,
+  type LarryAttachment,
+} from "@/lib/larry-attach";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { grokModelLabel } from "@/lib/grok-model";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
@@ -29,6 +37,7 @@ export type ChatLine = {
   id: string;
   role: ChatRole;
   content: string;
+  files?: LarryAttachment[];
   error?: string | null;
   failed?: boolean;
   waiting?: boolean;
@@ -156,6 +165,7 @@ export function GrokPane({
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const stopRef = useRef<() => void>(() => {});
   const abortRef = useRef<AbortController | null>(null);
   const dictation = useDictation();
@@ -165,7 +175,11 @@ export function GrokPane({
   const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
   const [listenTarget, setListenTarget] = useState<ListenTarget | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<LarryAttachment[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const pendingListenRef = useRef(false);
+  const skipPendingClearRef = useRef(false);
   const listenTargetRef = useRef<ListenTarget | null>(null);
   const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const messagesRef = useRef(pane.messages);
@@ -233,6 +247,14 @@ export function GrokPane({
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [pane.messages]);
+
+  useEffect(() => {
+    if (skipPendingClearRef.current) {
+      skipPendingClearRef.current = false;
+      return;
+    }
+    setPendingFiles([]);
+  }, [pane.conversationId]);
 
   /** Re-read the live reply so playback never depends on stale state. */
   const resolveListenScript = useCallback(() => {
@@ -333,6 +355,7 @@ export function GrokPane({
     retry?: boolean;
     userLine?: ChatLine;
     assistantId: string;
+    mediaIds?: string[];
   }) {
     const { message, retry = false, userLine, assistantId } = options;
     abortInFlight();
@@ -359,6 +382,7 @@ export function GrokPane({
           article_id: articleId,
           include_article: includeDecision.include,
           recap_question: pane.recapQuestion,
+          media_ids: retry ? undefined : options.mediaIds,
         },
         (delta) => {
           onUpdate((current) => ({
@@ -451,11 +475,70 @@ export function GrokPane({
     }
   }
 
+  async function attachFiles(fileList: FileList | File[]) {
+    const incoming = Array.from(fileList);
+    if (!incoming.length || locked || !enabled) return;
+    const room = LARRY_ATTACH_MAX_FILES - pendingFiles.length;
+    if (room <= 0) {
+      toast.error(`Attach up to ${LARRY_ATTACH_MAX_FILES} files.`);
+      return;
+    }
+    const chosen = incoming.slice(0, room);
+    if (incoming.length > room) {
+      toast.error(`Attach up to ${LARRY_ATTACH_MAX_FILES} files.`);
+    }
+    setUploadingFiles(true);
+    try {
+      for (const file of chosen) {
+        const reason = rejectLarryFile(file);
+        if (reason) {
+          toast.error(reason);
+          continue;
+        }
+        const uploaded = await api.uploadNoteMedia(file);
+        setPendingFiles((current) => {
+          if (current.some((item) => item.media_id === uploaded.id)) return current;
+          if (current.length >= LARRY_ATTACH_MAX_FILES) return current;
+          return [
+            ...current,
+            {
+              media_id: uploaded.id,
+              filename: uploaded.filename,
+              content_type: file.type || "application/octet-stream",
+              kind: uploaded.kind,
+              url: uploaded.url,
+              byte_size: uploaded.byte_size ?? file.size,
+            },
+          ];
+        });
+      }
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not attach that file");
+    } finally {
+      setUploadingFiles(false);
+    }
+  }
+
+  function removePending(mediaId: string) {
+    setPendingFiles((current) => current.filter((item) => item.media_id !== mediaId));
+    void api.deleteNoteMedia(mediaId).catch(() => {
+      /* still drop the chip */
+    });
+  }
+
   async function send() {
     const content = pane.draft.trim();
-    if (!content || busy || !enabled) return;
-    const userLine: ChatLine = { id: crypto.randomUUID(), role: "user", content };
+    const files = pendingFiles;
+    if ((!content && !files.length) || busy || !enabled) return;
+    const userLine: ChatLine = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content,
+      files,
+    };
     const assistantId = crypto.randomUUID();
+    skipPendingClearRef.current = true;
+    setPendingFiles([]);
     onUpdate((current) => ({
       ...current,
       draft: "",
@@ -465,7 +548,12 @@ export function GrokPane({
         { id: assistantId, role: "assistant", content: "", waiting: true },
       ],
     }));
-    await runStream({ message: content, userLine, assistantId });
+    await runStream({
+      message: content || (files[0] ? `Please look at ${files.map((item) => item.filename).join(", ")}.` : ""),
+      userLine,
+      assistantId,
+      mediaIds: files.map((item) => item.media_id),
+    });
   }
 
   async function retryAssistant(assistantId: string) {
@@ -491,19 +579,31 @@ export function GrokPane({
     });
   }
 
-  async function addToNotes(content: string) {
+  async function addToNotes(content: string, assistantId?: string) {
     const body = content.trim();
     if (!body) return;
+    const fromUser =
+      assistantId != null
+        ? (() => {
+            const index = pane.messages.findIndex((item) => item.id === assistantId);
+            const prior = index > 0 ? pane.messages[index - 1] : null;
+            return prior?.role === "user" ? prior.files || [] : [];
+          })()
+        : [];
+    const extra = attachmentMarkdown(fromUser);
     try {
       if (articleId && isComposedNote(articleGuid)) {
         const existing = (articleBody || "").trim();
-        const next = existing ? `${existing}\n\n## ${label}\n\n${body}` : body;
+        const chunk = extra ? `${body}\n\n${extra}` : body;
+        const next = existing ? `${existing}\n\n## ${label}\n\n${chunk}` : chunk;
         await api.updateComposedNote(articleId, articleTitle || titleFromReply(body, label), next, pane.noteDest, false, pane.noteFolderId);
         toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
         await onSavedNote(articleId, pane.noteDest, pane.noteFolderId);
         return;
       }
-      const markdown = noteMarkdown(body, articleTitle, sourceRef || null, label);
+      const markdown = extra
+        ? `${noteMarkdown(body, articleTitle, sourceRef || null, label)}\n\n${extra}`
+        : noteMarkdown(body, articleTitle, sourceRef || null, label);
       const article = await api.composeVaultNote(
         titleFromReply(body, label),
         markdown,
@@ -796,9 +896,10 @@ export function GrokPane({
                 listening={listenTarget?.id === item.id && listen.isActive}
                 activeWord={listenTarget?.id === item.id ? activeWord : null}
                 assistantName={label}
+                files={item.files}
                 onRegisterBody={registerBody}
                 onListen={requestListen}
-                onAddToNotes={(body) => void addToNotes(body)}
+                onAddToNotes={(body) => void addToNotes(body, item.id)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
               />
             ))
@@ -816,12 +917,54 @@ export function GrokPane({
         </p>
       ) : null}
       <form
-        className="flex shrink-0 flex-col gap-1.5 border-t p-2"
+        className={cn(
+          "flex shrink-0 flex-col gap-1.5 border-t p-2",
+          dragOver && "bg-primary/5",
+        )}
         onSubmit={(event) => {
           event.preventDefault();
           void send();
         }}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          if (enabled && !locked) setDragOver(true);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (enabled && !locked) setDragOver(true);
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+          setDragOver(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragOver(false);
+          void attachFiles(event.dataTransfer.files);
+        }}
       >
+        {pendingFiles.length ? (
+          <ul className="flex flex-wrap gap-1.5" aria-label="Files to send">
+            {pendingFiles.map((file) => (
+              <li
+                key={file.media_id}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+              >
+                <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="truncate">{file.filename}</span>
+                <span className="shrink-0 text-muted-foreground">{formatFileSize(file.byte_size)}</span>
+                <button
+                  type="button"
+                  className="rounded-full p-0.5 hover:bg-background"
+                  aria-label={`Remove ${file.filename}`}
+                  onClick={() => removePending(file.media_id)}
+                >
+                  <X className="size-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <div className="flex gap-2">
           <Textarea
             ref={draftRef}
@@ -846,6 +989,30 @@ export function GrokPane({
               }
             }}
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="sr-only"
+            accept={LARRY_ATTACH_ACCEPT}
+            multiple
+            onChange={(event) => {
+              const files = event.target.files;
+              event.target.value = "";
+              if (files?.length) void attachFiles(files);
+            }}
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="size-9 shrink-0 self-end"
+            disabled={!enabled || locked || uploadingFiles || pendingFiles.length >= LARRY_ATTACH_MAX_FILES}
+            aria-label="Attach files"
+            title="Attach PDF, text, or an image"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {uploadingFiles ? <LoaderCircle className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
+          </Button>
           {sttEnabled && !locked ? (
             <div className="flex shrink-0 flex-col gap-1">
               <Button
@@ -892,7 +1059,7 @@ export function GrokPane({
               </Button>
             </div>
           ) : null}
-          <Button type="submit" size="icon" className="size-9 shrink-0 self-end" disabled={busy || !pane.draft.trim() || !enabled} aria-label="Send">
+          <Button type="submit" size="icon" className="size-9 shrink-0 self-end" disabled={busy || !enabled || (!pane.draft.trim() && !pendingFiles.length)} aria-label="Send">
             {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
           </Button>
         </div>
@@ -900,6 +1067,9 @@ export function GrokPane({
           <p className="text-[10px] text-muted-foreground">
             {dictation.sessionContinuous ? "Continuous — speak, then pause; Stop when done." : "Listening — one utterance…"}
           </p>
+        ) : null}
+        {dragOver ? (
+          <p className="text-[10px] text-muted-foreground">Drop files here — PDF, text, or an image, up to 10 MB.</p>
         ) : null}
       </form>
     </div>

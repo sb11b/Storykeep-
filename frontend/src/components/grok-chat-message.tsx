@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Copy, LoaderCircle, NotebookPen, Volume2 } from "lucide-react";
+import { Copy, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
+import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ export function GrokChatMessage({
   id,
   role,
   content,
+  files = [],
   assistantName = DEFAULT_PANE_NAME,
   error,
   failed,
@@ -31,6 +33,7 @@ export function GrokChatMessage({
   id: string;
   role: "user" | "assistant";
   content: string;
+  files?: LarryAttachment[];
   /** Custom pane name, e.g. "Larry (the asparagus)". */
   assistantName?: string;
   error?: string | null;
@@ -93,6 +96,22 @@ export function GrokChatMessage({
         )
       ) : waiting && !failed ? (
         <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+      ) : null}
+      {role === "user" && files.length ? (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {files.map((file) => (
+            <li
+              key={file.media_id}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px]"
+            >
+              <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <a href={file.url} target="_blank" rel="noreferrer" className="truncate hover:underline">
+                {file.filename}
+              </a>
+              <span className="shrink-0 text-muted-foreground">{formatFileSize(file.byte_size)}</span>
+            </li>
+          ))}
+        </ul>
       ) : null}
       {failed && error ? (
         <p className="mt-1 text-xs text-destructive whitespace-pre-wrap">{error}</p>

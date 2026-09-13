@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Article, Feed, NoteMedia, OverlayAddition, User
+from app.models import Article, Feed, GrokMessageFile, NoteMedia, OverlayAddition, User
 from app.services.vault_paths import windows_safe_component
 
 MAX_MEDIA_BYTES = 10 * 1024 * 1024
@@ -130,6 +130,8 @@ def media_is_referenced(db: Session, user: User, media_id: UUID) -> bool:
         hay = f"{row.content_text or ''}\n{row.content_html or ''}"
         if token in hay:
             return True
+    if db.scalar(select(GrokMessageFile.id).where(GrokMessageFile.media_id == media_id).limit(1)):
+        return True
     return False
 
 

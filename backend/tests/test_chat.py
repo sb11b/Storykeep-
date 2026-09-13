@@ -18,7 +18,7 @@ class ChatGuardTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             validate_payload([{"role": "assistant", "content": "hi"}])
         with self.assertRaises(HTTPException):
-            validate_payload([{"role": "user", "content": "x" * 9000}])
+            validate_payload([{"role": "user", "content": "x" * 25_000}])
         cleaned = validate_payload([{"role": "user", "content": "What is this about?"}])
         self.assertEqual(cleaned[0]["role"], "user")
 

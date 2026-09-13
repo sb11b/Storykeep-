@@ -401,6 +401,32 @@ class GrokMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[GrokConversation] = relationship(back_populates="messages")
+    files: Mapped[list["GrokMessageFile"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="GrokMessageFile.created_at",
+    )
+
+
+class GrokMessageFile(Base):
+    __tablename__ = "grok_message_files"
+    __table_args__ = (UniqueConstraint("message_id", "media_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grok_messages.id", ondelete="CASCADE")
+    )
+    media_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("note_media.id", ondelete="CASCADE")
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    extract_text: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    message: Mapped[GrokMessage] = relationship(back_populates="files")
 
 
 class AuthChallenge(Base):

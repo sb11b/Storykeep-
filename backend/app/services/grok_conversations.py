@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import GrokConversation, GrokMessage, User
 from app.services.demo_lock import is_locked
@@ -17,8 +17,10 @@ def should_persist(user: User) -> bool:
     return not is_locked(user)
 
 
-def title_from_user_line(content: str) -> str:
+def title_from_user_line(content: str, filenames: list[str] | None = None) -> str:
     line = (content or "").strip().split("\n", 1)[0].strip()
+    if not line and filenames:
+        line = (filenames[0] or "").strip()
     if not line:
         return "New chat"
     one_line = " ".join(line.split())
@@ -54,8 +56,13 @@ def list_conversations(db: Session, user: User) -> list[GrokConversation]:
 
 
 def get_conversation(db: Session, user: User, conversation_id: UUID) -> GrokConversation:
-    row = owned_conversation(db, user, conversation_id)
-    _ = row.messages
+    row = db.scalar(
+        select(GrokConversation)
+        .options(selectinload(GrokConversation.messages).selectinload(GrokMessage.files))
+        .where(GrokConversation.id == conversation_id, GrokConversation.user_id == user.id)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
     return row
 
 
@@ -79,13 +86,14 @@ def append_message(
     role: str,
     content: str,
     set_title_from_user: bool = False,
+    title_filenames: list[str] | None = None,
 ) -> GrokMessage:
     message = GrokMessage(conversation_id=conversation.id, role=role, content=content)
     db.add(message)
     now = datetime.now(timezone.utc)
     conversation.updated_at = now
     if set_title_from_user and role == "user":
-        conversation.title = title_from_user_line(content)
+        conversation.title = title_from_user_line(content, title_filenames)
     db.add(conversation)
     db.flush()
     return message
@@ -177,19 +185,41 @@ def delete_conversation(db: Session, user: User, conversation_id: UUID) -> None:
     db.delete(row)
 
 
-def conversation_history(db: Session, conversation_id: UUID) -> list[dict[str, str]]:
-    rows = db.scalars(
-        select(GrokMessage)
-        .where(GrokMessage.conversation_id == conversation_id)
-        .order_by(GrokMessage.created_at.asc())
-    ).all()
-    return [{"role": row.role, "content": row.content} for row in rows]
+def conversation_history(db: Session, conversation_id: UUID) -> list[dict]:
+    rows = list(
+        db.scalars(
+            select(GrokMessage)
+            .options(selectinload(GrokMessage.files))
+            .where(GrokMessage.conversation_id == conversation_id)
+            .order_by(GrokMessage.created_at.asc())
+        ).all()
+    )
+    return [
+        {
+            "role": row.role,
+            "content": row.content,
+            "files": [
+                {
+                    "media_id": item.media_id,
+                    "filename": item.filename,
+                    "content_type": item.content_type,
+                    "kind": item.kind,
+                    "extract_text": item.extract_text or "",
+                    "byte_size": item.byte_size,
+                    "url": f"/api/v1/media/{item.media_id}",
+                }
+                for item in (row.files or [])
+            ],
+        }
+        for row in rows
+    ]
 
 
 def pending_user_turn(db: Session, conversation_id: UUID) -> GrokMessage | None:
     rows = list(
         db.scalars(
             select(GrokMessage)
+            .options(selectinload(GrokMessage.files))
             .where(GrokMessage.conversation_id == conversation_id)
             .order_by(GrokMessage.created_at.asc())
         ).all()

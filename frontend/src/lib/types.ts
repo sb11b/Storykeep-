@@ -272,11 +272,21 @@ export type GrokConversation = {
   updated_at: string;
 };
 
+export type GrokMessageFile = {
+  media_id: string;
+  filename: string;
+  content_type: string;
+  kind: "image" | "file";
+  url: string;
+  byte_size?: number | null;
+};
+
 export type GrokMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  files?: GrokMessageFile[];
 };
 
 export type GrokConversationDetail = GrokConversation & {

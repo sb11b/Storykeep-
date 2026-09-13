@@ -195,6 +195,7 @@ async def upload_note_media(
         "markdown": markdown_for_media(row),
         "filename": row.filename,
         "kind": kind,
+        "byte_size": row.byte_size,
     }
 
 

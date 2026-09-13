@@ -31,7 +31,7 @@ def suffix_of(filename: str) -> str:
     return PurePosixPath((filename or "").replace("\\", "/")).suffix.lower()
 
 
-def extract_document(filename: str, payload: bytes) -> tuple[str, str]:
+def extract_document(filename: str, payload: bytes, *, max_pdf_pages: int | None = None) -> tuple[str, str]:
     name = PurePosixPath((filename or "upload").replace("\\", "/")).name or "upload"
     suffix = suffix_of(name)
     if suffix == ".doc":
@@ -45,7 +45,7 @@ def extract_document(filename: str, payload: bytes) -> tuple[str, str]:
     text = ""
     try:
         if suffix == ".pdf":
-            text = _pdf(payload)
+            text = _pdf(payload, max_pages=max_pdf_pages)
         elif suffix == ".docx":
             text = _docx(payload)
         elif suffix == ".pptx":
@@ -78,12 +78,14 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
-def _pdf(payload: bytes) -> str:
+def _pdf(payload: bytes, max_pages: int | None = None) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(payload))
     pages = []
-    for page in reader.pages:
+    for index, page in enumerate(reader.pages):
+        if max_pages is not None and index >= max_pages:
+            break
         pages.append(page.extract_text() or "")
     return "\n\n".join(pages)
 

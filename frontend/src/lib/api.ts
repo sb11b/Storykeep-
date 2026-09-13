@@ -37,6 +37,7 @@ export type NoteMediaUpload = {
   markdown: string;
   filename: string;
   kind: "image" | "file";
+  byte_size?: number | null;
 };
 
 async function uploadNoteMedia(file: File): Promise<NoteMediaUpload> {
@@ -595,6 +596,7 @@ export const api = {
       include_article: boolean;
       recap_question?: boolean;
       retry?: boolean;
+      media_ids?: string[];
     },
     onDelta: (text: string) => void,
     onMeta?: (meta: GrokStreamMeta) => void,
