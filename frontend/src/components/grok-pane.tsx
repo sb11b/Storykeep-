@@ -17,7 +17,8 @@ import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-l
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
+import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
+import type { NoteDestination } from "@/lib/destinations";
 import { folderById } from "@/lib/folders";
 import { formatChatError } from "@/lib/grok-chat-error";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
@@ -45,7 +46,7 @@ export type GrokPaneState = {
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
-  noteDest: NoteDestination;
+  noteDest: FilingDestination;
   noteFolderId: string | null;
   recapQuestion: boolean;
 };
@@ -118,6 +119,8 @@ export function GrokPane({
   onRenameDraftChange,
   onCommitRename,
   onCancelRename,
+  customShelves = [],
+  onCreateNoteShelf,
 }: {
   pane: GrokPaneState;
   label: string;
@@ -128,6 +131,8 @@ export function GrokPane({
   onRenameDraftChange?: (value: string) => void;
   onCommitRename?: () => void;
   onCancelRename?: () => void;
+  customShelves?: CustomNoteShelf[];
+  onCreateNoteShelf?: () => void | Promise<void>;
   focused?: boolean;
   canRemove?: boolean;
   articleId: string | null;
@@ -144,7 +149,7 @@ export function GrokPane({
   onFocus: () => void;
   onUpdate: (updater: (pane: GrokPaneState) => GrokPaneState) => void;
   onRemove?: () => void;
-  onSavedNote: (noteId?: string, destination?: NoteDestination, folderId?: string | null) => Promise<void>;
+  onSavedNote: (noteId?: string, destination?: FilingDestination, folderId?: string | null) => Promise<void>;
   onActivateListen: (stop: (() => void) | null) => void;
   onStopArticleListen?: () => void;
   onHistoryChanged?: () => void;
@@ -469,8 +474,8 @@ export function GrokPane({
       const folderName = folderById(folders, pane.noteFolderId)?.name;
       toast.success(
         folderName
-          ? `Saved to StoryKeep/${DESTINATION_LABEL[pane.noteDest]}/${folderName}.`
-          : `Saved to StoryKeep/${DESTINATION_LABEL[pane.noteDest]}.`,
+          ? `Saved to StoryKeep/${destinationLabel(pane.noteDest, customShelves)}/${folderName}.`
+          : `Saved to StoryKeep/${destinationLabel(pane.noteDest, customShelves)}.`,
       );
       await onSavedNote(article.id, pane.noteDest, pane.noteFolderId);
     } catch (error) {
@@ -519,7 +524,7 @@ export function GrokPane({
     }
   }
 
-  function handleNoteDestChange(next: NoteDestination | "") {
+  function handleNoteDestChange(next: FilingDestination | "") {
     if (!next) return;
     patch({ noteDest: next, noteFolderId: null });
   }
@@ -606,7 +611,7 @@ export function GrokPane({
               <DropdownMenuContent align="start" className="min-w-36">
                 <DropdownMenuItem onClick={() => onStartRename()}>
                   <Pencil className="size-3.5" />
-                  Rename pane
+                  Rename
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -684,6 +689,8 @@ export function GrokPane({
             <DestinationSelect
               value={pane.noteDest}
               onChange={handleNoteDestChange}
+              customShelves={customShelves}
+              onCreateShelf={onCreateNoteShelf}
               className="max-w-[6.5rem] text-[11px]"
             />
             <FolderSelect

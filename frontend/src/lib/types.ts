@@ -328,7 +328,7 @@ export type FolderShelfKind = "vault" | "additions" | "books" | "notes" | "schoo
 
 export type Folder = {
   id: string;
-  shelf: FolderShelfKind;
+  shelf: string;
   name: string;
   item_count: number;
   created_at: string;
@@ -344,6 +344,7 @@ export type Shelf =
   | { kind: "books"; folderId?: string }
   | { kind: "notes"; folderId?: string }
   | { kind: "schoolwork"; folderId?: string }
+  | { kind: "custom"; id: string; folderId?: string }
   | { kind: "feed"; id: string }
   | { kind: "category"; id: string }
   | { kind: "tag"; id: string }

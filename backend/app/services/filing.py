@@ -45,7 +45,7 @@ def set_article_filing(
         article.destination = None
         article.folder_id = None
     else:
-        dest = normalize_destination(destination)
+        dest = normalize_destination(destination, user)
         article.destination = dest
         if folder_id is not _UNSET:
             if folder_id is None:

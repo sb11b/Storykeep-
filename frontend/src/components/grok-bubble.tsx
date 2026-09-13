@@ -16,7 +16,7 @@ import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
 import { grokModelLabel } from "@/lib/grok-model";
 import type { GrokConversation, TtsVoice } from "@/lib/types";
-import type { NoteDestination } from "@/lib/destinations";
+import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import {
   labelsFromPanes,
   loadSavedGrokPanes,
@@ -81,7 +81,7 @@ export function GrokBubble({
   articleGuid?: string | null;
   sourceRef?: string | null;
   articleBody?: string | null;
-  onSavedNote: (noteId?: string, destination?: NoteDestination, folderId?: string | null) => Promise<void>;
+  onSavedNote: (noteId?: string, destination?: FilingDestination, folderId?: string | null) => Promise<void>;
   onStopArticleListen?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -108,6 +108,7 @@ export function GrokBubble({
   const [paneRenameDraft, setPaneRenameDraft] = useState("");
   const paneRenameInputRef = useRef<HTMLInputElement>(null);
   const paneLabelsLoadedRef = useRef(false);
+  const [customShelves, setCustomShelves] = useState<CustomNoteShelf[]>([]);
   const [listening, setListening] = useState(false);
   const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
@@ -139,6 +140,7 @@ export function GrokBubble({
     void api
       .getPreferences()
       .then((prefs) => {
+        setCustomShelves(parseCustomNoteShelves(prefs));
         const labels = prefs.grok_pane_labels as Record<string, string> | undefined;
         if (!labels || !Object.keys(labels).length) return;
         setPanes((current) => mergePreferenceLabels(current, labels));
@@ -147,6 +149,20 @@ export function GrokBubble({
         /* ignore */
       });
   }, []);
+
+  async function createNoteShelf() {
+    const name = window.prompt("New shelf name:")?.trim();
+    if (!name) return;
+    const id = uniqueShelfId(name, customShelves);
+    const next = [...customShelves, { id, name }];
+    try {
+      const prefs = await api.updatePreferences({ custom_note_shelves: next });
+      setCustomShelves(parseCustomNoteShelves(prefs));
+      updatePane(focusedPaneId, (pane) => ({ ...pane, noteDest: id, noteFolderId: null }));
+    } catch {
+      /* ignore */
+    }
+  }
 
   useEffect(() => {
     if (!mounted) return;
@@ -614,7 +630,7 @@ export function GrokBubble({
       >
         <Sparkles className="size-4 text-primary" />
         <div className="min-w-0 flex-1">
-          {renamingPaneId === focusedPaneId && !fullscreen ? (
+          {renamingPaneId === focusedPaneId ? (
             <Input
               ref={paneRenameInputRef}
               value={paneRenameDraft}
@@ -647,7 +663,7 @@ export function GrokBubble({
             {fullscreen ? `${panes.length} pane${panes.length === 1 ? "" : "s"}` : subtitle}
           </p>
         </div>
-        {!fullscreen && renamingPaneId !== focusedPaneId ? (
+        {renamingPaneId !== focusedPaneId ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -659,7 +675,7 @@ export function GrokBubble({
             <DropdownMenuContent align="start" className="min-w-36">
               <DropdownMenuItem onClick={() => startPaneRename(focusedPaneId)}>
                 <Pencil className="size-3.5" />
-                Rename pane
+                Rename
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -721,6 +737,8 @@ export function GrokBubble({
                   persist={persist}
                   panelOpen={open}
                   ttsVoices={ttsVoices}
+                  customShelves={customShelves}
+                  onCreateNoteShelf={createNoteShelf}
                 />
               </div>
             ))}
@@ -729,6 +747,7 @@ export function GrokBubble({
           <GrokPane
             pane={focusedPane}
             label={focusedPane.displayName}
+            {...paneRenameProps(focusedPane.id)}
             articleId={articleId}
             articleTitle={articleTitle}
             articleGuid={articleGuid}
@@ -748,6 +767,8 @@ export function GrokBubble({
             persist={persist}
             panelOpen={open}
             ttsVoices={ttsVoices}
+            customShelves={customShelves}
+            onCreateNoteShelf={createNoteShelf}
           />
         )}
       </div>

@@ -4,17 +4,20 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.sql import ColumnElement
 
 from app.models import Article, Feed, User
+from app.services.custom_note_shelves import is_custom_note_shelf
 
 DESTINATIONS = ("vault", "additions", "books", "notes", "schoolwork")
 FOLDER_SHELVES = DESTINATIONS
 DEFAULT_DESTINATION = "additions"
 
 
-def normalize_destination(value: str | None) -> str:
+def normalize_destination(value: str | None, user: User | None = None) -> str:
     raw = (value or DEFAULT_DESTINATION).strip().lower()
-    if raw not in DESTINATIONS:
-        raise ValueError("Destination must be Vault, Additions, Books, Notes, or Schoolwork.")
-    return raw
+    if raw in DESTINATIONS:
+        return raw
+    if user and is_custom_note_shelf(user, raw):
+        return raw
+    raise ValueError("Destination must be Vault, Additions, Books, Notes, Schoolwork, or a custom shelf.")
 
 
 def is_composed_guid(guid: str | None) -> bool:
@@ -54,8 +57,10 @@ def source_kind_for_destination(destination: str) -> str:
     return "textbook" if destination == "books" else "obsidian"
 
 
-def apply_destination(article: Article, destination: str, is_correction: bool | None = None) -> None:
-    dest = normalize_destination(destination)
+def apply_destination(
+    article: Article, destination: str, is_correction: bool | None = None, user: User | None = None
+) -> None:
+    dest = normalize_destination(destination, user)
     article.destination = dest
     article.source_kind = source_kind_for_destination(dest)
     if is_correction is not None:
@@ -82,15 +87,13 @@ def shelf_where(shelf: str) -> ColumnElement[bool] | None:
         return or_(and_(composed, dest == "notes"), filed)
     if shelf == "schoolwork":
         return or_(and_(composed, dest == "schoolwork"), filed)
-    return None
+    return or_(and_(composed, dest == shelf), filed)
 
 
 def apply_shelf_filter(stmt, shelf: str | None):
     if not shelf:
         return stmt
     clause = shelf_where(shelf)
-    if clause is None:
-        return stmt
     return stmt.where(clause)
 
 

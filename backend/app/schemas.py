@@ -572,12 +572,18 @@ class MePatchIn(BaseModel):
     appearance: AppearancePreferencesIn | None = None
 
 
+class CustomNoteShelfIn(BaseModel):
+    id: str = Field(min_length=1, max_length=16)
+    name: str = Field(min_length=1, max_length=80)
+
+
 class PreferencesIn(BaseModel):
     theme: str | None = None
     items_per_page: int | None = Field(default=None, ge=10, le=200)
     mark_read_on_open: bool | None = None
     tts_voice_id: str | None = Field(default=None, max_length=64)
     grok_pane_labels: dict[str, str] | None = None
+    custom_note_shelves: list[CustomNoteShelfIn] | None = None
     appearance: AppearancePreferencesIn | None = None
 
 

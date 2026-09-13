@@ -6,16 +6,19 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Article, Feed, Folder, User
+from app.services.custom_note_shelves import is_custom_note_shelf
 from app.services.destination import FOLDER_SHELVES, apply_shelf_filter, normalize_destination
 
 FOLDER_SHELF_SET = set(FOLDER_SHELVES)
 
 
-def normalize_folder_shelf(shelf: str) -> str:
+def normalize_folder_shelf(shelf: str, user: User | None = None) -> str:
     raw = (shelf or "").strip().lower()
-    if raw not in FOLDER_SHELF_SET:
-        raise ValueError("Folder shelf must be Vault, Additions, Books, Notes, or Schoolwork.")
-    return raw
+    if raw in FOLDER_SHELF_SET:
+        return raw
+    if user and is_custom_note_shelf(user, raw):
+        return raw
+    raise ValueError("Folder shelf must be Vault, Additions, Books, Notes, Schoolwork, or a custom shelf.")
 
 
 def normalize_folder_name(name: str) -> str:
@@ -45,13 +48,13 @@ def folder_item_count(db: Session, user: User, folder: Folder) -> int:
 def list_folders(db: Session, user: User, shelf: str | None = None) -> list[tuple[Folder, int]]:
     stmt = select(Folder).where(Folder.user_id == user.id)
     if shelf:
-        stmt = stmt.where(Folder.shelf == normalize_folder_shelf(shelf))
+        stmt = stmt.where(Folder.shelf == normalize_folder_shelf(shelf, user))
     rows = db.scalars(stmt.order_by(Folder.shelf.asc(), Folder.name.asc())).all()
     return [(row, folder_item_count(db, user, row)) for row in rows]
 
 
 def create_folder(db: Session, user: User, shelf: str, name: str) -> Folder:
-    shelf_norm = normalize_folder_shelf(shelf)
+    shelf_norm = normalize_folder_shelf(shelf, user)
     label = normalize_folder_name(name)
     existing = db.scalar(
         select(Folder).where(Folder.user_id == user.id, Folder.shelf == shelf_norm, Folder.name == label)
@@ -105,7 +108,7 @@ def resolve_folder_id(db: Session, user: User, destination: str, folder_id: UUID
     row = get_folder(db, user, folder_id)
     if not row:
         raise ValueError("Folder not found.")
-    dest = normalize_destination(destination)
+    dest = normalize_destination(destination, user)
     if row.shelf != dest:
         raise ValueError("That folder belongs to a different shelf.")
     return row.id

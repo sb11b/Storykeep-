@@ -32,7 +32,7 @@ import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
 import { ArticleShareMenu } from "@/components/article-share-menu";
-import { CorrectionCheck, DestinationSelect, FolderSelect } from "@/components/destination-controls";
+import { CorrectionCheck, DestinationSelect, FolderSelect, RssShelfSelect } from "@/components/destination-controls";
 import { NoteAttachmentChips } from "@/components/note-attachments";
 import { NoteComposer } from "@/components/note-composer";
 import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
@@ -86,8 +86,22 @@ import {
   writeArticleTextSize,
   type ArticleTextSize,
 } from "@/lib/reader-text-size";
-import { asDestination, DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
-import { folderById, foldersForShelf, isFolderShelf, matchFolderByName, shelfFolderId } from "@/lib/folders";
+import { asDestination, DESTINATION_LABEL, NOTE_DESTINATIONS, type NoteDestination } from "@/lib/destinations";
+import {
+  destinationLabel,
+  parseCustomNoteShelves,
+  uniqueShelfId,
+  type CustomNoteShelf,
+  type FilingDestination,
+} from "@/lib/custom-note-shelves";
+import {
+  folderById,
+  foldersForShelf,
+  isFolderShelf,
+  matchFolderByName,
+  shelfFolderId,
+  shelfFromFilingDestination,
+} from "@/lib/folders";
 import { wordIndexFromSelection } from "@/lib/tts-words";
 import {
   buildVisibleSpeechScript,
@@ -124,8 +138,13 @@ function isVaultImport(article: Article): boolean {
 
 const RSS_SHELF_KEY = "storykeep-rss-shelf-id";
 
-function displayArticleShelf(article: Article): NoteDestination | "" {
-  if (article.destination) return asDestination(article.destination, "notes");
+function displayArticleShelf(article: Article): FilingDestination | "" {
+  if (article.destination) {
+    if (NOTE_DESTINATIONS.includes(article.destination as NoteDestination)) {
+      return asDestination(article.destination, "notes");
+    }
+    return article.destination;
+  }
   if (article.source_kind === "textbook") return "books";
   return "";
 }
@@ -150,7 +169,14 @@ function composedNoteHtml(article: Article): string {
   return "";
 }
 
-function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: Tag[], folders: Folder[]): string {
+function shelfTitle(
+  shelf: Shelf,
+  feeds: Feed[],
+  categories: Category[],
+  tags: Tag[],
+  folders: Folder[],
+  customNoteShelves: CustomNoteShelf[],
+): string {
   switch (shelf.kind) {
     case "inbox":
       return "All stories";
@@ -180,6 +206,11 @@ function shelfTitle(shelf: Shelf, feeds: Feed[], categories: Category[], tags: T
       const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
       return folder ? `${folder.name} · Schoolwork` : "Schoolwork";
     }
+    case "custom": {
+      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
+      const label = destinationLabel(shelf.id, customNoteShelves);
+      return folder ? `${folder.name} · ${label}` : label;
+    }
     case "search":
       return `Search: ${shelf.q}`;
     case "feed":
@@ -199,6 +230,8 @@ function shelfKey(shelf: Shelf): string {
       return `${shelf.kind}:${shelf.id}`;
     case "search":
       return `search:${shelf.q}`;
+    case "custom":
+      return shelf.folderId ? `custom:${shelf.id}:folder:${shelf.folderId}` : `custom:${shelf.id}`;
     default:
       if (isFolderShelf(shelf) && shelf.folderId) return `${shelf.kind}:folder:${shelf.folderId}`;
       return shelf.kind;
@@ -213,6 +246,12 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   useEffect(() => {
     applyAppearanceFromUser(user);
   }, [user]);
+  const [customNoteShelves, setCustomNoteShelves] = useState<CustomNoteShelf[]>(() =>
+    parseCustomNoteShelves(user.preferences),
+  );
+  useEffect(() => {
+    setCustomNoteShelves(parseCustomNoteShelves(user.preferences));
+  }, [user.preferences]);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [rssShelves, setRssShelves] = useState<RssShelf[]>([]);
@@ -404,6 +443,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     if (shelf.kind === "books") params.shelf = "books";
     if (shelf.kind === "notes") params.shelf = "notes";
     if (shelf.kind === "schoolwork") params.shelf = "schoolwork";
+    if (shelf.kind === "custom") params.shelf = shelf.id;
     const folderId = shelfFolderId(shelf);
     if (folderId) params.folder_id = folderId;
     if (shelf.kind === "feed") params.feed_id = shelf.id;
@@ -859,15 +899,34 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     }
   }
 
-  async function onAddRssShelf() {
+  async function onAddRssShelf(): Promise<string | null> {
     const name = window.prompt("New shelf name:")?.trim();
-    if (!name) return;
+    if (!name) return null;
     try {
       const row = await api.createRssShelf(name);
       await loadNav(row.id);
       toast.success(`Added shelf ${row.name}`);
+      return row.id;
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not add that shelf");
+      return null;
+    }
+  }
+
+  async function onCreateNoteShelf(): Promise<string | null> {
+    const name = window.prompt("New shelf name:")?.trim();
+    if (!name) return null;
+    const id = uniqueShelfId(name, customNoteShelves);
+    const next = [...customNoteShelves, { id, name }];
+    try {
+      const prefs = await api.updatePreferences({ custom_note_shelves: next });
+      setCustomNoteShelves(parseCustomNoteShelves(prefs));
+      await loadNav();
+      toast.success(`Added shelf ${name}`);
+      return id;
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not add that shelf");
+      return null;
     }
   }
 
@@ -955,8 +1014,9 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     await Promise.all([loadNav(), loadList()]);
   }
 
-  async function createFolderOnShelf(shelfKind: NoteDestination) {
-    const name = window.prompt(`Name for the new ${DESTINATION_LABEL[shelfKind]} folder:`)?.trim();
+  async function createFolderOnShelf(shelfKind: FilingDestination) {
+    const label = destinationLabel(shelfKind, customNoteShelves);
+    const name = window.prompt(`Name for the new ${label} folder:`)?.trim();
     if (!name) return null;
     try {
       const row = await api.createFolder(shelfKind, name);
@@ -982,11 +1042,13 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   }
 
   async function deleteFolderRow(folder: Folder) {
-    if (!window.confirm(`Delete folder “${folder.name}”? Notes stay on ${DESTINATION_LABEL[folder.shelf]}.`)) return;
+    const shelfLabel = destinationLabel(folder.shelf, customNoteShelves);
+    if (!window.confirm(`Delete folder “${folder.name}”? Notes stay on ${shelfLabel}.`)) return;
     try {
       await api.deleteFolder(folder.id);
       if (isFolderShelf(shelf) && shelf.folderId === folder.id) {
-        setShelf({ kind: shelf.kind });
+        if (shelf.kind === "custom") setShelf({ kind: "custom", id: shelf.id });
+        else setShelf({ kind: shelf.kind });
       }
       await Promise.all([loadNav(), loadList()]);
       toast.success("Folder deleted. Notes moved to the shelf root.");
@@ -1015,6 +1077,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       groupedFeeds={groupedFeeds}
       tags={tags}
       folders={folders}
+      customNoteShelves={customNoteShelves}
       onCreateFolder={(shelfKind) => createFolderOnShelf(shelfKind)}
       onRenameFolder={(folder) => void renameFolderRow(folder)}
       onDeleteFolder={(folder) => void deleteFolderRow(folder)}
@@ -1186,7 +1249,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags, folders)}</h1>
+                  <h1 className="font-[family-name:var(--font-serif)] text-xl">{shelfTitle(shelf, feeds, categories, tags, folders, customNoteShelves)}</h1>
                   <p className="text-xs text-muted-foreground">{listRangeLabel(items.length, total, shelf.kind)}</p>
                 </div>
                 {shelfSupportsUnreadFilter(shelf) ? (
@@ -1343,6 +1406,8 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                 article={article}
                 tags={tags}
                 folders={folders}
+                customNoteShelves={customNoteShelves}
+                onCreateNoteShelf={onCreateNoteShelf}
                 onCreateFolder={createFolderOnShelf}
                 listenRef={listenRef}
                 noteFocusRef={noteFocusRef}
@@ -1576,7 +1641,10 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         activeRssShelfId={activeRssShelfId}
         categories={categories}
         folders={folders}
+        customNoteShelves={customNoteShelves}
         onCreateFolder={createFolderOnShelf}
+        onCreateNoteShelf={onCreateNoteShelf}
+        onAddRssShelf={onAddRssShelf}
         onOpenChange={setAddOpen}
         onAdded={async () => {
           await Promise.all([loadNav(), loadList()]);
@@ -1588,7 +1656,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         }}
         onCreatedNote={async (articleId, destination, folderId) => {
           openArticle(articleId);
-          setShelf(folderId ? { kind: destination, folderId } : { kind: destination });
+          setShelf(shelfFromFilingDestination(destination, folderId));
           setReaderFull(true);
           await loadNav();
         }}
@@ -1653,7 +1721,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           await loadNav();
           const currentId = selectedIdRef.current;
           if (noteId && noteId !== currentId) {
-            setShelf(folderId ? { kind: destination || "notes", folderId } : { kind: destination || "notes" });
+            setShelf(shelfFromFilingDestination(destination || "notes", folderId));
             openArticle(noteId);
             return;
           }
@@ -1668,7 +1736,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
 }
 
 function ShelfWithFolders({
-  kind,
+  shelfId,
   label,
   icon,
   count,
@@ -1679,23 +1747,25 @@ function ShelfWithFolders({
   onRenameFolder,
   onDeleteFolder,
 }: {
-  kind: NoteDestination;
+  shelfId: FilingDestination;
   label: string;
   icon: React.ReactNode;
   count?: number;
   shelf: Shelf;
   folders: Folder[];
   onShelf: (shelf: Shelf) => void;
-  onCreateFolder: (shelf: NoteDestination) => Promise<string | null>;
+  onCreateFolder: (shelf: FilingDestination) => Promise<string | null>;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
 }) {
-  const rows = foldersForShelf(folders, kind);
-  const shelfActive = shelf.kind === kind && !shelfFolderId(shelf);
+  const rows = foldersForShelf(folders, shelfId);
+  const shelfActive =
+    (shelf.kind === shelfId || (shelf.kind === "custom" && shelf.id === shelfId)) && !shelfFolderId(shelf);
+  const openShelf = (folderId?: string) => onShelf(shelfFromFilingDestination(shelfId, folderId));
   return (
     <div className="mb-0.5">
       <div className="flex items-center gap-0.5">
-        <NavButton active={shelfActive} onClick={() => onShelf({ kind })} icon={icon} count={count} className="flex-1">
+        <NavButton active={shelfActive} onClick={() => openShelf()} icon={icon} count={count} className="flex-1">
           {label}
         </NavButton>
         <Button
@@ -1704,7 +1774,7 @@ function ShelfWithFolders({
           variant="ghost"
           className="shrink-0 text-sidebar-foreground/55 hover:text-sidebar-foreground"
           aria-label={`New ${label} folder`}
-          onClick={() => void onCreateFolder(kind)}
+          onClick={() => void onCreateFolder(shelfId)}
         >
           <Plus className="size-3.5" />
         </Button>
@@ -1712,8 +1782,8 @@ function ShelfWithFolders({
       {rows.map((folder) => (
         <div key={folder.id} className="group flex items-center gap-0.5 pl-3">
           <NavButton
-            active={shelf.kind === kind && shelf.folderId === folder.id}
-            onClick={() => onShelf({ kind, folderId: folder.id })}
+            active={(shelf.kind === shelfId || (shelf.kind === "custom" && shelf.id === shelfId)) && shelfFolderId(shelf) === folder.id}
+            onClick={() => openShelf(folder.id)}
             count={folder.item_count}
             className="flex-1 text-[0.92rem]"
           >
@@ -1754,6 +1824,7 @@ function Sidebar({
   groupedFeeds,
   tags,
   folders,
+  customNoteShelves,
   onShelf,
   onRssShelfChange,
   onAddRssShelf,
@@ -1782,10 +1853,11 @@ function Sidebar({
   groupedFeeds: { groups: { category: Category; feeds: Feed[] }[] };
   tags: Tag[];
   folders: Folder[];
+  customNoteShelves: CustomNoteShelf[];
   onShelf: (shelf: Shelf) => void;
   onRssShelfChange: (shelfId: string) => void;
   onAddRssShelf: () => void;
-  onCreateFolder: (shelf: NoteDestination) => Promise<string | null>;
+  onCreateFolder: (shelf: FilingDestination) => Promise<string | null>;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
   onAdd: () => void;
@@ -1845,11 +1917,25 @@ function Sidebar({
         <NavButton active={shelf.kind === "saved"} onClick={() => onShelf({ kind: "saved" })} icon={<Bookmark className="size-4" />} count={stats?.saved_count}>
           Saved
         </NavButton>
-        <ShelfWithFolders kind="vault" label="Vault" icon={<Library className="size-4" />} count={stats?.vault_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders kind="additions" label="Additions" icon={<FilePlus className="size-4" />} count={stats?.additions_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders kind="books" label="Books" icon={<BookOpen className="size-4" />} count={stats?.books_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders kind="notes" label="Notes" icon={<NotebookPen className="size-4" />} count={stats?.annotation_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders kind="schoolwork" label="Schoolwork" icon={<GraduationCap className="size-4" />} count={stats?.schoolwork_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="vault" label="Vault" icon={<Library className="size-4" />} count={stats?.vault_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="additions" label="Additions" icon={<FilePlus className="size-4" />} count={stats?.additions_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="books" label="Books" icon={<BookOpen className="size-4" />} count={stats?.books_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="notes" label="Notes" icon={<NotebookPen className="size-4" />} count={stats?.annotation_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="schoolwork" label="Schoolwork" icon={<GraduationCap className="size-4" />} count={stats?.schoolwork_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        {customNoteShelves.map((row) => (
+          <ShelfWithFolders
+            key={row.id}
+            shelfId={row.id}
+            label={row.name}
+            icon={<Library className="size-4" />}
+            shelf={shelf}
+            folders={folders}
+            onShelf={onShelf}
+            onCreateFolder={onCreateFolder}
+            onRenameFolder={onRenameFolder}
+            onDeleteFolder={onDeleteFolder}
+          />
+        ))}
         <NavButton active={shelf.kind === "starred"} onClick={() => onShelf({ kind: "starred" })} icon={<Star className="size-4" />}>
           Starred
         </NavButton>
@@ -2041,6 +2127,8 @@ function Reader({
   article,
   tags,
   folders,
+  customNoteShelves,
+  onCreateNoteShelf,
   onCreateFolder,
   listenRef,
   noteFocusRef,
@@ -2069,7 +2157,9 @@ function Reader({
   article: Article;
   tags: Tag[];
   folders: Folder[];
-  onCreateFolder: (shelf: NoteDestination) => Promise<string | null>;
+  customNoteShelves: CustomNoteShelf[];
+  onCreateNoteShelf: () => Promise<string | null>;
+  onCreateFolder: (shelf: FilingDestination) => Promise<string | null>;
   listenRef: React.RefObject<ListenControlsHandle | null>;
   noteFocusRef: React.MutableRefObject<(() => void) | null>;
   caretWordRef: React.MutableRefObject<(() => number | null) | null>;
@@ -2084,41 +2174,54 @@ function Reader({
   onArchive: () => Promise<void>;
   readerScrollToken: number;
   onTag: (name: string) => Promise<void>;
-  onNote: (title: string, markdown: string, destination: NoteDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
+  onNote: (title: string, markdown: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
   onHighlight: (payload: { quote: string; color: string; prefix: string; suffix: string; note?: string }) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
-  onFileArticle: (destination: NoteDestination | "", folderId?: string | null) => Promise<void>;
-  onMoveNote: (noteId: string, destination: NoteDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
-  onEditComposed: (title: string, markdown: string, destination: NoteDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
+  onFileArticle: (destination: FilingDestination | "", folderId?: string | null) => Promise<void>;
+  onMoveNote: (noteId: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
+  onEditComposed: (title: string, markdown: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
   onDownloadPack: () => Promise<void>;
   onOpenNote: (id: string) => void;
-  onCreateLinkedNote: (title: string, shelf: NoteDestination | "", folderId: string | null) => Promise<string | null>;
+  onCreateLinkedNote: (title: string, shelf: FilingDestination | "", folderId: string | null) => Promise<string | null>;
 }) {
   const [note, setNote] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
-  const [noteDest, setNoteDest] = useState<NoteDestination>("notes");
+  const [noteDest, setNoteDest] = useState<FilingDestination>("notes");
   const [noteFolder, setNoteFolder] = useState<string | null>(null);
   const [noteCorrection, setNoteCorrection] = useState(false);
-  const [fileDest, setFileDest] = useState<NoteDestination | "">(displayArticleShelf(article));
+  const [fileDest, setFileDest] = useState<FilingDestination | "">(displayArticleShelf(article));
   const [fileFolder, setFileFolder] = useState<string | null>(article.folder_id ?? null);
   const [editTitle, setEditTitle] = useState(article.title);
   const [editBody, setEditBody] = useState(article.content_text || "");
-  const [editDest, setEditDest] = useState<NoteDestination>(asDestination(article.destination, "additions"));
+  const [editDest, setEditDest] = useState<FilingDestination>(
+    (article.destination as FilingDestination | null) || asDestination(article.destination, "additions"),
+  );
   const [editFolder, setEditFolder] = useState<string | null>(article.folder_id ?? null);
   const [editCorrection, setEditCorrection] = useState(Boolean(article.is_correction));
 
-  function handleNoteDestChange(next: NoteDestination | "") {
-    if (!next) return;
-    const currentName = folderById(folders, noteFolder)?.name;
-    setNoteDest(next);
-    setNoteFolder(matchFolderByName(folders, next, currentName)?.id ?? null);
+  async function handleCreateNoteShelfSelect(
+    setDest: (next: FilingDestination) => void,
+    setFolder: (next: string | null) => void,
+    afterSelect?: (id: FilingDestination) => void,
+  ) {
+    const id = await onCreateNoteShelf();
+    if (id) {
+      setDest(id);
+      setFolder(null);
+      afterSelect?.(id);
+    }
   }
 
-  function handleEditDestChange(next: NoteDestination | "") {
+  function handleNoteDestChange(next: FilingDestination | "") {
     if (!next) return;
-    const currentName = folderById(folders, editFolder)?.name;
+    setNoteDest(next);
+    setNoteFolder(null);
+  }
+
+  function handleEditDestChange(next: FilingDestination | "") {
+    if (!next) return;
     setEditDest(next);
-    setEditFolder(matchFolderByName(folders, next, currentName)?.id ?? null);
+    setEditFolder(null);
   }
 
   async function handleCreateNoteFolder() {
@@ -2137,7 +2240,7 @@ function Reader({
     if (created) void moveArticleFiling(fileDest, created);
   }
 
-  async function moveArticleFiling(nextDest: NoteDestination | "", nextFolder: string | null = fileFolder) {
+  async function moveArticleFiling(nextDest: FilingDestination | "", nextFolder: string | null = fileFolder) {
     const prevDest = fileDest;
     const prevFolder = fileFolder;
     setFileDest(nextDest);
@@ -2423,7 +2526,7 @@ function Reader({
     };
   }, [article.id]);
 
-  async function moveComposedShelf(nextDest: NoteDestination, nextCorrection: boolean, nextFolder: string | null = editFolder) {
+  async function moveComposedShelf(nextDest: FilingDestination, nextCorrection: boolean, nextFolder: string | null = editFolder) {
     const prevDest = editDest;
     const prevCorrection = editCorrection;
     const prevFolder = editFolder;
@@ -2674,10 +2777,15 @@ function Reader({
             <DestinationSelect
               allowEmpty
               value={fileDest}
+              customShelves={customNoteShelves}
+              onCreateShelf={() =>
+                void handleCreateNoteShelfSelect(setFileDest, setFileFolder, (id) => void moveArticleFiling(id, null))
+              }
               onChange={(next) => {
-                const currentName = folderById(folders, fileFolder)?.name;
-                const nextFolder = next ? matchFolderByName(folders, next, currentName)?.id ?? null : null;
-                void moveArticleFiling(next, nextFolder);
+                if (next) setFileDest(next);
+                else setFileDest("");
+                setFileFolder(null);
+                void moveArticleFiling(next, null);
               }}
             />
             <span className="text-xs font-medium text-muted-foreground">Folder</span>
@@ -2880,7 +2988,12 @@ function Reader({
               }
               toolbarExtra={
                 <>
-                  <DestinationSelect value={noteDest} onChange={handleNoteDestChange} />
+                  <DestinationSelect
+                    value={noteDest}
+                    onChange={handleNoteDestChange}
+                    customShelves={customNoteShelves}
+                    onCreateShelf={() => void handleCreateNoteShelfSelect(setNoteDest, setNoteFolder)}
+                  />
                   <FolderSelect
                     shelf={noteDest}
                     folders={folders}
@@ -2942,11 +3055,17 @@ function Reader({
                   <>
                     <DestinationSelect
                       value={editDest}
+                      customShelves={customNoteShelves}
+                      onCreateShelf={() =>
+                        void handleCreateNoteShelfSelect(setEditDest, setEditFolder, (id) =>
+                          void moveComposedShelf(id, editCorrection, null),
+                        )
+                      }
                       onChange={(next) => {
                         if (!next) return;
-                        const currentName = folderById(folders, editFolder)?.name;
-                        const nextFolder = matchFolderByName(folders, next, currentName)?.id ?? null;
-                        void moveComposedShelf(next, editCorrection, nextFolder);
+                        setEditDest(next);
+                        setEditFolder(null);
+                        void moveComposedShelf(next, editCorrection, null);
                       }}
                     />
                     <FolderSelect
@@ -2983,37 +3102,47 @@ function Reader({
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-medium min-w-0 flex-1">{item.title}</p>
                     <DestinationSelect
-                      value={asDestination(item.destination, "notes")}
+                      value={(item.destination as FilingDestination | null) || "notes"}
+                      customShelves={customNoteShelves}
+                      onCreateShelf={() =>
+                        void onCreateNoteShelf().then((id) => {
+                          if (id) void onMoveNote(item.id, id, Boolean(item.is_correction), null);
+                        })
+                      }
                       onChange={(next) => {
                         if (!next) return;
-                        const currentName = folderById(folders, item.folder_id ?? null)?.name;
-                        const nextFolder = matchFolderByName(folders, next, currentName)?.id ?? null;
-                        void onMoveNote(item.id, next, Boolean(item.is_correction), nextFolder);
+                        void onMoveNote(item.id, next, Boolean(item.is_correction), null);
                       }}
                     />
                     <FolderSelect
-                      shelf={asDestination(item.destination, "notes")}
+                      shelf={(item.destination as FilingDestination | null) || "notes"}
                       folders={folders}
                       value={item.folder_id ?? null}
                       onChange={(next) =>
-                        void onMoveNote(item.id, asDestination(item.destination, "notes"), Boolean(item.is_correction), next)
+                        void onMoveNote(
+                          item.id,
+                          (item.destination as FilingDestination | null) || "notes",
+                          Boolean(item.is_correction),
+                          next,
+                        )
                       }
                       onCreateFolder={async () => {
-                        const created = await onCreateFolder(asDestination(item.destination, "notes"));
+                        const shelf = (item.destination as FilingDestination | null) || "notes";
+                        const created = await onCreateFolder(shelf);
                         if (created) {
-                          void onMoveNote(
-                            item.id,
-                            asDestination(item.destination, "notes"),
-                            Boolean(item.is_correction),
-                            created,
-                          );
+                          void onMoveNote(item.id, shelf, Boolean(item.is_correction), created);
                         }
                       }}
                     />
                     <CorrectionCheck
                       checked={Boolean(item.is_correction)}
                       onChange={(next) =>
-                        void onMoveNote(item.id, asDestination(item.destination, "notes"), next, item.folder_id ?? null)
+                        void onMoveNote(
+                          item.id,
+                          (item.destination as FilingDestination | null) || "notes",
+                          next,
+                          item.folder_id ?? null,
+                        )
                       }
                     />
                   </div>
@@ -3241,7 +3370,10 @@ function AddFeedDialog({
   activeRssShelfId,
   categories,
   folders,
+  customNoteShelves,
   onCreateFolder,
+  onCreateNoteShelf,
+  onAddRssShelf,
   onAdded,
   onSavedPage,
   onCreatedNote,
@@ -3253,10 +3385,13 @@ function AddFeedDialog({
   activeRssShelfId: string | null;
   categories: Category[];
   folders: Folder[];
-  onCreateFolder: (shelf: NoteDestination) => Promise<string | null>;
+  customNoteShelves: CustomNoteShelf[];
+  onCreateFolder: (shelf: FilingDestination) => Promise<string | null>;
+  onCreateNoteShelf: () => Promise<string | null>;
+  onAddRssShelf: () => Promise<string | null>;
   onAdded: () => Promise<void>;
   onSavedPage: (articleId: string) => Promise<void>;
-  onCreatedNote: (articleId: string, destination: NoteDestination, folderId?: string | null) => Promise<void>;
+  onCreatedNote: (articleId: string, destination: FilingDestination, folderId?: string | null) => Promise<void>;
   onImportedVault: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"feed" | "page" | "opml" | "vault" | "file">("feed");
@@ -3269,20 +3404,35 @@ function AddFeedDialog({
   const [additionTitle, setAdditionTitle] = useState("");
   const [additionSubject, setAdditionSubject] = useState("");
   const [additionBody, setAdditionBody] = useState("");
-  const [composeDest, setComposeDest] = useState<NoteDestination>("vault");
+  const [composeDest, setComposeDest] = useState<FilingDestination>("vault");
   const [composeFolder, setComposeFolder] = useState<string | null>(null);
   const [composeCorrection, setComposeCorrection] = useState(false);
 
-  function handleComposeDestChange(next: NoteDestination | "") {
+  function handleComposeDestChange(next: FilingDestination | "") {
     if (!next) return;
-    const currentName = folderById(folders, composeFolder)?.name;
     setComposeDest(next);
-    setComposeFolder(matchFolderByName(folders, next, currentName)?.id ?? null);
+    setComposeFolder(null);
   }
 
   async function handleComposeCreateFolder() {
     const created = await onCreateFolder(composeDest);
     if (created) setComposeFolder(created);
+  }
+
+  async function handleCreateComposeShelf() {
+    const id = await onCreateNoteShelf();
+    if (id) {
+      setComposeDest(id);
+      setComposeFolder(null);
+    }
+  }
+
+  async function handleCreateFeedShelf() {
+    const id = await onAddRssShelf();
+    if (id) {
+      setRssShelfId(id);
+      setCategoryId("");
+    }
   }
   const [composeFull, setComposeFull] = useState(false);
   const [fileTitle, setFileTitle] = useState("");
@@ -3395,21 +3545,16 @@ function AddFeedDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="feed-shelf">Shelf</Label>
-              <select
+              <RssShelfSelect
                 id="feed-shelf"
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                 value={rssShelfId}
-                onChange={(event) => {
-                  setRssShelfId(event.target.value);
+                shelves={rssShelves}
+                onCreateShelf={handleCreateFeedShelf}
+                onChange={(next) => {
+                  setRssShelfId(next);
                   setCategoryId("");
                 }}
-              >
-                {rssShelves.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="feed-category">Category</Label>
@@ -3697,7 +3842,12 @@ function AddFeedDialog({
                 }
                 toolbarExtra={
                   <>
-                    <DestinationSelect value={composeDest} onChange={handleComposeDestChange} />
+                    <DestinationSelect
+                      value={composeDest}
+                      onChange={handleComposeDestChange}
+                      customShelves={customNoteShelves}
+                      onCreateShelf={handleCreateComposeShelf}
+                    />
                     <FolderSelect
                       shelf={composeDest}
                       folders={folders}

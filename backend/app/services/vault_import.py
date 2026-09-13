@@ -192,7 +192,7 @@ def create_composed_note(
         raise ValueError("Title and body are required.")
     if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
         raise ValueError("That note is larger than 1.5 MB.")
-    dest = normalize_destination(destination)
+    dest = normalize_destination(destination, user)
     from app.services.folders import resolve_folder_id
 
     resolved_folder_id = resolve_folder_id(db, user, dest, folder_id)
@@ -336,9 +336,9 @@ def set_composed_destination(
     """Move a StoryKeep note to another shelf. Does not duplicate or write vault originals."""
     if not is_composed_note(article):
         raise ValueError("Imported vault notes stay on Vault. File a StoryKeep note instead.")
-    dest = normalize_destination(destination)
+    dest = normalize_destination(destination, user)
     flag = article.is_correction if is_correction is None else bool(is_correction)
-    apply_destination(article, dest, flag)
+    apply_destination(article, dest, flag, user)
     from app.services.folders import get_folder, match_folder_by_name, resolve_folder_id
 
     if folder_id is not _UNSET:

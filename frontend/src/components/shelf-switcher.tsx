@@ -87,7 +87,7 @@ export function ShelfSwitcher({
                   onAddRssShelf();
                 }}
               >
-                + New shelf
+                + New shelf…
               </button>
             </div>
           ) : null}

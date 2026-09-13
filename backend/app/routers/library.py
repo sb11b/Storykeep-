@@ -425,9 +425,17 @@ def get_preferences(user: User = Depends(get_current_user)) -> dict:
 def put_preferences(
     payload: PreferencesIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> dict:
+    from app.services.custom_note_shelves import normalize_custom_shelves_payload
+
     current = dict(user.preferences or {})
     data = payload.model_dump(exclude_none=True)
     appearance = data.pop("appearance", None)
+    custom_shelves = data.pop("custom_note_shelves", None)
+    if custom_shelves is not None:
+        try:
+            current["custom_note_shelves"] = normalize_custom_shelves_payload(custom_shelves)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     current.update(data)
     if appearance:
         merged = dict(current.get("appearance") or {})
