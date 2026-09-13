@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Mic, Paperclip, Pencil, Send, Square, X } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Pencil, Send, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -30,7 +30,7 @@ import {
   type LarryAttachment,
   type PendingAttachment,
 } from "@/lib/larry-attach";
-import { toastActionError } from "@/lib/toast-message";
+import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
@@ -647,6 +647,58 @@ export function GrokPane({
     });
   }
 
+  async function imagine() {
+    const prompt = pane.draft.trim();
+    if (!prompt) {
+      toast.error("Type a prompt for the image.");
+      return;
+    }
+    if (busy || !enabled || locked) return;
+    abortInFlight();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBusy(true);
+    applyStreamStatus("working");
+    try {
+      const result = await api.chatImagine(
+        { prompt, conversation_id: pane.conversationId },
+        controller.signal,
+      );
+      onUpdate((current) => ({
+        ...current,
+        draft: "",
+        conversationId: result.conversation_id || current.conversationId,
+        streamStatus: null,
+        messages: [
+          ...current.messages,
+          {
+            id: result.user_message.id,
+            role: "user",
+            content: result.user_message.content,
+            files: result.user_message.files,
+          },
+          {
+            id: result.assistant_message.id,
+            role: "assistant",
+            content: result.assistant_message.content,
+            files: result.assistant_message.files,
+          },
+        ],
+      }));
+      onHistoryChanged?.();
+    } catch (error) {
+      if (controller.signal.aborted) {
+        onUpdate((current) => (current.streamStatus == null ? current : { ...current, streamStatus: null }));
+        return;
+      }
+      toastErrorFromUnknown(error, "Could not generate that image.");
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+      setBusy(false);
+      clearStreamStatus();
+    }
+  }
+
   async function retryAssistant(assistantId: string) {
     if (busy || !enabled) return;
     if (!pane.conversationId) {
@@ -1174,6 +1226,18 @@ export function GrokPane({
             onClick={() => fileInputRef.current?.click()}
           >
             {uploadingFiles ? <LoaderCircle className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="size-9 shrink-0 self-end"
+            disabled={!enabled || locked || busy || uploadingFiles}
+            aria-label="Image"
+            title="Generate an image from this prompt"
+            onClick={() => void imagine()}
+          >
+            <ImageIcon className="size-4" />
           </Button>
           {sttEnabled && !locked ? (
             <div className="flex shrink-0 flex-col gap-1">

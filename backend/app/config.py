@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     xai_chat_fast_model: str = "grok-4.3"
     xai_chat_max_tokens: int = 2048
     chat_requests_per_hour: int = 120
+    xai_image_url: str = "https://api.x.ai/v1/images/generations"
+    xai_imagine_model: str = "grok-imagine-image-2.0"
+    imagine_requests_per_hour: int = 10
     stt_sessions_per_hour: int = 60
     smtp_host: str = ""
     smtp_port: int = 587

@@ -79,8 +79,17 @@ def resolve_owned_media(db: Session, user: User, media_ids: list[UUID]) -> list[
     return rows
 
 
-def attach_to_message(db: Session, user: User, message: GrokMessage, media_ids: list[UUID]) -> list[GrokMessageFile]:
-    if message.role != "user":
+def attach_to_message(
+    db: Session,
+    user: User,
+    message: GrokMessage,
+    media_ids: list[UUID],
+    *,
+    allow_assistant: bool = False,
+) -> list[GrokMessageFile]:
+    if message.role == "assistant" and allow_assistant:
+        pass
+    elif message.role != "user":
         raise HTTPException(status_code=400, detail="Files attach to your message, not the reply.")
     rows = resolve_owned_media(db, user, media_ids)
     attached: list[GrokMessageFile] = []

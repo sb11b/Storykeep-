@@ -23,6 +23,7 @@ import type {
   ChatStatus,
   GrokConversation,
   GrokConversationDetail,
+  GrokMessage,
   Correction,
 } from "./types";
 
@@ -582,6 +583,11 @@ export const api = {
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   chatHealth: () =>
     request<{ ok: boolean; model: string; reasoning: string; ttft_ms: number | null }>("/api/v1/chat/health"),
+  chatImagine: (body: { prompt: string; conversation_id?: string | null }, signal?: AbortSignal) =>
+    request<{ conversation_id: string; user_message: GrokMessage; assistant_message: GrokMessage }>(
+      "/api/v1/chat/imagine",
+      { method: "POST", body: JSON.stringify(body), signal },
+    ),
   chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
   chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
   patchChatConversation: (

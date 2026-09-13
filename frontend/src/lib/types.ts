@@ -260,6 +260,7 @@ export type ChatStatus = {
   reasoning_efforts?: string[];
   requests_per_hour: number;
   persist?: boolean;
+  imagine_requests_per_hour?: number;
 };
 
 export type GrokConversation = {

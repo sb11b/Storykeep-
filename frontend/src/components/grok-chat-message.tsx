@@ -111,6 +111,18 @@ export function GrokChatMessage({
           </div>
         )
       ) : null}
+      {role === "assistant"
+        ? files
+            .filter((file) => file.kind === "image" && !content.includes(`/api/v1/media/${file.media_id}`))
+            .map((file) => (
+              <img
+                key={file.media_id}
+                src={file.url || `/api/v1/media/${file.media_id}`}
+                alt={file.filename}
+                className="mt-2 max-h-80 w-auto max-w-full rounded-md border"
+              />
+            ))
+        : null}
       {role === "user" && files.length ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {files.map((file) => (

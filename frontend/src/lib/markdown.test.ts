@@ -137,3 +137,10 @@ test("wrapWikilink wraps selection as wiki link", () => {
   assert.equal(result.selectionStart, 6);
   assert.equal(result.selectionEnd, 17);
 });
+
+test("Junior Imagine markdown renders a media image", () => {
+  const id = "11111111-1111-1111-1111-111111111111";
+  const html = renderMarkdown(`Here's the image.\n\n![a red notebook on a desk](/api/v1/media/${id})`);
+  assert.match(html, /Here's the image/);
+  assert.match(html, new RegExp(`<img src="/api/v1/media/${id}" alt="a red notebook on a desk" />`));
+});

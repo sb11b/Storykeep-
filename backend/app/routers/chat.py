@@ -21,6 +21,7 @@ from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConv
 from app.services import chat as chat_service
 from app.services import chat_attachments
 from app.services import grok_conversations as grok_store
+from app.services import imagine as imagine_service
 from app.services.demo_lock import is_locked, reject_locked
 
 router = APIRouter(tags=["chat"])
@@ -44,6 +45,11 @@ class ChatIn(BaseModel):
         if not self.message.strip() and not self.media_ids:
             raise ValueError("Type a message or attach a file.")
         return self
+
+
+class ImagineIn(BaseModel):
+    prompt: str = Field(default="", max_length=4000)
+    conversation_id: UUID | None = None
 
 
 def _file_out(row) -> GrokMessageFileOut:
@@ -101,6 +107,7 @@ def chat_status(user: User = Depends(get_current_user)) -> dict:
         "fast_model": chat_service.default_fast_model(),
         "reasoning_efforts": list(chat_service.REASONING_EFFORTS),
         "requests_per_hour": int(settings.chat_requests_per_hour or 120),
+        "imagine_requests_per_hour": int(settings.imagine_requests_per_hour or 10),
         "persist": grok_store.should_persist(user),
         "key_configured": chat_service.key_configured(),
         "key_format_ok": chat_service.key_format_ok(),
@@ -187,6 +194,36 @@ def delete_conversation(
     grok_store.delete_conversation(db, user, conversation_id)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/chat/imagine")
+def imagine_image(
+    payload: ImagineIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    reject_locked(user)
+    imagine_service.require_imagine_key()
+    prompt = imagine_service.normalize_prompt(payload.prompt)
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Type a prompt for the image.")
+    if payload.conversation_id:
+        grok_store.owned_conversation(db, user, payload.conversation_id)
+    imagine_service.enforce_imagine_rate_limit(user.id)
+    image_bytes = imagine_service.generate_image_bytes(prompt)
+    media = imagine_service.save_generated_image(db, user, prompt, image_bytes)
+    conversation, user_row, assistant_row = imagine_service.persist_imagine_turn(
+        db,
+        user,
+        prompt=prompt,
+        conversation_id=payload.conversation_id,
+        media=media,
+    )
+    return {
+        "conversation_id": conversation.id,
+        "user_message": _message_out(user_row),
+        "assistant_message": _message_out(assistant_row),
+    }
 
 
 @router.post("/chat")
