@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CLARIFY_EDIT_OR_GENERATE, collectImageMediaIds, imageToolIntent } from "./chat-image";
+import { collectImageMediaIds, imageToolIntent, thisTurnImageMediaIds } from "./chat-image";
 
 test("make me look older with a selfie is edit", () => {
   assert.equal(imageToolIntent("Make me look older", true), "edit");
@@ -8,14 +8,17 @@ test("make me look older with a selfie is edit", () => {
   assert.equal(imageToolIntent("make it look older", true), "edit");
 });
 
-test("make this look older without a selfie asks once", () => {
-  assert.equal(imageToolIntent("make me look older", false), "clarify");
-  assert.equal(imageToolIntent("make this look older", false), "clarify");
-  assert.equal(imageToolIntent("make it older", false), "clarify");
-  assert.equal(
-    CLARIFY_EDIT_OR_GENERATE,
-    "Generate a new older-looking picture, or attach one to edit?",
-  );
+test("bald with a selfie is edit", () => {
+  assert.equal(imageToolIntent("let me see me bald", true), "edit");
+  assert.equal(imageToolIntent("make me bald", true), "edit");
+  assert.equal(imageToolIntent("bald", true), "edit");
+});
+
+test("edit phrases without this-turn photo stay text", () => {
+  assert.equal(imageToolIntent("make me look older", false), null);
+  assert.equal(imageToolIntent("make this look older", false), null);
+  assert.equal(imageToolIntent("make it older", false), null);
+  assert.equal(imageToolIntent("let me see me bald", false), null);
 });
 
 test("photo talk stays chat", () => {
@@ -35,6 +38,17 @@ test("chat reliability questions are not Imagine", () => {
   assert.equal(imageToolIntent(spec, false), null);
   assert.equal(imageToolIntent(spec, true), null);
   assert.equal(imageToolIntent('Tell me what to expect. Example: "make me look older".', false), null);
+});
+
+test("pasted ticket about Imagine is text even with a prior photo flag", () => {
+  const ticket = [
+    "Okay the image problem is not solved. Here is the newest problem.",
+    "Paste a ticket containing make me look older.",
+    "Verify: text only, no image prompt.",
+    "- checklist item: make me look older",
+  ].join("\n");
+  assert.equal(imageToolIntent(ticket, false), null);
+  assert.equal(imageToolIntent(ticket, true), null);
 });
 
 test("what's in this photo is vision only", () => {
@@ -66,7 +80,11 @@ test("school coding imagine is not image gen", () => {
   assert.equal(imageToolIntent("imagine we have a linked list", false), null);
 });
 
-test("collectImageMediaIds prefers the pending chip then the last user photo", () => {
+test("this-turn image ids ignore prior thread photos", () => {
+  assert.deepEqual(
+    thisTurnImageMediaIds([{ id: "pending-1", kind: "image" }]),
+    ["pending-1"],
+  );
   assert.deepEqual(
     collectImageMediaIds([{ id: "pending-1", kind: "image" }], [
       { role: "user", files: [{ kind: "image", media_id: "old" }] },
@@ -79,6 +97,10 @@ test("collectImageMediaIds prefers the pending chip then the last user photo", (
       { role: "assistant", files: [{ kind: "image", media_id: "generated" }] },
       { role: "user", files: [] },
     ]),
-    ["selfie"],
+    [],
+  );
+  assert.deepEqual(
+    thisTurnImageMediaIds([{ kind: "image", media_id: "from-message" }]),
+    ["from-message"],
   );
 });

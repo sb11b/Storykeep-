@@ -34,7 +34,7 @@ import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
-import { collectImageMediaIds, imageToolIntent, MEDIA_MARKDOWN } from "@/lib/chat-image";
+import { imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -672,7 +672,7 @@ export function GrokPane({
     inFlightRef.current = true;
     abortInFlight();
     try {
-    const imageIds = collectImageMediaIds(files, pane.messages);
+    const imageIds = thisTurnImageMediaIds(files);
     const intent = imageToolIntent(content, imageIds.length > 0);
     const wantsImage = intent === "edit" || intent === "generate";
     const userLine: ChatLine = {
@@ -896,7 +896,7 @@ export function GrokPane({
     inFlightRef.current = true;
     abortInFlight();
     try {
-    const retryImages = collectImageMediaIds(null, messages.slice(0, assistantIndex));
+    const retryImages = thisTurnImageMediaIds(userLine.files);
     const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
     const retryWantsImage = retryIntent === "generate" || (retryIntent === "edit" && retryImages.length > 0);
     onUpdate((current) => ({

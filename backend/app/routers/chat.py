@@ -362,64 +362,6 @@ def _image_tool_events(
     return events()
 
 
-def _canned_reply_events(
-    *,
-    persist: bool,
-    conversation_id: UUID | None,
-    user_message_id: UUID | None,
-    user_id: UUID,
-    text: str,
-):
-    async def events():
-        yield chat_service.SSE_PADDING
-        await asyncio.sleep(0)
-        meta = {
-            "conversation_id": str(conversation_id) if conversation_id else None,
-            "user_message_id": str(user_message_id) if user_message_id else None,
-            "model": chat_service.CURRENT_CHAT_MODEL,
-            "model_choice": chat_service.MODEL_AUTO,
-            "reasoning_effort": chat_service.DEFAULT_REASONING_EFFORT,
-        }
-        yield chat_service.encode_sse({key: value for key, value in meta.items() if value is not None})
-        yield chat_service.encode_sse({"delta": text})
-        if persist and conversation_id:
-            try:
-                with SessionLocal() as stream_db:
-                    conversation = grok_store.owned_conversation_for_user(stream_db, user_id, conversation_id)
-                    assistant_row = grok_store.append_message(
-                        stream_db,
-                        conversation,
-                        role="assistant",
-                        content=text,
-                    )
-                    grok_store.patch_conversation_for_user(
-                        stream_db,
-                        user_id,
-                        conversation_id,
-                        last_model=chat_service.CURRENT_CHAT_MODEL,
-                        last_reasoning=chat_service.DEFAULT_REASONING_EFFORT,
-                    )
-                    stream_db.commit()
-                    yield chat_service.encode_sse(
-                        {
-                            "conversation_id": str(conversation_id),
-                            "assistant_message_id": str(assistant_row.id),
-                            "model": chat_service.CURRENT_CHAT_MODEL,
-                            "model_choice": chat_service.MODEL_AUTO,
-                            "reasoning_effort": chat_service.DEFAULT_REASONING_EFFORT,
-                        }
-                    )
-            except Exception:
-                logger.exception(
-                    "Failed to persist clarify reply user=%s conversation=%s",
-                    user_id,
-                    conversation_id,
-                )
-        yield chat_service.encode_sse("[DONE]")
-
-    return events()
-
-
 @router.post("/chat")
 async def chat(
     payload: ChatIn,
@@ -570,20 +512,10 @@ async def chat(
 
     if history:
         current_files = history[-1].get("files") or current_files
-    thread_images = chat_image.collect_thread_images(current_files, history)
-    image_intent = chat_image.image_tool_intent(user_text, bool(thread_images))
-    if image_intent == "clarify" or (image_intent == "edit" and not thread_images):
-        return StreamingResponse(
-            _canned_reply_events(
-                persist=persist,
-                conversation_id=conversation_id,
-                user_message_id=user_message_id,
-                user_id=user_id,
-                text=chat_image.CLARIFY_EDIT_OR_GENERATE,
-            ),
-            media_type="text/event-stream",
-            headers=_sse_headers(),
-        )
+    this_turn_images = chat_image.this_turn_images(current_files)
+    image_intent = chat_image.image_tool_intent(user_text, bool(this_turn_images))
+    if image_intent == "edit" and not this_turn_images:
+        image_intent = None
     if image_intent in ("edit", "generate"):
         return StreamingResponse(
             _image_tool_events(
@@ -594,7 +526,7 @@ async def chat(
                 user_message_id=user_message_id,
                 user_text=user_text,
                 intent=image_intent,
-                thread_images=thread_images,
+                thread_images=this_turn_images,
             ),
             media_type="text/event-stream",
             headers=_sse_headers(),

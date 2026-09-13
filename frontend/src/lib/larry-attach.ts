@@ -81,7 +81,7 @@ export function pendingToMessageFile(item: PendingAttachment): LarryAttachment {
     filename: item.name,
     content_type: item.content_type,
     kind: item.kind,
-    url: item.url,
+    url: item.url || `/api/v1/media/${item.id}`,
     byte_size: item.size,
   };
 }

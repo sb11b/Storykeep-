@@ -7,7 +7,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.services.chat_image import (
-    CLARIFY_EDIT_OR_GENERATE,
     collect_thread_images,
     edit_prompt_for,
     image_tool_intent,
@@ -15,6 +14,7 @@ from app.services.chat_image import (
     markdown_for_result,
     produce_chat_image,
     run_intercepted_chat_image,
+    this_turn_images,
     ChatImageResult,
 )
 
@@ -26,10 +26,16 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertEqual(image_tool_intent("make this photo older", True), "edit")
         self.assertEqual(image_tool_intent("edit this photo", True), "edit")
 
-    def test_make_me_look_older_without_photo_asks_once(self):
-        self.assertEqual(image_tool_intent("make me look older", False), "clarify")
-        self.assertEqual(image_tool_intent("make this look older", False), "clarify")
-        self.assertEqual(image_tool_intent("make it older", False), "clarify")
+    def test_bald_with_selfie_is_edit(self):
+        self.assertEqual(image_tool_intent("let me see me bald", True), "edit")
+        self.assertEqual(image_tool_intent("make me bald", True), "edit")
+        self.assertEqual(image_tool_intent("bald", True), "edit")
+
+    def test_edit_phrases_without_this_turn_photo_are_text(self):
+        self.assertIsNone(image_tool_intent("make me look older", False))
+        self.assertIsNone(image_tool_intent("make this look older", False))
+        self.assertIsNone(image_tool_intent("make it older", False))
+        self.assertIsNone(image_tool_intent("let me see me bald", False))
 
     def test_whats_in_this_photo_is_vision_only(self):
         self.assertIsNone(image_tool_intent("what's in this picture?", True))
@@ -55,6 +61,16 @@ class ChatImageIntentTests(unittest.TestCase):
         text = 'Tell me what to expect. Example: "make me look older".'
         self.assertIsNone(image_tool_intent(text, False))
         self.assertIsNone(image_tool_intent(text, True))
+
+    def test_ticket_about_imagine_is_text(self):
+        ticket = (
+            "Okay the image problem is not solved. Here is the newest problem.\n"
+            "Paste a ticket containing make me look older and let me see me bald.\n"
+            "Verify: text only, no image prompt.\n"
+            "- checklist item: make me look older"
+        )
+        self.assertIsNone(image_tool_intent(ticket, False))
+        self.assertIsNone(image_tool_intent(ticket, True))
 
     def test_generate_with_image_is_edit(self):
         self.assertEqual(image_tool_intent("generate an image in this style", True), "edit")
@@ -82,7 +98,7 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIsNone(image_tool_intent("imagine we have a linked list", False))
         self.assertIsNone(image_tool_intent("debug this python homework", False))
 
-    def test_collects_prior_user_image_not_assistant(self):
+    def test_prior_thread_photo_is_ignored(self):
         media_id = uuid4()
         history = [
             {
@@ -94,10 +110,10 @@ class ChatImageIntentTests(unittest.TestCase):
             {"role": "user", "content": "make me look older", "files": []},
         ]
         found = collect_thread_images([], history)
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0]["media_id"], media_id)
+        self.assertEqual(found, [])
+        self.assertEqual(this_turn_images(history[-1]["files"]), [])
 
-    def test_current_turn_image_wins(self):
+    def test_current_turn_image_only(self):
         older = uuid4()
         newer = uuid4()
         current = [{"media_id": newer, "kind": "image"}]
@@ -107,6 +123,7 @@ class ChatImageIntentTests(unittest.TestCase):
         ]
         found = collect_thread_images(current, history)
         self.assertEqual(found[0]["media_id"], newer)
+        self.assertEqual(this_turn_images([{"kind": "image", "filename": "image.jpg"}]), [])
 
     def test_edit_prompt_keeps_identity(self):
         prompt = edit_prompt_for("make me look older")
@@ -114,6 +131,13 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIn("keep identity", prompt)
         self.assertIn("gray in the beard", prompt)
         self.assertNotIn("FaceApp", prompt)
+
+    def test_bald_edit_prompt_is_not_a_refusal(self):
+        prompt = edit_prompt_for("let me see me bald")
+        self.assertIn("bald", prompt.lower())
+        self.assertIn("keep identity", prompt)
+        self.assertNotIn("cannot", prompt.lower())
+        self.assertNotIn("system instructions", prompt.lower())
 
     def test_inspired_markdown_is_not_a_perfect_edit(self):
         media_id = uuid4()
@@ -126,6 +150,14 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIn(f"/api/v1/media/{media_id}", text)
         self.assertIn("![", text)
         self.assertNotIn("FaceApp", text)
+
+    def test_edit_markdown_always_has_media_url(self):
+        media_id = uuid4()
+        text = markdown_for_result(
+            ChatImageResult(payload=b"x", kind="edit", prompt="bald"),
+            media_id,
+        )
+        self.assertIn(f"/api/v1/media/{media_id}", text)
 
     def test_produce_falls_back_to_t2i_when_edits_unsupported(self):
         data_url = "data:image/jpeg;base64,abc"
@@ -157,7 +189,7 @@ class ChatImageIntentTests(unittest.TestCase):
     def test_inspired_prompt_does_not_send_people_away(self):
         text = inspired_prompt_for("make me look older", "a man with a beard")
         self.assertNotIn("FaceApp", text)
-        self.assertIn("looking older", text)
+        self.assertIn("make me look older", text)
 
     def test_intercepted_edit_without_photo_still_guards_the_job(self):
         with patch("app.services.imagine.require_imagine_key", return_value="xai-test"):
@@ -173,13 +205,7 @@ class ChatImageIntentTests(unittest.TestCase):
                     )
         self.assertEqual(raised.exception.status_code, 400)
         self.assertNotIn("FaceApp", str(raised.exception.detail))
-
-    def test_clarify_copy_is_a_choice_not_a_hard_block(self):
-        self.assertEqual(
-            CLARIFY_EDIT_OR_GENERATE,
-            "Generate a new older-looking picture, or attach one to edit?",
-        )
-        self.assertNotIn("Attach a photo first", CLARIFY_EDIT_OR_GENERATE)
+        self.assertNotIn("Generate a new older-looking picture", str(raised.exception.detail))
 
 
 if __name__ == "__main__":

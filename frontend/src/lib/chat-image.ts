@@ -25,6 +25,13 @@ const EDIT = [
   /\bretouch\b/i,
   /\bfrom this (?:photo|picture|image|pic|selfie)\b/i,
   /\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b/i,
+  /\bbald\b/i,
+  /\blet me see me\b/i,
+  /\bsee me bald\b/i,
+  /\bno hair\b/i,
+  /\bwithout hair\b/i,
+  /\bshave (?:my |the )?head\b/i,
+  /\bmake me bald\b/i,
 ];
 
 const GENERATE = [
@@ -44,6 +51,7 @@ const AGE = [
   /\bgrey(?:er)?\b/i,
   /\bwrinkl/i,
   /\btemples\b/i,
+  /\bbald\b/i,
 ];
 
 const CODE_GENERATE = /\b(?:linked list|homework|algorithm|typescript|javascript|function|class)\b/i;
@@ -61,18 +69,23 @@ const TALK = [
   /\bimage path\b/i,
   /\bspec quotes?\b/i,
   /\bpasted ticket\b/i,
+  /\bhere is the newest\b/i,
+  /\bnewest problem\b/i,
+  /\bimage problem\b/i,
+  /\bbug report\b/i,
+  /\bchecklist\b/i,
+  /\bout of scope\b/i,
+  /\bmust not regress\b/i,
   /\bverify:/i,
   /^verify\b/i,
   /^bug\b/i,
   /^fix\b/i,
 ];
 const COMMAND_START =
-  /^(?:please |can you |could you )?(?:generate|draw|create (?:an? )?(?:image|photo|picture|portrait)|make (?:an? )?(?:image|photo|picture|portrait) of|make (?:me|it|this|that|him|her|them) (?:look )?(?:older|younger)|make (?:me|it|this|that|him|her|them) look|age (?:this|the|me|my)|edit (?:this|the|my) (?:photo|picture|image|pic|selfie)|recreate (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait))/i;
+  /^(?:please |can you |could you )?(?:generate|draw|create (?:an? )?(?:image|photo|picture|portrait)|make (?:an? )?(?:image|photo|picture|portrait) of|make (?:me|it|this|that|him|her|them) (?:look )?(?:older|younger|bald)|make (?:me|it|this|that|him|her|them) look|let me see me|age (?:this|the|me|my)|edit (?:this|the|my) (?:photo|picture|image|pic|selfie)|recreate (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait))/i;
 
 function commandText(text: string): string {
-  const leftover = text.replace(QUOTE, " ").replace(TICK, " ").replace(/\s+/g, " ").trim();
-  if (leftover.length >= 12) return leftover;
-  return text.replace(/\s+/g, " ").trim();
+  return text.replace(QUOTE, " ").replace(TICK, " ").replace(/\s+/g, " ").trim();
 }
 
 function isTalkTurn(text: string): boolean {
@@ -94,13 +107,14 @@ function isPrimaryImageCommand(text: string): boolean {
   return compact.length <= 140;
 }
 
-export type ImageToolIntent = "edit" | "generate" | "clarify";
+export type ImageToolIntent = "edit" | "generate";
 
 export function imageToolIntent(text: string, hasImage: boolean): ImageToolIntent | null {
   const raw = (text || "").trim();
   if (!raw) return null;
   if (isTalkTurn(raw)) return null;
   const command = commandText(raw);
+  if (!command) return null;
   if (isTalkTurn(command)) return null;
   if (!isPrimaryImageCommand(command)) return null;
   if (VISION_ONLY.some((pattern) => pattern.test(command))) return null;
@@ -109,31 +123,27 @@ export function imageToolIntent(text: string, hasImage: boolean): ImageToolInten
     if (CODE_GENERATE.test(command) && !IMAGE_NOUN.test(command)) return null;
     return "generate";
   }
-  if (EDIT.some((pattern) => pattern.test(command))) return hasImage ? "edit" : "clarify";
+  if (EDIT.some((pattern) => pattern.test(command))) return hasImage ? "edit" : null;
   if (hasImage && command.length <= 48 && AGE.some((pattern) => pattern.test(command))) return "edit";
   return null;
 }
 
-export function collectImageMediaIds(
-  pending: { id: string; kind?: string }[] | null | undefined,
-  messages: { role?: string; files?: { kind?: string; media_id?: string }[] | null }[] | null | undefined,
+export function thisTurnImageMediaIds(
+  files: { id?: string; media_id?: string; kind?: string }[] | null | undefined,
 ): string[] {
-  const fromPending = (pending || []).filter((item) => item.kind === "image" && item.id).map((item) => item.id);
-  if (fromPending.length) return fromPending;
-  for (let index = (messages || []).length - 1; index >= 0; index -= 1) {
-    const row = messages![index];
-    if (row.role !== "user") continue;
-    const ids = (row.files || [])
-      .filter((item) => item.kind === "image" && item.media_id)
-      .map((item) => item.media_id!) ;
-    if (ids.length) return ids;
-  }
-  return [];
+  return (files || [])
+    .filter((item) => item.kind === "image")
+    .map((item) => item.id || item.media_id || "")
+    .filter(Boolean);
 }
 
-export const CLARIFY_EDIT_OR_GENERATE =
-  "Generate a new older-looking picture, or attach one to edit?";
-
-export const MISSING_PHOTO_DETAIL = CLARIFY_EDIT_OR_GENERATE;
+/** @deprecated use thisTurnImageMediaIds — Imagine must not reuse prior-thread photos. */
+export function collectImageMediaIds(
+  pending: { id: string; kind?: string }[] | null | undefined,
+  _messages?: unknown,
+): string[] {
+  void _messages;
+  return thisTurnImageMediaIds(pending);
+}
 
 export const MEDIA_MARKDOWN = /!\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\)/;

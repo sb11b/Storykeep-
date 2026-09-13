@@ -14,13 +14,12 @@ from app.services import imagine as imagine_service
 from app.services.note_media import owned_media
 
 ImageJobIntent = Literal["edit", "generate"]
-ImageIntent = Literal["edit", "generate", "clarify"]
+ImageIntent = Literal["edit", "generate"]
 
 GENERATING_DELTA = "Generating the image…\n\n"
 IMAGE_JOB_MODEL = "grok-4.6"
 IMAGE_JOB_REASONING = "low"
-MISSING_PHOTO_DETAIL = "Attach a photo first (picture button or paperclip), then ask me to age or edit it."
-CLARIFY_EDIT_OR_GENERATE = "Generate a new older-looking picture, or attach one to edit?"
+MISSING_PHOTO_DETAIL = "Could not edit that photo."
 
 _VISION_ONLY = tuple(
     re.compile(pattern, re.I)
@@ -55,6 +54,13 @@ _EDIT = tuple(
         r"\badd (?:gray|grey) (?:hair|beard|in (?:my )?(?:beard|hair|temples))\b",
         r"\bfrom this (?:photo|picture|image|pic|selfie)\b",
         r"\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b",
+        r"\bbald\b",
+        r"\blet me see me\b",
+        r"\bsee me bald\b",
+        r"\bno hair\b",
+        r"\bwithout hair\b",
+        r"\bshave (?:my |the )?head\b",
+        r"\bmake me bald\b",
     )
 )
 
@@ -86,6 +92,7 @@ _AGE = tuple(
         r"\bgrey(?:er)?\b",
         r"\bwrinkl",
         r"\btemples\b",
+        r"\bbald\b",
     )
 )
 
@@ -94,6 +101,12 @@ AGE_EDIT_PREFIX = (
     "gray in the beard and temples, more texture around the eyes and forehead, keep identity, "
     "pose, framing, clothing, and lighting. Do not replace them with a different person. "
     "User request: "
+)
+
+BALD_EDIT_PREFIX = (
+    "Edit THIS exact photograph of this person. Show the same person bald: receding or "
+    "shaved hair, keep identity, face, pose, framing, clothing, and lighting. Do not replace "
+    "them with a different person. User request: "
 )
 
 GENERIC_EDIT_PREFIX = (
@@ -131,6 +144,13 @@ _TALK = tuple(
         r"\bimage path\b",
         r"\bspec quotes?\b",
         r"\bpasted ticket\b",
+        r"\bhere is the newest\b",
+        r"\bnewest problem\b",
+        r"\bimage problem\b",
+        r"\bbug report\b",
+        r"\bchecklist\b",
+        r"\bout of scope\b",
+        r"\bmust not regress\b",
         r"\bverify:",
         r"^verify\b",
         r"^bug\b",
@@ -141,8 +161,9 @@ _COMMAND_START = re.compile(
     r"^(?:please |can you |could you )?"
     r"(?:generate|draw|create (?:an? )?(?:image|photo|picture|portrait)"
     r"|make (?:an? )?(?:image|photo|picture|portrait) of"
-    r"|make (?:me|it|this|that|him|her|them) (?:look )?(?:older|younger)"
+    r"|make (?:me|it|this|that|him|her|them) (?:look )?(?:older|younger|bald)"
     r"|make (?:me|it|this|that|him|her|them) look"
+    r"|let me see me"
     r"|age (?:this|the|me|my)"
     r"|edit (?:this|the|my) (?:photo|picture|image|pic|selfie)"
     r"|recreate (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait))",
@@ -153,10 +174,7 @@ _COMMAND_START = re.compile(
 def _command_text(text: str) -> str:
     stripped = _QUOTE.sub(" ", text)
     stripped = _TICK.sub(" ", stripped)
-    leftover = " ".join(stripped.split())
-    if len(leftover) >= 12:
-        return leftover
-    return " ".join(text.split())
+    return " ".join(stripped.split())
 
 
 def _is_talk_turn(text: str) -> bool:
@@ -186,6 +204,8 @@ def image_tool_intent(text: str, has_image: bool) -> ImageIntent | None:
     if _is_talk_turn(raw):
         return None
     command = _command_text(raw)
+    if not command:
+        return None
     if _is_talk_turn(command):
         return None
     if not _is_primary_image_command(command):
@@ -199,36 +219,35 @@ def image_tool_intent(text: str, has_image: bool) -> ImageIntent | None:
             return None
         return "generate"
     if any(pattern.search(command) for pattern in _EDIT):
-        return "edit" if has_image else "clarify"
+        return "edit" if has_image else None
     if has_image and len(command) <= 48 and any(pattern.search(command) for pattern in _AGE):
         return "edit"
     return None
 
 
+def _images_of(files: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in files or []:
+        if (item.get("kind") or "") != "image":
+            continue
+        if not item.get("media_id"):
+            continue
+        out.append(item)
+    return out
+
+
+def this_turn_images(current_files: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Only photos attached on this user turn (must include a /media id)."""
+    return _images_of(current_files)
+
+
 def collect_thread_images(
     current_files: list[dict[str, Any]] | None,
-    history: list[dict[str, Any]] | None,
+    history: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    def images_of(files: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for item in files or []:
-            if (item.get("kind") or "") != "image":
-                continue
-            if not item.get("media_id"):
-                continue
-            out.append(item)
-        return out
-
-    current = images_of(current_files)
-    if current:
-        return current
-    for item in reversed(history or []):
-        if item.get("role") != "user":
-            continue
-        found = images_of(item.get("files") if isinstance(item.get("files"), list) else None)
-        if found:
-            return found
-    return []
+    """Imagine from chat uses this-turn photos only. History is ignored on purpose."""
+    del history
+    return this_turn_images(current_files)
 
 
 def owned_image_data_url(db: Any, user: Any, file_item: dict[str, Any]) -> str:
@@ -243,25 +262,26 @@ def owned_image_data_url(db: Any, user: Any, file_item: dict[str, Any]) -> str:
 
 
 def edit_prompt_for(user_text: str) -> str:
-    text = (user_text or "").strip() or "make me look older"
+    text = (user_text or "").strip() or "edit this photograph"
+    if re.search(r"\bbald\b|\bno hair\b|\bshave (?:my |the )?head\b", text, re.I):
+        return BALD_EDIT_PREFIX + text
     if any(pattern.search(text) for pattern in _AGE):
         return AGE_EDIT_PREFIX + text
     return GENERIC_EDIT_PREFIX + text
 
 
 def inspired_prompt_for(user_text: str, description: str | None) -> str:
-    text = (user_text or "").strip() or "make me look older"
+    text = (user_text or "").strip() or "edit this portrait"
     seen = (description or "").strip()
     if seen:
         return (
-            f"{seen} Create a new photorealistic portrait of this same person looking older: "
-            "gray in the beard and temples, more texture around the eyes and forehead, "
-            f"keep identity, pose, clothing, and lighting. User request: {text}"
+            f"{seen} Create a new photorealistic portrait of this same person. "
+            "Apply the user's request while keeping identity, pose, clothing, and lighting. "
+            f"User request: {text}"
         )
     return (
-        "A photorealistic portrait inspired by a user's selfie, same person looking older: "
-        "gray in the beard and temples, more eye and forehead texture, keep identity. "
-        f"User request: {text}"
+        "A photorealistic portrait inspired by a user's selfie, same person. "
+        f"Apply the user's request while keeping identity. User request: {text}"
     )
 
 
