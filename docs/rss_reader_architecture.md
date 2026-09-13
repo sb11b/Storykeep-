@@ -54,7 +54,7 @@ A process-local scheduler refreshes due feeds (`last_fetched_at` older than `fet
 - `POST /backups` with `backup_type=db_dump` runs `pg_dump` to `backend/var/backups/`.
 - `backup_type=export_json` writes a user-scoped archive (feeds, saved articles, tags, notes).
 - If `S3_BUCKET` is set, the file is also uploaded. If not, destination falls back to `local`.
-- Restore: `psql storykeep < dump.sql` or re-import the JSON export (Phase 3 polish: one-click restore UI).
+- Restore: `psql storykeep < dump.sql` or re-import the JSON export. Article snapshots restore from **Restore…** in the reader (`POST /articles/{id}/restore`).
 
 ## Auth
 
@@ -67,8 +67,7 @@ Passwords hashed with bcrypt. Access tokens last 14 days (personal instance; ref
 ## Phase boundaries
 
 - **Shipped now:** schema, API, web reader, search, tags, notes, save/archive, local backup/export, delta sync endpoint.
-- **Phase 3 remaining:** one-click restore UI.
-- **Phase 3 shipped:** scheduled S3/B2 database dumps (`BACKUP_INTERVAL_HOURS`, default 24); PDF snapshots (`POST /articles/{id}/archive` `{ "type": "pdf" }`).
+- **Phase 3 shipped:** scheduled S3/B2 database dumps (`BACKUP_INTERVAL_HOURS`, default 24); PDF snapshots (`POST /articles/{id}/archive` `{ "type": "pdf" }`); one-click restore UI (`GET /articles/{id}/archives`, `POST /articles/{id}/restore`).
 - **Phase 4:** Android client using `/sync/delta` + offline `content_html`.
 - **Phase 5:** extraction quality pass, integrity checks, unread-performance indexes under large archives.
 

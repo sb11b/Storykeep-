@@ -368,6 +368,7 @@ class ArchiveOut(BaseModel):
     id: uuid.UUID
     article_id: uuid.UUID
     archive_type: str
+    type: str
     storage_backend: str
     checksum: str | None
     byte_size: int | None
@@ -436,6 +437,8 @@ class ArticleOut(BaseModel):
     is_correction: bool = False
     parent_id: uuid.UUID | None = None
     filed_notes: list[FiledNoteOut] = []
+    offline_view: str | None = None
+    offline_archive_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 
@@ -493,6 +496,10 @@ class SearchHit(BaseModel):
 
 class ArchiveCreate(BaseModel):
     type: str = "html"
+
+
+class RestoreIn(BaseModel):
+    archive_id: uuid.UUID
 
 
 class SyncDeltaIn(BaseModel):

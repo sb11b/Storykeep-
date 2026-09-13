@@ -19,6 +19,7 @@ import {
   Maximize2,
   Menu,
   Minimize2,
+  History,
   NotebookPen,
   Plus,
   RefreshCw,
@@ -112,6 +113,7 @@ import {
 } from "@/lib/tts-visible";
 import type { VisibleSpeechPayload } from "@/lib/tts-visible";
 import type {
+  Archive,
   Article,
   ArticleListItem,
   Backup,
@@ -146,6 +148,17 @@ function displayArticleShelf(article: Article): FilingDestination | "" {
   }
   if (article.source_kind === "textbook") return "books";
   return "";
+}
+
+function snapshotKind(row: Archive): "html" | "pdf" {
+  if (row.type === "pdf" || row.archive_type === "pdf") return "pdf";
+  return "html";
+}
+
+function snapshotStamp(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 function readerActionError(error: unknown, fallback: string): never {
@@ -1492,6 +1505,23 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                     readerActionError(error, "Could not store a PDF snapshot");
                   }
                 }}
+                onRestore={async (archiveId) => {
+                  const id = article.id;
+                  try {
+                    const next = await api.restore(id, archiveId);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    setReaderScrollToken((current) => current + 1);
+                    toast.success(
+                      next.offline_view === "pdf"
+                        ? "Offline view is the PDF snapshot. Article text was kept."
+                        : "Restored the HTML snapshot. Current text was saved first.",
+                    );
+                    void loadNav();
+                  } catch (error) {
+                    readerActionError(error, "Could not restore that snapshot");
+                  }
+                }}
                 onTag={async (name) => {
                   const id = article.id;
                   try {
@@ -2145,6 +2175,7 @@ function Reader({
   onUseFeedText,
   onArchive,
   onArchivePdf,
+  onRestore,
   onTag,
   onNote,
   onHighlight,
@@ -2176,6 +2207,7 @@ function Reader({
   onUseFeedText: () => Promise<void>;
   onArchive: () => Promise<void>;
   onArchivePdf: () => Promise<void>;
+  onRestore: (archiveId: string) => Promise<void>;
   readerScrollToken: number;
   onTag: (name: string) => Promise<void>;
   onNote: (title: string, markdown: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
@@ -2265,6 +2297,11 @@ function Reader({
   const [findCount, setFindCount] = useState(0);
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreRows, setRestoreRows] = useState<Archive[]>([]);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<Archive | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const articleRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2277,6 +2314,8 @@ function Reader({
   );
   const bodyRef = useRef<HTMLDivElement>(null);
   const composed = isStoryKeepNote(article);
+  const pdfOffline =
+    !composed && article.offline_view === "pdf" && Boolean(article.offline_archive_id);
   const heroImage = composed ? null : articleHeroImageUrl(article.image_url, article.url);
   const html = composed ? composedNoteHtml(article) : articleReaderSource(article);
   const fallbackBody = composed
@@ -2767,6 +2806,30 @@ function Reader({
           <Button
             size="sm"
             variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setPendingRestore(null);
+              setRestoreError(null);
+              setRestoreOpen(true);
+              setRestoreLoading(true);
+              void api
+                .archives(article.id)
+                .then((rows) => {
+                  setRestoreRows(rows);
+                })
+                .catch((error) => {
+                  setRestoreRows([]);
+                  setRestoreError(error instanceof ApiError ? error.message : "Could not load snapshots");
+                })
+                .finally(() => setRestoreLoading(false));
+            }}
+          >
+            <History className="size-3.5" />
+            Restore…
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => void onDownloadPack()}
           >
             Obsidian overlay pack
@@ -2897,7 +2960,18 @@ function Reader({
           </div>
         ) : null}
         {composed ? <NoteAttachmentChips markdown={composedNoteMarkdown(article)} className="mb-4" /> : null}
-        {bodyHtml ? (
+        {pdfOffline ? (
+          <div className="mt-2 flex min-h-[70vh] flex-col overflow-hidden rounded-lg border">
+            <p className="border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              Offline view is this PDF snapshot. The article text was not replaced.
+            </p>
+            <iframe
+              title="PDF snapshot"
+              className="min-h-[70vh] w-full flex-1 bg-muted"
+              src={`/api/v1/archives/${article.offline_archive_id}/file`}
+            />
+          </div>
+        ) : bodyHtml ? (
           <div
             ref={bodyRef}
             className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
@@ -3246,6 +3320,91 @@ function Reader({
           />
         </div>
       ) : null}
+      <Dialog
+        open={restoreOpen}
+        onOpenChange={(open) => {
+          setRestoreOpen(open);
+          if (!open) {
+            setPendingRestore(null);
+            setRestoreError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" showCloseButton>
+          {pendingRestore ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  Restore {snapshotKind(pendingRestore) === "pdf" ? "PDF" : "HTML"} snapshot?
+                </DialogTitle>
+                <DialogDescription>
+                  {snapshotKind(pendingRestore) === "pdf"
+                    ? "The article text is kept. This PDF becomes the offline view."
+                    : "This replaces the article text with the snapshot. Your current text is saved as a new HTML snapshot first."}
+                </DialogDescription>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">
+                {snapshotKind(pendingRestore) === "pdf" ? "PDF" : "HTML"} · {snapshotStamp(pendingRestore.created_at)}
+              </p>
+              <DialogFooter>
+                <Button variant="outline" disabled={busy} onClick={() => setPendingRestore(null)}>
+                  Back
+                </Button>
+                <Button
+                  disabled={busy}
+                  onClick={() => {
+                    const row = pendingRestore;
+                    setBusy(true);
+                    void onRestore(row.id)
+                      .then(() => {
+                        setRestoreOpen(false);
+                        setPendingRestore(null);
+                      })
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Restore
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Restore a snapshot</DialogTitle>
+                <DialogDescription>Choose an HTML or PDF snapshot to use as the offline view.</DialogDescription>
+              </DialogHeader>
+              {restoreLoading ? (
+                <p className="text-sm text-muted-foreground">Loading snapshots…</p>
+              ) : restoreError ? (
+                <p className="text-sm text-destructive">{restoreError}</p>
+              ) : restoreRows.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No snapshots yet. Take an HTML or PDF snapshot first.
+                </p>
+              ) : (
+                <ul className="max-h-72 space-y-1 overflow-y-auto">
+                  {restoreRows.map((row) => (
+                    <li key={row.id}>
+                      <button
+                        type="button"
+                        className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
+                        onClick={() => setPendingRestore(row)}
+                      >
+                        {snapshotKind(row) === "pdf" ? "PDF" : "HTML"} · {snapshotStamp(row.created_at)}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setRestoreOpen(false)}>
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
       </div>
     </div>
   );

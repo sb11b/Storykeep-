@@ -1,5 +1,6 @@
 import type {
   Annotation,
+  Archive,
   Article,
   ExtractResult,
   Backup,
@@ -517,6 +518,12 @@ export const api = {
     request(`/api/v1/articles/${id}/archive`, {
       method: "POST",
       body: JSON.stringify({ type }),
+    }),
+  archives: (id: string) => request<Archive[]>(`/api/v1/articles/${id}/archives`),
+  restore: (id: string, archiveId: string) =>
+    request<Article>(`/api/v1/articles/${id}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ archive_id: archiveId }),
     }),
   search: (q: string, opts?: { saved?: boolean; limit?: number; offset?: number }) => {
     const search = new URLSearchParams({ q });

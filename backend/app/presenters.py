@@ -43,12 +43,18 @@ def annotation_out(note: Annotation, article_title: str | None = None) -> Annota
     )
 
 
+def archive_kind(row: Archive) -> str:
+    return "pdf" if getattr(row, "archive_type", None) == "pdf" else "html"
+
+
 def archive_out(row: Archive) -> ArchiveOut:
-    download_url = f"/api/v1/archives/{row.id}/file" if row.archive_type == "pdf" else None
+    kind = archive_kind(row)
+    download_url = f"/api/v1/archives/{row.id}/file?download=1" if kind == "pdf" else None
     return ArchiveOut(
         id=row.id,
         article_id=row.article_id,
         archive_type=row.archive_type,
+        type=kind,
         storage_backend=row.storage_backend,
         checksum=row.checksum,
         byte_size=row.byte_size,
@@ -179,6 +185,8 @@ def article_out(article: Article, filed_notes: list[Article] | None = None) -> A
         is_correction=bool(getattr(article, "is_correction", False)),
         parent_id=article.parent_id,
         filed_notes=[filed_note_out(row) for row in filed_notes or []],
+        offline_view=getattr(article, "offline_view", None),
+        offline_archive_id=getattr(article, "offline_archive_id", None),
     )
 
 

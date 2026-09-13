@@ -202,3 +202,30 @@ def _snapshot_pdf(db: Session, article: Article) -> Archive | None:
     db.add(article)
     db.flush()
     return row
+
+
+def restore_article_from_archive(db: Session, article: Article, row: Archive) -> None:
+    """Apply a snapshot as the article's offline view.
+
+    HTML: snapshot the current body first, then load the chosen snapshot
+    through the extractor sanitizer. PDF: keep content_html, switch the
+    offline view to the stored file.
+    """
+    if getattr(row, "archive_type", None) == "pdf":
+        path = Path(row.storage_path or "")
+        if not path.is_file():
+            raise FileNotFoundError("PDF snapshot file is missing")
+        article.offline_view = "pdf"
+        article.offline_archive_id = row.id
+        db.add(article)
+        return
+
+    snapshot_article(db, article, "html")
+    raw = row.content or ""
+    html = extractor._sanitize_html(raw) if raw.strip() else raw
+    text = extractor._clean_text(extractor._strip_tags(html)) if html else ""
+    article.content_html = html
+    article.content_text = text or None
+    article.offline_view = "html"
+    article.offline_archive_id = row.id
+    db.add(article)

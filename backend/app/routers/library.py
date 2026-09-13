@@ -368,7 +368,7 @@ def get_archive(archive_id: UUID, db: Session = Depends(get_db), user: User = De
         "archive_type": row.archive_type,
         "content": None if row.archive_type == "pdf" else row.content,
         "created_at": row.created_at.isoformat(),
-        "download_url": f"/api/v1/archives/{row.id}/file" if row.archive_type == "pdf" else None,
+        "download_url": f"/api/v1/archives/{row.id}/file?download=1" if row.archive_type == "pdf" else None,
         "byte_size": row.byte_size,
         "storage_backend": row.storage_backend,
     }
@@ -377,7 +377,10 @@ def get_archive(archive_id: UUID, db: Session = Depends(get_db), user: User = De
 
 @router.get("/archives/{archive_id}/file")
 def download_archive_file(
-    archive_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    archive_id: UUID,
+    download: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> FileResponse:
     row = db.get(Archive, archive_id)
     if not row or row.archive_type != "pdf" or not row.storage_path:
@@ -392,7 +395,7 @@ def download_archive_file(
         path,
         media_type="application/pdf",
         filename=f"storykeep-{row.id}.pdf",
-        content_disposition_type="attachment",
+        content_disposition_type="attachment" if download else "inline",
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"},
     )
 

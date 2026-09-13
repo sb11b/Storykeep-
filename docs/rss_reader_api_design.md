@@ -241,7 +241,11 @@ Empty `q` returns 400.
 ## 8. Archives (link-rot fallback)
 
 ### `POST /articles/{id}/archive` `{ "type": "html" | "pdf" }`
-### `GET /articles/{id}/archives`
+### `GET /articles/{id}/archives`  — owner-only list (`type` html|pdf + `created_at`). Unauth 401; missing/wrong owner 404.
+### `POST /articles/{id}/restore` `{ "archive_id" }`
+- **html:** save current body as a new HTML snapshot, then load the chosen snapshot through the sanitizer (`offline_view=html`).
+- **pdf:** `offline_view=pdf`, `content_html` unchanged; viewer uses `GET /archives/{id}/file` (inline). `?download=1` for attachment.
+- Unauth 401 JSON. Wrong user / missing row 404.
 ### `GET /archives/{id}`  — HTML/readability returns stored text; `type=pdf` returns `download_url`
 ### `GET /archives/{id}/file`  — authenticated PDF bytes (`application/pdf`). Same cookie as other user data.
 

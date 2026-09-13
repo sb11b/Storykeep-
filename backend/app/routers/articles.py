@@ -28,6 +28,7 @@ from app.schemas import (
     Page,
     ResolveTitleOut,
     ResolveTitlesIn,
+    RestoreIn,
     ResolveTitlesOut,
     ResolvedTitleOut,
     SaveUrlIn,
@@ -659,4 +660,36 @@ def list_archives(
     article_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> list[ArchiveOut]:
     article = _owned_article(db, user, article_id)
-    return [archive_out(row) for row in article.archives]
+    rows = sorted(
+        article.archives or [],
+        key=lambda row: row.created_at or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return [archive_out(row) for row in rows]
+
+
+@router.post("/articles/{article_id}/restore", response_model=ArticleOut)
+def restore_article(
+    article_id: UUID,
+    payload: RestoreIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    row = next((item for item in (article.archives or []) if item.id == payload.archive_id), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Archive not found")
+    try:
+        archive_service.restore_article_from_archive(db, article, row)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Archive not found") from None
+    changelog.record(
+        db,
+        user.id,
+        "article",
+        article.id,
+        "upsert",
+        {"restore_archive_id": str(row.id), "offline_view": article.offline_view},
+    )
+    db.commit()
+    return _article_payload(db, user, article.id)

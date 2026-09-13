@@ -95,6 +95,7 @@ export type Archive = {
   id: string;
   article_id: string;
   archive_type: string;
+  type?: "html" | "pdf" | string;
   storage_backend: string;
   checksum: string | null;
   byte_size: number | null;
@@ -199,6 +200,8 @@ export type Article = ArticleListItem & {
   is_correction?: boolean;
   parent_id?: string | null;
   filed_notes?: FiledNote[];
+  offline_view?: "html" | "pdf" | string | null;
+  offline_archive_id?: string | null;
 };
 
 export type Page<T> = {
