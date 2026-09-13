@@ -157,9 +157,19 @@
 .sk-page-surface {
   background-color: var(--storykeep-page-bg);
   color: var(--storykeep-page-fg, var(--foreground));
+  --background: var(--storykeep-page-bg);
   --foreground: var(--storykeep-page-fg, var(--foreground));
   --muted-foreground: var(--storykeep-page-muted, var(--muted-foreground));
+  --card: var(--storykeep-page-bg);
   --card-foreground: var(--storykeep-page-fg, var(--foreground));
+}
+
+[data-page-theme="dark"] .sk-page-surface {
+  --muted: oklch(0.28 0.02 55);
+  --accent: oklch(0.32 0.03 55);
+  --accent-foreground: var(--storykeep-page-fg);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
 }
 
 @layer base {
@@ -184,6 +194,7 @@
   font-family: var(--storykeep-body-font, var(--font-serif), ui-serif, Georgia, serif);
   font-size: 1.125rem;
   line-height: 1.75;
+  color: inherit;
 }
 .article-body.article-size-sm {
   font-size: 1rem;

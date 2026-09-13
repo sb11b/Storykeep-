@@ -185,6 +185,8 @@ export function applyAppearance(settings: AppearanceSettings) {
   root.style.setProperty("--storykeep-rail", rail);
   root.style.setProperty("--storykeep-page-fg", pageFg);
   root.style.setProperty("--storykeep-page-muted", pageMuted);
+  root.style.setProperty("--foreground", pageFg);
+  root.style.setProperty("--muted-foreground", pageMuted);
   root.style.setProperty("--background", page);
   root.style.setProperty("--sidebar", rail);
   root.style.setProperty("--card", topbar);

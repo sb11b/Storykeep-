@@ -48,7 +48,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
-import { avatarMediaUrl } from "@/lib/user-profile";
+import { avatarMediaUrl, normalizeUserProfile } from "@/lib/user-profile";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   extractWikilinkTargets,
@@ -1002,7 +1002,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
 
   function closeProfile() {
     setProfileOpen(false);
-    void api.me().then((next) => onUserChange?.(next)).catch(() => {});
+    void api.me().then((next) => onUserChange?.(normalizeUserProfile(next))).catch(() => {});
   }
 
   const nav = (

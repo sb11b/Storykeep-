@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeUserProfile } from "./user-profile";
+import { mergeUserProfile, normalizeUserProfile } from "./user-profile";
 import type { User } from "./types";
 
 const base: User = {
@@ -28,6 +28,17 @@ test("mergeUserProfile keeps preferences when patch omits them", () => {
   assert.equal(next.avatar_media_id, base.avatar_media_id);
   assert.equal(next.avatar_url, base.avatar_url);
   assert.deepEqual(next.preferences.appearance, { rail_preset: "navy", font_family: "serif" });
+});
+
+test("normalizeUserProfile derives avatar_url from avatar_media_id", () => {
+  const mediaId = "22222222-2222-2222-2222-222222222222";
+  const profile = normalizeUserProfile({
+    ...base,
+    avatar_media_id: mediaId,
+    avatar_url: "blob:http://localhost/dead",
+  });
+  assert.equal(profile.avatar_media_id, mediaId);
+  assert.equal(profile.avatar_url, `/api/v1/media/${mediaId}`);
 });
 
 test("mergeUserProfile derives avatar_url from avatar_media_id", () => {

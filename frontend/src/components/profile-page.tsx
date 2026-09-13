@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Camera, Loader2 } from "lucide-react";
 import { appearanceFromPreferences, type AppearanceSettings } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
-import { avatarMediaUrl } from "@/lib/user-profile";
+import { avatarMediaUrl, normalizeUserProfile } from "@/lib/user-profile";
 import type { Profile, TotpSetup } from "@/lib/types";
 import { ProfileAppearancePanel } from "@/components/profile-appearance-panel";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -54,7 +54,7 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.profile();
+      const data = normalizeUserProfile(await api.me());
       setProfile(data);
       setDisplayName(data.display_name || "");
       setBirthdate(data.birthdate || "");
@@ -97,7 +97,7 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
     setUploadingPhoto(true);
     try {
       const uploaded = await api.uploadNoteMedia(file);
-      const updated = await api.updateMe({ avatar_media_id: uploaded.id });
+      const updated = normalizeUserProfile(await api.updateMe({ avatar_media_id: uploaded.id }));
       setProfile(updated);
       onUpdated?.(updated);
       toast.success("Profile photo updated");
