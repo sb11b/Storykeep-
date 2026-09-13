@@ -69,6 +69,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `SECRET_KEY` | JWT signing key |
 | `SEED_DEMO` | Create the demo user and sample feeds (`1` by default) |
 | `S3_BUCKET` | Optional backup destination |
+| `BACKUP_INTERVAL_HOURS` | Scheduled S3/B2 database dump interval (default 24; `0` disables) |
 | `S3_PREFIX` | Object prefix, default `storykeep` |
 | `API_ORIGIN` | Next.js rewrite target for the API |
 | `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen, dictation, and the Junior chat bubble. Server only — never in git or the browser. |

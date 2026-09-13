@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_prefix: str = "storykeep"
     aws_region: str = "us-east-1"
+    backup_interval_hours: int = 24
     b2_key_id: str = ""
     b2_application_key: str = ""
     b2_bucket: str | None = None

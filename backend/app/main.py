@@ -18,6 +18,7 @@ from app.models import Feed
 from app.routers import articles, auth, backups, chat, feeds, library, overlay, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
+from app.services.backup import run_scheduled_s3_dumps
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -191,6 +192,14 @@ async def lifespan(_: FastAPI):
     _create_schema()
     threading.Thread(target=_seed_in_background, daemon=True, name="storykeep-seed").start()
     scheduler.add_job(refresh_due_feeds, "interval", minutes=settings.refresh_minutes, id="refresh")
+    scheduler.add_job(
+        run_scheduled_s3_dumps,
+        "interval",
+        minutes=60,
+        id="scheduled-s3-dumps",
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
     yield
     scheduler.shutdown(wait=False)

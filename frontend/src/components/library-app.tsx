@@ -4034,7 +4034,8 @@ function BackupDialog({
           <DialogTitle>Backup the archive</DialogTitle>
           <DialogDescription>
             StoryKeep is the working archive. Primary backup is a dated bundle on Backblaze when configured: Export JSON
-            (archive.json + note media in one zip) or Dump database (pg_dump). Nothing writes to Steve&apos;s Surface Vault on
+            (archive.json + note media in one zip) or Dump database (pg_dump). A database dump is also uploaded to that
+            bucket about once a day. Nothing writes to Steve&apos;s Surface Vault on
             disk. The Obsidian overlay pack is optional if you still want a markdown zip.
           </DialogDescription>
         </DialogHeader>

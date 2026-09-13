@@ -47,6 +47,7 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `B2_BUCKET` | No | Backblaze bucket name |
 | `B2_ENDPOINT` | No | S3-compatible endpoint, e.g. `https://s3.us-west-004.backblazeb2.com` |
 | `B2_REGION` | No | Backblaze region, e.g. `us-west-004` |
+| `BACKUP_INTERVAL_HOURS` | No | Phase 3 scheduled S3/B2 `pg_dump`. Default 24. Set `0` to disable. |
 | `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 

@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
-from app.database import parse_database_url
+from app.database import SessionLocal, parse_database_url
 from app.models import Annotation, Article, Backup, Feed, Folder, NoteMedia, Tag, User
 
 logger = logging.getLogger(__name__)
@@ -292,3 +292,47 @@ def create_db_dump(db: Session, user_id: UUID | None) -> Backup:
     db.commit()
     db.refresh(backup)
     return backup
+
+
+def last_successful_s3_dump_at(db: Session) -> datetime | None:
+    row = db.scalars(
+        select(Backup)
+        .where(
+            Backup.backup_type == "db_dump",
+            Backup.status == "success",
+            Backup.destination == "s3",
+        )
+        .order_by(Backup.completed_at.desc())
+    ).first()
+    return row.completed_at if row and row.completed_at else None
+
+
+def scheduled_s3_dump_due(now: datetime, last: datetime | None, interval_hours: int) -> bool:
+    """Phase 3: daily object-store dumps. interval_hours <= 0 disables."""
+    if interval_hours <= 0:
+        return False
+    if last is None:
+        return True
+    return now - last >= timedelta(hours=interval_hours)
+
+
+def run_scheduled_s3_dumps() -> None:
+    """Hourly tick; uploads a pg_dump to S3/B2 when the interval has elapsed."""
+    hours = int(settings.backup_interval_hours or 0)
+    if hours <= 0:
+        return
+    if not object_store_ready():
+        logger.info("Scheduled S3 dump skipped: object store is not configured.")
+        return
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        last = last_successful_s3_dump_at(db)
+        if not scheduled_s3_dump_due(now, last, hours):
+            return
+        logger.info("Starting scheduled S3 database dump.")
+        create_db_dump(db, None)
+    except Exception:
+        logger.exception("Scheduled S3 dump failed")
+    finally:
+        db.close()
