@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { LoaderCircle, Maximize2, MessageSquarePlus, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
-import { createGrokPane, GrokPane, type GrokPaneState } from "@/components/grok-pane";
+import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -98,6 +98,10 @@ export function GrokBubble({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [renamingPaneId, setRenamingPaneId] = useState<string | null>(null);
+  const [paneRenameDraft, setPaneRenameDraft] = useState("");
+  const paneRenameInputRef = useRef<HTMLInputElement>(null);
+  const paneLabelsLoadedRef = useRef(false);
   const [listening, setListening] = useState(false);
   const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
@@ -122,6 +126,26 @@ export function GrokBubble({
   useEffect(() => {
     if (open && persist) void refreshHistory();
   }, [open, persist, refreshHistory]);
+
+  useEffect(() => {
+    if (paneLabelsLoadedRef.current) return;
+    paneLabelsLoadedRef.current = true;
+    void api
+      .getPreferences()
+      .then((prefs) => {
+        const labels = prefs.grok_pane_labels as Record<string, string> | undefined;
+        if (!labels || !Object.keys(labels).length) return;
+        setPanes((current) =>
+          current.map((pane, index) => ({
+            ...pane,
+            displayName: labels[pane.id]?.trim() || pane.displayName || defaultGrokPaneName(index),
+          })),
+        );
+      })
+      .catch(() => {
+        /* ignore */
+      });
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -238,11 +262,24 @@ export function GrokBubble({
     setFullscreen(true);
   }
 
+  async function persistPaneLabel(paneId: string, name: string) {
+    try {
+      const prefs = await api.getPreferences();
+      const existing = (prefs.grok_pane_labels as Record<string, string> | undefined) || {};
+      await api.updatePreferences({
+        grok_pane_labels: { ...existing, [paneId]: name },
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
   function addPane() {
     if (locked || panes.length >= MAX_PANES) return;
-    const next = createGrokPane();
+    const next = createGrokPane(panes.length);
     setPanes((current) => [...current, next]);
     setFocusedPaneId(next.id);
+    void persistPaneLabel(next.id, next.displayName);
   }
 
   function removePane(id: string) {
@@ -288,15 +325,22 @@ export function GrokBubble({
     }
   }
 
-  async function deleteConversation(conversationId: string) {
+  async function deleteConversation(row: GrokConversation) {
+    if (!window.confirm(`Delete "${row.title}"? This cannot be undone.`)) return;
     try {
-      await api.deleteChatConversation(conversationId);
-      setConversations((current) => current.filter((row) => row.id !== conversationId));
-      const active = panes.find((pane) => pane.conversationId === conversationId);
+      await api.deleteChatConversation(row.id);
+      setConversations((current) => current.filter((item) => item.id !== row.id));
+      const active = panes.find((pane) => pane.conversationId === row.id);
       if (active) {
-        updatePane(active.id, (pane) => ({ ...pane, conversationId: null, messages: [] }));
+        updatePane(active.id, (pane) => ({
+          ...pane,
+          conversationId: null,
+          messages: [],
+          draft: "",
+          recapQuestion: false,
+        }));
       }
-      if (renamingId === conversationId) {
+      if (renamingId === row.id) {
         setRenamingId(null);
         setRenameDraft("");
       }
@@ -329,6 +373,39 @@ export function GrokBubble({
     } catch {
       /* ignore */
     }
+  }
+
+  function startPaneRename(paneId: string) {
+    const pane = panes.find((item) => item.id === paneId);
+    if (!pane) return;
+    setRenamingPaneId(paneId);
+    setPaneRenameDraft(pane.displayName);
+    window.requestAnimationFrame(() => paneRenameInputRef.current?.select());
+  }
+
+  function cancelPaneRename() {
+    setRenamingPaneId(null);
+    setPaneRenameDraft("");
+  }
+
+  async function commitPaneRename(paneId: string) {
+    const trimmed = paneRenameDraft.trim().slice(0, 120);
+    setRenamingPaneId(null);
+    setPaneRenameDraft("");
+    if (!trimmed) return;
+    updatePane(paneId, (pane) => ({ ...pane, displayName: trimmed }));
+    await persistPaneLabel(paneId, trimmed);
+  }
+
+  function paneRenameProps(paneId: string) {
+    return {
+      renamingLabel: renamingPaneId === paneId,
+      renameDraft: paneRenameDraft,
+      onStartRename: () => startPaneRename(paneId),
+      onRenameDraftChange: setPaneRenameDraft,
+      onCommitRename: () => void commitPaneRename(paneId),
+      onCancelRename: cancelPaneRename,
+    };
   }
 
   const historySidebar = persist ? (
@@ -411,7 +488,7 @@ export function GrokBubble({
                         <Pencil className="size-3.5" />
                         Rename
                       </DropdownMenuItem>
-                      <DropdownMenuItem variant="destructive" onClick={() => void deleteConversation(row.id)}>
+                      <DropdownMenuItem variant="destructive" onClick={() => void deleteConversation(row)}>
                         <Trash2 className="size-3.5" />
                         Delete
                       </DropdownMenuItem>
@@ -461,12 +538,15 @@ export function GrokBubble({
 
   if (!mounted) return null;
 
+  const bubbleLabel = focusedPane.displayName;
+
   const bubble = (
     <button
       type="button"
       className="fixed z-[80] flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg ring-1 ring-black/10"
       style={{ left: pos.x, top: pos.y }}
-      aria-label="Open Grok chat"
+      aria-label={`Open ${bubbleLabel} chat`}
+      title={bubbleLabel}
       onPointerDown={(event) => {
         movedRef.current = false;
         dragRef.current = { kind: "bubble", dx: event.clientX - pos.x, dy: event.clientY - pos.y };
@@ -520,9 +600,56 @@ export function GrokBubble({
       >
         <Sparkles className="size-4 text-primary" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium leading-none">Grok</p>
-          <p className="truncate text-[11px] text-muted-foreground">{fullscreen ? `${panes.length} pane${panes.length === 1 ? "" : "s"}` : subtitle}</p>
+          {renamingPaneId === focusedPaneId && !fullscreen ? (
+            <Input
+              ref={paneRenameInputRef}
+              value={paneRenameDraft}
+              className="h-7 max-w-[14rem] px-2 text-sm"
+              aria-label="Rename pane"
+              onChange={(event) => setPaneRenameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void commitPaneRename(focusedPaneId);
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelPaneRename();
+                }
+              }}
+              onBlur={() => void commitPaneRename(focusedPaneId)}
+            />
+          ) : (
+            <button
+              type="button"
+              className="truncate text-left text-sm font-medium leading-none hover:underline"
+              title="Rename pane"
+              onClick={() => startPaneRename(focusedPaneId)}
+            >
+              {focusedPane.displayName}
+            </button>
+          )}
+          <p className="truncate text-[11px] text-muted-foreground">
+            {fullscreen ? `${panes.length} pane${panes.length === 1 ? "" : "s"}` : subtitle}
+          </p>
         </div>
+        {!fullscreen && renamingPaneId !== focusedPaneId ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label={`Options for ${focusedPane.displayName}`}>
+                  <MoreHorizontal className="size-3.5" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="start" className="min-w-36">
+              <DropdownMenuItem onClick={() => startPaneRename(focusedPaneId)}>
+                <Pencil className="size-3.5" />
+                Rename pane
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         {fullscreen && !locked && panes.length < MAX_PANES ? (
           <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={addPane}>
             <Plus className="size-3.5" />
@@ -555,10 +682,11 @@ export function GrokBubble({
               >
                 <GrokPane
                   pane={pane}
-                  label={`Grok ${index + 1}`}
+                  label={pane.displayName}
                   compact
                   focused={pane.id === focusedPaneId}
                   canRemove={panes.length > 1}
+                  {...paneRenameProps(pane.id)}
                   articleId={articleId}
                   articleTitle={articleTitle}
                   articleGuid={articleGuid}
@@ -586,7 +714,7 @@ export function GrokBubble({
         ) : (
           <GrokPane
             pane={focusedPane}
-            label="Grok"
+            label={focusedPane.displayName}
             articleId={articleId}
             articleTitle={articleTitle}
             articleGuid={articleGuid}

@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Mic, Send, Square, X } from "lucide-react";
+import { LoaderCircle, Mic, MoreHorizontal, Pencil, Send, Square, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
@@ -31,6 +38,7 @@ export type ChatLine = {
 
 export type GrokPaneState = {
   id: string;
+  displayName: string;
   conversationId: string | null;
   modelChoice: string;
   lastResolvedModel: string | null;
@@ -42,9 +50,14 @@ export type GrokPaneState = {
   recapQuestion: boolean;
 };
 
-export function createGrokPane(): GrokPaneState {
+export function defaultGrokPaneName(index: number) {
+  return index === 0 ? "Grok" : `Grok panel ${index + 1}`;
+}
+
+export function createGrokPane(paneIndex = 0): GrokPaneState {
   return {
     id: crypto.randomUUID(),
+    displayName: defaultGrokPaneName(paneIndex),
     conversationId: null,
     modelChoice: "auto",
     lastResolvedModel: null,
@@ -99,10 +112,22 @@ export function GrokPane({
   persist,
   panelOpen = true,
   ttsVoices = [],
+  renamingLabel = false,
+  renameDraft = "",
+  onStartRename,
+  onRenameDraftChange,
+  onCommitRename,
+  onCancelRename,
 }: {
   pane: GrokPaneState;
   label: string;
   compact?: boolean;
+  renamingLabel?: boolean;
+  renameDraft?: string;
+  onStartRename?: () => void;
+  onRenameDraftChange?: (value: string) => void;
+  onCommitRename?: () => void;
+  onCancelRename?: () => void;
   focused?: boolean;
   canRemove?: boolean;
   articleId: string | null;
@@ -532,13 +557,60 @@ export function GrokPane({
       onPointerDown={onFocus}
     >
       {compact ? (
-        <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1.5">
+        <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium">{label}</p>
-            <p className="truncate text-[10px] text-muted-foreground">
-              {grokModelLabel(pane.modelChoice, pane.lastResolvedModel)}
-            </p>
+            {renamingLabel ? (
+              <Input
+                value={renameDraft}
+                className="h-7 px-2 text-xs"
+                aria-label="Rename pane"
+                autoFocus
+                onChange={(event) => onRenameDraftChange?.(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    onCommitRename?.();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    onCancelRename?.();
+                  }
+                }}
+                onBlur={() => onCommitRename?.()}
+              />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="truncate text-left text-xs font-medium hover:underline"
+                  title="Rename pane"
+                  onClick={() => onStartRename?.()}
+                >
+                  {label}
+                </button>
+                <p className="truncate text-[10px] text-muted-foreground">
+                  {grokModelLabel(pane.modelChoice, pane.lastResolvedModel)}
+                </p>
+              </>
+            )}
           </div>
+          {!renamingLabel && onStartRename ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button size="icon-xs" variant="ghost" aria-label={`Options for ${label}`}>
+                    <MoreHorizontal className="size-3.5 text-muted-foreground" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="start" className="min-w-36">
+                <DropdownMenuItem onClick={() => onStartRename()}>
+                  <Pencil className="size-3.5" />
+                  Rename pane
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
           {canRemove ? (
             <Button size="icon-xs" variant="ghost" onClick={onRemove} aria-label={`Remove ${label}`}>
               <X className="size-3.5" />

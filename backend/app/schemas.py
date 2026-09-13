@@ -577,6 +577,7 @@ class PreferencesIn(BaseModel):
     items_per_page: int | None = Field(default=None, ge=10, le=200)
     mark_read_on_open: bool | None = None
     tts_voice_id: str | None = Field(default=None, max_length=64)
+    grok_pane_labels: dict[str, str] | None = None
     appearance: AppearancePreferencesIn | None = None
 
 
