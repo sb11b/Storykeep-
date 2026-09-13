@@ -100,7 +100,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export type HealthInfo = { status: string; build: string; built_at: string };
 
 export const api = {
-  health: () => request<HealthInfo>("/health"),
+  health: () => request<HealthInfo>("/api/health"),
   me: () => request<Profile>("/api/v1/me"),
   profile: () => request<Profile>("/api/v1/auth/profile"),
   updateMe: (payload: {

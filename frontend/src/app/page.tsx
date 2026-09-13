@@ -5,8 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { LibraryApp } from "@/components/library-app";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import { isPublicAppPath } from "@/lib/public-routes";
 import type { Profile, User } from "@/lib/types";
 import { mergeUserProfile, normalizeUserProfile } from "@/lib/user-profile";
+
+const AUTH_WAIT_MS = 8000;
 
 export default function HomePage() {
   const router = useRouter();
@@ -15,21 +18,33 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (pathname !== "/") return;
+    if (isPublicAppPath(pathname)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (!cancelled) router.replace("/login");
+    }, AUTH_WAIT_MS);
     api
       .me()
       .then((next) => {
+        if (cancelled) return;
+        window.clearTimeout(timer);
         const user = normalizeUserProfile(next);
         applyAppearanceFromUser(user);
         setUser(user);
       })
       .catch((err) => {
+        window.clearTimeout(timer);
+        if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
           router.replace("/login");
           return;
         }
         setError(err instanceof Error ? err.message : "Could not reach Storykeep");
       });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [router, pathname]);
 
   if (error) {

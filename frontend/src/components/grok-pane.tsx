@@ -1633,6 +1633,11 @@ export function GrokPane({
         {dragOver ? (
           <p className="text-[10px] text-muted-foreground">Drop files here — PDF, text, or an image, up to 10 MB.</p>
         ) : null}
+        {process.env.NEXT_PUBLIC_BUILD_SHA ? (
+          <p className="text-[10px] text-muted-foreground" title="Deployed build">
+            Build {process.env.NEXT_PUBLIC_BUILD_SHA}
+          </p>
+        ) : null}
       </form>
     </div>
   );

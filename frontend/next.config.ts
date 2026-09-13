@@ -14,6 +14,7 @@ const nextConfig: NextConfig = isStaticExport
         return [
           { source: "/api/:path*", destination: `${API_ORIGIN}/api/:path*` },
           { source: "/health", destination: `${API_ORIGIN}/health` },
+          { source: "/about", destination: `${API_ORIGIN}/about` },
         ];
       },
     };

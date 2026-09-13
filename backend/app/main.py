@@ -7,7 +7,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import select, text
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -241,6 +241,11 @@ app.include_router(chat.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 
 
+# Logged-out browsers opening these paths used to get the SPA shell and hang on
+# "Opening your library…". Send them to sign-in instead. Not Junior chat.
+APP_SHELL_ALIASES = frozenset({"archive", "library", "app", "home", "chat", "junior"})
+
+
 def _build_info() -> dict[str, str]:
     path = Path(__file__).resolve().parent / "build-info.json"
     if path.is_file():
@@ -257,9 +262,35 @@ def _build_info() -> dict[str, str]:
     return {"build": "unknown", "built_at": ""}
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
+def health_payload() -> dict[str, str]:
     return {"status": "ok", **_build_info()}
+
+
+def is_app_shell_alias(full_path: str) -> bool:
+    first = (full_path or "").strip("/").split("/", 1)[0].lower()
+    return first in APP_SHELL_ALIASES
+
+
+def about_html() -> str:
+    info = health_payload()
+    build = info.get("build") or "unknown"
+    built_at = info.get("built_at") or ""
+    stamp = f" · {built_at}" if built_at else ""
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'/>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
+        "<title>About StoryKeep</title></head><body>"
+        "<main style='font-family:system-ui,sans-serif;max-width:36rem;margin:3rem auto;padding:0 1.25rem'>"
+        "<h1>StoryKeep</h1>"
+        "<p>A personal RSS reader and article archive. Sign in to open your library.</p>"
+        f"<p>Build <strong>{build}</strong>{stamp}</p>"
+        "<p><a href='/login'>Sign in</a></p>"
+        "</main></body></html>"
+    )
+
+
+def _health() -> dict[str, str]:
+    return health_payload()
 
 
 def _static_headers(path: Path) -> dict[str, str]:
@@ -269,15 +300,41 @@ def _static_headers(path: Path) -> dict[str, str]:
     return {"Cache-Control": "public, max-age=3600"}
 
 
+def _about_page():
+    directory = Path(settings.frontend_dir) if settings.frontend_dir else None
+    if directory and directory.is_dir():
+        nested = directory / "about" / "index.html"
+        if nested.is_file():
+            return FileResponse(nested, headers=_static_headers(nested))
+        html_file = directory / "about.html"
+        if html_file.is_file():
+            return FileResponse(html_file, headers=_static_headers(html_file))
+    return HTMLResponse(about_html())
+
+
+def _login_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/login", status_code=302)
+
+
+app.add_api_route("/health", _health, methods=["GET", "HEAD"], tags=["health"])
+app.add_api_route("/api/health", _health, methods=["GET", "HEAD"], tags=["health"])
+app.add_api_route("/about", _about_page, methods=["GET", "HEAD"], tags=["health"], include_in_schema=False)
+for _alias in sorted(APP_SHELL_ALIASES):
+    app.add_api_route(f"/{_alias}", _login_redirect, methods=["GET", "HEAD"], include_in_schema=False)
+    app.add_api_route(f"/{_alias}/{{rest:path}}", _login_redirect, methods=["GET", "HEAD"], include_in_schema=False)
+
+
 def _register_frontend(app: FastAPI) -> None:
     directory = Path(settings.frontend_dir) if settings.frontend_dir else None
     if not directory or not directory.is_dir():
         return
 
-    @app.get("/{full_path:path}")
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     def frontend_page(full_path: str):
-        if full_path in {"api", "health"} or full_path.startswith("api/"):
-            return {"detail": "Not found"}
+        if is_app_shell_alias(full_path):
+            return RedirectResponse(url="/login", status_code=302)
+        if full_path in {"api", "health", "about"} or full_path.startswith("api/"):
+            return JSONResponse({"detail": "Not found"}, status_code=404)
         direct = directory / full_path
         if direct.is_file():
             return FileResponse(direct, headers=_static_headers(direct))
