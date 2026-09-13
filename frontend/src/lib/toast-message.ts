@@ -32,3 +32,14 @@ export function toastErrorFromUnknown(error: unknown, fallback: string): void {
   }
   toastError(messageFromApiError(error, fallback));
 }
+
+/** Human-readable action failure — always includes HTTP code when available. */
+export function actionErrorMessage(error: unknown, action: string, fallback: string): string {
+  const status = error instanceof ApiError ? error.status : 0;
+  const detail = messageFromApiError(error, fallback);
+  return `Could not ${action} (HTTP ${status || "error"}): ${detail}`;
+}
+
+export function toastActionError(error: unknown, action: string, fallback: string): void {
+  toast.error(actionErrorMessage(error, action, fallback));
+}

@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
+import { toastActionError } from "@/lib/toast-message";
 import { grokModelLabel } from "@/lib/grok-model";
 import type { GrokConversation, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
@@ -352,26 +353,24 @@ export function GrokBubble({
   }
 
   async function deleteConversation(row: GrokConversation) {
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
     if (!window.confirm(`Delete "${row.title}"? This cannot be undone.`)) return;
     try {
       await api.deleteChatConversation(row.id);
       setConversations((current) => current.filter((item) => item.id !== row.id));
-      const active = panes.find((pane) => pane.conversationId === row.id);
-      if (active) {
-        updatePane(active.id, (pane) => ({
-          ...pane,
-          conversationId: null,
-          messages: [],
-          draft: "",
-          recapQuestion: false,
-        }));
-      }
+      setPanes((current) =>
+        current.map((pane) =>
+          pane.conversationId === row.id
+            ? { ...pane, conversationId: null, messages: [], draft: "", recapQuestion: false }
+            : pane,
+        ),
+      );
       if (renamingId === row.id) {
         setRenamingId(null);
         setRenameDraft("");
       }
-    } catch {
-      /* ignore */
+    } catch (error) {
+      toastActionError(error, "delete chat", "Could not delete that chat");
     }
   }
 
@@ -506,7 +505,7 @@ export function GrokBubble({
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          className="mt-0.5 shrink-0 opacity-0 group-hover:opacity-100 data-popup-open:opacity-100"
+                          className="mt-0.5 shrink-0 opacity-60 hover:opacity-100 data-popup-open:opacity-100"
                           aria-label={`Options for ${row.title}`}
                         >
                           <MoreHorizontal className="size-3 text-muted-foreground" />
@@ -518,7 +517,12 @@ export function GrokBubble({
                         <Pencil className="size-3.5" />
                         Rename
                       </DropdownMenuItem>
-                      <DropdownMenuItem variant="destructive" onClick={() => void deleteConversation(row)}>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => {
+                          queueMicrotask(() => void deleteConversation(row));
+                        }}
+                      >
                         <Trash2 className="size-3.5" />
                         Delete
                       </DropdownMenuItem>
