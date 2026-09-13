@@ -113,7 +113,7 @@ import {
 } from "@/lib/tts-visible";
 import type { VisibleSpeechPayload } from "@/lib/tts-visible";
 import type {
-  Archive,
+  Archive as SnapshotRow,
   Article,
   ArticleListItem,
   Backup,
@@ -150,7 +150,7 @@ function displayArticleShelf(article: Article): FilingDestination | "" {
   return "";
 }
 
-function snapshotKind(row: Archive): "html" | "pdf" {
+function snapshotKind(row: SnapshotRow): "html" | "pdf" {
   if (row.type === "pdf" || row.archive_type === "pdf") return "pdf";
   return "html";
 }
@@ -2298,10 +2298,10 @@ function Reader({
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
-  const [restoreRows, setRestoreRows] = useState<Archive[]>([]);
+  const [restoreRows, setRestoreRows] = useState<SnapshotRow[]>([]);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [pendingRestore, setPendingRestore] = useState<Archive | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<SnapshotRow | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const articleRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
