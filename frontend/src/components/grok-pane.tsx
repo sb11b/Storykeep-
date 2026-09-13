@@ -16,6 +16,7 @@ export type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork
 
 export type GrokPaneState = {
   id: string;
+  conversationId: string | null;
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
@@ -25,6 +26,7 @@ export type GrokPaneState = {
 export function createGrokPane(): GrokPaneState {
   return {
     id: crypto.randomUUID(),
+    conversationId: null,
     messages: [],
     draft: "",
     includeArticle: false,
@@ -68,6 +70,7 @@ export function GrokPane({
   onSavedNote,
   onActivateListen,
   onStopArticleListen,
+  onHistoryChanged,
 }: {
   pane: GrokPaneState;
   label: string;
@@ -88,6 +91,7 @@ export function GrokPane({
   onSavedNote: (noteId?: string, destination?: GrokNoteDestination) => Promise<void>;
   onActivateListen: (stop: (() => void) | null) => void;
   onStopArticleListen?: () => void;
+  onHistoryChanged?: () => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const stopRef = useRef<() => void>(() => {});
@@ -112,7 +116,8 @@ export function GrokPane({
     try {
       await api.streamChat(
         {
-          messages: history.map((item) => ({ role: item.role, content: item.content })),
+          message: content,
+          conversation_id: pane.conversationId,
           article_id: articleId,
           include_article: Boolean(pane.includeArticle && articleId),
         },
@@ -123,6 +128,32 @@ export function GrokPane({
               item.id === assistantId ? { ...item, content: item.content + delta } : item,
             ),
           }));
+        },
+        (meta) => {
+          onUpdate((current) => {
+            let next = current;
+            if (meta.conversation_id && meta.conversation_id !== current.conversationId) {
+              next = { ...next, conversationId: meta.conversation_id };
+            }
+            if (meta.user_message_id) {
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === userLine.id ? { ...item, id: meta.user_message_id! } : item,
+                ),
+              };
+            }
+            if (meta.assistant_message_id) {
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === assistantId ? { ...item, id: meta.assistant_message_id! } : item,
+                ),
+              };
+            }
+            return next;
+          });
+          if (meta.conversation_id || meta.assistant_message_id) onHistoryChanged?.();
         },
       );
     } catch (error) {

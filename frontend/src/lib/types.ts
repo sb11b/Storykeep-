@@ -255,6 +255,26 @@ export type ChatStatus = {
   provider: string;
   model: string;
   requests_per_hour: number;
+  persist?: boolean;
+};
+
+export type GrokConversation = {
+  id: string;
+  title: string;
+  pane: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GrokMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type GrokConversationDetail = GrokConversation & {
+  messages: GrokMessage[];
 };
 
 export type TtsPlan = {

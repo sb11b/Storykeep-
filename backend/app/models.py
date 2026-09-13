@@ -367,6 +367,39 @@ class ChangeLog(Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class GrokConversation(Base):
+    __tablename__ = "grok_conversations"
+    __table_args__ = (Index("grok_conversations_user_updated_idx", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="New chat")
+    pane: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    messages: Mapped[list["GrokMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="GrokMessage.created_at",
+    )
+
+
+class GrokMessage(Base):
+    __tablename__ = "grok_messages"
+    __table_args__ = (Index("grok_messages_conversation_created_idx", "conversation_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grok_conversations.id", ondelete="CASCADE")
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    conversation: Mapped[GrokConversation] = relationship(back_populates="messages")
+
+
 class AuthChallenge(Base):
     __tablename__ = "auth_challenges"
 

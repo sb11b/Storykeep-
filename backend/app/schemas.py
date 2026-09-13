@@ -632,3 +632,30 @@ class ChatSpeechIn(BaseModel):
     visible_text: str = Field(min_length=1, max_length=65000)
     voice_id: str = Field(default="eve", max_length=64)
     message_id: str = Field(min_length=1, max_length=64)
+
+
+class GrokConversationOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    pane: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GrokMessageOut(BaseModel):
+    id: uuid.UUID
+    role: str
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GrokConversationDetailOut(GrokConversationOut):
+    messages: list[GrokMessageOut] = Field(default_factory=list)
+
+
+class GrokConversationPatchIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80)

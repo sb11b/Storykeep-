@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.services.chat import build_xai_messages, enforce_rate_limit, validate_payload, _rate_hits
+from app.services.chat import build_xai_messages, enforce_rate_limit, thread_window, validate_payload, _rate_hits
 
 
 class ChatGuardTests(unittest.TestCase):
@@ -52,6 +52,12 @@ class ChatGuardTests(unittest.TestCase):
         system = messages[0]["content"]
         self.assertIn("Current article excerpt", system)
         self.assertIn("Body text", system)
+
+    def test_thread_window_limits_context(self):
+        history = [{"role": "user", "content": f"line {index}"} for index in range(20)]
+        windowed = thread_window(history, limit=6)
+        self.assertEqual(len(windowed), 6)
+        self.assertEqual(windowed[-1]["content"], "line 19")
 
     def test_rate_limit_caps_hourly_requests(self):
         from app.config import settings

@@ -20,6 +20,8 @@ import type {
   TotpSetup,
   VaultImportResult,
   ChatStatus,
+  GrokConversation,
+  GrokConversationDetail,
   Correction,
 } from "./types";
 
@@ -592,9 +594,28 @@ export const api = {
     };
   },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
+  chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
+  chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
+  patchChatConversation: (id: string, title: string) =>
+    request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  deleteChatConversation: (id: string) =>
+    request<{ ok: boolean }>(`/api/v1/chat/conversations/${id}`, { method: "DELETE" }),
   streamChat: async (
-    body: { messages: { role: "user" | "assistant"; content: string }[]; article_id: string | null; include_article: boolean },
+    body: {
+      message: string;
+      conversation_id?: string | null;
+      article_id: string | null;
+      include_article: boolean;
+    },
     onDelta: (text: string) => void,
+    onMeta?: (meta: {
+      conversation_id?: string;
+      user_message_id?: string;
+      assistant_message_id?: string;
+    }) => void,
   ) => {
     const response = await fetch("/api/v1/chat", {
       method: "POST",
@@ -629,8 +650,21 @@ export const api = {
         const data = line.slice(5).trim();
         if (data === "[DONE]") return;
         try {
-          const parsed = JSON.parse(data) as { delta?: string; error?: string };
+          const parsed = JSON.parse(data) as {
+            delta?: string;
+            error?: string;
+            conversation_id?: string;
+            user_message_id?: string;
+            assistant_message_id?: string;
+          };
           if (parsed.error) throw new ApiError(502, parsed.error);
+          if (parsed.conversation_id || parsed.user_message_id || parsed.assistant_message_id) {
+            onMeta?.({
+              conversation_id: parsed.conversation_id,
+              user_message_id: parsed.user_message_id,
+              assistant_message_id: parsed.assistant_message_id,
+            });
+          }
           if (parsed.delta) onDelta(parsed.delta);
         } catch (error) {
           if (error instanceof ApiError) throw error;

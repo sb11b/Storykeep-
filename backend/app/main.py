@@ -129,6 +129,31 @@ def _create_schema() -> None:
         "kind VARCHAR(32) NOT NULL, code_hash TEXT, payload JSONB, "
         "attempts INTEGER DEFAULT 0, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ DEFAULT now())"
     )
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS grok_conversations ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "title TEXT NOT NULL DEFAULT 'New chat', "
+        "pane TEXT, "
+        "created_at TIMESTAMPTZ DEFAULT now(), "
+        "updated_at TIMESTAMPTZ DEFAULT now())"
+    )
+    _try_sql(
+        "CREATE INDEX IF NOT EXISTS grok_conversations_user_updated_idx "
+        "ON grok_conversations (user_id, updated_at DESC)"
+    )
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS grok_messages ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "conversation_id UUID NOT NULL REFERENCES grok_conversations(id) ON DELETE CASCADE, "
+        "role VARCHAR(16) NOT NULL, "
+        "content TEXT NOT NULL, "
+        "created_at TIMESTAMPTZ DEFAULT now())"
+    )
+    _try_sql(
+        "CREATE INDEX IF NOT EXISTS grok_messages_conversation_created_idx "
+        "ON grok_messages (conversation_id, created_at)"
+    )
 
 
 def _seed_in_background() -> None:

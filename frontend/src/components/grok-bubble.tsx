@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { Maximize2, Plus, Sparkles, X } from "lucide-react";
+import { LoaderCircle, Maximize2, MessageSquarePlus, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import type { GrokConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
@@ -77,6 +78,9 @@ export function GrokBubble({
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [persist, setPersist] = useState(false);
+  const [conversations, setConversations] = useState<GrokConversation[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
@@ -85,6 +89,22 @@ export function GrokBubble({
   const panelRef = useRef<HTMLDivElement>(null);
 
   const focusedPane = panes.find((pane) => pane.id === focusedPaneId) ?? panes[0]!;
+
+  const refreshHistory = useCallback(async () => {
+    if (!persist) return;
+    setHistoryLoading(true);
+    try {
+      setConversations(await api.chatConversations());
+    } catch {
+      /* ignore */
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [persist]);
+
+  useEffect(() => {
+    if (open && persist) void refreshHistory();
+  }, [open, persist, refreshHistory]);
 
   useEffect(() => {
     setMounted(true);
@@ -99,10 +119,12 @@ export function GrokBubble({
       .then((row) => {
         setEnabled(row.enabled);
         setLocked(Boolean(row.locked));
+        setPersist(Boolean(row.persist ?? !row.locked));
       })
       .catch(() => {
         setEnabled(false);
         setLocked(false);
+        setPersist(false);
       });
     api
       .tts()
@@ -200,6 +222,94 @@ export function GrokBubble({
   function updatePane(id: string, updater: (pane: GrokPaneState) => GrokPaneState) {
     setPanes((current) => current.map((pane) => (pane.id === id ? updater(pane) : pane)));
   }
+
+  function startNewChat() {
+    updatePane(focusedPaneId, (pane) => ({
+      ...pane,
+      conversationId: null,
+      messages: [],
+    }));
+  }
+
+  async function loadConversation(conversationId: string) {
+    try {
+      const detail = await api.chatConversation(conversationId);
+      updatePane(focusedPaneId, (pane) => ({
+        ...pane,
+        conversationId: detail.id,
+        messages: detail.messages.map((item) => ({
+          id: item.id,
+          role: item.role,
+          content: item.content,
+        })),
+        draft: "",
+      }));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function deleteConversation(conversationId: string) {
+    try {
+      await api.deleteChatConversation(conversationId);
+      setConversations((current) => current.filter((row) => row.id !== conversationId));
+      const active = panes.find((pane) => pane.conversationId === conversationId);
+      if (active) {
+        updatePane(active.id, (pane) => ({ ...pane, conversationId: null, messages: [] }));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const historySidebar = persist ? (
+    <aside className="flex w-44 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
+      <div className="shrink-0 border-b p-2">
+        <Button size="sm" variant="secondary" className="h-7 w-full gap-1 text-xs" onClick={startNewChat}>
+          <MessageSquarePlus className="size-3.5" />
+          New chat
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
+        {historyLoading ? (
+          <p className="flex items-center gap-1 px-2 py-2 text-[11px] text-muted-foreground">
+            <LoaderCircle className="size-3 animate-spin" />
+            Loading…
+          </p>
+        ) : conversations.length === 0 ? (
+          <p className="px-2 py-2 text-[11px] text-muted-foreground">Past chats appear here.</p>
+        ) : (
+          conversations.map((row) => {
+            const active = focusedPane.conversationId === row.id;
+            return (
+              <div key={row.id} className="group flex items-start gap-0.5">
+                <button
+                  type="button"
+                  className={cn(
+                    "min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-[11px] leading-snug hover:bg-accent/60",
+                    active && "bg-accent/80 font-medium",
+                  )}
+                  title={row.title}
+                  onClick={() => void loadConversation(row.id)}
+                >
+                  <span className="line-clamp-2">{row.title}</span>
+                </button>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="mt-0.5 shrink-0 opacity-0 group-hover:opacity-100"
+                  aria-label={`Delete ${row.title}`}
+                  onClick={() => void deleteConversation(row.id)}
+                >
+                  <Trash2 className="size-3 text-muted-foreground" />
+                </Button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </aside>
+  ) : null;
 
   const onPointerMove = useCallback(
     (event: PointerEvent) => {
@@ -318,57 +428,62 @@ export function GrokBubble({
         </Button>
       </div>
 
-      {fullscreen ? (
-        <div className="grid min-h-0 flex-1 gap-px bg-border" style={paneGridStyle(panes.length)}>
-          {panes.map((pane, index) => (
-            <div
-              key={pane.id}
-              className="min-h-0 overflow-hidden bg-popover"
-              style={paneCellStyle(panes.length, index)}
-            >
-              <GrokPane
-                pane={pane}
-                label={`Grok ${index + 1}`}
-                compact
-                focused={pane.id === focusedPaneId}
-                canRemove={panes.length > 1}
-                articleId={articleId}
-                articleTitle={articleTitle}
-                articleGuid={articleGuid}
-                sourceRef={sourceRef}
-                articleBody={articleBody}
-                enabled={Boolean(enabled)}
-                ttsEnabled={ttsEnabled}
-                locked={locked}
-                onFocus={() => setFocusedPaneId(pane.id)}
-                onUpdate={(updater) => updatePane(pane.id, updater)}
-                onRemove={() => removePane(pane.id)}
-                onSavedNote={onSavedNote}
-                onActivateListen={handleActivateListen}
-                onStopArticleListen={onStopArticleListen}
-              />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <GrokPane
-          pane={focusedPane}
-          label="Grok"
-          articleId={articleId}
-          articleTitle={articleTitle}
-          articleGuid={articleGuid}
-          sourceRef={sourceRef}
-          articleBody={articleBody}
-          enabled={Boolean(enabled)}
-          ttsEnabled={ttsEnabled}
-          locked={locked}
-          onFocus={() => setFocusedPaneId(focusedPane.id)}
-          onUpdate={(updater) => updatePane(focusedPane.id, updater)}
-          onSavedNote={onSavedNote}
-          onActivateListen={handleActivateListen}
-          onStopArticleListen={onStopArticleListen}
-        />
-      )}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {historySidebar}
+        {fullscreen ? (
+          <div className="grid min-h-0 flex-1 gap-px bg-border" style={paneGridStyle(panes.length)}>
+            {panes.map((pane, index) => (
+              <div
+                key={pane.id}
+                className="min-h-0 overflow-hidden bg-popover"
+                style={paneCellStyle(panes.length, index)}
+              >
+                <GrokPane
+                  pane={pane}
+                  label={`Grok ${index + 1}`}
+                  compact
+                  focused={pane.id === focusedPaneId}
+                  canRemove={panes.length > 1}
+                  articleId={articleId}
+                  articleTitle={articleTitle}
+                  articleGuid={articleGuid}
+                  sourceRef={sourceRef}
+                  articleBody={articleBody}
+                  enabled={Boolean(enabled)}
+                  ttsEnabled={ttsEnabled}
+                  locked={locked}
+                  onFocus={() => setFocusedPaneId(pane.id)}
+                  onUpdate={(updater) => updatePane(pane.id, updater)}
+                  onRemove={() => removePane(pane.id)}
+                  onSavedNote={onSavedNote}
+                  onActivateListen={handleActivateListen}
+                  onStopArticleListen={onStopArticleListen}
+                  onHistoryChanged={() => void refreshHistory()}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <GrokPane
+            pane={focusedPane}
+            label="Grok"
+            articleId={articleId}
+            articleTitle={articleTitle}
+            articleGuid={articleGuid}
+            sourceRef={sourceRef}
+            articleBody={articleBody}
+            enabled={Boolean(enabled)}
+            ttsEnabled={ttsEnabled}
+            locked={locked}
+            onFocus={() => setFocusedPaneId(focusedPane.id)}
+            onUpdate={(updater) => updatePane(focusedPane.id, updater)}
+            onSavedNote={onSavedNote}
+            onActivateListen={handleActivateListen}
+            onStopArticleListen={onStopArticleListen}
+            onHistoryChanged={() => void refreshHistory()}
+          />
+        )}
+      </div>
 
       {!fullscreen ? (
         <button

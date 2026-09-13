@@ -20,6 +20,7 @@ XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
 ARTICLE_CHAR_CAP = 12_000
 MESSAGE_CHAR_CAP = 8_000
 MAX_MESSAGES = 24
+XAI_CONTEXT_MESSAGES = 12
 TOTAL_CHAR_CAP = 48_000
 MAX_TOKENS_CAP = 2048
 
@@ -88,6 +89,12 @@ def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
         hits.append(stamp)
 
 
+def thread_window(messages: list[dict[str, str]], limit: int = XAI_CONTEXT_MESSAGES) -> list[dict[str, str]]:
+    if len(messages) <= limit:
+        return messages
+    return messages[-limit:]
+
+
 def validate_payload(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     if not messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
@@ -130,7 +137,8 @@ def build_xai_messages(history: list[dict[str, str]], excerpt: str | None, *, in
         system = SYSTEM_PROMPT + ARTICLE_MODE_APPEND + "\n\nCurrent article excerpt (truncated):\n" + excerpt
     else:
         system = SYSTEM_PROMPT + GENERAL_MODE_APPEND
-    return [{"role": "system", "content": system}, *history]
+    windowed = thread_window(history)
+    return [{"role": "system", "content": system}, *windowed]
 
 
 def stream_completion(history: list[dict[str, str]], excerpt: str | None, *, include_article: bool) -> Iterator[str]:
