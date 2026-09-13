@@ -44,6 +44,7 @@ def annotation_out(note: Annotation, article_title: str | None = None) -> Annota
 
 
 def archive_out(row: Archive) -> ArchiveOut:
+    download_url = f"/api/v1/archives/{row.id}/file" if row.archive_type == "pdf" else None
     return ArchiveOut(
         id=row.id,
         article_id=row.article_id,
@@ -52,6 +53,7 @@ def archive_out(row: Archive) -> ArchiveOut:
         checksum=row.checksum,
         byte_size=row.byte_size,
         created_at=row.created_at,
+        download_url=download_url,
     )
 
 

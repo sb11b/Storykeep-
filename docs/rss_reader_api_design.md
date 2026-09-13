@@ -240,11 +240,12 @@ Empty `q` returns 400.
 
 ## 8. Archives (link-rot fallback)
 
-### `POST /articles/{id}/archive` `{ "type": "html" }`
+### `POST /articles/{id}/archive` `{ "type": "html" | "pdf" }`
 ### `GET /articles/{id}/archives`
-### `GET /archives/{id}`  — returns stored HTML or a download URL
+### `GET /archives/{id}`  — HTML/readability returns stored text; `type=pdf` returns `download_url`
+### `GET /archives/{id}/file`  — authenticated PDF bytes (`application/pdf`). Same cookie as other user data.
 
-`type=pdf` is reserved; MVP stores cleaned HTML (`readability`).
+`type=pdf` writes `{DATA_DIR}/archives/{article_id}/{archive_id}.pdf` (Railway volume `/app/var`) and copies to S3/B2 under `{prefix}/pdf-snapshots/` when the object store is configured. HTML snapshots stay in Postgres.
 
 ---
 

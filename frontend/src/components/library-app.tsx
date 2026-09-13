@@ -1469,7 +1469,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                 onArchive={async () => {
                   const id = article.id;
                   try {
-                    await api.archive(id);
+                    await api.archive(id, "html");
                     const next = await api.article(id);
                     if (selectedIdRef.current !== id) return;
                     setArticle(next);
@@ -1477,6 +1477,19 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                     void loadNav();
                   } catch (error) {
                     readerActionError(error, "Could not store a snapshot");
+                  }
+                }}
+                onArchivePdf={async () => {
+                  const id = article.id;
+                  try {
+                    await api.archive(id, "pdf");
+                    const next = await api.article(id);
+                    if (selectedIdRef.current !== id) return;
+                    setArticle(next);
+                    toast.success("PDF snapshot stored in the archive");
+                    void loadNav();
+                  } catch (error) {
+                    readerActionError(error, "Could not store a PDF snapshot");
                   }
                 }}
                 onTag={async (name) => {
@@ -2131,6 +2144,7 @@ function Reader({
   onExtract,
   onUseFeedText,
   onArchive,
+  onArchivePdf,
   onTag,
   onNote,
   onHighlight,
@@ -2161,6 +2175,7 @@ function Reader({
   onExtract: () => Promise<void>;
   onUseFeedText: () => Promise<void>;
   onArchive: () => Promise<void>;
+  onArchivePdf: () => Promise<void>;
   readerScrollToken: number;
   onTag: (name: string) => Promise<void>;
   onNote: (title: string, markdown: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
@@ -2741,6 +2756,17 @@ function Reader({
           <Button
             size="sm"
             variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void onArchivePdf().finally(() => setBusy(false));
+            }}
+          >
+            PDF snapshot
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => void onDownloadPack()}
           >
             Obsidian overlay pack
@@ -3159,9 +3185,21 @@ function Reader({
             </ul>
           )}
           {article.archives.length > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {article.archives.length} snapshot{article.archives.length === 1 ? "" : "s"} stored if the original link dies.
-            </p>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <p>
+                {article.archives.length} snapshot{article.archives.length === 1 ? "" : "s"} stored if the original link
+                dies.
+              </p>
+              {article.archives
+                .filter((row) => row.archive_type === "pdf" && row.download_url)
+                .map((row) => (
+                  <p key={row.id}>
+                    <a className="text-primary underline" href={row.download_url || undefined}>
+                      Download PDF snapshot
+                    </a>
+                  </p>
+                ))}
+            </div>
           ) : null}
         </section>
       </article>

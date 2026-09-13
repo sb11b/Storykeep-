@@ -99,6 +99,7 @@ export type Archive = {
   checksum: string | null;
   byte_size: number | null;
   created_at: string;
+  download_url?: string | null;
 };
 
 export type OverlayHighlight = {

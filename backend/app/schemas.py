@@ -372,6 +372,7 @@ class ArchiveOut(BaseModel):
     checksum: str | None
     byte_size: int | None
     created_at: datetime
+    download_url: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -70,13 +70,18 @@ def _redact_backup_error(message: str) -> str:
     return text[:1000]
 
 
-def _upload_backup_file(path: Path) -> str:
+def upload_object_file(path: Path, object_key: str) -> str:
+    """Upload any file to the configured bucket. Backup dumps keep keys `{prefix}/{filename}`."""
     bucket = settings.object_bucket
     if not bucket:
         raise RuntimeError("No object-store bucket is configured.")
+    _object_store_client().upload_file(str(path), bucket, object_key)
+    return f"s3://{bucket}/{object_key}"
+
+
+def _upload_backup_file(path: Path) -> str:
     key = f"{settings.s3_prefix.strip('/')}/{path.name}"
-    _object_store_client().upload_file(str(path), bucket, key)
-    return f"s3://{bucket}/{key}"
+    return upload_object_file(path, key)
 
 
 def _maybe_upload_s3(path: Path) -> str | None:

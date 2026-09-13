@@ -513,10 +513,10 @@ export const api = {
     const query = search.toString();
     return request<Page<Annotation>>(`/api/v1/annotations${query ? `?${query}` : ""}`);
   },
-  archive: (id: string) =>
+  archive: (id: string, type: "html" | "pdf" = "html") =>
     request(`/api/v1/articles/${id}/archive`, {
       method: "POST",
-      body: JSON.stringify({ type: "html" }),
+      body: JSON.stringify({ type }),
     }),
   search: (q: string, opts?: { saved?: boolean; limit?: number; offset?: number }) => {
     const search = new URLSearchParams({ q });

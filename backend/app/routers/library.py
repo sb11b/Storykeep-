@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -360,13 +362,39 @@ def get_archive(archive_id: UUID, db: Session = Depends(get_db), user: User = De
     article = db.scalar(select(Article).join(Feed).where(Article.id == row.article_id, Feed.user_id == user.id))
     if not article:
         raise HTTPException(status_code=404, detail="Archive not found")
-    return {
+    payload = {
         "id": str(row.id),
         "article_id": str(row.article_id),
         "archive_type": row.archive_type,
-        "content": row.content,
+        "content": None if row.archive_type == "pdf" else row.content,
         "created_at": row.created_at.isoformat(),
+        "download_url": f"/api/v1/archives/{row.id}/file" if row.archive_type == "pdf" else None,
+        "byte_size": row.byte_size,
+        "storage_backend": row.storage_backend,
     }
+    return payload
+
+
+@router.get("/archives/{archive_id}/file")
+def download_archive_file(
+    archive_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> FileResponse:
+    row = db.get(Archive, archive_id)
+    if not row or row.archive_type != "pdf" or not row.storage_path:
+        raise HTTPException(status_code=404, detail="Archive not found")
+    article = db.scalar(select(Article).join(Feed).where(Article.id == row.article_id, Feed.user_id == user.id))
+    if not article:
+        raise HTTPException(status_code=404, detail="Archive not found")
+    path = Path(row.storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File is missing.")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=f"storykeep-{row.id}.pdf",
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.get("/search", response_model=Page[SearchHit])

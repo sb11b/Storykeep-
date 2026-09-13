@@ -642,7 +642,10 @@ def archive_article(
     user: User = Depends(get_current_user),
 ) -> ArchiveOut:
     article = _owned_article(db, user, article_id)
-    row = archive_service.snapshot_article(db, article, payload.type)
+    kind = (payload.type or "html").strip().lower()
+    if kind not in {"html", "pdf"}:
+        raise HTTPException(status_code=400, detail="Snapshot type must be html or pdf.")
+    row = archive_service.snapshot_article(db, article, kind)
     if row is None:
         raise HTTPException(status_code=400, detail="Nothing stored yet to snapshot.")
     changelog.record(db, user.id, "archive", row.id, "upsert", {"article_id": str(article.id)})
