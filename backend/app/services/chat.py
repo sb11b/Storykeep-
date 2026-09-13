@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 MODEL_AUTO = "auto"
 XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
+CHAT_STREAM_TIMEOUT_SEC = 90.0
+CHAT_CONNECT_TIMEOUT_SEC = 15.0
 CODE_KEYWORDS = (
     "python",
     "javascript",
@@ -174,6 +176,47 @@ def model_label(choice: str, resolved: str | None = None) -> str:
     return choice
 
 
+def chat_error_message(status: int, detail: str) -> str:
+    cleaned = (detail or "Unknown error.").strip()
+    return f"Chat failed (HTTP {status}): {cleaned}"
+
+
+def stream_error_event(status: int, detail: str, *, partial: bool = False) -> dict[str, object]:
+    return {
+        "error": chat_error_message(status, detail),
+        "status": status,
+        "detail": detail.strip() or "Unknown error.",
+        "partial": partial,
+    }
+
+
+def http_exception_detail(exc: HTTPException) -> tuple[int, str]:
+    status_code = int(exc.status_code or 502)
+    detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
+    return status_code, detail
+
+
+def parse_xai_error_body(raw: str, status_code: int) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return f"xAI returned HTTP {status_code} with no body."
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return text[:300]
+    if isinstance(parsed, dict):
+        err = parsed.get("error")
+        if isinstance(err, dict):
+            message = err.get("message") or err.get("code")
+            if isinstance(message, str) and message.strip():
+                return message.strip()[:300]
+        for key in ("message", "detail", "error"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:300]
+    return text[:300]
+
+
 def require_key() -> str:
     key = (settings.xai_api_key or "").strip()
     if not key:
@@ -281,14 +324,17 @@ def stream_completion(
     }
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     try:
-        with httpx.Client(timeout=httpx.Timeout(90.0, connect=15.0)) as client:
+        with httpx.Client(
+            timeout=httpx.Timeout(CHAT_STREAM_TIMEOUT_SEC, connect=CHAT_CONNECT_TIMEOUT_SEC),
+        ) as client:
             with client.stream("POST", XAI_CHAT_URL, json=payload, headers=headers) as response:
                 if response.status_code >= 400:
-                    detail = response.read().decode("utf-8", errors="replace")[:400]
-                    logger.warning("xAI chat error %s: %s", response.status_code, detail)
+                    body = response.read().decode("utf-8", errors="replace")
+                    detail = parse_xai_error_body(body, response.status_code)
+                    logger.warning("xAI chat HTTP %s model=%s: %s", response.status_code, model, detail)
                     raise HTTPException(
                         status_code=502,
-                        detail="Grok did not return a reply. Check XAI_API_KEY and XAI_CHAT_MODEL on Railway.",
+                        detail=f"xAI HTTP {response.status_code}: {detail}",
                     )
                 for line in response.iter_lines():
                     if not line:
@@ -305,10 +351,19 @@ def stream_completion(
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="Grok timed out.") from exc
+        logger.warning(
+            "xAI chat timed out after %.0fs model=%s user=%s",
+            CHAT_STREAM_TIMEOUT_SEC,
+            model,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"Grok timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s.",
+        ) from exc
     except httpx.HTTPError as exc:
-        logger.exception("xAI chat request failed")
-        raise HTTPException(status_code=502, detail="Could not reach xAI chat.") from exc
+        logger.warning("xAI chat transport error model=%s user=%s: %s", model, user_id, exc)
+        raise HTTPException(status_code=502, detail=f"Could not reach xAI chat: {exc}") from exc
 
 
 def _delta_text(raw: str) -> str:

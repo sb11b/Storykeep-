@@ -26,6 +26,7 @@ import type {
 } from "./types";
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
+import { formatChatError } from "@/lib/grok-chat-error";
 
 export type NoteMediaUpload = {
   id: string;
@@ -610,6 +611,7 @@ export const api = {
       model?: string;
       article_id: string | null;
       include_article: boolean;
+      retry?: boolean;
     },
     onDelta: (text: string) => void,
     onMeta?: (meta: {
@@ -635,9 +637,9 @@ export const api = {
       } catch {
         /* ignore */
       }
-      throw new ApiError(response.status, detail);
+      throw new ApiError(response.status, formatChatError(response.status, detail));
     }
-    if (!response.body) throw new ApiError(502, "Chat stream was empty");
+    if (!response.body) throw new ApiError(502, formatChatError(502, "Chat stream was empty"));
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -656,13 +658,20 @@ export const api = {
           const parsed = JSON.parse(data) as {
             delta?: string;
             error?: string;
+            status?: number;
+            detail?: string;
+            partial?: boolean;
             conversation_id?: string;
             user_message_id?: string;
             assistant_message_id?: string;
             model?: string;
             model_choice?: string;
           };
-          if (parsed.error) throw new ApiError(502, parsed.error);
+          if (parsed.error) {
+            const status = typeof parsed.status === "number" ? parsed.status : 502;
+            const detail = parsed.detail || parsed.error;
+            throw new ApiError(status, parsed.error || formatChatError(status, detail));
+          }
           if (
             parsed.conversation_id ||
             parsed.user_message_id ||

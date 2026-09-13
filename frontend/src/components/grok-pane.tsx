@@ -8,11 +8,18 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
+import { formatChatError } from "@/lib/grok-chat-error";
 import { grokModelLabel } from "@/lib/grok-model";
 import { cn } from "@/lib/utils";
 
 type ChatRole = "user" | "assistant";
-export type ChatLine = { id: string; role: ChatRole; content: string };
+export type ChatLine = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  error?: string | null;
+  failed?: boolean;
+};
 export type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
 export type GrokPaneState = {
@@ -110,22 +117,19 @@ export function GrokPane({
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [pane.messages]);
 
-  async function send() {
-    const content = pane.draft.trim();
-    if (!content || busy || !enabled) return;
-    const userLine: ChatLine = { id: crypto.randomUUID(), role: "user", content };
-    const assistantId = crypto.randomUUID();
-    const history = [...pane.messages, userLine];
-    onUpdate((current) => ({
-      ...current,
-      draft: "",
-      messages: [...history, { id: assistantId, role: "assistant", content: "" }],
-    }));
+  async function runStream(options: {
+    message: string;
+    retry?: boolean;
+    userLine?: ChatLine;
+    assistantId: string;
+  }) {
+    const { message, retry = false, userLine, assistantId } = options;
     setBusy(true);
     try {
       await api.streamChat(
         {
-          message: content,
+          message,
+          retry,
           conversation_id: pane.conversationId,
           model: pane.modelChoice,
           article_id: articleId,
@@ -135,7 +139,9 @@ export function GrokPane({
           onUpdate((current) => ({
             ...current,
             messages: current.messages.map((item) =>
-              item.id === assistantId ? { ...item, content: item.content + delta } : item,
+              item.id === assistantId
+                ? { ...item, content: item.content + delta, failed: false, error: null }
+                : item,
             ),
           }));
         },
@@ -145,7 +151,7 @@ export function GrokPane({
             if (meta.conversation_id && meta.conversation_id !== current.conversationId) {
               next = { ...next, conversationId: meta.conversation_id };
             }
-            if (meta.user_message_id) {
+            if (meta.user_message_id && userLine) {
               next = {
                 ...next,
                 messages: next.messages.map((item) =>
@@ -157,7 +163,9 @@ export function GrokPane({
               next = {
                 ...next,
                 messages: next.messages.map((item) =>
-                  item.id === assistantId ? { ...item, id: meta.assistant_message_id! } : item,
+                  item.id === assistantId
+                    ? { ...item, id: meta.assistant_message_id!, failed: false, error: null }
+                    : item,
                 ),
               };
             }
@@ -170,17 +178,56 @@ export function GrokPane({
         },
       );
     } catch (error) {
+      const status = error instanceof ApiError ? error.status : 502;
       const detail = error instanceof ApiError ? error.message : "Grok did not reply";
+      const formatted =
+        detail.startsWith("Chat failed (HTTP") ? detail : formatChatError(status, detail);
       onUpdate((current) => ({
         ...current,
         messages: current.messages.map((item) =>
-          item.id === assistantId ? { ...item, content: item.content || detail } : item,
+          item.id === assistantId
+            ? { ...item, failed: true, error: formatted, content: item.content }
+            : item,
         ),
       }));
-      toast.error(detail.trim() || "Grok did not reply");
+      toast.error(formatted);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function send() {
+    const content = pane.draft.trim();
+    if (!content || busy || !enabled) return;
+    const userLine: ChatLine = { id: crypto.randomUUID(), role: "user", content };
+    const assistantId = crypto.randomUUID();
+    onUpdate((current) => ({
+      ...current,
+      draft: "",
+      messages: [...current.messages, userLine, { id: assistantId, role: "assistant", content: "" }],
+    }));
+    await runStream({ message: content, userLine, assistantId });
+  }
+
+  async function retryAssistant(assistantId: string) {
+    if (busy || !enabled) return;
+    const messages = pane.messages;
+    const assistantIndex = messages.findIndex((item) => item.id === assistantId);
+    if (assistantIndex < 1) return;
+    const userLine = messages[assistantIndex - 1];
+    if (!userLine || userLine.role !== "user") return;
+    onUpdate((current) => ({
+      ...current,
+      messages: current.messages.map((item) =>
+        item.id === assistantId ? { ...item, content: "", failed: false, error: null } : item,
+      ),
+    }));
+    await runStream({
+      message: userLine.content,
+      retry: Boolean(pane.conversationId),
+      userLine,
+      assistantId,
+    });
   }
 
   async function addToNotes(content: string) {
@@ -303,11 +350,15 @@ export function GrokPane({
               id={item.id}
               role={item.role}
               content={item.content}
+              error={item.error}
+              failed={item.failed}
+              busy={busy}
               ttsAvailable={ttsEnabled && !locked}
               noteDest={pane.noteDest}
               showNoteDest={!(articleId && isComposedNote(articleGuid)) && item.role === "assistant"}
               onNoteDestChange={(dest) => patch({ noteDest: dest })}
               onAddToNotes={(body) => void addToNotes(body)}
+              onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
               onActivateListen={(stop) => {
                 stopRef.current = stop ?? (() => {});
                 onActivateListen(stop);

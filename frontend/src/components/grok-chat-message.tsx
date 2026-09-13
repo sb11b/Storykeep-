@@ -18,22 +18,30 @@ export function GrokChatMessage({
   id,
   role,
   content,
+  error,
+  failed,
+  busy,
   ttsAvailable,
   noteDest,
   showNoteDest,
   onNoteDestChange,
   onAddToNotes,
+  onRetry,
   onActivateListen,
   onStopArticleListen,
 }: {
   id: string;
   role: "user" | "assistant";
   content: string;
+  error?: string | null;
+  failed?: boolean;
+  busy?: boolean;
   ttsAvailable: boolean;
   noteDest: GrokNoteDestination;
   showNoteDest: boolean;
   onNoteDestChange: (dest: GrokNoteDestination) => void;
   onAddToNotes: (content: string) => void;
+  onRetry?: () => void;
   onActivateListen: (stop: (() => void) | null) => void;
   onStopArticleListen?: () => void;
 }) {
@@ -87,10 +95,18 @@ export function GrokChatMessage({
             {content}
           </div>
         )
-      ) : (
+      ) : failed && error ? null : (
         <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
       )}
-      {content ? (
+      {failed && error ? (
+        <p className="mt-1 text-xs text-destructive whitespace-pre-wrap">{error}</p>
+      ) : null}
+      {failed && onRetry ? (
+        <Button size="xs" variant="outline" className="mt-2" disabled={busy} onClick={onRetry}>
+          Retry
+        </Button>
+      ) : null}
+      {content && !failed ? (
         <div className="mt-2 flex flex-wrap items-center gap-1">
           {role === "assistant" ? (
             <GrokListenBar

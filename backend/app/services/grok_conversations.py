@@ -149,3 +149,16 @@ def conversation_history(db: Session, conversation_id: UUID) -> list[dict[str, s
         .order_by(GrokMessage.created_at.asc())
     ).all()
     return [{"role": row.role, "content": row.content} for row in rows]
+
+
+def pending_user_turn(db: Session, conversation_id: UUID) -> GrokMessage | None:
+    rows = list(
+        db.scalars(
+            select(GrokMessage)
+            .where(GrokMessage.conversation_id == conversation_id)
+            .order_by(GrokMessage.created_at.asc())
+        ).all()
+    )
+    if not rows or rows[-1].role != "user":
+        return None
+    return rows[-1]

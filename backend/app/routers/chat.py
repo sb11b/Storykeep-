@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -27,6 +30,7 @@ class ChatIn(BaseModel):
     model: str | None = None
     article_id: UUID | None = None
     include_article: bool = False
+    retry: bool = False
 
 
 def _conversation_out(row) -> GrokConversationOut:
@@ -139,39 +143,68 @@ def chat(
     user_message_id: UUID | None = None
     model_choice = chat_service.normalize_model_choice(payload.model) if payload.model else chat_service.MODEL_AUTO
 
+    user_text = payload.message.strip()
+
     if persist:
-        if conversation_id:
+        if payload.retry:
+            if not conversation_id:
+                raise HTTPException(status_code=400, detail="Open the thread you want to retry.")
+            conversation = grok_store.owned_conversation(db, user, conversation_id)
+            pending = grok_store.pending_user_turn(db, conversation_id)
+            if not pending:
+                raise HTTPException(status_code=400, detail="Nothing to retry on this thread.")
+            user_text = pending.content.strip()
+            user_message_id = pending.id
+            model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
+            if payload.model:
+                model_choice = chat_service.normalize_model_choice(payload.model)
+                conversation.model = model_choice
+                db.add(conversation)
+                db.commit()
+            history = grok_store.conversation_history(db, conversation_id)
+        elif conversation_id:
             conversation = grok_store.owned_conversation(db, user, conversation_id)
             model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
             if payload.model:
                 model_choice = chat_service.normalize_model_choice(payload.model)
                 conversation.model = model_choice
                 db.add(conversation)
+            is_first = not conversation.messages
+            user_row = grok_store.append_message(
+                db,
+                conversation,
+                role="user",
+                content=user_text,
+                set_title_from_user=is_first,
+            )
+            user_message_id = user_row.id
+            db.commit()
+            history = grok_store.conversation_history(db, conversation_id)
         else:
             if payload.model:
                 model_choice = chat_service.normalize_model_choice(payload.model)
             conversation = grok_store.create_conversation(db, user, model=model_choice)
             conversation_id = conversation.id
-        is_first = not conversation.messages
-        user_row = grok_store.append_message(
-            db,
-            conversation,
-            role="user",
-            content=payload.message.strip(),
-            set_title_from_user=is_first,
-        )
-        user_message_id = user_row.id
-        db.commit()
-        history = grok_store.conversation_history(db, conversation_id)
+            is_first = True
+            user_row = grok_store.append_message(
+                db,
+                conversation,
+                role="user",
+                content=user_text,
+                set_title_from_user=is_first,
+            )
+            user_message_id = user_row.id
+            db.commit()
+            history = grok_store.conversation_history(db, conversation_id)
     else:
         if payload.model:
             model_choice = chat_service.normalize_model_choice(payload.model)
-        history = [{"role": "user", "content": payload.message.strip()}]
+        history = [{"role": "user", "content": user_text}]
 
     history_for_xai = chat_service.validate_payload(chat_service.thread_window(history))
     resolved_model = chat_service.resolve_model_for_request(
         model_choice,
-        payload.message.strip(),
+        user_text,
         history_for_xai,
     )
     excerpt = None
@@ -244,11 +277,39 @@ def chat(
             yield "data: [DONE]\n\n"
         except HTTPException as exc:
             db.rollback()
-            detail = exc.detail if isinstance(exc.detail, str) else "Chat failed."
-            yield f"data: {json.dumps({'error': detail})}\n\n"
-        except Exception:
+            status_code, detail = chat_service.http_exception_detail(exc)
+            logger.warning(
+                "Chat stream failed user=%s conversation=%s status=%s detail=%s partial_chars=%s",
+                user.id,
+                conversation_id,
+                status_code,
+                detail,
+                sum(len(part) for part in assistant_parts),
+            )
+            yield (
+                "data: "
+                + json.dumps(
+                    chat_service.stream_error_event(status_code, detail, partial=bool(assistant_parts)),
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+        except Exception as exc:
             db.rollback()
-            yield f"data: {json.dumps({'error': 'Chat failed.'})}\n\n"
+            logger.exception(
+                "Chat stream unexpected error user=%s conversation=%s partial_chars=%s",
+                user.id,
+                conversation_id,
+                sum(len(part) for part in assistant_parts),
+            )
+            yield (
+                "data: "
+                + json.dumps(
+                    chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(assistant_parts)),
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
 
     return StreamingResponse(
         events(),

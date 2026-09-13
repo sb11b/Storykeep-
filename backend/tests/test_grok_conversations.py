@@ -9,10 +9,13 @@ from fastapi import HTTPException
 from app.services.chat import (
     MODEL_AUTO,
     build_xai_messages,
+    chat_error_message,
     default_fast_model,
     default_full_model,
+    parse_xai_error_body,
     pick_fast_for_auto,
     resolve_model_for_request,
+    stream_error_event,
     thread_window,
     validate_payload,
 )
@@ -68,6 +71,20 @@ class GrokConversationTests(unittest.TestCase):
     def test_locked_model_skips_auto_routing(self):
         resolved = resolve_model_for_request("grok-4", "hi", [])
         self.assertEqual(resolved, "grok-4")
+
+    def test_chat_error_message_includes_http_status(self):
+        message = chat_error_message(504, "Grok timed out after 90s.")
+        self.assertIn("HTTP 504", message)
+        self.assertIn("timed out", message)
+
+    def test_parse_xai_error_body_reads_json_message(self):
+        body = '{"error":{"message":"rate limit exceeded","code":"429"}}'
+        self.assertEqual(parse_xai_error_body(body, 429), "rate limit exceeded")
+
+    def test_stream_error_event_marks_partial(self):
+        event = stream_error_event(504, "Grok timed out.", partial=True)
+        self.assertTrue(event["partial"])
+        self.assertIn("HTTP 504", event["error"])
 
     def test_validate_payload_accepts_windowed_history(self):
         history = [{"role": "user", "content": f"m{index}"} for index in range(30)]
