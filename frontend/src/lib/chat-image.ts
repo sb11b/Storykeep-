@@ -12,8 +12,8 @@ const VISION_ONLY = [
 
 const EDIT = [
   /\blook older\b/i,
-  /\bmake me look\b/i,
-  /\bmake (?:him|her|them) look\b/i,
+  /\bmake (?:me|it|this|that|him|her|them) look\b/i,
+  /\bmake (?:me|it|this|that) older\b/i,
   /\bolder version\b/i,
   /\bage (?:this|the|me|my)\b/i,
   /\bage(?:ing)? (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
@@ -23,17 +23,18 @@ const EDIT = [
   /\bturn (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
   /\bchange (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
   /\bretouch\b/i,
+  /\bfrom this (?:photo|picture|image|pic|selfie)\b/i,
+  /\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b/i,
 ];
 
 const GENERATE = [
   /\bgenerate (?:an? )?(?:image|photo|picture|portrait|drawing)\b/i,
+  /\bgenerate (?:me )?(?:an? |the |this )/i,
   /\bcreate (?:an? )?(?:image|photo|picture|portrait)\b/i,
-  /\bdraw (?:me |an? |this )/i,
+  /\bdraw (?:me |an? |this |a )/i,
   /\bmake (?:an? )?(?:image|photo|picture|portrait) of\b/i,
   /\bimagine (?:an? )?(?:image|photo|picture|portrait)\b/i,
   /\brecreat(?:e|ing) (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait)/i,
-  /\bfrom this (?:photo|picture|image|pic|selfie)\b/i,
-  /\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b/i,
 ];
 
 const AGE = [
@@ -45,14 +46,21 @@ const AGE = [
   /\btemples\b/i,
 ];
 
-export type ImageToolIntent = "edit" | "generate";
+const CODE_GENERATE = /\b(?:linked list|homework|algorithm|typescript|javascript|function|class)\b/i;
+const IMAGE_NOUN = /\b(?:image|photo|picture|portrait|drawing|selfie)\b/i;
+
+export type ImageToolIntent = "edit" | "generate" | "clarify";
 
 export function imageToolIntent(text: string, hasImage: boolean): ImageToolIntent | null {
   const raw = (text || "").trim();
   if (!raw) return null;
   if (VISION_ONLY.some((pattern) => pattern.test(raw))) return null;
-  if (EDIT.some((pattern) => pattern.test(raw))) return "edit";
-  if (GENERATE.some((pattern) => pattern.test(raw))) return hasImage ? "edit" : "generate";
+  if (GENERATE.some((pattern) => pattern.test(raw))) {
+    if (hasImage) return "edit";
+    if (CODE_GENERATE.test(raw) && !IMAGE_NOUN.test(raw)) return null;
+    return "generate";
+  }
+  if (EDIT.some((pattern) => pattern.test(raw))) return hasImage ? "edit" : "clarify";
   if (hasImage && AGE.some((pattern) => pattern.test(raw))) return "edit";
   return null;
 }
@@ -74,5 +82,7 @@ export function collectImageMediaIds(
   return [];
 }
 
-export const MISSING_PHOTO_DETAIL =
-  "Attach a photo first (picture button or paperclip), then ask me to age or edit it.";
+export const CLARIFY_EDIT_OR_GENERATE =
+  "Generate a new older-looking picture, or attach one to edit?";
+
+export const MISSING_PHOTO_DETAIL = CLARIFY_EDIT_OR_GENERATE;

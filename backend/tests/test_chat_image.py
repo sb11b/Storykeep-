@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.services.chat_image import (
+    CLARIFY_EDIT_OR_GENERATE,
     collect_thread_images,
     edit_prompt_for,
     image_tool_intent,
@@ -25,8 +26,10 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertEqual(image_tool_intent("make this photo older", True), "edit")
         self.assertEqual(image_tool_intent("edit this photo", True), "edit")
 
-    def test_make_me_look_older_without_photo_is_still_edit(self):
-        self.assertEqual(image_tool_intent("make me look older", False), "edit")
+    def test_make_me_look_older_without_photo_asks_once(self):
+        self.assertEqual(image_tool_intent("make me look older", False), "clarify")
+        self.assertEqual(image_tool_intent("make this look older", False), "clarify")
+        self.assertEqual(image_tool_intent("make it older", False), "clarify")
 
     def test_whats_in_this_photo_is_vision_only(self):
         self.assertIsNone(image_tool_intent("what's in this picture?", True))
@@ -36,6 +39,12 @@ class ChatImageIntentTests(unittest.TestCase):
 
     def test_generate_without_image_is_generate(self):
         self.assertEqual(image_tool_intent("generate an image of a red notebook", False), "generate")
+        self.assertEqual(image_tool_intent("Generate a red notebook", False), "generate")
+
+    def test_photo_metadata_stays_chat(self):
+        self.assertIsNone(image_tool_intent("Tell me about photo metadata", False))
+        self.assertIsNone(image_tool_intent("what is a picture element in HTML", False))
+        self.assertIsNone(image_tool_intent("older python versions", False))
 
     def test_generate_with_image_is_edit(self):
         self.assertEqual(image_tool_intent("generate an image in this style", True), "edit")
@@ -139,7 +148,7 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertNotIn("FaceApp", text)
         self.assertIn("looking older", text)
 
-    def test_intercepted_edit_without_photo_asks_for_attachment(self):
+    def test_intercepted_edit_without_photo_still_guards_the_job(self):
         with patch("app.services.imagine.require_imagine_key", return_value="xai-test"):
             with patch("app.services.imagine.enforce_imagine_rate_limit"):
                 with self.assertRaises(HTTPException) as raised:
@@ -152,8 +161,14 @@ class ChatImageIntentTests(unittest.TestCase):
                         thread_images=[],
                     )
         self.assertEqual(raised.exception.status_code, 400)
-        self.assertIn("Attach a photo", str(raised.exception.detail))
         self.assertNotIn("FaceApp", str(raised.exception.detail))
+
+    def test_clarify_copy_is_a_choice_not_a_hard_block(self):
+        self.assertEqual(
+            CLARIFY_EDIT_OR_GENERATE,
+            "Generate a new older-looking picture, or attach one to edit?",
+        )
+        self.assertNotIn("Attach a photo first", CLARIFY_EDIT_OR_GENERATE)
 
 
 if __name__ == "__main__":

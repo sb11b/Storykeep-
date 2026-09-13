@@ -34,7 +34,7 @@ import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
-import { collectImageMediaIds, imageToolIntent, MISSING_PHOTO_DETAIL } from "@/lib/chat-image";
+import { collectImageMediaIds, imageToolIntent } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -642,6 +642,7 @@ export function GrokPane({
     if ((!content && !files.length) || busy || !enabled) return;
     const imageIds = collectImageMediaIds(files, pane.messages);
     const intent = imageToolIntent(content, imageIds.length > 0);
+    const wantsImage = intent === "edit" || intent === "generate";
     const userLine: ChatLine = {
       id: crypto.randomUUID(),
       role: "user",
@@ -653,28 +654,24 @@ export function GrokPane({
       ...current,
       draft: "",
       pendingAttachments: [],
-      streamStatus: intent ? "generating" : "working",
+      streamStatus: wantsImage ? "generating" : "working",
       messages: [
         ...current.messages,
         userLine,
         { id: assistantId, role: "assistant", content: "", waiting: true },
       ],
     }));
-    setStreamStatus(intent ? "generating" : "working");
-    if (intent === "edit" && !imageIds.length) {
-      onUpdate((current) => ({
-        ...current,
-        streamStatus: null,
-        messages: current.messages.map((item) =>
-          item.id === assistantId
-            ? { ...item, waiting: false, failed: true, error: MISSING_PHOTO_DETAIL }
-            : item,
-        ),
-      }));
-      setStreamStatus(null);
+    setStreamStatus(wantsImage ? "generating" : "working");
+    if (intent === "edit" && imageIds.length) {
+      await runImagineFromChat({
+        prompt: content,
+        mediaIds: imageIds,
+        userLine,
+        assistantId,
+      });
       return;
     }
-    if (intent) {
+    if (intent === "generate") {
       await runImagineFromChat({
         prompt: content,
         mediaIds: imageIds,
@@ -845,31 +842,20 @@ export function GrokPane({
     if (assistantIndex < 1) return;
     const userLine = messages[assistantIndex - 1];
     if (!userLine || userLine.role !== "user") return;
+    const retryImages = collectImageMediaIds(null, messages.slice(0, assistantIndex));
+    const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
+    const retryWantsImage = retryIntent === "generate" || (retryIntent === "edit" && retryImages.length > 0);
     onUpdate((current) => ({
       ...current,
-      streamStatus: "generating",
+      streamStatus: retryWantsImage ? "generating" : "working",
       messages: current.messages.map((item) =>
         item.id === assistantId
           ? { ...item, content: "", failed: false, error: null, waiting: true }
           : item,
       ),
     }));
-    setStreamStatus("generating");
-    const retryImages = collectImageMediaIds(null, messages.slice(0, assistantIndex));
-    const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
-    if (retryIntent === "edit" && !retryImages.length) {
-      onUpdate((current) => ({
-        ...current,
-        streamStatus: null,
-        messages: current.messages.map((item) =>
-          item.id === assistantId
-            ? { ...item, waiting: false, failed: true, error: MISSING_PHOTO_DETAIL }
-            : item,
-        ),
-      }));
-      return;
-    }
-    if (retryIntent) {
+    setStreamStatus(retryWantsImage ? "generating" : "working");
+    if (retryWantsImage) {
       await runImagineFromChat({
         prompt: userLine.content,
         mediaIds: retryImages,
@@ -878,7 +864,6 @@ export function GrokPane({
       });
       return;
     }
-    setStreamStatus("working");
     await runStream({
       message: userLine.content,
       retry: true,

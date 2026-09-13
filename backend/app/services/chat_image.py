@@ -13,12 +13,14 @@ from app.models import User
 from app.services import imagine as imagine_service
 from app.services.note_media import owned_media
 
-ImageIntent = Literal["edit", "generate"]
+ImageJobIntent = Literal["edit", "generate"]
+ImageIntent = Literal["edit", "generate", "clarify"]
 
 GENERATING_DELTA = "Generating the image…\n\n"
 IMAGE_JOB_MODEL = "grok-4.6"
 IMAGE_JOB_REASONING = "low"
 MISSING_PHOTO_DETAIL = "Attach a photo first (picture button or paperclip), then ask me to age or edit it."
+CLARIFY_EDIT_OR_GENERATE = "Generate a new older-looking picture, or attach one to edit?"
 
 _VISION_ONLY = tuple(
     re.compile(pattern, re.I)
@@ -38,8 +40,8 @@ _EDIT = tuple(
     re.compile(pattern, re.I)
     for pattern in (
         r"\blook older\b",
-        r"\bmake me look\b",
-        r"\bmake (?:him|her|them) look\b",
+        r"\bmake (?:me|it|this|that|him|her|them) look\b",
+        r"\bmake (?:me|it|this|that) older\b",
         r"\bolder version\b",
         r"\bage (?:this|the|me|my)\b",
         r"\bage(?:ing)? (?:this|the|my) (?:photo|picture|image|pic|selfie)\b",
@@ -51,6 +53,8 @@ _EDIT = tuple(
         r"\bretouch\b",
         r"\bimage[- ]to[- ]image\b",
         r"\badd (?:gray|grey) (?:hair|beard|in (?:my )?(?:beard|hair|temples))\b",
+        r"\bfrom this (?:photo|picture|image|pic|selfie)\b",
+        r"\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b",
     )
 )
 
@@ -58,15 +62,20 @@ _GENERATE = tuple(
     re.compile(pattern, re.I)
     for pattern in (
         r"\bgenerate (?:an? )?(?:image|photo|picture|portrait|drawing)\b",
+        r"\bgenerate (?:me )?(?:an? |the |this )",
         r"\bcreate (?:an? )?(?:image|photo|picture|portrait)\b",
-        r"\bdraw (?:me |an? |this )",
+        r"\bdraw (?:me |an? |this |a )",
         r"\bmake (?:an? )?(?:image|photo|picture|portrait) of\b",
         r"\bimagine (?:an? )?(?:image|photo|picture|portrait)\b",
         r"\brecreat(?:e|ing) (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait)",
-        r"\bfrom this (?:photo|picture|image|pic|selfie)\b",
-        r"\bbased on (?:this|the|my) (?:attached )?(?:photo|picture|image|pic|selfie)\b",
     )
 )
+
+_CODE_GENERATE = re.compile(
+    r"\b(?:linked list|homework|algorithm|typescript|javascript|function|class)\b",
+    re.I,
+)
+_IMAGE_NOUN = re.compile(r"\b(?:image|photo|picture|portrait|drawing|selfie)\b", re.I)
 
 _AGE = tuple(
     re.compile(pattern, re.I)
@@ -112,10 +121,14 @@ def image_tool_intent(text: str, has_image: bool) -> ImageIntent | None:
         return None
     if any(pattern.search(raw) for pattern in _VISION_ONLY):
         return None
-    if any(pattern.search(raw) for pattern in _EDIT):
-        return "edit"
     if any(pattern.search(raw) for pattern in _GENERATE):
-        return "edit" if has_image else "generate"
+        if has_image:
+            return "edit"
+        if _CODE_GENERATE.search(raw) and not _IMAGE_NOUN.search(raw):
+            return None
+        return "generate"
+    if any(pattern.search(raw) for pattern in _EDIT):
+        return "edit" if has_image else "clarify"
     if has_image and any(pattern.search(raw) for pattern in _AGE):
         return "edit"
     return None
@@ -192,7 +205,7 @@ def _fallback_to_t2i(exc: HTTPException) -> bool:
     return False
 
 
-def produce_chat_image(intent: ImageIntent, user_text: str, image_data_url: str | None) -> ChatImageResult:
+def produce_chat_image(intent: ImageJobIntent, user_text: str, image_data_url: str | None) -> ChatImageResult:
     prompt = (user_text or "").strip()
     if intent == "generate" and not image_data_url:
         payload = imagine_service.generate_image_bytes(prompt)
@@ -233,7 +246,7 @@ def run_intercepted_chat_image(
     persist: bool,
     conversation_id: UUID | None,
     user_text: str,
-    intent: ImageIntent,
+    intent: ImageJobIntent,
     thread_images: list[dict[str, Any]],
 ) -> InterceptedImageTurn:
     """Produce a photo on /chat without calling the text model. User turn is already saved."""

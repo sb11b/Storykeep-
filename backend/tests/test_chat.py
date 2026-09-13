@@ -64,6 +64,8 @@ class ChatGuardTests(unittest.TestCase):
         self.assertNotIn("imagine will apply", lower)
         self.assertNotIn("use the imagine", lower)
         self.assertNotIn("if this reply has no", lower)
+        self.assertNotIn("do not treat the word", lower)
+        self.assertNotIn("denylist", lower)
 
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"
