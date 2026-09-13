@@ -2,6 +2,8 @@ import { ApiError } from "@/lib/api";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 
 export const LARRY_ATTACH_ACCEPT = ".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.gif,.webp,.csv";
+export const LARRY_IMAGE_ACCEPT =
+  "image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp";
 export const LARRY_ATTACH_MAX_BYTES = 10 * 1024 * 1024;
 export const LARRY_ATTACH_MAX_FILES = 5;
 

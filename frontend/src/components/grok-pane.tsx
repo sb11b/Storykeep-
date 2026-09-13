@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Pencil, Save, Send, Square, X } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import {
   formatFileSize,
   LARRY_ATTACH_ACCEPT,
   LARRY_ATTACH_MAX_FILES,
+  LARRY_IMAGE_ACCEPT,
   pendingToMessageFile,
   rejectLarryFile,
   snapshotFiles,
@@ -184,6 +185,7 @@ export function GrokPane({
   const listRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const stopRef = useRef<() => void>(() => {});
   const abortRef = useRef<AbortController | null>(null);
   const dictation = useDictation();
@@ -950,7 +952,7 @@ export function GrokPane({
     <div
       className={cn(
         "flex min-h-0 flex-col overflow-hidden",
-        compact ? "h-full" : "min-h-0 flex-1",
+        compact ? "h-full" : "h-full min-h-0 flex-1",
         focused && compact ? "ring-1 ring-inset ring-primary/40" : "",
       )}
       onPointerDown={onFocus}
@@ -1241,15 +1243,25 @@ export function GrokPane({
           setDragOver(false);
           void attachFiles(snapshotFiles(event.dataTransfer.files));
         }}
+        onPaste={(event) => {
+          const picked = snapshotFiles(event.clipboardData?.files);
+          if (!picked.length) return;
+          event.preventDefault();
+          void attachFiles(picked);
+        }}
       >
-        {(pane.pendingAttachments ?? []).length ? (
+        {(pane.pendingAttachments ?? []).length || uploadingFiles ? (
           <ul className="flex flex-wrap gap-1.5" aria-label="Files to send">
             {(pane.pendingAttachments ?? []).map((file) => (
               <li
                 key={file.id}
-                className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+                className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px]"
               >
-                <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                {file.kind === "image" && file.url ? (
+                  <img src={file.url} alt="" className="size-5 shrink-0 rounded-full object-cover" />
+                ) : (
+                  <Paperclip className="ml-1.5 size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                )}
                 <span className="truncate">{file.name}</span>
                 <span className="shrink-0 text-muted-foreground">{formatFileSize(file.size)}</span>
                 <button
@@ -1262,6 +1274,12 @@ export function GrokPane({
                 </button>
               </li>
             ))}
+            {uploadingFiles ? (
+              <li className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                <LoaderCircle className="size-3 animate-spin" />
+                Uploading…
+              </li>
+            ) : null}
           </ul>
         ) : null}
         <div className="flex gap-2">
@@ -1300,11 +1318,23 @@ export function GrokPane({
               if (picked.length) void attachFiles(picked);
             }}
           />
+          <input
+            ref={imageInputRef}
+            type="file"
+            className="sr-only"
+            accept={LARRY_IMAGE_ACCEPT}
+            multiple
+            onChange={(event) => {
+              const picked = snapshotFiles(event.currentTarget.files);
+              event.currentTarget.value = "";
+              if (picked.length) void attachFiles(picked);
+            }}
+          />
           <Button
             type="button"
             size="icon"
             variant="outline"
-            className="size-9 shrink-0 self-end"
+            className="relative z-10 size-9 shrink-0 self-end"
             disabled={!enabled || locked || uploadingFiles || (pane.pendingAttachments ?? []).length >= LARRY_ATTACH_MAX_FILES}
             aria-label="Attach files"
             title="Attach PDF, text, or an image"
@@ -1316,13 +1346,25 @@ export function GrokPane({
             type="button"
             size="icon"
             variant="outline"
-            className="size-9 shrink-0 self-end"
-            disabled={!enabled || locked || busy || uploadingFiles}
-            aria-label="Image"
-            title="Generate an image from this prompt"
-            onClick={() => void imagine()}
+            className="relative z-10 size-9 shrink-0 self-end"
+            disabled={!enabled || locked || uploadingFiles || (pane.pendingAttachments ?? []).length >= LARRY_ATTACH_MAX_FILES}
+            aria-label="Upload image"
+            title="Upload a photo (jpg, png, webp, gif)"
+            onClick={() => imageInputRef.current?.click()}
           >
             <ImageIcon className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="relative z-10 size-9 shrink-0 self-end"
+            disabled={!enabled || locked || busy || uploadingFiles}
+            aria-label="Imagine"
+            title="Imagine — generate an image from this prompt"
+            onClick={() => void imagine()}
+          >
+            <Sparkles className="size-4" />
           </Button>
           {sttEnabled && !locked ? (
             <div className="flex shrink-0 flex-col gap-1">
