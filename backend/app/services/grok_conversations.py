@@ -81,12 +81,31 @@ def append_message(
     return message
 
 
+def first_user_message_content(db: Session, conversation_id: UUID) -> str | None:
+    row = db.scalar(
+        select(GrokMessage)
+        .where(GrokMessage.conversation_id == conversation_id, GrokMessage.role == "user")
+        .order_by(GrokMessage.created_at.asc())
+        .limit(1)
+    )
+    if not row:
+        return None
+    return row.content
+
+
+def resolve_patched_title(proposed: str, first_user_content: str | None) -> str:
+    cleaned = (proposed or "").strip()
+    if cleaned:
+        return cleaned[:TITLE_MAX]
+    if first_user_content:
+        return title_from_user_line(first_user_content)
+    return "New chat"
+
+
 def patch_conversation_title(db: Session, user: User, conversation_id: UUID, title: str) -> GrokConversation:
     row = owned_conversation(db, user, conversation_id)
-    cleaned = (title or "").strip()
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Title cannot be empty.")
-    row.title = cleaned[:TITLE_MAX]
+    first_user = first_user_message_content(db, conversation_id)
+    row.title = resolve_patched_title(title, first_user)
     row.updated_at = datetime.now(timezone.utc)
     db.add(row)
     db.flush()

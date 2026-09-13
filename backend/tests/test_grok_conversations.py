@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.services.chat import build_xai_messages, thread_window, validate_payload
-from app.services.grok_conversations import should_persist, title_from_user_line
+from app.services.grok_conversations import resolve_patched_title, should_persist, title_from_user_line
 
 
 class GrokConversationTests(unittest.TestCase):
@@ -36,6 +36,14 @@ class GrokConversationTests(unittest.TestCase):
         body = [item for item in messages if item["role"] != "system"]
         self.assertEqual(len(body), 12)
         self.assertEqual(body[-1]["content"], "m19")
+
+    def test_empty_patch_title_falls_back_to_first_user_message(self):
+        self.assertEqual(resolve_patched_title("", "Explain Python lists"), "Explain Python lists")
+        self.assertEqual(resolve_patched_title("   ", "First question"), "First question")
+        self.assertEqual(resolve_patched_title("", None), "New chat")
+
+    def test_non_empty_patch_title_is_used(self):
+        self.assertEqual(resolve_patched_title("My homework", "ignored"), "My homework")
 
     def test_validate_payload_accepts_windowed_history(self):
         history = [{"role": "user", "content": f"m{index}"} for index in range(30)]

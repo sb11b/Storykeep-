@@ -2,9 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { LoaderCircle, Maximize2, MessageSquarePlus, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { LoaderCircle, Maximize2, MessageSquarePlus, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import type { GrokConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -81,6 +88,9 @@ export function GrokBubble({
   const [persist, setPersist] = useState(false);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const [listening, setListening] = useState(false);
   const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
@@ -257,6 +267,36 @@ export function GrokBubble({
       if (active) {
         updatePane(active.id, (pane) => ({ ...pane, conversationId: null, messages: [] }));
       }
+      if (renamingId === conversationId) {
+        setRenamingId(null);
+        setRenameDraft("");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function startRename(row: GrokConversation) {
+    setRenamingId(row.id);
+    setRenameDraft(row.title);
+    window.requestAnimationFrame(() => renameInputRef.current?.select());
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameDraft("");
+  }
+
+  async function commitRename(conversationId: string) {
+    if (!persist) return;
+    const draft = renameDraft;
+    setRenamingId(null);
+    setRenameDraft("");
+    try {
+      const updated = await api.patchChatConversation(conversationId, draft);
+      setConversations((current) =>
+        current.map((row) => (row.id === conversationId ? { ...row, title: updated.title } : row)),
+      );
     } catch {
       /* ignore */
     }
@@ -281,28 +321,71 @@ export function GrokBubble({
         ) : (
           conversations.map((row) => {
             const active = focusedPane.conversationId === row.id;
+            const renaming = renamingId === row.id;
             return (
               <div key={row.id} className="group flex items-start gap-0.5">
-                <button
-                  type="button"
-                  className={cn(
-                    "min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-[11px] leading-snug hover:bg-accent/60",
-                    active && "bg-accent/80 font-medium",
-                  )}
-                  title={row.title}
-                  onClick={() => void loadConversation(row.id)}
-                >
-                  <span className="line-clamp-2">{row.title}</span>
-                </button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className="mt-0.5 shrink-0 opacity-0 group-hover:opacity-100"
-                  aria-label={`Delete ${row.title}`}
-                  onClick={() => void deleteConversation(row.id)}
-                >
-                  <Trash2 className="size-3 text-muted-foreground" />
-                </Button>
+                {renaming ? (
+                  <Input
+                    ref={renameInputRef}
+                    value={renameDraft}
+                    className="h-7 min-w-0 flex-1 px-2 text-[11px]"
+                    aria-label="Rename chat"
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void commitRename(row.id);
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    onBlur={() => void commitRename(row.id)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className={cn(
+                      "min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-[11px] leading-snug hover:bg-accent/60",
+                      active && "bg-accent/80 font-medium",
+                    )}
+                    title={row.title}
+                    onClick={() => void loadConversation(row.id)}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      startRename(row);
+                    }}
+                  >
+                    <span className="line-clamp-2">{row.title}</span>
+                  </button>
+                )}
+                {!renaming ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="mt-0.5 shrink-0 opacity-0 group-hover:opacity-100 data-popup-open:opacity-100"
+                          aria-label={`Options for ${row.title}`}
+                        >
+                          <MoreHorizontal className="size-3 text-muted-foreground" />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="start" className="min-w-36">
+                      <DropdownMenuItem onClick={() => startRename(row)}>
+                        <Pencil className="size-3.5" />
+                        Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem variant="destructive" onClick={() => void deleteConversation(row.id)}>
+                        <Trash2 className="size-3.5" />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
               </div>
             );
           })

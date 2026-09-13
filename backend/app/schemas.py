@@ -658,4 +658,4 @@ class GrokConversationDetailOut(GrokConversationOut):
 
 
 class GrokConversationPatchIn(BaseModel):
-    title: str = Field(min_length=1, max_length=80)
+    title: str = Field(default="", max_length=80)
