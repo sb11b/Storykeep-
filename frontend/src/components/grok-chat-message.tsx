@@ -5,7 +5,7 @@ import { Copy, Download, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "l
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
-import { downloadChatPicture, mediaDownloadUrl } from "@/lib/chat-media-download";
+import { downloadChatPicture, resolveChatImageSrc } from "@/lib/chat-media-download";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
@@ -22,9 +22,14 @@ function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
   if (trigger) {
     event.preventDefault();
     event.stopPropagation();
+    const figure = trigger.closest("figure");
+    const img = figure?.querySelector("img") ?? trigger.parentElement?.querySelector("img");
     const mediaId = trigger.getAttribute("data-media-id") || "";
-    const url = trigger.getAttribute("data-media-url");
-    void downloadChatPicture({ mediaId, url }).catch(toastDownloadError);
+    void downloadChatPicture({
+      img,
+      mediaId,
+      url: img?.currentSrc || img?.getAttribute("src") || trigger.getAttribute("data-media-url"),
+    }).catch(toastDownloadError);
     return;
   }
   onCodeCopyClick(event);
@@ -40,7 +45,7 @@ function ChatPicture({
   alt: string;
   contentType?: string | null;
 }) {
-  const src = mediaDownloadUrl(mediaId);
+  const src = resolveChatImageSrc(url, mediaId);
   return (
     <figure className="sk-chat-image mt-2">
       <img src={src} alt={alt} className="max-h-80 w-auto max-w-full rounded-md border" />
@@ -50,8 +55,14 @@ function ChatPicture({
         variant="outline"
         className="mt-1.5"
         aria-label="Download picture"
-        onClick={() => {
-          void downloadChatPicture({ mediaId, url: src, contentType }).catch(toastDownloadError);
+        onClick={(event) => {
+          const img = (event.currentTarget.closest("figure") as HTMLElement | null)?.querySelector("img");
+          void downloadChatPicture({
+            img,
+            mediaId,
+            url: img?.currentSrc || img?.getAttribute("src") || src,
+            contentType,
+          }).catch(toastDownloadError);
         }}
       >
         <Download className="size-3" />

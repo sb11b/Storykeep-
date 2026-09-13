@@ -1,4 +1,6 @@
 const MEDIA_ID = /\/api\/v1\/media\/([0-9a-fA-F-]{36})/;
+const UUID = /^[0-9a-fA-F-]{36}$/;
+const ACCIDENTAL_EXT = /(\/api\/v1\/media\/[0-9a-fA-F-]{36})\.(jpg|jpeg|png|gif|webp)(?=(\?|$))/i;
 
 const TYPE_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",
@@ -31,9 +33,37 @@ export function storykeepDownloadFilename(mediaId: string, contentType?: string 
   return `storykeep-${mediaId}${ext}`;
 }
 
-/** Same path as the <img> src. */
 export function mediaDownloadUrl(mediaId: string): string {
   return `/api/v1/media/${mediaId}`;
+}
+
+function stripAccidentalPathExt(src: string): string {
+  if (src.startsWith("blob:") || src.startsWith("data:")) return src;
+  return src.replace(ACCIDENTAL_EXT, "$1");
+}
+
+/**
+ * Exact GET URL for Download. Must match the working <img> src (origin, path, query, UUID).
+ * Never append .jpg to the request path. Never replace a live src with a reconstructed /media/{id}.
+ */
+export function resolveChatImageSrc(
+  imgSrc: string | null | undefined,
+  mediaId?: string | null,
+): string {
+  const raw = (imgSrc || "").trim();
+  if (raw) return stripAccidentalPathExt(raw);
+  const id = (mediaId || "").trim();
+  if (UUID.test(id)) return mediaDownloadUrl(id);
+  return "";
+}
+
+export function liveChatImageSrc(
+  img?: Pick<HTMLImageElement, "getAttribute" | "currentSrc"> | null,
+  fallbackUrl?: string | null,
+): string {
+  const attr = img?.getAttribute?.("src")?.trim() || "";
+  const current = (img?.currentSrc || "").trim();
+  return current || attr || (fallbackUrl || "").trim();
 }
 
 export function sniffImageContentType(bytes: Uint8Array): string | null {
@@ -60,21 +90,21 @@ function looksLikeHtmlOrJson(bytes: Uint8Array, contentType: string): boolean {
 }
 
 export async function downloadChatPicture(options: {
-  mediaId: string;
+  img?: Pick<HTMLImageElement, "getAttribute" | "currentSrc"> | null;
+  mediaId?: string | null;
   url?: string | null;
   contentType?: string | null;
 }): Promise<void> {
-  const mediaId = (options.mediaId || mediaIdFromUrl(options.url) || "").trim();
-  if (!/^[0-9a-fA-F-]{36}$/.test(mediaId)) {
+  const imgSrc = liveChatImageSrc(options.img, options.url);
+  const downloadUrl = resolveChatImageSrc(imgSrc);
+  const mediaId = mediaIdFromUrl(downloadUrl) || mediaIdFromUrl(imgSrc) || (options.mediaId || "").trim();
+  console.info("[storykeep-download]", { imgSrc: imgSrc || null, downloadUrl: downloadUrl || null });
+  if (!downloadUrl) {
     throw new MediaDownloadError(400, "Could not download that picture. (HTTP 400)");
   }
-  const href = mediaDownloadUrl(mediaId);
-  const response = await fetch(href, {
+  const response = await fetch(downloadUrl, {
     method: "GET",
     credentials: "include",
-    cache: "no-store",
-    mode: "same-origin",
-    headers: { Accept: "image/jpeg,image/png,image/webp,image/gif,image/*" },
   });
   if (!response.ok) {
     throw new MediaDownloadError(
@@ -88,12 +118,11 @@ export async function downloadChatPicture(options: {
   if (!sniffed || looksLikeHtmlOrJson(buffer, headerType)) {
     throw new MediaDownloadError(response.status, `Could not download that picture. (HTTP ${response.status})`);
   }
-  const type = sniffed;
-  const blob = new Blob([buffer], { type });
+  const blob = new Blob([buffer], { type: sniffed });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
-  link.download = storykeepDownloadFilename(mediaId, options.contentType || type);
+  link.download = storykeepDownloadFilename(mediaId || "image", options.contentType || sniffed);
   link.rel = "noopener";
   link.setAttribute("aria-label", "Download picture");
   document.body.appendChild(link);

@@ -207,6 +207,7 @@ def get_note_media(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FileResponse:
+    """Canonical byte GET. Same path the Junior <img> already uses — no /download/{id}."""
     row = owned_media(db, user, media_id)
     path = Path(row.storage_path)
     if not path.is_file():
