@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Any, Iterator
+from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -20,8 +22,10 @@ MODEL_AUTO = "auto"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
 CHAT_FIRST_BYTE_TIMEOUT_SEC = 8.0
+CHAT_IDLE_AFTER_TOKEN_SEC = 60.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
 XAI_SILENT_DETAIL = "xAI silent"
+SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
 XAI_MODELS_CACHE_SEC = 900.0
 CODE_KEYWORDS = (
     "python",
@@ -221,6 +225,20 @@ def stream_error_event(status: int, detail: str, *, partial: bool = False) -> di
     }
 
 
+def encode_sse(payload: dict[str, object] | str) -> bytes:
+    """One SSE event as bytes so ASGI can flush it immediately."""
+    if isinstance(payload, str):
+        return f"data: {payload}\n\n".encode("utf-8")
+    return ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+
+
+async def _anext_or_none(lines: AsyncIterator[str]) -> str | None:
+    try:
+        return await anext(lines)
+    except StopAsyncIteration:
+        return None
+
+
 def http_exception_detail(exc: HTTPException) -> tuple[int, str]:
     status_code = int(exc.status_code or 502)
     detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
@@ -265,12 +283,12 @@ def require_key() -> str:
 
 def _chat_timeout(*, streaming: bool) -> httpx.Timeout:
     if streaming:
-        # No overall cap here — first byte is 8s, later silence uses the 8s read
-        # timeout, and stream_completion enforces the 45s wall clock after tokens.
+        # Read idle is owned by asyncio.wait_for so we can fail "xAI silent" at 8s
+        # without httpx buffering the whole completion.
         return httpx.Timeout(
-            timeout=None,
+            None,
             connect=CHAT_CONNECT_TIMEOUT_SEC,
-            read=CHAT_FIRST_BYTE_TIMEOUT_SEC,
+            read=None,
             write=15.0,
             pool=10.0,
         )
@@ -546,7 +564,7 @@ def messages_for_xai(
     return prepared
 
 
-def stream_completion(
+async def stream_completion(
     history: list[dict],
     excerpt: str | None,
     *,
@@ -556,7 +574,7 @@ def stream_completion(
     model_choice: str = MODEL_AUTO,
     user_id: UUID | None = None,
     has_attachments: bool = False,
-) -> Iterator[str]:
+) -> AsyncIterator[str]:
     key = require_key()
     validate_xai_model(model)
     latest_user = next((_content_text(item.get("content")) for item in reversed(history) if item.get("role") == "user"), "")
@@ -582,20 +600,19 @@ def stream_completion(
         "temperature": 0.6,
     }
     started = time.perf_counter()
-    first_byte_at: float | None = None
-    first_event = threading.Event()
+    first_visible_at: float | None = None
     yielded_any = False
     try:
-        with httpx.Client(timeout=_chat_timeout(streaming=True)) as client:
-            with client.stream(
+        async with httpx.AsyncClient(timeout=_chat_timeout(streaming=True)) as client:
+            async with client.stream(
                 "POST",
                 chat_url(),
                 json=payload,
-                headers=_auth_headers(key),
+                headers={**_auth_headers(key), "Accept": "text/event-stream"},
             ) as response:
                 status_code = response.status_code
                 if status_code >= 400:
-                    body = response.read().decode("utf-8", errors="replace")
+                    body = (await response.aread()).decode("utf-8", errors="replace")
                     detail = parse_xai_error_body(body, status_code)
                     logger.warning(
                         "xAI chat HTTP %s model=%s ttfb=%.2fs detail=%s",
@@ -605,104 +622,97 @@ def stream_completion(
                         detail,
                     )
                     raise map_xai_http_error(status_code, detail, model)
-
-                remaining = CHAT_FIRST_BYTE_TIMEOUT_SEC - (time.perf_counter() - started)
-                if remaining <= 0:
-                    raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
-
-                def _kill_if_silent() -> None:
-                    if not first_event.is_set():
-                        try:
-                            response.close()
-                        except Exception:
-                            pass
-
-                watchdog = threading.Timer(remaining, _kill_if_silent)
-                watchdog.daemon = True
-                watchdog.start()
-                try:
-                    for line in response.iter_lines():
-                        elapsed = time.perf_counter() - started
-                        if first_byte_at is None and elapsed >= CHAT_FIRST_BYTE_TIMEOUT_SEC:
+                lines = response.aiter_lines()
+                while True:
+                    elapsed = time.perf_counter() - started
+                    if first_visible_at is None:
+                        wait = CHAT_FIRST_BYTE_TIMEOUT_SEC - elapsed
+                        if wait <= 0:
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
-                        if first_byte_at is not None and elapsed >= CHAT_STREAM_TIMEOUT_SEC:
-                            raise HTTPException(
-                                status_code=504,
-                                detail=f"Chat timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s.",
-                            )
-                        if not line:
-                            continue
-                        if line.startswith("data:"):
-                            data = line[5:].strip()
-                        else:
-                            data = line.strip()
-                        if data == "[DONE]":
-                            break
-                        text, active = _parse_sse_chunk(data)
-                        if active and first_byte_at is None:
-                            first_byte_at = time.perf_counter()
-                            first_event.set()
-                            watchdog.cancel()
+                    else:
+                        wait = CHAT_IDLE_AFTER_TOKEN_SEC
+                    try:
+                        line = await asyncio.wait_for(_anext_or_none(lines), timeout=wait)
+                    except asyncio.TimeoutError as exc:
+                        if first_visible_at is None or not yielded_any:
+                            raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
+                        raise HTTPException(
+                            status_code=504,
+                            detail=f"Chat timed out after {int(elapsed)}s.",
+                        ) from exc
+                    if line is None:
+                        break
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        data = line[5:].strip()
+                    else:
+                        data = line.strip()
+                    if data == "[DONE]":
+                        break
+                    text, active = _parse_sse_chunk(data)
+                    if not active:
+                        continue
+                    if text:
+                        if first_visible_at is None:
+                            first_visible_at = time.perf_counter()
                             logger.info(
-                                "xAI chat first_byte model=%s status=%s ttfb=%.2fs user=%s",
+                                "larry-chat ttft_ms=%s flushed=%s model=%s user=%s",
+                                int((first_visible_at - started) * 1000),
+                                True,
                                 model,
-                                status_code,
-                                first_byte_at - started,
                                 user_id,
                             )
-                        if not active:
-                            continue
-                        if text:
-                            yielded_any = True
-                            yield text
-                    if first_byte_at is None:
-                        raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
-                finally:
-                    first_event.set()
-                    watchdog.cancel()
+                        yielded_any = True
+                        yield text
+                if not yielded_any:
+                    raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
     except HTTPException:
+        raise
+    except asyncio.CancelledError:
         raise
     except httpx.HTTPError as exc:
         elapsed = time.perf_counter() - started
-        silent = first_byte_at is None or not yielded_any
-        if silent:
+        if not yielded_any:
             detail = XAI_SILENT_DETAIL
-            status_code = 504 if isinstance(exc, (httpx.ReadTimeout, httpx.TimeoutException)) or elapsed >= CHAT_FIRST_BYTE_TIMEOUT_SEC else 502
+            status_code = (
+                504
+                if isinstance(exc, (httpx.ReadTimeout, httpx.TimeoutException))
+                or elapsed >= CHAT_FIRST_BYTE_TIMEOUT_SEC
+                else 502
+            )
             if status_code == 502:
                 detail = _transport_error_detail(exc)
             logger.warning(
-                "xAI chat transport error model=%s user=%s ttfb=%.2fs detail=%s",
+                "larry-chat ttft_ms=%s flushed=%s model=%s user=%s detail=%s",
+                -1,
+                False,
                 model,
                 user_id,
-                elapsed,
                 detail,
             )
             raise HTTPException(status_code=status_code, detail=detail) from exc
-        logger.warning(
-            "xAI chat transport error after tokens model=%s user=%s elapsed=%.2fs detail=%s",
-            model,
-            user_id,
-            elapsed,
-            exc,
-        )
         raise HTTPException(
             status_code=504,
-            detail=f"Chat timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s.",
+            detail=f"Chat timed out after {int(elapsed)}s.",
         ) from exc
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         elapsed = time.perf_counter() - started
-        if first_byte_at is None or not yielded_any:
+        if not yielded_any:
+            logger.warning(
+                "larry-chat ttft_ms=%s flushed=%s model=%s user=%s detail=%s",
+                -1,
+                False,
+                model,
+                user_id,
+                exc,
+            )
             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
-        logger.warning(
-            "xAI chat stopped after tokens model=%s user=%s elapsed=%.2fs detail=%s",
-            model,
-            user_id,
-            elapsed,
-            exc,
-        )
         raise HTTPException(
             status_code=504,
-            detail=f"Chat timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s.",
+            detail=f"Chat timed out after {int(elapsed)}s.",
         ) from exc
 
 

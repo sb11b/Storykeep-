@@ -144,6 +144,12 @@ test("readGrokChatStream keeps tokens when a partial 504 arrives", async () => {
   assert.deepEqual(parts, ["Partial ", "answer"]);
 });
 
+test("readGrokChatStream parses a leftover event without a blank line", async () => {
+  const parts: string[] = [];
+  await readGrokChatStream(sseResponse(['data: {"delta":"Hi"}']), { onDelta: (text) => parts.push(text) });
+  assert.deepEqual(parts, ["Hi"]);
+});
+
 test("heartbeat does not count as the first token", async () => {
   const hangingChunks = [
     'data: {"heartbeat":true}\n\n',

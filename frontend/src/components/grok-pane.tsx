@@ -859,7 +859,7 @@ export function GrokPane({
         />
         <span className="text-muted-foreground">
           Include current article
-          {!articleId ? " — open an article to ground this pane." : pane.includeArticle ? " — up to ~12k chars." : " — off, thread only."}
+          {!articleId ? " — open an article to ground this pane." : pane.includeArticle ? " — up to 8k chars." : " — off, thread only."}
         </span>
       </label>
 
@@ -1063,9 +1063,29 @@ export function GrokPane({
               </Button>
             </div>
           ) : null}
-          <Button type="submit" size="icon" className="size-9 shrink-0 self-end" disabled={busy || !enabled || (!pane.draft.trim() && !(pane.pendingAttachments ?? []).length)} aria-label="Send">
-            {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
-          </Button>
+          {busy ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="destructive"
+              className="size-9 shrink-0 self-end"
+              aria-label="Stop"
+              title="Stop generating"
+              onClick={() => abortInFlight()}
+            >
+              <Square className="size-3.5 fill-current" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              className="size-9 shrink-0 self-end"
+              disabled={!enabled || (!pane.draft.trim() && !(pane.pendingAttachments ?? []).length)}
+              aria-label="Send"
+            >
+              <Send className="size-4" />
+            </Button>
+          )}
         </div>
         {dictation?.listening && sttEnabled && !locked ? (
           <p className="text-[10px] text-muted-foreground">

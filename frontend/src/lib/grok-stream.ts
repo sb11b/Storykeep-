@@ -104,6 +104,7 @@ export async function readGrokChatStream(
   const receivedDelta = { value: false };
   const startedAt = Date.now();
   let lastActivityAt = Date.now();
+  let firstDeltaAt: number | null = null;
 
   const throwIfTimedOut = () => {
     const now = Date.now();
@@ -156,7 +157,10 @@ export async function readGrokChatStream(
         if (!part.trim()) continue;
         try {
           const outcome = parseSsePart(part, handlers, receivedDelta);
-          if (receivedDelta.value) lastActivityAt = Date.now();
+          if (receivedDelta.value) {
+            lastActivityAt = Date.now();
+            if (firstDeltaAt == null) firstDeltaAt = lastActivityAt;
+          }
           if (outcome === "done") {
             if (!receivedDelta.value) {
               throw new ApiError(504, formatChatError(504, "xAI silent"));
@@ -168,10 +172,20 @@ export async function readGrokChatStream(
         }
       }
     }
+    if (buffer.trim()) {
+      try {
+        parseSsePart(buffer, handlers, receivedDelta);
+        if (receivedDelta.value && firstDeltaAt == null) firstDeltaAt = Date.now();
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+      }
+    }
     if (!receivedDelta.value) {
       throw new ApiError(504, formatChatError(504, "xAI silent"));
     }
   } finally {
+    const ttftMs = firstDeltaAt != null ? firstDeltaAt - startedAt : -1;
+    console.info("larry-chat", { ttft_ms: ttftMs, flushed: receivedDelta.value });
     try {
       await reader.cancel();
     } catch {

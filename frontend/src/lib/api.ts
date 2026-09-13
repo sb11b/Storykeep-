@@ -608,11 +608,12 @@ export const api = {
       method: "POST",
       credentials: "include",
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify(body),
       signal,
     });
-    if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok && !contentType.includes("text/event-stream")) {
       let detail = response.statusText;
       try {
         const data = (await response.json()) as { detail?: string };

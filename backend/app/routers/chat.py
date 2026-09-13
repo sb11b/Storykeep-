@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
+import time
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
@@ -180,8 +181,9 @@ def delete_conversation(
 
 
 @router.post("/chat")
-def chat(
+async def chat(
     payload: ChatIn,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> StreamingResponse:
@@ -340,8 +342,24 @@ def chat(
             )
             return None
 
-    def events():
+    async def events():
         assistant_parts: list[str] = []
+        started = time.perf_counter()
+        ttft_ms: int | None = None
+        flushed = False
+
+        def _log(reason: str) -> None:
+            logger.info(
+                "larry-chat ttft_ms=%s flushed=%s reason=%s model=%s user=%s conversation=%s chars=%s",
+                ttft_ms if ttft_ms is not None else -1,
+                flushed,
+                reason,
+                resolved_model,
+                user_id,
+                conversation_id,
+                sum(len(part) for part in assistant_parts),
+            )
+
         try:
             meta = {
                 "conversation_id": str(conversation_id) if conversation_id else None,
@@ -350,19 +368,14 @@ def chat(
                 "model_choice": model_choice,
             }
             if persist and conversation_id and user_message_id:
-                yield "data: " + json.dumps({k: v for k, v in meta.items() if v is not None}, ensure_ascii=False) + "\n\n"
+                yield chat_service.encode_sse({k: v for k, v in meta.items() if v is not None})
             elif not persist:
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {"model": resolved_model, "model_choice": model_choice},
-                        ensure_ascii=False,
-                    )
-                    + "\n\n"
-                )
-            # Padding comment so proxies flush before the first token.
-            yield ": " + (" " * 2048) + "\n\n"
-            for piece in chat_service.stream_completion(
+                yield chat_service.encode_sse({"model": resolved_model, "model_choice": model_choice})
+            else:
+                yield chat_service.encode_sse({"model": resolved_model, "model_choice": model_choice})
+            yield chat_service.SSE_PADDING
+            await asyncio.sleep(0)
+            async for piece in chat_service.stream_completion(
                 history_for_xai,
                 excerpt,
                 include_article=include_article,
@@ -372,94 +385,85 @@ def chat(
                 user_id=user_id,
                 has_attachments=has_attachments,
             ):
+                if await request.is_disconnected():
+                    _log("aborted")
+                    _persist_assistant("".join(assistant_parts))
+                    return
                 assistant_parts.append(piece)
-                yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"
+                if ttft_ms is None:
+                    ttft_ms = int((time.perf_counter() - started) * 1000)
+                flushed = True
+                yield chat_service.encode_sse({"delta": piece})
+                await asyncio.sleep(0)
             if persist and conversation_id:
                 assistant_text = "".join(assistant_parts).strip() or "No reply came back."
                 assistant_message_id = _persist_assistant(assistant_text)
                 if assistant_message_id:
-                    yield (
-                        "data: "
-                        + json.dumps(
-                            {
-                                "conversation_id": str(conversation_id),
-                                "assistant_message_id": assistant_message_id,
-                                "model": resolved_model,
-                                "model_choice": model_choice,
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n\n"
+                    yield chat_service.encode_sse(
+                        {
+                            "conversation_id": str(conversation_id),
+                            "assistant_message_id": assistant_message_id,
+                            "model": resolved_model,
+                            "model_choice": model_choice,
+                        }
                     )
-            yield "data: [DONE]\n\n"
+            yield chat_service.encode_sse("[DONE]")
+            _log("done")
         except HTTPException as exc:
             status_code, detail = chat_service.http_exception_detail(exc)
             partial_text = "".join(assistant_parts)
-            logger.warning(
-                "Chat stream failed user=%s conversation=%s status=%s detail=%s partial_chars=%s",
-                user_id,
-                conversation_id,
-                status_code,
-                detail,
-                len(partial_text),
-            )
+            flushed = flushed or bool(partial_text)
+            _log(f"http-{status_code}")
             saved_id = _persist_assistant(partial_text) if persist else None
             if saved_id and conversation_id:
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "conversation_id": str(conversation_id),
-                            "assistant_message_id": saved_id,
-                            "model": resolved_model,
-                            "model_choice": model_choice,
-                            "partial": True,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n\n"
+                yield chat_service.encode_sse(
+                    {
+                        "conversation_id": str(conversation_id),
+                        "assistant_message_id": saved_id,
+                        "model": resolved_model,
+                        "model_choice": model_choice,
+                        "partial": True,
+                    }
                 )
-            yield (
-                "data: "
-                + json.dumps(
-                    chat_service.stream_error_event(status_code, detail, partial=bool(partial_text)),
-                    ensure_ascii=False,
-                )
-                + "\n\n"
+            yield chat_service.encode_sse(
+                chat_service.stream_error_event(status_code, detail, partial=bool(partial_text))
             )
+        except asyncio.CancelledError:
+            partial_text = "".join(assistant_parts)
+            flushed = flushed or bool(partial_text)
+            _log("cancelled")
+            _persist_assistant(partial_text)
+            raise
         except Exception as exc:
             partial_text = "".join(assistant_parts)
+            flushed = flushed or bool(partial_text)
             logger.exception(
                 "Chat stream unexpected error user=%s conversation=%s partial_chars=%s",
                 user_id,
                 conversation_id,
                 len(partial_text),
             )
+            _log("error")
             saved_id = _persist_assistant(partial_text) if persist else None
             if saved_id and conversation_id:
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "conversation_id": str(conversation_id),
-                            "assistant_message_id": saved_id,
-                            "partial": True,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n\n"
+                yield chat_service.encode_sse(
+                    {
+                        "conversation_id": str(conversation_id),
+                        "assistant_message_id": saved_id,
+                        "partial": True,
+                    }
                 )
-            yield (
-                "data: "
-                + json.dumps(
-                    chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(partial_text)),
-                    ensure_ascii=False,
-                )
-                + "\n\n"
+            yield chat_service.encode_sse(
+                chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(partial_text))
             )
 
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Encoding": "identity",
+        },
     )
