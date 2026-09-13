@@ -50,9 +50,12 @@
 
 :root {
   --storykeep-body-font: var(--font-sans), ui-sans-serif, sans-serif;
-  --background: oklch(0.965 0.018 88);
+  --storykeep-page-bg: oklch(0.965 0.018 88);
+  --storykeep-top-bar: oklch(0.985 0.01 88);
+  --storykeep-rail: oklch(0.23 0.02 55);
+  --background: var(--storykeep-page-bg);
   --foreground: oklch(0.24 0.02 55);
-  --card: oklch(0.985 0.01 88);
+  --card: var(--storykeep-top-bar);
   --card-foreground: oklch(0.24 0.02 55);
   --popover: oklch(0.985 0.01 88);
   --popover-foreground: oklch(0.24 0.02 55);
@@ -74,7 +77,7 @@
   --chart-4: oklch(0.7 0.08 80);
   --chart-5: oklch(0.35 0.04 55);
   --radius: 0.7rem;
-  --sidebar: oklch(0.23 0.02 55);
+  --sidebar: var(--storykeep-rail);
   --sidebar-foreground: oklch(0.93 0.02 85);
   --sidebar-primary: oklch(0.7 0.12 50);
   --sidebar-primary-foreground: oklch(0.2 0.02 55);

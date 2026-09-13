@@ -3,6 +3,11 @@ import type { User } from "./types";
 export type FontFamilyChoice = "serif" | "sans" | "source-serif" | "system";
 export type BaseFontSize = "sm" | "md" | "lg";
 
+export type ThemeColorChoice = {
+  preset: string;
+  custom: string | null;
+};
+
 export type AppearanceSettings = {
   page_preset: string;
   rail_preset: string;
@@ -90,21 +95,61 @@ export function resolvePresetColor(
   return presets[preset] || presets[fallback] || Object.values(presets)[0];
 }
 
-export function appearanceFromPreferences(preferences: Record<string, unknown> | undefined): AppearanceSettings {
-  const raw = (preferences?.appearance || {}) as Partial<AppearanceSettings>;
+function readThemeColor(
+  raw: Record<string, unknown>,
+  nestedKey: "pageBg" | "topBar" | "rail",
+  presetDefault: string,
+  customDefault: string | null,
+  flatPresetKey: keyof AppearanceSettings,
+  flatCustomKey: keyof AppearanceSettings,
+): ThemeColorChoice {
+  const nested = raw[nestedKey];
+  if (nested && typeof nested === "object") {
+    const row = nested as { preset?: string; custom?: string | null };
+    return {
+      preset: row.preset || presetDefault,
+      custom: normalizeHex(row.custom) ?? customDefault,
+    };
+  }
+  const flatPreset = raw[flatPresetKey];
+  const flatCustom = raw[flatCustomKey];
   return {
-    page_preset: raw.page_preset || DEFAULT_APPEARANCE.page_preset,
-    rail_preset: raw.rail_preset || DEFAULT_APPEARANCE.rail_preset,
-    topbar_preset: raw.topbar_preset || DEFAULT_APPEARANCE.topbar_preset,
-    page_custom: normalizeHex(raw.page_custom),
-    rail_custom: normalizeHex(raw.rail_custom),
-    topbar_custom: normalizeHex(raw.topbar_custom),
-    font_family: FONT_FAMILY_OPTIONS.some((row) => row.value === raw.font_family)
-      ? (raw.font_family as FontFamilyChoice)
+    preset: typeof flatPreset === "string" && flatPreset ? flatPreset : presetDefault,
+    custom: normalizeHex(typeof flatCustom === "string" ? flatCustom : null) ?? customDefault,
+  };
+}
+
+export function appearanceFromPreferences(preferences: Record<string, unknown> | undefined): AppearanceSettings {
+  const raw = (preferences?.appearance || {}) as Record<string, unknown>;
+  const page = readThemeColor(raw, "pageBg", DEFAULT_APPEARANCE.page_preset, null, "page_preset", "page_custom");
+  const topBar = readThemeColor(raw, "topBar", DEFAULT_APPEARANCE.topbar_preset, null, "topbar_preset", "topbar_custom");
+  const rail = readThemeColor(raw, "rail", DEFAULT_APPEARANCE.rail_preset, null, "rail_preset", "rail_custom");
+  const fontFamily = raw.font_family;
+  const baseFontSize = raw.base_font_size;
+  return {
+    page_preset: page.preset,
+    page_custom: page.custom,
+    topbar_preset: topBar.preset,
+    topbar_custom: topBar.custom,
+    rail_preset: rail.preset,
+    rail_custom: rail.custom,
+    font_family: FONT_FAMILY_OPTIONS.some((row) => row.value === fontFamily)
+      ? (fontFamily as FontFamilyChoice)
       : DEFAULT_APPEARANCE.font_family,
-    base_font_size: BASE_FONT_SIZE_OPTIONS.some((row) => row.value === raw.base_font_size)
-      ? (raw.base_font_size as BaseFontSize)
+    base_font_size: BASE_FONT_SIZE_OPTIONS.some((row) => row.value === baseFontSize)
+      ? (baseFontSize as BaseFontSize)
       : DEFAULT_APPEARANCE.base_font_size,
+  };
+}
+
+/** Payload for PATCH /api/v1/me — pageBg, topBar, and rail stored together. */
+export function appearanceToMePatch(settings: AppearanceSettings): Record<string, unknown> {
+  return {
+    pageBg: { preset: settings.page_preset, ...(settings.page_custom ? { custom: settings.page_custom } : {}) },
+    topBar: { preset: settings.topbar_preset, ...(settings.topbar_custom ? { custom: settings.topbar_custom } : {}) },
+    rail: { preset: settings.rail_preset, ...(settings.rail_custom ? { custom: settings.rail_custom } : {}) },
+    font_family: settings.font_family,
+    base_font_size: settings.base_font_size,
   };
 }
 
@@ -117,6 +162,9 @@ export function applyAppearance(settings: AppearanceSettings) {
   const font = FONT_FAMILY_OPTIONS.find((row) => row.value === settings.font_family)?.css || FONT_FAMILY_OPTIONS[1].css;
   const size = BASE_FONT_SIZE_OPTIONS.find((row) => row.value === settings.base_font_size)?.px || "16px";
 
+  root.style.setProperty("--storykeep-page-bg", page);
+  root.style.setProperty("--storykeep-top-bar", topbar);
+  root.style.setProperty("--storykeep-rail", rail);
   root.style.setProperty("--background", page);
   root.style.setProperty("--sidebar", rail);
   root.style.setProperty("--card", topbar);

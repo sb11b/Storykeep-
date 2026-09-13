@@ -48,7 +48,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
-import { mergeUserProfile } from "@/lib/user-profile";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   extractWikilinkTargets,
@@ -1048,7 +1047,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   );
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 overflow-hidden bg-[var(--storykeep-page-bg)]">
       <aside className={cn("hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex", readerFull && "!hidden")}>{nav}</aside>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetContent side="left" className="w-80 overflow-hidden bg-sidebar p-0 text-sidebar-foreground">
@@ -1059,8 +1058,8 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
+        <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
           </Button>

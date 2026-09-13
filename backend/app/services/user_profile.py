@@ -49,12 +49,50 @@ def profile_out(user: User) -> ProfileOut:
     )
 
 
+def _read_theme_color(raw: dict, nested_key: str, preset_key: str, custom_key: str) -> dict | None:
+    nested = raw.get(nested_key)
+    if isinstance(nested, dict):
+        preset = nested.get("preset")
+        custom = nested.get("custom")
+        if preset or custom:
+            return {"preset": preset, "custom": custom}
+    preset = raw.get(preset_key)
+    custom = raw.get(custom_key)
+    if preset or custom:
+        return {"preset": preset, "custom": custom}
+    return None
+
+
+def normalize_appearance_storage(raw: dict) -> dict:
+    out: dict = {}
+    for nested_key, preset_key, custom_key in (
+        ("pageBg", "page_preset", "page_custom"),
+        ("topBar", "topbar_preset", "topbar_custom"),
+        ("rail", "rail_preset", "rail_custom"),
+    ):
+        color = _read_theme_color(raw, nested_key, preset_key, custom_key)
+        if color:
+            out[nested_key] = {key: value for key, value in color.items() if value is not None}
+    if raw.get("font_family"):
+        out["font_family"] = raw["font_family"]
+    if raw.get("base_font_size"):
+        out["base_font_size"] = raw["base_font_size"]
+    return out
+
+
 def merge_appearance_preferences(preferences: dict, appearance: dict | None) -> dict:
     current = dict(preferences or {})
     if not appearance:
         return current
     merged = dict(current.get("appearance") or {})
-    merged.update({key: value for key, value in appearance.items() if value is not None})
+    normalized = normalize_appearance_storage(appearance)
+    for key, value in normalized.items():
+        if key in {"pageBg", "topBar", "rail"} and isinstance(value, dict):
+            slot = dict(merged.get(key) or {})
+            slot.update(value)
+            merged[key] = slot
+        elif value is not None:
+            merged[key] = value
     current["appearance"] = merged
     return current
 

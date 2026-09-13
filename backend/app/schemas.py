@@ -543,15 +543,23 @@ class BackupOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ThemeColorIn(BaseModel):
+    preset: str | None = None
+    custom: str | None = None
+
+
 class AppearancePreferencesIn(BaseModel):
+    pageBg: ThemeColorIn | None = None
+    topBar: ThemeColorIn | None = None
+    rail: ThemeColorIn | None = None
+    font_family: str | None = None
+    base_font_size: str | None = None
     page_preset: str | None = None
     rail_preset: str | None = None
     topbar_preset: str | None = None
     page_custom: str | None = None
     rail_custom: str | None = None
     topbar_custom: str | None = None
-    font_family: str | None = None
-    base_font_size: str | None = None
 
 
 class MePatchIn(BaseModel):

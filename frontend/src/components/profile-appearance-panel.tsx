@@ -8,6 +8,7 @@ import {
   RAIL_COLOR_PRESETS,
   TOPBAR_COLOR_PRESETS,
   applyAppearance,
+  appearanceToMePatch,
   baseFontSizePx,
   fontFamilyCss,
   FONT_PREVIEW_SAMPLE,
@@ -77,7 +78,7 @@ function PresetRow({
 export function ProfileAppearancePanel({ appearance, readOnly, onChange, onSaved }: ProfileAppearancePanelProps) {
   async function saveAppearance() {
     try {
-      const updated = await api.updateMe({ appearance });
+      const updated = await api.updateMe({ appearance: appearanceToMePatch(appearance) });
       applyAppearance(appearance);
       onSaved(updated);
       toast.success("Appearance saved");
