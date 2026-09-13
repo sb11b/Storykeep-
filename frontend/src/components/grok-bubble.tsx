@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { grokModelLabel } from "@/lib/grok-model";
 import type { GrokConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -86,6 +87,7 @@ export function GrokBubble({
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
   const [persist, setPersist] = useState(false);
+  const [chatModels, setChatModels] = useState<string[]>(["grok-4", "grok-4-fast"]);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -130,6 +132,7 @@ export function GrokBubble({
         setEnabled(row.enabled);
         setLocked(Boolean(row.locked));
         setPersist(Boolean(row.persist ?? !row.locked));
+        if (row.models?.length) setChatModels(row.models);
       })
       .catch(() => {
         setEnabled(false);
@@ -247,6 +250,8 @@ export function GrokBubble({
       updatePane(focusedPaneId, (pane) => ({
         ...pane,
         conversationId: detail.id,
+        modelChoice: detail.model || "auto",
+        lastResolvedModel: detail.last_model ?? null,
         messages: detail.messages.map((item) => ({
           id: item.id,
           role: item.role,
@@ -293,7 +298,7 @@ export function GrokBubble({
     setRenamingId(null);
     setRenameDraft("");
     try {
-      const updated = await api.patchChatConversation(conversationId, draft);
+      const updated = await api.patchChatConversation(conversationId, { title: draft });
       setConversations((current) =>
         current.map((row) => (row.id === conversationId ? { ...row, title: updated.title } : row)),
       );
@@ -358,6 +363,9 @@ export function GrokBubble({
                     }}
                   >
                     <span className="line-clamp-2">{row.title}</span>
+                    <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                      {grokModelLabel(row.model || "auto", row.last_model)}
+                    </span>
                   </button>
                 )}
                 {!renaming ? (
@@ -542,6 +550,8 @@ export function GrokBubble({
                   onActivateListen={handleActivateListen}
                   onStopArticleListen={onStopArticleListen}
                   onHistoryChanged={() => void refreshHistory()}
+                  chatModels={chatModels}
+                  persist={persist}
                 />
               </div>
             ))}
@@ -564,6 +574,8 @@ export function GrokBubble({
             onActivateListen={handleActivateListen}
             onStopArticleListen={onStopArticleListen}
             onHistoryChanged={() => void refreshHistory()}
+            chatModels={chatModels}
+            persist={persist}
           />
         )}
       </div>

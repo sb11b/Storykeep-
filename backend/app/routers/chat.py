@@ -24,18 +24,40 @@ router = APIRouter(tags=["chat"])
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     conversation_id: UUID | None = None
+    model: str | None = None
     article_id: UUID | None = None
     include_article: bool = False
+
+
+def _conversation_out(row) -> GrokConversationOut:
+    return GrokConversationOut.model_validate(row)
+
+
+def _conversation_detail(row) -> GrokConversationDetailOut:
+    return GrokConversationDetailOut(
+        id=row.id,
+        title=row.title,
+        pane=row.pane,
+        model=row.model or chat_service.MODEL_AUTO,
+        last_model=row.last_model,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        messages=[GrokMessageOut.model_validate(item) for item in row.messages],
+    )
 
 
 @router.get("/chat")
 def chat_status(user: User = Depends(get_current_user)) -> dict:
     locked = is_locked(user)
+    models = chat_service.available_models()
     return {
         "enabled": chat_service.key_configured() and not locked,
         "locked": locked,
         "provider": "xai",
-        "model": (settings.xai_chat_model or "grok-4").strip(),
+        "model": chat_service.default_full_model(),
+        "models": models,
+        "default_model": chat_service.default_full_model(),
+        "fast_model": chat_service.default_fast_model(),
         "requests_per_hour": int(settings.chat_requests_per_hour or 120),
         "persist": grok_store.should_persist(user),
     }
@@ -49,7 +71,7 @@ def list_conversations(
     if not grok_store.should_persist(user):
         return []
     rows = grok_store.list_conversations(db, user)
-    return [GrokConversationOut.model_validate(row) for row in rows]
+    return [_conversation_out(row) for row in rows]
 
 
 @router.get("/chat/conversations/{conversation_id}", response_model=GrokConversationDetailOut)
@@ -61,14 +83,7 @@ def get_conversation(
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     row = grok_store.get_conversation(db, user, conversation_id)
-    return GrokConversationDetailOut(
-        id=row.id,
-        title=row.title,
-        pane=row.pane,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        messages=[GrokMessageOut.model_validate(item) for item in row.messages],
-    )
+    return _conversation_detail(row)
 
 
 @router.patch("/chat/conversations/{conversation_id}", response_model=GrokConversationOut)
@@ -80,10 +95,20 @@ def patch_conversation(
 ) -> GrokConversationOut:
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
-    row = grok_store.patch_conversation_title(db, user, conversation_id, payload.title)
+    fields = payload.model_fields_set
+    model_value = chat_service.normalize_model_choice(payload.model) if "model" in fields else None
+    row = grok_store.patch_conversation(
+        db,
+        user,
+        conversation_id,
+        title=payload.title,
+        model=model_value,
+        title_provided="title" in fields,
+        model_provided="model" in fields,
+    )
     db.commit()
     db.refresh(row)
-    return GrokConversationOut.model_validate(row)
+    return _conversation_out(row)
 
 
 @router.delete("/chat/conversations/{conversation_id}")
@@ -112,13 +137,20 @@ def chat(
     persist = grok_store.should_persist(user)
     conversation_id = payload.conversation_id
     user_message_id: UUID | None = None
-    assistant_message_id: UUID | None = None
+    model_choice = chat_service.normalize_model_choice(payload.model) if payload.model else chat_service.MODEL_AUTO
 
     if persist:
         if conversation_id:
             conversation = grok_store.owned_conversation(db, user, conversation_id)
+            model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
+            if payload.model:
+                model_choice = chat_service.normalize_model_choice(payload.model)
+                conversation.model = model_choice
+                db.add(conversation)
         else:
-            conversation = grok_store.create_conversation(db, user)
+            if payload.model:
+                model_choice = chat_service.normalize_model_choice(payload.model)
+            conversation = grok_store.create_conversation(db, user, model=model_choice)
             conversation_id = conversation.id
         is_first = not conversation.messages
         user_row = grok_store.append_message(
@@ -132,9 +164,16 @@ def chat(
         db.commit()
         history = grok_store.conversation_history(db, conversation_id)
     else:
+        if payload.model:
+            model_choice = chat_service.normalize_model_choice(payload.model)
         history = [{"role": "user", "content": payload.message.strip()}]
 
     history_for_xai = chat_service.validate_payload(chat_service.thread_window(history))
+    resolved_model = chat_service.resolve_model_for_request(
+        model_choice,
+        payload.message.strip(),
+        history_for_xai,
+    )
     excerpt = None
     include_article = bool(payload.include_article)
     if include_article:
@@ -146,19 +185,31 @@ def chat(
     def events():
         assistant_parts: list[str] = []
         try:
+            meta = {
+                "conversation_id": str(conversation_id) if conversation_id else None,
+                "user_message_id": str(user_message_id) if user_message_id else None,
+                "model": resolved_model,
+                "model_choice": model_choice,
+            }
             if persist and conversation_id and user_message_id:
+                yield "data: " + json.dumps({k: v for k, v in meta.items() if v is not None}, ensure_ascii=False) + "\n\n"
+            elif not persist:
                 yield (
                     "data: "
                     + json.dumps(
-                        {
-                            "conversation_id": str(conversation_id),
-                            "user_message_id": str(user_message_id),
-                        },
+                        {"model": resolved_model, "model_choice": model_choice},
                         ensure_ascii=False,
                     )
                     + "\n\n"
                 )
-            for piece in chat_service.stream_completion(history_for_xai, excerpt, include_article=include_article):
+            for piece in chat_service.stream_completion(
+                history_for_xai,
+                excerpt,
+                include_article=include_article,
+                model=resolved_model,
+                model_choice=model_choice,
+                user_id=user.id,
+            ):
                 assistant_parts.append(piece)
                 yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"
             if persist and conversation_id:
@@ -170,14 +221,21 @@ def chat(
                     role="assistant",
                     content=assistant_text,
                 )
+                grok_store.patch_conversation(
+                    db,
+                    user,
+                    conversation_id,
+                    last_model=resolved_model,
+                )
                 db.commit()
-                assistant_message_id = assistant_row.id
                 yield (
                     "data: "
                     + json.dumps(
                         {
                             "conversation_id": str(conversation_id),
-                            "assistant_message_id": str(assistant_message_id),
+                            "assistant_message_id": str(assistant_row.id),
+                            "model": resolved_model,
+                            "model_choice": model_choice,
                         },
                         ensure_ascii=False,
                     )

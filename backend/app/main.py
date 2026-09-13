@@ -154,6 +154,9 @@ def _create_schema() -> None:
         "CREATE INDEX IF NOT EXISTS grok_messages_conversation_created_idx "
         "ON grok_messages (conversation_id, created_at)"
     )
+    _try_sql("ALTER TABLE grok_conversations ADD COLUMN IF NOT EXISTS model VARCHAR(64) DEFAULT 'auto'")
+    _try_sql("ALTER TABLE grok_conversations ADD COLUMN IF NOT EXISTS last_model VARCHAR(64)")
+    _try_sql("UPDATE grok_conversations SET model = 'auto' WHERE model IS NULL")
 
 
 def _seed_in_background() -> None:

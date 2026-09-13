@@ -596,10 +596,10 @@ export const api = {
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
   chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
-  patchChatConversation: (id: string, title: string) =>
+  patchChatConversation: (id: string, payload: { title?: string; model?: string }) =>
     request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(payload),
     }),
   deleteChatConversation: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/chat/conversations/${id}`, { method: "DELETE" }),
@@ -607,6 +607,7 @@ export const api = {
     body: {
       message: string;
       conversation_id?: string | null;
+      model?: string;
       article_id: string | null;
       include_article: boolean;
     },
@@ -615,6 +616,8 @@ export const api = {
       conversation_id?: string;
       user_message_id?: string;
       assistant_message_id?: string;
+      model?: string;
+      model_choice?: string;
     }) => void,
   ) => {
     const response = await fetch("/api/v1/chat", {
@@ -656,13 +659,23 @@ export const api = {
             conversation_id?: string;
             user_message_id?: string;
             assistant_message_id?: string;
+            model?: string;
+            model_choice?: string;
           };
           if (parsed.error) throw new ApiError(502, parsed.error);
-          if (parsed.conversation_id || parsed.user_message_id || parsed.assistant_message_id) {
+          if (
+            parsed.conversation_id ||
+            parsed.user_message_id ||
+            parsed.assistant_message_id ||
+            parsed.model ||
+            parsed.model_choice
+          ) {
             onMeta?.({
               conversation_id: parsed.conversation_id,
               user_message_id: parsed.user_message_id,
               assistant_message_id: parsed.assistant_message_id,
+              model: parsed.model,
+              model_choice: parsed.model_choice,
             });
           }
           if (parsed.delta) onDelta(parsed.delta);

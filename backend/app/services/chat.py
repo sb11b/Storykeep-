@@ -16,7 +16,41 @@ from app.models import Article
 
 logger = logging.getLogger(__name__)
 
+MODEL_AUTO = "auto"
 XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
+CODE_KEYWORDS = (
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "sql",
+    "debug",
+    "error",
+    "stack trace",
+    "function",
+    "class ",
+    "import ",
+    "def ",
+    "const ",
+    "let ",
+    "var ",
+    "algorithm",
+    "homework",
+    "assignment",
+    "implement",
+    "leetcode",
+    "compile",
+    "syntax",
+    "```",
+    "code",
+    "program",
+    "loop",
+    "array",
+    "recursion",
+    "explain why",
+    "write a ",
+    "fix this",
+)
 ARTICLE_CHAR_CAP = 12_000
 MESSAGE_CHAR_CAP = 8_000
 MAX_MESSAGES = 24
@@ -60,6 +94,84 @@ _rate_hits: dict[str, deque[float]] = defaultdict(deque)
 
 def key_configured() -> bool:
     return bool((settings.xai_api_key or "").strip())
+
+
+def available_models() -> list[str]:
+    raw = (settings.xai_chat_models or "").strip()
+    if raw:
+        models = [part.strip() for part in raw.split(",") if part.strip()]
+        if models:
+            return models
+    full = (settings.xai_chat_model or "grok-4").strip()
+    fast = (settings.xai_chat_fast_model or "grok-4-fast").strip()
+    ordered = [full]
+    if fast and fast not in ordered:
+        ordered.append(fast)
+    return ordered
+
+
+def default_full_model() -> str:
+    models = available_models()
+    preferred = (settings.xai_chat_model or "grok-4").strip()
+    if preferred in models:
+        return preferred
+    return models[0]
+
+
+def default_fast_model() -> str:
+    preferred = (settings.xai_chat_fast_model or "grok-4-fast").strip()
+    models = available_models()
+    if preferred in models:
+        return preferred
+    for candidate in models:
+        if "fast" in candidate.lower():
+            return candidate
+    return models[-1] if len(models) > 1 else models[0]
+
+
+def normalize_model_choice(choice: str | None) -> str:
+    cleaned = (choice or MODEL_AUTO).strip()
+    if not cleaned or cleaned.lower() == MODEL_AUTO:
+        return MODEL_AUTO
+    models = available_models()
+    if cleaned not in models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model. Choose auto or one of: {', '.join(models)}.",
+        )
+    return cleaned
+
+
+def pick_fast_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
+    text = (message or "").strip()
+    lower = text.lower()
+    if len(text) > 180:
+        return False
+    if text.count("\n") >= 2:
+        return False
+    if any(keyword in lower for keyword in CODE_KEYWORDS):
+        return False
+    if history:
+        for item in history[-4:]:
+            prior = (item.get("content") or "").lower()
+            if any(keyword in prior for keyword in CODE_KEYWORDS):
+                return False
+            if len(prior) > 240:
+                return False
+    return True
+
+
+def resolve_model_for_request(choice: str, message: str, history: list[dict[str, str]] | None = None) -> str:
+    normalized = normalize_model_choice(choice)
+    if normalized != MODEL_AUTO:
+        return normalized
+    return default_fast_model() if pick_fast_for_auto(message, history) else default_full_model()
+
+
+def model_label(choice: str, resolved: str | None = None) -> str:
+    if choice == MODEL_AUTO:
+        return f"Auto · {resolved}" if resolved else "Auto"
+    return choice
 
 
 def require_key() -> str:
@@ -141,9 +253,24 @@ def build_xai_messages(history: list[dict[str, str]], excerpt: str | None, *, in
     return [{"role": "system", "content": system}, *windowed]
 
 
-def stream_completion(history: list[dict[str, str]], excerpt: str | None, *, include_article: bool) -> Iterator[str]:
+def stream_completion(
+    history: list[dict[str, str]],
+    excerpt: str | None,
+    *,
+    include_article: bool,
+    model: str,
+    model_choice: str = MODEL_AUTO,
+    user_id: UUID | None = None,
+) -> Iterator[str]:
     key = require_key()
-    model = (settings.xai_chat_model or "grok-4").strip()
+    latest_user = next((item["content"] for item in reversed(history) if item.get("role") == "user"), "")
+    logger.info(
+        "xAI chat model=%s choice=%s user=%s chars=%s",
+        model,
+        model_choice,
+        user_id,
+        len(latest_user),
+    )
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
     payload = {
         "model": model,

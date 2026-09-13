@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
+import { grokModelLabel } from "@/lib/grok-model";
 import { cn } from "@/lib/utils";
 
 type ChatRole = "user" | "assistant";
@@ -17,6 +18,8 @@ export type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork
 export type GrokPaneState = {
   id: string;
   conversationId: string | null;
+  modelChoice: string;
+  lastResolvedModel: string | null;
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
@@ -27,6 +30,8 @@ export function createGrokPane(): GrokPaneState {
   return {
     id: crypto.randomUUID(),
     conversationId: null,
+    modelChoice: "auto",
+    lastResolvedModel: null,
     messages: [],
     draft: "",
     includeArticle: false,
@@ -71,6 +76,8 @@ export function GrokPane({
   onActivateListen,
   onStopArticleListen,
   onHistoryChanged,
+  chatModels,
+  persist,
 }: {
   pane: GrokPaneState;
   label: string;
@@ -85,6 +92,8 @@ export function GrokPane({
   enabled: boolean;
   ttsEnabled: boolean;
   locked: boolean;
+  chatModels: string[];
+  persist: boolean;
   onFocus: () => void;
   onUpdate: (updater: (pane: GrokPaneState) => GrokPaneState) => void;
   onRemove?: () => void;
@@ -118,6 +127,7 @@ export function GrokPane({
         {
           message: content,
           conversation_id: pane.conversationId,
+          model: pane.modelChoice,
           article_id: articleId,
           include_article: Boolean(pane.includeArticle && articleId),
         },
@@ -150,6 +160,9 @@ export function GrokPane({
                   item.id === assistantId ? { ...item, id: meta.assistant_message_id! } : item,
                 ),
               };
+            }
+            if (meta.model) {
+              next = { ...next, lastResolvedModel: meta.model };
             }
             return next;
           });
@@ -195,6 +208,23 @@ export function GrokPane({
     onUpdate((current) => ({ ...current, ...partial }));
   }
 
+  async function setModelChoice(next: string) {
+    patch({ modelChoice: next });
+    if (!pane.conversationId || !persist) return;
+    try {
+      const updated = await api.patchChatConversation(pane.conversationId, { model: next });
+      patch({
+        modelChoice: updated.model,
+        lastResolvedModel: updated.last_model ?? pane.lastResolvedModel,
+      });
+      onHistoryChanged?.();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
+
   return (
     <div
       className={cn(
@@ -206,7 +236,12 @@ export function GrokPane({
     >
       {compact ? (
         <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1.5">
-          <p className="min-w-0 flex-1 truncate text-xs font-medium">{label}</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium">{label}</p>
+            <p className="truncate text-[10px] text-muted-foreground">
+              {grokModelLabel(pane.modelChoice, pane.lastResolvedModel)}
+            </p>
+          </div>
           {canRemove ? (
             <Button size="icon-xs" variant="ghost" onClick={onRemove} aria-label={`Remove ${label}`}>
               <X className="size-3.5" />
@@ -214,6 +249,27 @@ export function GrokPane({
           ) : null}
         </div>
       ) : null}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
+        <label className="inline-flex items-center gap-1.5">
+          <span className="text-muted-foreground">Model</span>
+          <select
+            aria-label="Grok model"
+            value={pane.modelChoice}
+            disabled={!enabled}
+            onChange={(event) => void setModelChoice(event.target.value)}
+            className="h-7 max-w-[10rem] rounded-md border border-input bg-background px-2 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {modelOptions.map((item) => (
+              <option key={item} value={item}>
+                {item === "auto" ? "Auto" : item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="text-[10px] text-muted-foreground">
+          {grokModelLabel(pane.modelChoice, pane.lastResolvedModel)}
+        </span>
+      </div>
       <label className="flex shrink-0 items-start gap-2 border-b px-3 py-2 text-xs leading-snug">
         <input
           type="checkbox"

@@ -55,8 +55,14 @@ def get_conversation(db: Session, user: User, conversation_id: UUID) -> GrokConv
     return row
 
 
-def create_conversation(db: Session, user: User, *, pane: str | None = None) -> GrokConversation:
-    row = GrokConversation(user_id=user.id, title="New chat", pane=pane)
+def create_conversation(
+    db: Session,
+    user: User,
+    *,
+    pane: str | None = None,
+    model: str = "auto",
+) -> GrokConversation:
+    row = GrokConversation(user_id=user.id, title="New chat", pane=pane, model=model)
     db.add(row)
     db.flush()
     return row
@@ -102,14 +108,33 @@ def resolve_patched_title(proposed: str, first_user_content: str | None) -> str:
     return "New chat"
 
 
-def patch_conversation_title(db: Session, user: User, conversation_id: UUID, title: str) -> GrokConversation:
+def patch_conversation(
+    db: Session,
+    user: User,
+    conversation_id: UUID,
+    *,
+    title: str | None = None,
+    model: str | None = None,
+    last_model: str | None = None,
+    title_provided: bool = False,
+    model_provided: bool = False,
+) -> GrokConversation:
     row = owned_conversation(db, user, conversation_id)
-    first_user = first_user_message_content(db, conversation_id)
-    row.title = resolve_patched_title(title, first_user)
+    if title_provided:
+        first_user = first_user_message_content(db, conversation_id)
+        row.title = resolve_patched_title(title or "", first_user)
+    if model_provided and model is not None:
+        row.model = model
+    if last_model is not None:
+        row.last_model = last_model
     row.updated_at = datetime.now(timezone.utc)
     db.add(row)
     db.flush()
     return row
+
+
+def patch_conversation_title(db: Session, user: User, conversation_id: UUID, title: str) -> GrokConversation:
+    return patch_conversation(db, user, conversation_id, title=title, title_provided=True)
 
 
 def delete_conversation(db: Session, user: User, conversation_id: UUID) -> None:

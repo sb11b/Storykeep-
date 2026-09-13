@@ -254,6 +254,9 @@ export type ChatStatus = {
   locked?: boolean;
   provider: string;
   model: string;
+  models?: string[];
+  default_model?: string;
+  fast_model?: string;
   requests_per_hour: number;
   persist?: boolean;
 };
@@ -262,6 +265,8 @@ export type GrokConversation = {
   id: string;
   title: string;
   pane: string | null;
+  model: string;
+  last_model: string | null;
   created_at: string;
   updated_at: string;
 };

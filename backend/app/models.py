@@ -375,6 +375,8 @@ class GrokConversation(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(Text, nullable=False, default="New chat")
     pane: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(64), nullable=False, default="auto", server_default="auto")
+    last_model: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

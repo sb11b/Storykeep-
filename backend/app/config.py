@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     xai_api_key: str = ""
     xai_chat_model: str = "grok-4"
+    xai_chat_models: str = "grok-4,grok-4-fast"
+    xai_chat_fast_model: str = "grok-4-fast"
     xai_chat_max_tokens: int = 2048
     chat_requests_per_hour: int = 120
     stt_sessions_per_hour: int = 60

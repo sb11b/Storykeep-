@@ -638,6 +638,8 @@ class GrokConversationOut(BaseModel):
     id: uuid.UUID
     title: str
     pane: str | None = None
+    model: str = "auto"
+    last_model: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -658,4 +660,5 @@ class GrokConversationDetailOut(GrokConversationOut):
 
 
 class GrokConversationPatchIn(BaseModel):
-    title: str = Field(default="", max_length=80)
+    title: str | None = Field(default=None, max_length=80)
+    model: str | None = Field(default=None, max_length=64)

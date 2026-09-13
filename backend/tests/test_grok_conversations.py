@@ -6,7 +6,16 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.services.chat import build_xai_messages, thread_window, validate_payload
+from app.services.chat import (
+    MODEL_AUTO,
+    build_xai_messages,
+    default_fast_model,
+    default_full_model,
+    pick_fast_for_auto,
+    resolve_model_for_request,
+    thread_window,
+    validate_payload,
+)
 from app.services.grok_conversations import resolve_patched_title, should_persist, title_from_user_line
 
 
@@ -44,6 +53,21 @@ class GrokConversationTests(unittest.TestCase):
 
     def test_non_empty_patch_title_is_used(self):
         self.assertEqual(resolve_patched_title("My homework", "ignored"), "My homework")
+
+    def test_auto_picks_fast_for_short_simple_prompt(self):
+        self.assertTrue(pick_fast_for_auto("What is GDP?"))
+        resolved = resolve_model_for_request(MODEL_AUTO, "What is GDP?", [])
+        self.assertEqual(resolved, default_fast_model())
+
+    def test_auto_picks_full_for_coding_prompt(self):
+        prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"
+        self.assertFalse(pick_fast_for_auto(prompt))
+        resolved = resolve_model_for_request(MODEL_AUTO, prompt, [])
+        self.assertEqual(resolved, default_full_model())
+
+    def test_locked_model_skips_auto_routing(self):
+        resolved = resolve_model_for_request("grok-4", "hi", [])
+        self.assertEqual(resolved, "grok-4")
 
     def test_validate_payload_accepts_windowed_history(self):
         history = [{"role": "user", "content": f"m{index}"} for index in range(30)]
