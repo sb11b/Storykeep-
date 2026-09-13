@@ -35,6 +35,35 @@ test("articleHeroImageUrl allows http Fox CDN images for RSS articles", () => {
   assert.equal(articleHeroImageUrl(imageUrl, articleUrl), imageUrl);
 });
 
+test("articleHeroImageUrl allows any publisher CDN, not just a fixed list", () => {
+  const articleUrl = "https://www.cbr.com/naruto-strongest-characters/";
+  for (const imageUrl of [
+    "https://static0.cbrimages.com/wordpress/wp-content/uploads/2024/01/hero.jpg",
+    "https://www.theblaze.com/media-library/image.jpg",
+    "https://unknown-publisher-cdn.example.org/photo.webp",
+  ]) {
+    assert.equal(articleHeroImageUrl(imageUrl, articleUrl), imageUrl);
+  }
+});
+
+test("articleHeroImageUrl resolves protocol-relative and root-relative feed art", () => {
+  const articleUrl = "https://www.cbr.com/naruto-strongest-characters/";
+  assert.equal(
+    articleHeroImageUrl("//static0.cbrimages.com/hero.jpg", articleUrl),
+    "https://static0.cbrimages.com/hero.jpg",
+  );
+  assert.equal(
+    articleHeroImageUrl("/wp-content/uploads/hero.jpg", articleUrl),
+    "https://www.cbr.com/wp-content/uploads/hero.jpg",
+  );
+});
+
+test("articleHeroImageUrl still rejects non-http schemes", () => {
+  const articleUrl = "https://www.cbr.com/story/";
+  assert.equal(articleHeroImageUrl("data:image/png;base64,AAAA", articleUrl), null);
+  assert.equal(articleHeroImageUrl("javascript:alert(1)", articleUrl), null);
+});
+
 test("mergeExtractArticle keeps previous body when extract returns worse text", () => {
   const previous = {
     ...LONG_BODY,

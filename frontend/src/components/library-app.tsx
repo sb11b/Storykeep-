@@ -48,7 +48,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
-import { avatarMediaUrl, normalizeUserProfile } from "@/lib/user-profile";
+import { normalizeUserProfile } from "@/lib/user-profile";
+import { ArticleImage } from "@/components/article-image";
+import { UserAvatar } from "@/components/user-avatar";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   extractWikilinkTargets,
@@ -1874,7 +1876,6 @@ function Sidebar({
   onProfile: () => void;
   deployBuild: string | null;
 }) {
-  const initials = (user.display_name || user.email).slice(0, 1).toUpperCase();
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
       <button
@@ -1884,17 +1885,13 @@ function Sidebar({
       >
         <p className="font-[family-name:var(--font-serif)] text-2xl tracking-tight">Storykeep</p>
         <div className="mt-2 flex items-center gap-2">
-          <div className="size-8 shrink-0 overflow-hidden rounded-full bg-sidebar-accent">
-            {avatarMediaUrl(user.avatar_media_id) || user.avatar_url ? (
-              <img
-                src={avatarMediaUrl(user.avatar_media_id) || user.avatar_url || ""}
-                alt=""
-                className="size-full object-cover"
-              />
-            ) : (
-              <span className="flex size-full items-center justify-center text-xs font-medium text-sidebar-foreground/80">{initials}</span>
-            )}
-          </div>
+          <UserAvatar
+            mediaId={user.avatar_media_id}
+            displayName={user.display_name}
+            email={user.email}
+            className="size-8 bg-sidebar-accent"
+            initialsClassName="text-xs text-sidebar-foreground/80"
+          />
           <p className="min-w-0 truncate text-xs text-sidebar-foreground/70">{user.display_name || user.email}</p>
         </div>
       </button>
@@ -2092,12 +2089,7 @@ function ArticleRow({
         </div>
         <div className="mt-1 flex gap-3">
           {thumbUrl ? (
-            <img
-              src={thumbUrl}
-              alt=""
-              loading="lazy"
-              className="size-14 shrink-0 rounded-md object-cover bg-muted"
-            />
+            <ArticleImage src={thumbUrl} className="size-14 shrink-0 rounded-md object-cover bg-muted" />
           ) : null}
           <div className="min-w-0 flex-1">
             <p className={cn("leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>{item.title}</p>
@@ -2697,7 +2689,7 @@ function Reader({
         <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl leading-tight mt-2">{article.title}</h1>
         {article.author ? <p className="mt-2 text-sm text-muted-foreground">{article.author}</p> : null}
         {heroImage ? (
-          <img src={heroImage} alt="" className="article-hero mt-4 max-w-full rounded-lg" />
+          <ArticleImage eager src={heroImage} className="article-hero mt-4 max-w-full rounded-lg" />
         ) : null}
         <div className="flex flex-wrap gap-2 mt-4">
           <Button size="sm" variant={article.is_saved ? "default" : "outline"} onClick={onToggleSaved}>

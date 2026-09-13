@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import { ArrowLeft, Camera, Loader2 } from "lucide-react";
 import { appearanceFromPreferences, type AppearanceSettings } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
-import { avatarMediaUrl, normalizeUserProfile } from "@/lib/user-profile";
+import { normalizeUserProfile } from "@/lib/user-profile";
+import { UserAvatar } from "@/components/user-avatar";
 import type { Profile, TotpSetup } from "@/lib/types";
 import { ProfileAppearancePanel } from "@/components/profile-appearance-panel";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -78,10 +79,12 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
     if (!profile || profile.profile_read_only) return;
     setSavingProfile(true);
     try {
-      const updated = await api.updateProfile({
-        display_name: displayName.trim() || null,
-        birthdate: birthdate || null,
-      });
+      const updated = normalizeUserProfile(
+        await api.updateProfile({
+          display_name: displayName.trim() || null,
+          birthdate: birthdate || null,
+        }),
+      );
       setProfile(updated);
       onUpdated?.(updated);
       toast.success("Profile updated");
@@ -291,7 +294,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
             appearance={appearance}
             readOnly={readOnly}
             onChange={setAppearance}
-            onSaved={(updated) => {
+            onSaved={(saved) => {
+              const updated = normalizeUserProfile(saved);
               setProfile(updated);
               setAppearance(appearanceFromPreferences(updated.preferences));
               onUpdated?.(updated);
@@ -314,19 +318,13 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
-              <div className="relative size-16 overflow-hidden rounded-full bg-muted">
-                {avatarMediaUrl(profile.avatar_media_id) || profile.avatar_url ? (
-                  <img
-                    src={avatarMediaUrl(profile.avatar_media_id) || profile.avatar_url || ""}
-                    alt=""
-                    className="size-full object-cover"
-                  />
-                ) : (
-                  <div className="flex size-full items-center justify-center text-lg font-medium text-muted-foreground">
-                    {(profile.display_name || profile.email).slice(0, 1).toUpperCase()}
-                  </div>
-                )}
-              </div>
+              <UserAvatar
+                mediaId={profile.avatar_media_id}
+                displayName={profile.display_name}
+                email={profile.email}
+                className="relative size-16"
+                initialsClassName="text-lg text-muted-foreground"
+              />
               <div>
                 <input
                   ref={fileRef}

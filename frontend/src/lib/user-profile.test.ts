@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeUserProfile, normalizeUserProfile } from "./user-profile";
+import { avatarInitials, avatarMediaUrl, mergeUserProfile, normalizeUserProfile } from "./user-profile";
 import type { User } from "./types";
 
 const base: User = {
@@ -8,7 +8,7 @@ const base: User = {
   email: "a@example.com",
   display_name: "Ada",
   avatar_media_id: "11111111-1111-1111-1111-111111111111",
-  avatar_url: "/api/v1/media/11111111-1111-1111-1111-111111111111",
+  avatar_url: avatarMediaUrl("11111111-1111-1111-1111-111111111111"),
   birthdate: null,
   preferences: {
     appearance: { rail_preset: "navy", font_family: "serif" },
@@ -38,7 +38,30 @@ test("normalizeUserProfile derives avatar_url from avatar_media_id", () => {
     avatar_url: "blob:http://localhost/dead",
   });
   assert.equal(profile.avatar_media_id, mediaId);
-  assert.equal(profile.avatar_url, `/api/v1/media/${mediaId}`);
+  assert.equal(profile.avatar_url, `/api/v1/media/${mediaId}?v=${mediaId}`);
+});
+
+test("normalizeUserProfile drops a blob preview when there is no media id", () => {
+  const profile = normalizeUserProfile({
+    ...base,
+    avatar_media_id: null,
+    avatar_url: "blob:http://localhost/dead",
+  });
+  assert.equal(profile.avatar_url, null);
+});
+
+test("mergeUserProfile never inherits a blob avatar url", () => {
+  const next = mergeUserProfile(
+    { ...base, avatar_media_id: null, avatar_url: "blob:http://localhost/dead" },
+    { avatar_media_id: null },
+  );
+  assert.equal(next.avatar_url, null);
+});
+
+test("avatarInitials uses two name parts, then email, then a placeholder glyph", () => {
+  assert.equal(avatarInitials("Steve Bitsko", "steve@example.com"), "SB");
+  assert.equal(avatarInitials(null, "steve@example.com"), "S");
+  assert.equal(avatarInitials(null, null), "?");
 });
 
 test("mergeUserProfile derives avatar_url from avatar_media_id", () => {
@@ -51,7 +74,7 @@ test("mergeUserProfile derives avatar_url from avatar_media_id", () => {
     has_backup_codes: false,
   });
   assert.equal(next.avatar_media_id, mediaId);
-  assert.equal(next.avatar_url, `/api/v1/media/${mediaId}`);
+  assert.equal(next.avatar_url, `/api/v1/media/${mediaId}?v=${mediaId}`);
 });
 
 test("mergeUserProfile replaces preferences when patch includes them", () => {

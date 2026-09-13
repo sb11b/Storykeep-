@@ -20,26 +20,6 @@ export function stripHtml(value: string | null | undefined): string {
   return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-const ARTICLE_CDN_SUFFIXES = [
-  "wp.com",
-  "wordpress.com",
-  "cloudfront.net",
-  "cloudinary.com",
-  "imgix.net",
-  "akamaized.net",
-  "fastly.net",
-  "googleusercontent.com",
-  "fbcdn.net",
-  "twimg.com",
-  "cdninstagram.com",
-  "media-amazon.com",
-  "blazemedia.com",
-  "theblaze.com",
-  "foxnews.com",
-  "fox.com",
-  "fncstatic.com",
-];
-
 export function sanitizeHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
@@ -136,17 +116,18 @@ export function resolveArticleImageUrl(imageUrl: string | null | undefined, arti
   }
 }
 
-export function isAllowedArticleImage(imageUrl: string, articleUrl: string): boolean {
+/**
+ * Feed art lives on whatever CDN the publisher picked (Fox, CBR, Blaze, and a
+ * long tail of others), so a host allowlist just silently drops legitimate
+ * images. An article hero is a plain `<img src>` that executes nothing, so any
+ * http(s) origin is fine here. The stricter remote-image rule still applies to
+ * note markdown, which is authored content — see `sanitizeHtml` callers.
+ */
+export function isAllowedArticleImage(imageUrl: string, _articleUrl?: string): boolean {
   try {
     const image = new URL(imageUrl);
     if (!/^https?:$/i.test(image.protocol)) return false;
-    const article = new URL(articleUrl);
-    if (image.hostname === article.hostname) return true;
-    if (image.hostname.endsWith(`.${article.hostname}`)) return true;
-    if (article.hostname.endsWith(`.${image.hostname}`)) return true;
-    return ARTICLE_CDN_SUFFIXES.some(
-      (suffix) => image.hostname === suffix || image.hostname.endsWith(`.${suffix}`),
-    );
+    return Boolean(image.hostname);
   } catch {
     return false;
   }

@@ -208,7 +208,14 @@ def get_note_media(
     path = Path(row.storage_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File is missing.")
-    return FileResponse(path, media_type=row.content_type, filename=row.filename)
+    return FileResponse(
+        path,
+        media_type=row.content_type,
+        filename=row.filename,
+        # Media ids are immutable, so a private long cache is safe and keeps the
+        # sidebar avatar from refetching (and briefly blanking) on every reload.
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @router.delete("/media/{media_id}")

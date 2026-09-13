@@ -52,7 +52,16 @@ def _looks_like_image_url(url: str, mime: str = "") -> bool:
     return bool(re.search(r"\.(jpe?g|png|gif|webp|avif|bmp)(\?|$)", url, re.I))
 
 
-def _entry_image(entry: Any) -> str | None:
+def _entry_image(entry: Any, base_url: str = "") -> str | None:
+    """First usable image for a feed entry, resolved against the entry link."""
+    candidate = _entry_image_candidate(entry)
+    if not candidate:
+        return None
+    resolved = urljoin(base_url or str(entry.get("link") or ""), candidate.strip())
+    return resolved[:2000] or None
+
+
+def _entry_image_candidate(entry: Any) -> str | None:
     if entry.get("image", {}).get("href"):
         return entry["image"]["href"]
     for media in entry.get("media_content", []) or []:
@@ -78,6 +87,14 @@ def _entry_image(entry: Any) -> str | None:
         if mime.startswith("image") or _looks_like_image_url(href, mime):
             return href
     return None
+
+
+def entry_image_for(entry: Any, url: str, feed_html: str | None, stored_html: str | None) -> str | None:
+    """media:content / thumbnail / enclosure, then the first image in the entry body."""
+    image_url = _entry_image(entry, url)
+    if image_url:
+        return image_url
+    return extractor._first_content_image(feed_html or stored_html or "", url)
 
 
 def _entry_html(entry: Any) -> str | None:
@@ -279,12 +296,17 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
             continue
         existing = db.scalar(select(Article).where(Article.feed_id == feed.id, Article.guid == guid))
         if existing:
+            # Backfill art for rows stored before image extraction improved.
+            if not existing.image_url:
+                stored_html = _entry_html(entry)
+                backfilled = entry_image_for(entry, existing.url or url, stored_html, existing.feed_html)
+                if backfilled:
+                    existing.image_url = backfilled
+                    db.add(existing)
             continue
         feed_html = _entry_html(entry)
         feed_store_html, feed_store_text = extractor._feed_storage_body(feed_html, entry.get("summary"))
-        image_url = _entry_image(entry)
-        if not image_url:
-            image_url = extractor._first_content_image(feed_html or feed_store_html or "", url)
+        image_url = entry_image_for(entry, url, feed_html, feed_store_html)
         article = Article(
             feed_id=feed.id,
             guid=guid[:2000],

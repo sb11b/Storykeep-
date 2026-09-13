@@ -14,7 +14,7 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
-import { grokReplySpeechScript } from "@/lib/grok-reply-speech";
+import { GROK_REPLY_SELECTOR, grokReplySpeechScript } from "@/lib/grok-reply-speech";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
@@ -31,6 +31,7 @@ export function useGrokMessageListen({
   messageId,
   bodyRef,
   fallbackText,
+  scriptOverride,
   voiceId,
   disabled,
   onPlayingChange,
@@ -40,6 +41,8 @@ export function useGrokMessageListen({
   bodyRef: RefObject<HTMLElement | null>;
   /** Raw assistant markdown when the DOM body is not mounted yet. */
   fallbackText?: string | null;
+  /** Text already resolved from the live reply body at click time. */
+  scriptOverride?: string | null;
   voiceId: string;
   disabled?: boolean;
   onPlayingChange?: (active: boolean) => void;
@@ -190,11 +193,12 @@ export function useGrokMessageListen({
   }, [onPlayingChange, phase]);
 
   const visibleSpeech = useCallback(() => {
-    const payload = grokReplySpeechScript(bodyRef.current, fallbackText);
-    const chars = payload.script.length;
-    console.info("[grok-tts] reply text", { messageId, chars, source: payload.source });
-    return payload;
-  }, [bodyRef, fallbackText, messageId]);
+    const pinned = scriptOverride?.trim();
+    if (pinned) {
+      return { script: pinned, visibleWordCount: pinned.match(/\S+/g)?.length ?? 0, source: "innerText" as const, selector: GROK_REPLY_SELECTOR };
+    }
+    return grokReplySpeechScript(bodyRef.current, fallbackText);
+  }, [bodyRef, fallbackText, scriptOverride]);
 
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
@@ -312,6 +316,12 @@ export function useGrokMessageListen({
   const beginPlayback = useCallback(async () => {
     const payload = visibleSpeech();
     const script = payload.script.trim();
+    console.info("[grok-tts] begin playback", {
+      messageId,
+      chars: script.length,
+      selector: payload.selector,
+      source: payload.source,
+    });
     if (!script.length) {
       showTtsErrorToast(new Error("This reply has no text to read yet."));
       return;
@@ -323,7 +333,7 @@ export function useGrokMessageListen({
     speedRef.current = rate;
     const voice = voiceRef.current || readStoredTtsVoice();
     await playChunk(0, voice);
-  }, [playChunk, resetLoaded, visibleSpeech]);
+  }, [messageId, playChunk, resetLoaded, visibleSpeech]);
 
   const listen = useCallback(() => {
     if (disabled) return;

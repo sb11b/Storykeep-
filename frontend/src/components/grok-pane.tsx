@@ -9,6 +9,7 @@ import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
+import { resolveGrokReplyText } from "@/lib/grok-reply-speech";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -160,7 +161,7 @@ export function GrokPane({
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
   const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
-  const [listenTarget, setListenTarget] = useState<{ id: string; bodyEl: HTMLElement } | null>(null);
+  const [listenTarget, setListenTarget] = useState<{ id: string; bodyEl: HTMLElement; script: string } | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const pendingListenRef = useRef(false);
   const activeBodyRef = useRef<HTMLElement | null>(null);
@@ -238,6 +239,7 @@ export function GrokPane({
     messageId: listenTarget?.id ?? "",
     bodyRef: activeBodyRef,
     fallbackText: listenFallbackText,
+    scriptOverride: listenTarget?.script,
     voiceId,
     disabled: !listenTarget || !ttsEnabled || locked,
     onCue: setActiveWord,
@@ -271,15 +273,12 @@ export function GrokPane({
   const registerBody = useCallback((messageId: string, element: HTMLElement | null) => {
     if (element) bodyElementsRef.current.set(messageId, element);
     else bodyElementsRef.current.delete(messageId);
-    if (listenTarget?.id === messageId && element) {
-      setListenTarget({ id: messageId, bodyEl: element });
-    }
-  }, [listenTarget?.id]);
+  }, []);
 
   /** Sticky bar with no active target reads the newest assistant reply. */
   function listenLatestReply() {
     if (listenTarget) {
-      requestListen(listenTarget.id, listenTarget.bodyEl);
+      void requestListen(listenTarget.id, listenTarget.bodyEl);
       return;
     }
     const latest = [...pane.messages]
@@ -290,14 +289,10 @@ export function GrokPane({
       return;
     }
     const el = bodyElementsRef.current.get(latest.id);
-    if (!el) {
-      toast.error("That reply is still rendering. Try Listen again in a moment.");
-      return;
-    }
-    requestListen(latest.id, el);
+    void requestListen(latest.id, el ?? null);
   }
 
-  function requestListen(messageId: string, bodyEl: HTMLElement) {
+  async function requestListen(messageId: string, bodyEl: HTMLElement | null) {
     if (listen.isActive && listenTarget?.id !== messageId) {
       listen.stop();
     }
@@ -309,8 +304,15 @@ export function GrokPane({
       }
       return;
     }
+    const markdown = pane.messages.find((item) => item.id === messageId)?.content ?? null;
+    const el = bodyEl ?? bodyElementsRef.current.get(messageId) ?? null;
+    const resolved = await resolveGrokReplyText(el, markdown);
+    if (!resolved.script) {
+      toast.error("This reply has no text to read yet.");
+      return;
+    }
     pendingListenRef.current = true;
-    setListenTarget({ id: messageId, bodyEl });
+    setListenTarget({ id: messageId, bodyEl: el ?? bodyEl!, script: resolved.script });
   }
 
   async function runStream(options: {
@@ -779,8 +781,9 @@ export function GrokPane({
                 ttsAvailable={ttsEnabled && !locked}
                 listening={listenTarget?.id === item.id && listen.isActive}
                 activeWord={listenTarget?.id === item.id ? activeWord : null}
+                assistantName={label}
                 onRegisterBody={registerBody}
-                onListen={requestListen}
+                onListen={(messageId, element) => void requestListen(messageId, element)}
                 onAddToNotes={(body) => void addToNotes(body)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
               />

@@ -14,6 +14,7 @@ export function GrokChatMessage({
   id,
   role,
   content,
+  assistantName = "Grok",
   error,
   failed,
   waiting,
@@ -29,6 +30,8 @@ export function GrokChatMessage({
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Custom pane name, e.g. "Larry (the asparagus)". */
+  assistantName?: string;
   error?: string | null;
   failed?: boolean;
   waiting?: boolean;
@@ -47,8 +50,9 @@ export function GrokChatMessage({
     const root = bodyRef.current;
     if (!root || role !== "assistant" || !content) return;
     root.innerHTML = sanitizeHtml(renderMarkdown(content));
+    root.dataset.grokReplyBody = id;
     buildVisibleSpeechScript(root);
-  }, [content, role]);
+  }, [content, id, role]);
 
   useEffect(() => {
     onRegisterBody?.(id, bodyRef.current);
@@ -69,7 +73,9 @@ export function GrokChatMessage({
 
   return (
     <div className={cn("rounded-lg px-2.5 py-2 text-sm", role === "user" ? "ml-6 bg-primary/10" : "mr-4 bg-muted/60")}>
-      <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">{role === "user" ? "You" : "Grok"}</p>
+      <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+        {role === "user" ? "You" : content || failed ? `${assistantName} replied` : assistantName}
+      </p>
       {content ? (
         role === "assistant" ? (
           <div ref={bodyRef} className="note-md" onClick={onCodeCopyClick} />
