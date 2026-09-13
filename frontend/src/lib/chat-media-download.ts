@@ -98,7 +98,9 @@ export async function downloadChatPicture(options: {
   const imgSrc = liveChatImageSrc(options.img, options.url);
   const downloadUrl = resolveChatImageSrc(imgSrc);
   const mediaId = mediaIdFromUrl(downloadUrl) || mediaIdFromUrl(imgSrc) || (options.mediaId || "").trim();
-  console.info("[storykeep-download]", { imgSrc: imgSrc || null, downloadUrl: downloadUrl || null });
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[storykeep-download]", { imgSrc: imgSrc || null, downloadUrl: downloadUrl || null });
+  }
   if (!downloadUrl) {
     throw new MediaDownloadError(400, "Could not download that picture. (HTTP 400)");
   }

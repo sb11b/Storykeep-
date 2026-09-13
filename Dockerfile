@@ -23,6 +23,7 @@ COPY start.sh /start.sh
 RUN chmod +x /start.sh
 ENV PYTHONPATH=/app
 ENV FRONTEND_DIR=/app/frontend_out
+ENV DATA_DIR=/app/var
 ENV SEED_DEMO=0
 EXPOSE 8080
 CMD ["/start.sh"]

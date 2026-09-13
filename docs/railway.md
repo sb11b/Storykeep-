@@ -64,4 +64,4 @@ Settings → Networking → Custom domain. HTTPS is automatic. Session cookies a
 
 ## 6. Backups on Railway
 
-The container filesystem is ephemeral. Use **Export JSON** from the library, attach an S3 bucket, or add a Railway volume mounted at `/app/var` and set `DATA_DIR=/app/var`.
+Chat photos live on the **storykeep** volume at `/app/var` (`DATA_DIR=/app/var`). Pre-volume media ids 404 if the file was never on that volume — do not migrate ghosts. Use **Export JSON**, S3/B2, or that volume for other app data.

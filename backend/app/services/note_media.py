@@ -100,6 +100,19 @@ def sniff_image_media_type(path: Path, declared: str | None) -> str:
     return declared_type or "application/octet-stream"
 
 
+def note_media_root() -> Path:
+    """Imagine/attach bytes go on DATA_DIR (prod volume /app/var). Pre-volume ids 404 if the file is gone — do not migrate ghosts."""
+    root = settings.data_dir / "note-media"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def media_storage_path(user_id: UUID, media_id: UUID, suffix: str) -> Path:
+    folder = note_media_root() / str(user_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"{media_id}{suffix}"
+
+
 def is_image_media(row: NoteMedia) -> bool:
     suffix = Path(row.filename).suffix.lower()
     if suffix == ".jpeg":
@@ -119,10 +132,7 @@ def save_note_media(db: Session, user: User, filename: str, payload: bytes, cont
     if suffix not in ALLOWED_SUFFIXES:
         raise ValueError("That file type is not allowed.")
     media_id = uuid4()
-    folder = settings.data_dir / "note-media" / str(user.id)
-    folder.mkdir(parents=True, exist_ok=True)
-    stored_name = f"{media_id}{suffix}"
-    path = folder / stored_name
+    path = media_storage_path(user.id, media_id, suffix)
     path.write_bytes(payload)
     safe_name = windows_safe_component(Path(filename).stem) + suffix
     row = NoteMedia(

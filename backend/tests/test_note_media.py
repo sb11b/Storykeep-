@@ -8,6 +8,7 @@ from app.services.note_media import (
     markdown_attachment,
     markdown_for_media,
     media_ids_in_markdown,
+    media_storage_path,
     sniff_image_media_type,
     storykeep_download_filename,
 )
@@ -52,6 +53,21 @@ class NoteMediaTests(unittest.TestCase):
             self.assertEqual(sniff_image_media_type(path, "image/jpeg"), "image/jpeg")
         finally:
             path.unlink(missing_ok=True)
+
+    def test_new_media_files_are_written_under_data_dir(self):
+        from app.config import settings
+
+        user_id = uuid4()
+        media_id = uuid4()
+        previous = settings.data_dir
+        with tempfile.TemporaryDirectory() as tmp:
+            settings.data_dir = Path(tmp)
+            try:
+                path = media_storage_path(user_id, media_id, ".jpg")
+                self.assertEqual(path, Path(tmp) / "note-media" / str(user_id) / f"{media_id}.jpg")
+                self.assertTrue(path.parent.is_dir())
+            finally:
+                settings.data_dir = previous
 
 
 if __name__ == "__main__":

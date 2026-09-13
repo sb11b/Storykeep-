@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     access_token_minutes: int = 60 * 24 * 14
     cors_origins: str = "http://127.0.0.1:43123,http://localhost:43123"
     seed_demo: bool = False
+    # Railway: volume on the storykeep service at /app/var, env DATA_DIR=/app/var.
     data_dir: Path = Path(__file__).resolve().parents[1] / "var"
     frontend_dir: Path | None = None
     s3_bucket: str | None = None

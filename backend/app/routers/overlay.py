@@ -210,6 +210,7 @@ def get_note_media(
     """Canonical byte GET. Same path the Junior <img> already uses — no /download/{id}."""
     row = owned_media(db, user, media_id)
     path = Path(row.storage_path)
+    # Pre-volume Postgres ids stay 404 when the ephemeral file is gone; do not migrate ghosts.
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File is missing.")
     media_type = sniff_image_media_type(path, row.content_type)
