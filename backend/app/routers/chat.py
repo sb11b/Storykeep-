@@ -324,10 +324,13 @@ def _image_tool_events(
                     yield chat_service.encode_sse({"heartbeat": True})
                     await asyncio.sleep(0)
             turn = job.result()
+            if "/api/v1/media/" not in (turn.markdown or "") or not turn.media_id:
+                raise HTTPException(status_code=502, detail="Could not generate that image.")
             yield chat_service.encode_sse({"delta": turn.markdown})
             done_meta = {
                 "conversation_id": str(conversation_id) if conversation_id else None,
                 "assistant_message_id": str(turn.assistant_message_id) if turn.assistant_message_id else None,
+                "media_id": str(turn.media_id) if turn.media_id else None,
                 "model": chat_image.IMAGE_JOB_MODEL,
                 "model_choice": chat_service.MODEL_AUTO,
                 "reasoning_effort": chat_image.IMAGE_JOB_REASONING,

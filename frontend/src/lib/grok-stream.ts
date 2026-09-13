@@ -16,6 +16,7 @@ export type GrokStreamMeta = {
   conversation_id?: string;
   user_message_id?: string;
   assistant_message_id?: string;
+  media_id?: string;
   model?: string;
   model_choice?: string;
   reasoning_effort?: string;
@@ -39,6 +40,7 @@ type StreamPayload = {
   conversation_id?: string;
   user_message_id?: string;
   assistant_message_id?: string;
+  media_id?: string;
   model?: string;
   model_choice?: string;
   reasoning_effort?: string;
@@ -75,6 +77,7 @@ function parseSsePart(
     parsed.conversation_id ||
     parsed.user_message_id ||
     parsed.assistant_message_id ||
+    parsed.media_id ||
     parsed.model ||
     parsed.model_choice ||
     parsed.reasoning_effort ||
@@ -85,6 +88,7 @@ function parseSsePart(
       conversation_id: parsed.conversation_id,
       user_message_id: parsed.user_message_id,
       assistant_message_id: parsed.assistant_message_id,
+      media_id: parsed.media_id,
       model: parsed.model,
       model_choice: parsed.model_choice,
       reasoning_effort: parsed.reasoning_effort,

@@ -34,7 +34,7 @@ import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
-import { collectImageMediaIds, imageToolIntent } from "@/lib/chat-image";
+import { collectImageMediaIds, imageToolIntent, MEDIA_MARKDOWN } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -189,6 +189,7 @@ export function GrokPane({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const stopRef = useRef<() => void>(() => {});
   const abortRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef(false);
   const dictation = useDictation();
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -462,7 +463,7 @@ export function GrokPane({
                 ? {
                     ...item,
                     waiting: false,
-                    content: item.content + delta,
+                    content: MEDIA_MARKDOWN.test(delta) ? delta : item.content + delta,
                     failed: false,
                     error: null,
                   }
@@ -515,6 +516,29 @@ export function GrokPane({
             }
             if (meta.reasoning_effort) {
               next = { ...next, lastResolvedReasoning: meta.reasoning_effort };
+            }
+            if (meta.media_id) {
+              const targetId = meta.assistant_message_id || assistantId;
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === targetId || item.id === assistantId
+                    ? {
+                        ...item,
+                        files: [
+                          ...(item.files || []).filter((file) => file.media_id !== meta.media_id),
+                          {
+                            media_id: meta.media_id!,
+                            filename: "generated image",
+                            content_type: "image/png",
+                            kind: "image" as const,
+                            url: `/api/v1/media/${meta.media_id}`,
+                          },
+                        ],
+                      }
+                    : item,
+                ),
+              };
             }
             const routed = autoRouteLabel(
               meta.model_choice || current.modelChoice,
@@ -638,8 +662,16 @@ export function GrokPane({
 
   async function send() {
     const content = pane.draft.trim();
-    const files = pane.pendingAttachments ?? [];
-    if ((!content && !files.length) || busy || !enabled) return;
+    const pending = pane.pendingAttachments ?? [];
+    if (pending.some((item) => !item.id)) {
+      toast.error("Wait for the file to finish uploading.");
+      return;
+    }
+    const files = pending.filter((item) => item.id);
+    if ((!content && !files.length) || busy || !enabled || inFlightRef.current) return;
+    inFlightRef.current = true;
+    abortInFlight();
+    try {
     const imageIds = collectImageMediaIds(files, pane.messages);
     const intent = imageToolIntent(content, imageIds.length > 0);
     const wantsImage = intent === "edit" || intent === "generate";
@@ -686,6 +718,9 @@ export function GrokPane({
       assistantId,
       mediaIds: files.map((item) => item.id),
     });
+    } finally {
+      inFlightRef.current = false;
+    }
   }
 
   async function runImagineFromChat(options: {
@@ -710,6 +745,13 @@ export function GrokPane({
         },
         controller.signal,
       );
+      const reply = result.assistant_message;
+      const hasPixels =
+        MEDIA_MARKDOWN.test(reply.content || "") ||
+        (reply.files || []).some((file) => file.kind === "image" && file.media_id);
+      if (!hasPixels) {
+        throw new ApiError(502, "Could not generate that image.");
+      }
       onUpdate((current) => ({
         ...current,
         conversationId: result.conversation_id || current.conversationId,
@@ -778,7 +820,8 @@ export function GrokPane({
       toast.error("Type a prompt for the image.");
       return;
     }
-    if (busy || !enabled || locked) return;
+    if (busy || !enabled || locked || inFlightRef.current) return;
+    inFlightRef.current = true;
     abortInFlight();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -786,7 +829,7 @@ export function GrokPane({
     applyStreamStatus("working");
     try {
       const pendingImages = (pane.pendingAttachments ?? [])
-        .filter((item) => item.kind === "image")
+        .filter((item) => item.kind === "image" && item.id)
         .map((item) => item.id);
       const result = await api.chatImagine(
         {
@@ -796,6 +839,13 @@ export function GrokPane({
         },
         controller.signal,
       );
+      const reply = result.assistant_message;
+      const hasPixels =
+        MEDIA_MARKDOWN.test(reply.content || "") ||
+        (reply.files || []).some((file) => file.kind === "image" && file.media_id);
+      if (!hasPixels) {
+        throw new ApiError(502, "Could not generate that image.");
+      }
       onUpdate((current) => ({
         ...current,
         draft: "",
@@ -828,11 +878,12 @@ export function GrokPane({
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
       clearStreamStatus();
+      inFlightRef.current = false;
     }
   }
 
   async function retryAssistant(assistantId: string) {
-    if (busy || !enabled) return;
+    if (busy || !enabled || inFlightRef.current) return;
     if (!pane.conversationId) {
       toast.error("That thread is not ready to retry yet.");
       return;
@@ -842,6 +893,9 @@ export function GrokPane({
     if (assistantIndex < 1) return;
     const userLine = messages[assistantIndex - 1];
     if (!userLine || userLine.role !== "user") return;
+    inFlightRef.current = true;
+    abortInFlight();
+    try {
     const retryImages = collectImageMediaIds(null, messages.slice(0, assistantIndex));
     const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
     const retryWantsImage = retryIntent === "generate" || (retryIntent === "edit" && retryImages.length > 0);
@@ -870,6 +924,9 @@ export function GrokPane({
       userLine,
       assistantId,
     });
+    } finally {
+      inFlightRef.current = false;
+    }
   }
 
   async function addToNotes(content: string, assistantId?: string) {

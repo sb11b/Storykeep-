@@ -48,20 +48,69 @@ const AGE = [
 
 const CODE_GENERATE = /\b(?:linked list|homework|algorithm|typescript|javascript|function|class)\b/i;
 const IMAGE_NOUN = /\b(?:image|photo|picture|portrait|drawing|selfie)\b/i;
+const QUOTE = /["“”]([^"“”]{0,240})["“”]/g;
+const TICK = /`([^`]{0,240})`/g;
+const TALK = [
+  /\bwhat should i\b/i,
+  /\bwhat do i (?:get|expect|see)\b/i,
+  /\bexpect from\b/i,
+  /\bchat reliability\b/i,
+  /\btell me (?:what|about)\b/i,
+  /\bexplain\b/i,
+  /\bimage[- ]gate\b/i,
+  /\bimage path\b/i,
+  /\bspec quotes?\b/i,
+  /\bpasted ticket\b/i,
+  /\bverify:/i,
+  /^verify\b/i,
+  /^bug\b/i,
+  /^fix\b/i,
+];
+const COMMAND_START =
+  /^(?:please |can you |could you )?(?:generate|draw|create (?:an? )?(?:image|photo|picture|portrait)|make (?:an? )?(?:image|photo|picture|portrait) of|make (?:me|it|this|that|him|her|them) (?:look )?(?:older|younger)|make (?:me|it|this|that|him|her|them) look|age (?:this|the|me|my)|edit (?:this|the|my) (?:photo|picture|image|pic|selfie)|recreate (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait))/i;
+
+function commandText(text: string): string {
+  const leftover = text.replace(QUOTE, " ").replace(TICK, " ").replace(/\s+/g, " ").trim();
+  if (leftover.length >= 12) return leftover;
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function isTalkTurn(text: string): boolean {
+  if (TALK.some((pattern) => pattern.test(text))) return true;
+  const lines = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  if (
+    lines.length >= 4 &&
+    lines.some((line) => /^(bug|fix|verify|-|\*|1\.|2\.)/i.test(line))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isPrimaryImageCommand(text: string): boolean {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  if (COMMAND_START.test(compact)) return true;
+  return compact.length <= 140;
+}
 
 export type ImageToolIntent = "edit" | "generate" | "clarify";
 
 export function imageToolIntent(text: string, hasImage: boolean): ImageToolIntent | null {
   const raw = (text || "").trim();
   if (!raw) return null;
-  if (VISION_ONLY.some((pattern) => pattern.test(raw))) return null;
-  if (GENERATE.some((pattern) => pattern.test(raw))) {
+  if (isTalkTurn(raw)) return null;
+  const command = commandText(raw);
+  if (isTalkTurn(command)) return null;
+  if (!isPrimaryImageCommand(command)) return null;
+  if (VISION_ONLY.some((pattern) => pattern.test(command))) return null;
+  if (GENERATE.some((pattern) => pattern.test(command))) {
     if (hasImage) return "edit";
-    if (CODE_GENERATE.test(raw) && !IMAGE_NOUN.test(raw)) return null;
+    if (CODE_GENERATE.test(command) && !IMAGE_NOUN.test(command)) return null;
     return "generate";
   }
-  if (EDIT.some((pattern) => pattern.test(raw))) return hasImage ? "edit" : "clarify";
-  if (hasImage && AGE.some((pattern) => pattern.test(raw))) return "edit";
+  if (EDIT.some((pattern) => pattern.test(command))) return hasImage ? "edit" : "clarify";
+  if (hasImage && command.length <= 48 && AGE.some((pattern) => pattern.test(command))) return "edit";
   return null;
 }
 
@@ -86,3 +135,5 @@ export const CLARIFY_EDIT_OR_GENERATE =
   "Generate a new older-looking picture, or attach one to edit?";
 
 export const MISSING_PHOTO_DETAIL = CLARIFY_EDIT_OR_GENERATE;
+
+export const MEDIA_MARKDOWN = /!\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\)/;

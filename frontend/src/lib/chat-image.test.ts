@@ -24,6 +24,19 @@ test("photo talk stays chat", () => {
   assert.equal(imageToolIntent("older python versions", false), null);
 });
 
+test("chat reliability questions are not Imagine", () => {
+  assert.equal(imageToolIntent("what should I expect from chat reliability?", false), null);
+  assert.equal(imageToolIntent("what should I expect from chat reliability?", true), null);
+  const spec = [
+    "Junior image-gate is firing on every message that quotes the spec",
+    '("make me look older", "image path").',
+    "Verify: keep partials on 60s.",
+  ].join("\n");
+  assert.equal(imageToolIntent(spec, false), null);
+  assert.equal(imageToolIntent(spec, true), null);
+  assert.equal(imageToolIntent('Tell me what to expect. Example: "make me look older".', false), null);
+});
+
 test("what's in this photo is vision only", () => {
   assert.equal(imageToolIntent("what's in this picture?", true), null);
   assert.equal(imageToolIntent("describe this selfie", true), null);

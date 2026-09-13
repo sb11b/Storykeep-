@@ -43,17 +43,17 @@ def image_alt(prompt: str) -> str:
 
 
 def assistant_image_markdown(prompt: str, media_id: UUID) -> str:
-    return f"Here's the image.\n\n![{image_alt(prompt)}](/api/v1/media/{media_id})"
+    return f"Here's the image.\n\n![generated image](/api/v1/media/{media_id})"
 
 
 def assistant_edit_markdown(prompt: str, media_id: UUID) -> str:
-    return f"Here's the edited image.\n\n![{image_alt(prompt)}](/api/v1/media/{media_id})"
+    return f"Here's the edited image.\n\n![edited image](/api/v1/media/{media_id})"
 
 
 def assistant_inspired_markdown(prompt: str, media_id: UUID) -> str:
     return (
         "Here's a new generated portrait inspired by your photo — not a pixel-perfect edit.\n\n"
-        f"![{image_alt(prompt)}](/api/v1/media/{media_id})"
+        f"![generated image](/api/v1/media/{media_id})"
     )
 
 

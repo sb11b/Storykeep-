@@ -41,10 +41,20 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertEqual(image_tool_intent("generate an image of a red notebook", False), "generate")
         self.assertEqual(image_tool_intent("Generate a red notebook", False), "generate")
 
-    def test_photo_metadata_stays_chat(self):
-        self.assertIsNone(image_tool_intent("Tell me about photo metadata", False))
-        self.assertIsNone(image_tool_intent("what is a picture element in HTML", False))
-        self.assertIsNone(image_tool_intent("older python versions", False))
+    def test_chat_reliability_question_is_not_image_intent(self):
+        self.assertIsNone(image_tool_intent("what should I expect from chat reliability?", False))
+        self.assertIsNone(image_tool_intent("what should I expect from chat reliability?", True))
+        spec = (
+            'Junior image-gate is firing on every message that quotes the spec\n'
+            '("make me look older", "image path"). Verify: keep partials on 60s.'
+        )
+        self.assertIsNone(image_tool_intent(spec, False))
+        self.assertIsNone(image_tool_intent(spec, True))
+
+    def test_quoted_spec_example_is_not_imagine(self):
+        text = 'Tell me what to expect. Example: "make me look older".'
+        self.assertIsNone(image_tool_intent(text, False))
+        self.assertIsNone(image_tool_intent(text, True))
 
     def test_generate_with_image_is_edit(self):
         self.assertEqual(image_tool_intent("generate an image in this style", True), "edit")
@@ -114,6 +124,7 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIn("inspired by your photo", text)
         self.assertIn("not a pixel-perfect edit", text)
         self.assertIn(f"/api/v1/media/{media_id}", text)
+        self.assertIn("![", text)
         self.assertNotIn("FaceApp", text)
 
     def test_produce_falls_back_to_t2i_when_edits_unsupported(self):

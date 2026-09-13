@@ -113,23 +113,94 @@ class ChatImageResult:
 class InterceptedImageTurn:
     markdown: str
     assistant_message_id: UUID | None
+    media_id: UUID | None
+
+
+_QUOTE = re.compile(r'["“”]([^"“”]{0,240})["“”]')
+_TICK = re.compile(r"`([^`]{0,240})`")
+_TALK = tuple(
+    re.compile(pattern, re.I)
+    for pattern in (
+        r"\bwhat should i\b",
+        r"\bwhat do i (?:get|expect|see)\b",
+        r"\bexpect from\b",
+        r"\bchat reliability\b",
+        r"\btell me (?:what|about)\b",
+        r"\bexplain\b",
+        r"\bimage[- ]gate\b",
+        r"\bimage path\b",
+        r"\bspec quotes?\b",
+        r"\bpasted ticket\b",
+        r"\bverify:",
+        r"^verify\b",
+        r"^bug\b",
+        r"^fix\b",
+    )
+)
+_COMMAND_START = re.compile(
+    r"^(?:please |can you |could you )?"
+    r"(?:generate|draw|create (?:an? )?(?:image|photo|picture|portrait)"
+    r"|make (?:an? )?(?:image|photo|picture|portrait) of"
+    r"|make (?:me|it|this|that|him|her|them) (?:look )?(?:older|younger)"
+    r"|make (?:me|it|this|that|him|her|them) look"
+    r"|age (?:this|the|me|my)"
+    r"|edit (?:this|the|my) (?:photo|picture|image|pic|selfie)"
+    r"|recreate (?:an? |this |the |my )?(?:image|photo|picture|pic|selfie|portrait))",
+    re.I,
+)
+
+
+def _command_text(text: str) -> str:
+    stripped = _QUOTE.sub(" ", text)
+    stripped = _TICK.sub(" ", stripped)
+    leftover = " ".join(stripped.split())
+    if len(leftover) >= 12:
+        return leftover
+    return " ".join(text.split())
+
+
+def _is_talk_turn(text: str) -> bool:
+    if any(pattern.search(text) for pattern in _TALK):
+        return True
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) >= 4 and any(
+        line.lower().startswith(("bug", "fix", "verify", "-", "*", "1.", "2.")) for line in lines
+    ):
+        return True
+    return False
+
+
+def _is_primary_image_command(text: str) -> bool:
+    compact = " ".join(text.split())
+    if not compact:
+        return False
+    if _COMMAND_START.match(compact):
+        return True
+    return len(compact) <= 140
 
 
 def image_tool_intent(text: str, has_image: bool) -> ImageIntent | None:
     raw = (text or "").strip()
     if not raw:
         return None
-    if any(pattern.search(raw) for pattern in _VISION_ONLY):
+    if _is_talk_turn(raw):
         return None
-    if any(pattern.search(raw) for pattern in _GENERATE):
+    command = _command_text(raw)
+    if _is_talk_turn(command):
+        return None
+    if not _is_primary_image_command(command):
+        return None
+    if any(pattern.search(command) for pattern in _VISION_ONLY):
+        return None
+    if any(pattern.search(command) for pattern in _GENERATE):
         if has_image:
             return "edit"
-        if _CODE_GENERATE.search(raw) and not _IMAGE_NOUN.search(raw):
+        if _CODE_GENERATE.search(command) and not _IMAGE_NOUN.search(command):
             return None
         return "generate"
-    if any(pattern.search(raw) for pattern in _EDIT):
+    if any(pattern.search(command) for pattern in _EDIT):
         return "edit" if has_image else "clarify"
-    if has_image and any(pattern.search(raw) for pattern in _AGE):
+    if has_image and len(command) <= 48 and any(pattern.search(command) for pattern in _AGE):
         return "edit"
     return None
 
@@ -282,4 +353,8 @@ def run_intercepted_chat_image(
                 last_reasoning=IMAGE_JOB_REASONING,
             )
             assistant_id = assistant.id
-        return InterceptedImageTurn(markdown=markdown, assistant_message_id=assistant_id)
+        return InterceptedImageTurn(
+            markdown=markdown,
+            assistant_message_id=assistant_id,
+            media_id=media.id,
+        )
