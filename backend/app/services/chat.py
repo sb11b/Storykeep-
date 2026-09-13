@@ -19,13 +19,28 @@ from app.models import Article
 logger = logging.getLogger(__name__)
 
 MODEL_AUTO = "auto"
+CURRENT_CHAT_MODEL = "grok-4.6"
+CURRENT_FAST_MODEL = "grok-4.20-0309-non-reasoning"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
 CHAT_FIRST_BYTE_TIMEOUT_SEC = 8.0
 CHAT_IDLE_AFTER_TOKEN_SEC = 60.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
 XAI_SILENT_DETAIL = "xAI silent"
+CHAT_IDLE_TIMEOUT_DETAIL = "Timed out after 60s."
 SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
+# Railway env can still hold retired aliases. Invalid ids hang the stream until a proxy 504.
+_DEAD_MODEL_ALIASES = {
+    "grok-4-fast-non-reasoning": CURRENT_FAST_MODEL,
+    "grok-4-fast": CURRENT_FAST_MODEL,
+    "grok-4-fast-reasoning": CURRENT_CHAT_MODEL,
+    "grok-4-1-fast": CURRENT_FAST_MODEL,
+    "grok-4-1-fast-non-reasoning": CURRENT_FAST_MODEL,
+    "grok-4-1-fast-reasoning": CURRENT_CHAT_MODEL,
+    "grok-4": CURRENT_CHAT_MODEL,
+    "grok-3": CURRENT_CHAT_MODEL,
+    "grok-3-mini": CURRENT_FAST_MODEL,
+}
 XAI_MODELS_CACHE_SEC = 900.0
 CODE_KEYWORDS = (
     "python",
@@ -131,14 +146,33 @@ def key_configured() -> bool:
     return key_format_ok()
 
 
+def rewrite_xai_model(model: str) -> str:
+    """Map retired aliases to a live chat id. Dead ids hang until a proxy 504."""
+    key = (model or "").strip()
+    if not key:
+        return CURRENT_CHAT_MODEL
+    return _DEAD_MODEL_ALIASES.get(key, key)
+
+
+def _dedupe_models(models: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in models:
+        rewritten = rewrite_xai_model(item)
+        if rewritten and rewritten not in seen:
+            seen.add(rewritten)
+            ordered.append(rewritten)
+    return ordered or [CURRENT_CHAT_MODEL]
+
+
 def available_models() -> list[str]:
     raw = (settings.xai_chat_models or "").strip()
     if raw:
         models = [part.strip() for part in raw.split(",") if part.strip()]
         if models:
-            return models
-    full = (settings.xai_chat_model or "grok-4.6").strip()
-    fast = (settings.xai_chat_fast_model or "grok-4-fast-non-reasoning").strip()
+            return _dedupe_models(models)
+    full = rewrite_xai_model(settings.xai_chat_model or CURRENT_CHAT_MODEL)
+    fast = rewrite_xai_model(settings.xai_chat_fast_model or CURRENT_FAST_MODEL)
     ordered = [full]
     if fast and fast not in ordered:
         ordered.append(fast)
@@ -147,27 +181,42 @@ def available_models() -> list[str]:
 
 def default_full_model() -> str:
     models = available_models()
-    preferred = (settings.xai_chat_model or "grok-4.6").strip()
+    preferred = rewrite_xai_model(settings.xai_chat_model or CURRENT_CHAT_MODEL)
     if preferred in models:
         return preferred
     return models[0]
 
 
 def default_fast_model() -> str:
-    preferred = (settings.xai_chat_fast_model or "grok-4-fast-non-reasoning").strip()
+    preferred = rewrite_xai_model(settings.xai_chat_fast_model or CURRENT_FAST_MODEL)
     models = available_models()
     if preferred in models:
         return preferred
     for candidate in models:
-        if "fast" in candidate.lower():
+        lowered = candidate.lower()
+        if "fast" in lowered or "non-reasoning" in lowered:
             return candidate
     return models[-1] if len(models) > 1 else models[0]
+
+
+def model_uses_reasoning(model: str) -> bool:
+    lowered = rewrite_xai_model(model).lower()
+    if "non-reasoning" in lowered:
+        return False
+    return lowered.startswith("grok-4.6") or lowered.startswith("grok-4.5")
+
+
+def attach_reasoning_effort(payload: dict[str, object], model: str) -> dict[str, object]:
+    if model_uses_reasoning(model):
+        payload["reasoning_effort"] = "low"
+    return payload
 
 
 def normalize_model_choice(choice: str | None) -> str:
     cleaned = (choice or MODEL_AUTO).strip()
     if not cleaned or cleaned.lower() == MODEL_AUTO:
         return MODEL_AUTO
+    cleaned = rewrite_xai_model(cleaned)
     models = available_models()
     if cleaned not in models:
         raise HTTPException(
@@ -199,8 +248,9 @@ def pick_fast_for_auto(message: str, history: list[dict[str, str]] | None = None
 def resolve_model_for_request(choice: str, message: str, history: list[dict[str, str]] | None = None) -> str:
     normalized = normalize_model_choice(choice)
     if normalized != MODEL_AUTO:
-        return normalized
-    return default_fast_model() if pick_fast_for_auto(message, history) else default_full_model()
+        return rewrite_xai_model(normalized)
+    picked = default_fast_model() if pick_fast_for_auto(message, history) else default_full_model()
+    return rewrite_xai_model(picked)
 
 
 def model_label(choice: str, resolved: str | None = None) -> str:
@@ -378,47 +428,83 @@ def validate_xai_model(model: str) -> None:
 
 
 def ping_xai() -> dict[str, object]:
-    """One-token non-streaming probe for /chat/health."""
+    """Streaming 1-token probe for GET /chat/health. Stops at first visible token."""
     key = require_key()
-    model = default_fast_model()
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "stream": False,
-        "max_tokens": 1,
-        "temperature": 0,
-    }
+    model = rewrite_xai_model(default_full_model())
+    payload = attach_reasoning_effort(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "stream": True,
+            "max_tokens": 8,
+            "temperature": 0,
+        },
+        model,
+    )
     started = time.perf_counter()
     try:
         with httpx.Client(timeout=_chat_timeout(streaming=False)) as client:
-            response = client.post(chat_url(), json=payload, headers=_auth_headers(key))
-            ms = int((time.perf_counter() - started) * 1000)
-            xai_status = response.status_code
-            if xai_status >= 400:
-                detail = parse_xai_error_body(response.text, xai_status)
-                if xai_status == 401:
-                    detail = "xAI auth failed"
-                logger.warning(
-                    "xAI health ping HTTP %s model=%s ms=%s detail=%s",
-                    xai_status,
-                    model,
-                    ms,
-                    detail,
-                )
+            with client.stream(
+                "POST",
+                chat_url(),
+                json=payload,
+                headers={**_auth_headers(key), "Accept": "text/event-stream"},
+            ) as response:
+                xai_status = response.status_code
+                if xai_status >= 400:
+                    body = response.read().decode("utf-8", errors="replace")
+                    ttft_ms = int((time.perf_counter() - started) * 1000)
+                    detail = parse_xai_error_body(body, xai_status)
+                    if xai_status == 401:
+                        detail = "xAI auth failed"
+                    logger.warning(
+                        "xAI health ping HTTP %s model=%s ttft_ms=%s detail=%s",
+                        xai_status,
+                        model,
+                        ttft_ms,
+                        detail,
+                    )
+                    return {
+                        "ok": False,
+                        "model": model,
+                        "ttft_ms": ttft_ms,
+                        "xai_status": xai_status,
+                        "message": detail,
+                    }
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    data = line[5:].strip() if line.startswith("data:") else line.strip()
+                    if data == "[DONE]":
+                        break
+                    text, _active = _parse_sse_chunk(data)
+                    if text:
+                        ttft_ms = int((time.perf_counter() - started) * 1000)
+                        logger.info(
+                            "xAI health ping ok model=%s xai_status=%s ttft_ms=%s",
+                            model,
+                            xai_status,
+                            ttft_ms,
+                        )
+                        return {
+                            "ok": True,
+                            "model": model,
+                            "ttft_ms": ttft_ms,
+                            "xai_status": xai_status,
+                        }
+                ttft_ms = int((time.perf_counter() - started) * 1000)
                 return {
                     "ok": False,
                     "model": model,
-                    "ms": ms,
+                    "ttft_ms": ttft_ms,
                     "xai_status": xai_status,
-                    "message": detail,
+                    "message": XAI_SILENT_DETAIL,
                 }
-            logger.info("xAI health ping ok model=%s xai_status=%s ms=%s", model, xai_status, ms)
-            return {"ok": True, "model": model, "ms": ms, "xai_status": xai_status}
     except httpx.HTTPError as exc:
-        ms = int((time.perf_counter() - started) * 1000)
+        ttft_ms = int((time.perf_counter() - started) * 1000)
         detail = _transport_error_detail(exc)
-        logger.warning("xAI health ping failed model=%s ms=%s detail=%s", model, ms, detail)
-        return {"ok": False, "model": model, "ms": ms, "xai_status": None, "message": detail}
+        logger.warning("xAI health ping failed model=%s ttft_ms=%s detail=%s", model, ttft_ms, detail)
+        return {"ok": False, "model": model, "ttft_ms": ttft_ms, "xai_status": None, "message": detail}
 
 
 def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
@@ -576,7 +662,7 @@ async def stream_completion(
     has_attachments: bool = False,
 ) -> AsyncIterator[str]:
     key = require_key()
-    validate_xai_model(model)
+    model = rewrite_xai_model(model)
     latest_user = next((_content_text(item.get("content")) for item in reversed(history) if item.get("role") == "user"), "")
     logger.info(
         "xAI chat start model=%s choice=%s user=%s chars=%s",
@@ -586,19 +672,22 @@ async def stream_completion(
         len(latest_user or ""),
     )
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
-    payload = {
-        "model": model,
-        "messages": build_xai_messages(
-            history,
-            excerpt,
-            include_article=include_article,
-            recap_question=recap_question,
-            has_attachments=has_attachments,
-        ),
-        "stream": True,
-        "max_tokens": max_tokens,
-        "temperature": 0.6,
-    }
+    payload = attach_reasoning_effort(
+        {
+            "model": model,
+            "messages": build_xai_messages(
+                history,
+                excerpt,
+                include_article=include_article,
+                recap_question=recap_question,
+                has_attachments=has_attachments,
+            ),
+            "stream": True,
+            "max_tokens": max_tokens,
+            "temperature": 0.6,
+        },
+        model,
+    )
     started = time.perf_counter()
     first_visible_at: float | None = None
     yielded_any = False
@@ -638,7 +727,7 @@ async def stream_completion(
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
                         raise HTTPException(
                             status_code=504,
-                            detail=f"Chat timed out after {int(elapsed)}s.",
+                            detail=CHAT_IDLE_TIMEOUT_DETAIL,
                         ) from exc
                     if line is None:
                         break
@@ -694,7 +783,7 @@ async def stream_completion(
             raise HTTPException(status_code=status_code, detail=detail) from exc
         raise HTTPException(
             status_code=504,
-            detail=f"Chat timed out after {int(elapsed)}s.",
+            detail=CHAT_IDLE_TIMEOUT_DETAIL,
         ) from exc
     except Exception as exc:
         if isinstance(exc, HTTPException):
@@ -712,7 +801,7 @@ async def stream_completion(
             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
         raise HTTPException(
             status_code=504,
-            detail=f"Chat timed out after {int(elapsed)}s.",
+            detail=CHAT_IDLE_TIMEOUT_DETAIL,
         ) from exc
 
 

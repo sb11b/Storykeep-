@@ -83,8 +83,24 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(resolved, default_full_model())
 
     def test_locked_model_skips_auto_routing(self):
-        resolved = resolve_model_for_request("grok-4", "hi", [])
-        self.assertEqual(resolved, "grok-4")
+        resolved = resolve_model_for_request("grok-4.6", "hi", [])
+        self.assertEqual(resolved, "grok-4.6")
+        self.assertEqual(resolve_model_for_request("grok-4", "hi", []), "grok-4.6")
+
+    def test_rewrites_dead_fast_alias(self):
+        from app.services.chat import CURRENT_CHAT_MODEL, CURRENT_FAST_MODEL, rewrite_xai_model
+
+        self.assertEqual(rewrite_xai_model("grok-4-fast-non-reasoning"), CURRENT_FAST_MODEL)
+        self.assertEqual(rewrite_xai_model("grok-4-fast"), CURRENT_FAST_MODEL)
+        self.assertEqual(rewrite_xai_model("grok-4"), CURRENT_CHAT_MODEL)
+        self.assertEqual(rewrite_xai_model("grok-4.6"), CURRENT_CHAT_MODEL)
+        self.assertEqual(rewrite_xai_model("grok-4.20-0309-non-reasoning"), CURRENT_FAST_MODEL)
+
+    def test_idle_timeout_copy_is_sixty_seconds(self):
+        from app.services.chat import CHAT_IDLE_AFTER_TOKEN_SEC, CHAT_IDLE_TIMEOUT_DETAIL
+
+        self.assertEqual(CHAT_IDLE_AFTER_TOKEN_SEC, 60.0)
+        self.assertEqual(CHAT_IDLE_TIMEOUT_DETAIL, "Timed out after 60s.")
 
     def test_chat_error_message_includes_http_status(self):
         message = chat_error_message(504, "Grok timed out after 90s.")

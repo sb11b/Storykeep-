@@ -95,7 +95,7 @@ export function GrokBubble({
   const [locked, setLocked] = useState(false);
   const dictation = useDictation();
   const [persist, setPersist] = useState(false);
-  const [chatModels, setChatModels] = useState<string[]>(["grok-4", "grok-4-fast"]);
+  const [chatModels, setChatModels] = useState<string[]>(["grok-4.6", "grok-4.20-0309-non-reasoning"]);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -745,6 +745,7 @@ export function GrokBubble({
           </div>
         ) : (
           <GrokPane
+            key={focusedPane.id}
             pane={focusedPane}
             label={focusedPane.displayName}
             {...paneRenameProps(focusedPane.id)}

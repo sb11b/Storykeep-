@@ -88,6 +88,12 @@ export function GrokChatMessage({
       <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
         {role === "user" ? "You" : content || failed ? `${assistantName} replied` : assistantName}
       </p>
+      {statusLine || (waiting && !failed && !content) ? (
+        <p className="mb-1 flex items-center gap-2 text-sm font-medium" role="status">
+          {waiting && !content ? <LoaderCircle className="size-4 animate-spin shrink-0" /> : null}
+          <span>{statusLine || `${assistantName} is working…`}</span>
+        </p>
+      ) : null}
       {content ? (
         role === "assistant" ? (
           <div ref={bodyRef} className="note-md markdown" data-larry-reply-body={id} onClick={onCodeCopyClick} />
@@ -96,11 +102,6 @@ export function GrokChatMessage({
             {content}
           </div>
         )
-      ) : waiting && !failed ? (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin shrink-0" />
-          <span>{statusLine || `${assistantName} is working…`}</span>
-        </p>
       ) : null}
       {role === "user" && files.length ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">

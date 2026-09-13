@@ -116,7 +116,7 @@ export async function readGrokChatStream(
       return;
     }
     if (now - lastActivityAt >= idleAfterMs) {
-      throw new ApiError(504, formatChatError(504, `Chat timed out after ${Math.round(idleAfterMs / 1000)}s.`), {
+      throw new ApiError(504, formatChatError(504, "Timed out after 60s."), {
         partial: true,
       });
     }

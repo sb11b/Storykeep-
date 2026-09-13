@@ -109,9 +109,8 @@ def chat_health(user: User = Depends(get_current_user)) -> dict:
     if not chat_service.key_configured():
         return {
             "ok": False,
-            "model": chat_service.default_fast_model(),
-            "ms": 0,
-            "xai_status": None,
+            "model": chat_service.default_full_model(),
+            "ttft_ms": None,
             "message": "XAI_API_KEY is not set or must start with xai-.",
         }
     return chat_service.ping_xai()
@@ -361,6 +360,9 @@ async def chat(
             )
 
         try:
+            # Flush padding first so proxies start the SSE body before xAI tokens.
+            yield chat_service.SSE_PADDING
+            await asyncio.sleep(0)
             meta = {
                 "conversation_id": str(conversation_id) if conversation_id else None,
                 "user_message_id": str(user_message_id) if user_message_id else None,
@@ -369,11 +371,8 @@ async def chat(
             }
             if persist and conversation_id and user_message_id:
                 yield chat_service.encode_sse({k: v for k, v in meta.items() if v is not None})
-            elif not persist:
-                yield chat_service.encode_sse({"model": resolved_model, "model_choice": model_choice})
             else:
                 yield chat_service.encode_sse({"model": resolved_model, "model_choice": model_choice})
-            yield chat_service.SSE_PADDING
             await asyncio.sleep(0)
             async for piece in chat_service.stream_completion(
                 history_for_xai,

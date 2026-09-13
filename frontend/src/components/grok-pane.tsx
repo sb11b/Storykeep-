@@ -17,7 +17,7 @@ import { ApiError, api } from "@/lib/api";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import type { NoteDestination } from "@/lib/destinations";
 import { folderById } from "@/lib/folders";
-import { formatChatError, withAssistantName } from "@/lib/grok-chat-error";
+import { formatChatError, chatTimeoutToast, withAssistantName } from "@/lib/grok-chat-error";
 import {
   attachmentMarkdown,
   formatFileSize,
@@ -61,6 +61,7 @@ export type GrokPaneState = {
   noteFolderId: string | null;
   recapQuestion: boolean;
   pendingAttachments: PendingAttachment[];
+  streamStatus?: ChatStatusKind | null;
 };
 
 export { DEFAULT_PANE_NAME, defaultGrokPaneName };
@@ -81,6 +82,7 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     noteFolderId: null,
     recapQuestion: false,
     pendingAttachments: [],
+    streamStatus: null,
   };
 }
 
@@ -199,6 +201,22 @@ export function GrokPane({
     abortRef.current = null;
   }, []);
 
+  const applyStreamStatus = useCallback(
+    (kind: ChatStatusKind | null) => {
+      if (kind === "writing" || kind == null) {
+        if (thinkingTimerRef.current != null) {
+          window.clearTimeout(thinkingTimerRef.current);
+          thinkingTimerRef.current = null;
+        }
+      }
+      if (kind === "working") gotDeltaRef.current = false;
+      if (kind === "writing") gotDeltaRef.current = true;
+      setStreamStatus(kind);
+      onUpdate((current) => (current.streamStatus === kind ? current : { ...current, streamStatus: kind }));
+    },
+    [onUpdate],
+  );
+
   const clearStreamStatus = useCallback(() => {
     if (thinkingTimerRef.current != null) {
       window.clearTimeout(thinkingTimerRef.current);
@@ -206,25 +224,21 @@ export function GrokPane({
     }
     gotDeltaRef.current = false;
     setStreamStatus(null);
-  }, []);
+    onUpdate((current) => (current.streamStatus == null ? current : { ...current, streamStatus: null }));
+  }, [onUpdate]);
 
   const beginStreamStatus = useCallback(() => {
     if (thinkingTimerRef.current != null) window.clearTimeout(thinkingTimerRef.current);
     gotDeltaRef.current = false;
-    setStreamStatus("working");
+    applyStreamStatus("working");
     thinkingTimerRef.current = window.setTimeout(() => {
-      if (!gotDeltaRef.current) setStreamStatus("thinking");
-    }, 700);
-  }, []);
+      if (!gotDeltaRef.current) applyStreamStatus("thinking");
+    }, 250);
+  }, [applyStreamStatus]);
 
   const markWriting = useCallback(() => {
-    gotDeltaRef.current = true;
-    if (thinkingTimerRef.current != null) {
-      window.clearTimeout(thinkingTimerRef.current);
-      thinkingTimerRef.current = null;
-    }
-    setStreamStatus("writing");
-  }, []);
+    applyStreamStatus("writing");
+  }, [applyStreamStatus]);
 
   useEffect(() => {
     void api.folders().then(setFolders).catch(() => setFolders([]));
@@ -271,8 +285,13 @@ export function GrokPane({
 
   useEffect(() => () => {
     abortInFlight();
-    clearStreamStatus();
-  }, [abortInFlight, clearStreamStatus]);
+    if (thinkingTimerRef.current != null) {
+      window.clearTimeout(thinkingTimerRef.current);
+      thinkingTimerRef.current = null;
+    }
+    gotDeltaRef.current = false;
+    setStreamStatus(null);
+  }, [abortInFlight]);
 
   useEffect(() => {
     if (!panelOpen) dictation?.stop();
@@ -420,6 +439,7 @@ export function GrokPane({
           markWriting();
           onUpdate((current) => ({
             ...current,
+            streamStatus: "writing",
             messages: current.messages.map((item) =>
               item.id === assistantId
                 ? {
@@ -434,6 +454,7 @@ export function GrokPane({
           }));
         },
         (meta) => {
+          if (!gotDeltaRef.current) applyStreamStatus("thinking");
           onUpdate((current) => {
             let next = current;
             if (meta.conversation_id && meta.conversation_id !== current.conversationId) {
@@ -471,11 +492,15 @@ export function GrokPane({
           if (meta.conversation_id || meta.assistant_message_id) onHistoryChanged?.();
         },
         controller.signal,
+        () => {
+          if (!gotDeltaRef.current) applyStreamStatus("thinking");
+        },
       );
     } catch (error) {
       if (controller.signal.aborted) {
         onUpdate((current) => ({
           ...current,
+          streamStatus: null,
           messages: current.messages.map((item) =>
             item.id === assistantId ? { ...item, waiting: false } : item,
           ),
@@ -487,8 +512,10 @@ export function GrokPane({
       const formatted = detail.startsWith("Chat failed (HTTP")
         ? withAssistantName(detail, label)
         : formatChatError(status, detail, label);
+      const timeoutToast = chatTimeoutToast(status, formatted);
       onUpdate((current) => ({
         ...current,
+        streamStatus: null,
         messages: current.messages.map((item) =>
           item.id === assistantId
             ? {
@@ -502,7 +529,7 @@ export function GrokPane({
             : item,
         ),
       }));
-      toast.error(formatted);
+      toast.error(timeoutToast || formatted);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
@@ -581,12 +608,14 @@ export function GrokPane({
       ...current,
       draft: "",
       pendingAttachments: [],
+      streamStatus: "working",
       messages: [
         ...current.messages,
         userLine,
         { id: assistantId, role: "assistant", content: "", waiting: true },
       ],
     }));
+    setStreamStatus("working");
     await runStream({
       message: content || (files[0] ? `Please look at ${files.map((item) => item.name).join(", ")}.` : ""),
       userLine,
@@ -608,12 +637,14 @@ export function GrokPane({
     if (!userLine || userLine.role !== "user") return;
     onUpdate((current) => ({
       ...current,
+      streamStatus: "working",
       messages: current.messages.map((item) =>
         item.id === assistantId
           ? { ...item, content: "", failed: false, error: null, waiting: true }
           : item,
       ),
     }));
+    setStreamStatus("working");
     await runStream({
       message: userLine.content,
       retry: true,
@@ -734,6 +765,8 @@ export function GrokPane({
   const voiceOptions = ttsVoices.length ? ttsVoices : [{ voice_id: "eve", name: "Eve" }];
   const hasReadableReply = pane.messages.some((item) => item.role === "assistant" && Boolean(item.content));
   const showStickyPlayer = ttsEnabled && !locked && (listen.isActive || hasReadableReply);
+  const visibleStatus = pane.streamStatus ?? streamStatus;
+  const lastAssistantId = [...pane.messages].reverse().find((item) => item.role === "assistant")?.id ?? null;
   const headerSelectClass =
     "h-7 max-w-[7rem] rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";
 
@@ -900,9 +933,14 @@ export function GrokPane({
         </span>
       </label>
 
-      {streamStatus ? (
-        <p className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground" aria-live="polite">
-          {chatStatusLine(label, streamStatus)}
+      {visibleStatus ? (
+        <p
+          data-junior-status={visibleStatus}
+          role="status"
+          aria-live="polite"
+          className="shrink-0 border-b bg-muted px-3 py-2 text-sm font-medium text-foreground"
+        >
+          {chatStatusLine(label, visibleStatus)}
         </p>
       ) : null}
 
@@ -945,7 +983,11 @@ export function GrokPane({
                 assistantName={label}
                 files={item.files}
                 statusLine={
-                  item.waiting && streamStatus ? chatStatusLine(label, streamStatus) : null
+                  item.role === "assistant" &&
+                  visibleStatus &&
+                  (item.waiting || (visibleStatus === "writing" && item.id === lastAssistantId))
+                    ? chatStatusLine(label, visibleStatus)
+                    : null
                 }
                 onRegisterBody={registerBody}
                 onListen={requestListen}
@@ -1117,7 +1159,10 @@ export function GrokPane({
               className="size-9 shrink-0 self-end"
               aria-label="Stop"
               title="Stop generating"
-              onClick={() => abortInFlight()}
+              onClick={() => {
+                abortInFlight();
+                clearStreamStatus();
+              }}
             >
               <Square className="size-3.5 fill-current" />
             </Button>
