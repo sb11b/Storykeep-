@@ -9,7 +9,7 @@ import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
-import { readRenderedReplyText, replyBodySelector } from "@/lib/grok-reply-speech";
+import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -49,6 +49,8 @@ export type GrokPaneState = {
 };
 
 export { DEFAULT_PANE_NAME, defaultGrokPaneName };
+
+type ListenTarget = { id: string; trigger: HTMLElement | null; script: string };
 
 export function createGrokPane(paneIndex = 0): GrokPaneState {
   return {
@@ -161,12 +163,14 @@ export function GrokPane({
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
   const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
-  const [listenTarget, setListenTarget] = useState<{ id: string; bodyEl: HTMLElement; script: string } | null>(null);
+  const [listenTarget, setListenTarget] = useState<ListenTarget | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const pendingListenRef = useRef(false);
-  const activeBodyRef = useRef<HTMLElement | null>(null);
+  const listenTargetRef = useRef<ListenTarget | null>(null);
   const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
-  activeBodyRef.current = listenTarget?.bodyEl ?? null;
+  const messagesRef = useRef(pane.messages);
+  listenTargetRef.current = listenTarget;
+  messagesRef.current = pane.messages;
 
   const abortInFlight = useCallback(() => {
     abortRef.current?.abort();
@@ -230,16 +234,23 @@ export function GrokPane({
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [pane.messages]);
 
-  const listenFallbackText =
-    listenTarget?.id != null
-      ? pane.messages.find((item) => item.id === listenTarget.id && item.role === "assistant")?.content
-      : undefined;
+  /** Re-read the live reply so playback never depends on stale state. */
+  const resolveListenScript = useCallback(() => {
+    const target = listenTargetRef.current;
+    if (!target) return "";
+    if (target.script) return target.script;
+    const resolved = readReplyText({
+      trigger: target.trigger,
+      body: bodyElementsRef.current.get(target.id) ?? null,
+      markdown: messagesRef.current.find((item) => item.id === target.id)?.content ?? null,
+    });
+    logReplyText("resolve", resolved);
+    return resolved.text;
+  }, []);
 
   const listen = useGrokMessageListen({
     messageId: listenTarget?.id ?? "",
-    bodyRef: activeBodyRef,
-    fallbackText: listenFallbackText,
-    scriptOverride: listenTarget?.script,
+    resolveScript: resolveListenScript,
     voiceId,
     disabled: !listenTarget || !ttsEnabled || locked,
     onCue: setActiveWord,
@@ -278,7 +289,7 @@ export function GrokPane({
   /** Sticky bar with no active target reads the newest assistant reply. */
   function listenLatestReply() {
     if (listenTarget) {
-      requestListen(listenTarget.id, listenTarget.bodyEl);
+      requestListen(listenTarget.id, listenTarget.trigger);
       return;
     }
     const latest = [...pane.messages]
@@ -288,10 +299,10 @@ export function GrokPane({
       toast.error("Send a message first — there is no reply to read yet.");
       return;
     }
-    requestListen(latest.id, bodyElementsRef.current.get(latest.id) ?? null);
+    requestListen(latest.id, null);
   }
 
-  function requestListen(messageId: string, bodyEl: HTMLElement | null) {
+  function requestListen(messageId: string, trigger: HTMLElement | null) {
     if (listen.isActive && listenTarget?.id !== messageId) {
       listen.stop();
     }
@@ -303,18 +314,18 @@ export function GrokPane({
       }
       return;
     }
-    const { text, selector } = readRenderedReplyText(messageId);
-    if (!text.length) {
-      toast.error(`selector miss: ${selector}`);
+    const resolved = readReplyText({
+      trigger,
+      body: bodyElementsRef.current.get(messageId) ?? null,
+      markdown: pane.messages.find((item) => item.id === messageId)?.content ?? null,
+    });
+    logReplyText("click", resolved);
+    if (!resolved.chars) {
+      toast.error("That reply is still empty — nothing to read yet.");
       return;
     }
-    const el =
-      document.querySelector<HTMLElement>(selector) ??
-      bodyEl ??
-      bodyElementsRef.current.get(messageId) ??
-      null;
     pendingListenRef.current = true;
-    setListenTarget({ id: messageId, bodyEl: el!, script: text });
+    setListenTarget({ id: messageId, trigger, script: resolved.text });
   }
 
   async function runStream(options: {

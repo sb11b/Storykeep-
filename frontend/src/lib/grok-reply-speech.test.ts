@@ -1,79 +1,81 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  GROK_REPLY_SELECTOR,
-  grokReplySpeechScript,
-  readRenderedReplyText,
-  replyBodySelector,
+  readReplyText,
+  replyBodyFromTrigger,
+  REPLY_BODY_SELECTOR,
+  REPLY_ROW_SELECTOR,
 } from "@/lib/grok-reply-speech";
 
-function fakeBody(innerText: string, textContent = ""): HTMLElement {
+function fakeEl(innerText: string, className = "note-md markdown", textContent = ""): HTMLElement {
+  return { innerText, className, textContent } as unknown as HTMLElement;
+}
+
+/** Stand-in for a Listen button sitting inside a reply row. */
+function fakeTrigger(row: { body: HTMLElement | null; matches?: string } | null): HTMLElement {
+  const rowEl = row
+    ? ({
+        className: "chat-message larry-reply",
+        innerText: "LARRY (THE ASPARAGUS) REPLIED Hello Steve. Listen Copy",
+        querySelector: (selector: string) => (selector === REPLY_BODY_SELECTOR ? row.body : null),
+      } as unknown as HTMLElement)
+    : null;
   return {
-    innerText,
-    textContent,
-    querySelectorAll: () => [],
+    closest: (selector: string) => (selector === REPLY_ROW_SELECTOR ? rowEl : null),
   } as unknown as HTMLElement;
 }
 
-test("grokReplySpeechScript reads innerText from the rendered reply body", () => {
-  const result = grokReplySpeechScript(fakeBody("Hello! How can I help with your code?"), "markdown ignored");
-  assert.equal(result.script, "Hello! How can I help with your code?");
-  assert.equal(result.source, "innerText");
-  assert.equal(result.selector, GROK_REPLY_SELECTOR);
+test("replyBodyFromTrigger walks up to the row and down to the body", () => {
+  const body = fakeEl("Hello Steve.");
+  assert.equal(replyBodyFromTrigger(fakeTrigger({ body })), body);
 });
 
-test("grokReplySpeechScript collapses whitespace from a long reply", () => {
-  const result = grokReplySpeechScript(fakeBody("First line.\n\n  Second   line.\n"));
-  assert.equal(result.script, "First line. Second line.");
-  assert.ok(result.script.length > 0);
+test("replyBodyFromTrigger falls back to the row when it has no marked body", () => {
+  const found = replyBodyFromTrigger(fakeTrigger({ body: null }));
+  assert.equal(found?.className, "chat-message larry-reply");
 });
 
-test("grokReplySpeechScript uses textContent when innerText is unavailable", () => {
-  const result = grokReplySpeechScript(fakeBody("", "Fallback body text"));
-  assert.equal(result.script, "Fallback body text");
-  assert.equal(result.source, "innerText");
+test("replyBodyFromTrigger returns null without a row to climb to", () => {
+  assert.equal(replyBodyFromTrigger(fakeTrigger(null)), null);
+  assert.equal(replyBodyFromTrigger(null), null);
 });
 
-test("grokReplySpeechScript falls back to markdown when the body is unmounted", () => {
-  const result = grokReplySpeechScript(null, "Hello from Larry");
-  assert.equal(result.script, "Hello from Larry");
-  assert.equal(result.source, "markdown");
-  assert.equal(result.visibleWordCount, 3);
-});
-
-test("grokReplySpeechScript reports empty only when there is truly no text", () => {
-  const result = grokReplySpeechScript(fakeBody("   "), "   ");
-  assert.equal(result.script, "");
-  assert.equal(result.source, "empty");
-});
-
-test("replyBodySelector targets one reply body by message id", () => {
-  assert.equal(replyBodySelector("abc-123"), 'div.note-md[data-grok-reply-body="abc-123"]');
-});
-
-function withDocument(match: HTMLElement | null, run: () => void) {
-  const previous = (globalThis as { document?: unknown }).document;
-  (globalThis as { document?: unknown }).document = { querySelector: () => match };
-  try {
-    run();
-  } finally {
-    (globalThis as { document?: unknown }).document = previous;
-  }
-}
-
-test("readRenderedReplyText returns trimmed innerText from the document", () => {
-  withDocument(fakeBody("  Hello Steve, here is the fix.  "), () => {
-    const result = readRenderedReplyText("abc-123");
-    assert.equal(result.text, "Hello Steve, here is the fix.");
-    assert.equal(result.found, true);
-    assert.equal(result.selector, replyBodySelector("abc-123"));
+test("readReplyText reads innerText from the button's own reply row", () => {
+  const resolved = readReplyText({
+    trigger: fakeTrigger({ body: fakeEl("  Hello Steve, here is the fix.  ") }),
+    markdown: "ignored",
   });
+  assert.equal(resolved.text, "Hello Steve, here is the fix.");
+  assert.equal(resolved.chars, 29);
+  assert.equal(resolved.source, "row");
+  assert.equal(resolved.className, "note-md markdown");
 });
 
-test("readRenderedReplyText reports a selector miss when nothing matches", () => {
-  withDocument(null, () => {
-    const result = readRenderedReplyText("abc-123");
-    assert.equal(result.text, "");
-    assert.equal(result.found, false);
+test("readReplyText uses the registered body when there is no trigger", () => {
+  const resolved = readReplyText({ body: fakeEl("Sticky bar reply.") });
+  assert.equal(resolved.text, "Sticky bar reply.");
+  assert.equal(resolved.source, "body");
+});
+
+test("readReplyText falls back to markdown, stripped of syntax", () => {
+  const resolved = readReplyText({ markdown: "## Heading\n\nHello **Steve**." });
+  assert.equal(resolved.source, "markdown");
+  assert.ok(resolved.chars > 0);
+  assert.ok(resolved.text.includes("Hello"));
+});
+
+test("readReplyText reports empty only when nothing has any text", () => {
+  const resolved = readReplyText({
+    trigger: fakeTrigger({ body: fakeEl("   ") }),
+    body: fakeEl("  "),
+    markdown: "   ",
   });
+  assert.equal(resolved.text, "");
+  assert.equal(resolved.chars, 0);
+  assert.equal(resolved.source, "empty");
+});
+
+test("readReplyText uses textContent when innerText is unavailable", () => {
+  const resolved = readReplyText({ body: fakeEl("", "note-md", "From textContent") });
+  assert.equal(resolved.text, "From textContent");
 });

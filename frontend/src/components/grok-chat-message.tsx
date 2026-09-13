@@ -41,7 +41,8 @@ export function GrokChatMessage({
   listening?: boolean;
   activeWord?: number | null;
   onRegisterBody?: (messageId: string, element: HTMLElement | null) => void;
-  onListen?: (messageId: string, element: HTMLElement) => void;
+  /** `trigger` is the Listen button, so the reply body is one closest() away. */
+  onListen?: (messageId: string, trigger: HTMLElement) => void;
   onAddToNotes: (content: string) => void;
   onRetry?: () => void;
 }) {
@@ -72,13 +73,19 @@ export function GrokChatMessage({
   }, [activeWord, content, listening]);
 
   return (
-    <div className={cn("rounded-lg px-2.5 py-2 text-sm", role === "user" ? "ml-6 bg-primary/10" : "mr-4 bg-muted/60")}>
+    <div
+      data-role={role}
+      className={cn(
+        "chat-message rounded-lg px-2.5 py-2 text-sm",
+        role === "user" ? "ml-6 bg-primary/10" : "larry-reply mr-4 bg-muted/60",
+      )}
+    >
       <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
         {role === "user" ? "You" : content || failed ? `${assistantName} replied` : assistantName}
       </p>
       {content ? (
         role === "assistant" ? (
-          <div ref={bodyRef} className="note-md" data-grok-reply-body={id} onClick={onCodeCopyClick} />
+          <div ref={bodyRef} className="note-md markdown" data-larry-reply-body={id} onClick={onCodeCopyClick} />
         ) : (
           <div ref={bodyRef} className="whitespace-pre-wrap">
             {content}
@@ -101,11 +108,7 @@ export function GrokChatMessage({
             size="xs"
             variant={listening ? "secondary" : "outline"}
             disabled={!ttsAvailable}
-            onClick={() => {
-              const el = bodyRef.current;
-              if (!el) return;
-              onListen?.(id, el);
-            }}
+            onClick={(event) => onListen?.(id, event.currentTarget)}
           >
             <Volume2 className="size-3" />
             {listening ? "Playing…" : "Listen"}

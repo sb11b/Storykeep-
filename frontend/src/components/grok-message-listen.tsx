@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { showTtsErrorToast } from "@/lib/tts-error-toast";
@@ -14,7 +13,6 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
-import { GROK_REPLY_SELECTOR, grokReplySpeechScript, replyBodySelector } from "@/lib/grok-reply-speech";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
@@ -29,20 +27,15 @@ function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
 
 export function useGrokMessageListen({
   messageId,
-  bodyRef,
-  fallbackText,
-  scriptOverride,
+  resolveScript,
   voiceId,
   disabled,
   onPlayingChange,
   onCue,
 }: {
   messageId: string;
-  bodyRef: RefObject<HTMLElement | null>;
-  /** Raw assistant markdown when the DOM body is not mounted yet. */
-  fallbackText?: string | null;
-  /** Text already resolved from the live reply body at click time. */
-  scriptOverride?: string | null;
+  /** Reads the live reply text. Called again if the script is ever lost. */
+  resolveScript: () => string;
   voiceId: string;
   disabled?: boolean;
   onPlayingChange?: (active: boolean) => void;
@@ -192,36 +185,25 @@ export function useGrokMessageListen({
     onPlayingChange?.(phase === "playing" || phase === "paused" || phase === "loading");
   }, [onPlayingChange, phase]);
 
-  const visibleSpeech = useCallback(() => {
-    const pinned = scriptOverride?.trim();
-    if (pinned) {
-      return {
-        script: pinned,
-        visibleWordCount: pinned.match(/\S+/g)?.length ?? 0,
-        source: "innerText" as const,
-        selector: messageId ? replyBodySelector(messageId) : GROK_REPLY_SELECTOR,
-      };
-    }
-    return grokReplySpeechScript(bodyRef.current, fallbackText);
-  }, [bodyRef, fallbackText, messageId, scriptOverride]);
-
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
   const loadChunk = useCallback(
     async (index: number, voice: string) => {
       const cached = chunkCacheRef.current.get(chunkCacheKey(index, voice));
       if (cached) return cached;
-      const script = scriptRef.current;
-      if (!script.trim()) {
-        throw new Error(`selector miss: ${replyBodySelector(messageId)}`);
+      // A cleared script is a bug on our side, not an empty reply: read it again.
+      const script = scriptRef.current.trim() || resolveScript().trim();
+      if (!script) {
+        throw new Error("That reply is still empty — nothing to read yet.");
       }
-      console.info("[grok-tts] POST /tts", { messageId, chunk: index, chars: script.length });
+      scriptRef.current = script;
+      console.log("larry-tts", { stage: "POST /tts", chars: script.length, chunk: index });
       const data = await api.messageSpeech(messageId, voice, index, script, true);
       chunkCacheRef.current.set(chunkCacheKey(index, voice), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
       return data;
     },
-    [chunkCacheKey, messageId],
+    [chunkCacheKey, messageId, resolveScript],
   );
 
   const prefetchChunk = useCallback(
@@ -319,21 +301,21 @@ export function useGrokMessageListen({
   playChunkRef.current = playChunk;
 
   const beginPlayback = useCallback(async () => {
-    const payload = visibleSpeech();
-    const script = payload.script.trim();
-    console.log("larry-tts", script.length, script.slice(0, 80));
-    if (!script.length) {
-      showTtsErrorToast(new Error(`selector miss: ${payload.selector}`));
+    const script = resolveScript().trim();
+    console.log("larry-tts", { stage: "begin", chars: script.length, sample: script.slice(0, 80) });
+    if (!script) {
+      showTtsErrorToast(new Error("That reply is still empty — nothing to read yet."));
       return;
     }
-    scriptRef.current = script;
+    // resetLoaded() clears scriptRef, so pin the script after the reset.
     resetLoaded();
+    scriptRef.current = script;
     const rate = readStoredTtsSpeed();
     setSpeed(rate);
     speedRef.current = rate;
     const voice = voiceRef.current || readStoredTtsVoice();
     await playChunk(0, voice);
-  }, [messageId, playChunk, resetLoaded, visibleSpeech]);
+  }, [playChunk, resetLoaded, resolveScript]);
 
   const listen = useCallback(() => {
     if (disabled) return;
