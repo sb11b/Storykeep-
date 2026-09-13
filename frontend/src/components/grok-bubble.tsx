@@ -17,6 +17,12 @@ import { api } from "@/lib/api";
 import { grokModelLabel } from "@/lib/grok-model";
 import type { GrokConversation, TtsVoice } from "@/lib/types";
 import type { NoteDestination } from "@/lib/destinations";
+import {
+  labelsFromPanes,
+  loadSavedGrokPanes,
+  mergePreferenceLabels,
+  saveGrokPanes,
+} from "@/lib/grok-pane-storage";
 import { cn } from "@/lib/utils";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
@@ -83,8 +89,8 @@ export function GrokBubble({
   const [fullscreen, setFullscreen] = useState(false);
   const [pos, setPos] = useState({ x: 24, y: 24 });
   const [size, setSize] = useState(DEFAULT_PANEL);
-  const [panes, setPanes] = useState<GrokPaneState[]>(() => [createGrokPane()]);
-  const [focusedPaneId, setFocusedPaneId] = useState<string>(() => panes[0]!.id);
+  const [panes, setPanes] = useState<GrokPaneState[]>(() => loadSavedGrokPanes() ?? [createGrokPane(0)]);
+  const [focusedPaneId, setFocusedPaneId] = useState<string>(() => (loadSavedGrokPanes() ?? [createGrokPane(0)])[0]!.id);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<TtsVoice[]>([]);
@@ -135,17 +141,17 @@ export function GrokBubble({
       .then((prefs) => {
         const labels = prefs.grok_pane_labels as Record<string, string> | undefined;
         if (!labels || !Object.keys(labels).length) return;
-        setPanes((current) =>
-          current.map((pane, index) => ({
-            ...pane,
-            displayName: labels[pane.id]?.trim() || pane.displayName || defaultGrokPaneName(index),
-          })),
-        );
+        setPanes((current) => mergePreferenceLabels(current, labels));
       })
       .catch(() => {
         /* ignore */
       });
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    saveGrokPanes(panes);
+  }, [mounted, panes]);
 
   useEffect(() => {
     setMounted(true);
@@ -205,7 +211,7 @@ export function GrokBubble({
   const exitFullscreen = useCallback(() => {
     setPanes((current) => {
       const keep = current.find((pane) => pane.id === focusedPaneId) ?? current[0];
-      return keep ? [keep] : [createGrokPane()];
+      return keep ? [keep] : [createGrokPane(0)];
     });
     setFullscreen(false);
   }, [focusedPaneId]);
@@ -262,12 +268,13 @@ export function GrokBubble({
     setFullscreen(true);
   }
 
-  async function persistPaneLabel(paneId: string, name: string) {
+  async function persistPaneLabels(nextPanes: GrokPaneState[]) {
+    saveGrokPanes(nextPanes);
     try {
       const prefs = await api.getPreferences();
       const existing = (prefs.grok_pane_labels as Record<string, string> | undefined) || {};
       await api.updatePreferences({
-        grok_pane_labels: { ...existing, [paneId]: name },
+        grok_pane_labels: { ...existing, ...labelsFromPanes(nextPanes) },
       });
     } catch {
       /* ignore */
@@ -277,15 +284,18 @@ export function GrokBubble({
   function addPane() {
     if (locked || panes.length >= MAX_PANES) return;
     const next = createGrokPane(panes.length);
-    setPanes((current) => [...current, next]);
+    setPanes((current) => {
+      const result = [...current, next];
+      void persistPaneLabels(result);
+      return result;
+    });
     setFocusedPaneId(next.id);
-    void persistPaneLabel(next.id, next.displayName);
   }
 
   function removePane(id: string) {
     setPanes((current) => {
       const next = current.filter((pane) => pane.id !== id);
-      const result = next.length ? next : [createGrokPane()];
+      const result = next.length ? next : [createGrokPane(0)];
       setFocusedPaneId((focused) => (focused === id ? result[0]!.id : focused));
       return result;
     });
@@ -393,8 +403,12 @@ export function GrokBubble({
     setRenamingPaneId(null);
     setPaneRenameDraft("");
     if (!trimmed) return;
-    updatePane(paneId, (pane) => ({ ...pane, displayName: trimmed }));
-    await persistPaneLabel(paneId, trimmed);
+    let nextPanes: GrokPaneState[] = [];
+    setPanes((current) => {
+      nextPanes = current.map((pane) => (pane.id === paneId ? { ...pane, displayName: trimmed } : pane));
+      return nextPanes;
+    });
+    await persistPaneLabels(nextPanes);
   }
 
   function paneRenameProps(paneId: string) {

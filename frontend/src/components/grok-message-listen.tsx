@@ -16,6 +16,8 @@ import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import type { TtsWord } from "@/lib/types";
 
+type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
+
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   audio.playbackRate = rate;
   audio.defaultPlaybackRate = rate;
@@ -57,9 +59,11 @@ export function useGrokMessageListen({
   const loadedChunkRef = useRef<number | null>(null);
   const loadedVoiceRef = useRef<string | null>(null);
   const totalChunksRef = useRef(1);
+  const chunkCacheRef = useRef<Map<string, ChunkPayload>>(new Map());
   const voiceRef = useRef(voiceId);
   const speedRef = useRef(readStoredTtsSpeed());
   const stopRef = useRef<() => void>(() => {});
+  const playChunkRef = useRef<(index: number, voice: string) => Promise<void>>(async () => {});
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [speed, setSpeed] = useState(readStoredTtsSpeed);
 
@@ -138,6 +142,7 @@ export function useGrokMessageListen({
     countsRef.current = [];
     totalChunksRef.current = 1;
     scriptRef.current = "";
+    chunkCacheRef.current.clear();
   }, []);
 
   const stop = useCallback(() => {
@@ -191,17 +196,33 @@ export function useGrokMessageListen({
     return buildVisibleSpeechScript(root);
   }, [bodyRef]);
 
+  const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
+
   const loadChunk = useCallback(
     async (index: number, voice: string) => {
+      const cached = chunkCacheRef.current.get(chunkCacheKey(index, voice));
+      if (cached) return cached;
       const script = scriptRef.current;
       if (!script.trim()) {
         throw new Error("Nothing visible to read in this reply.");
       }
       const data = await api.messageSpeech(messageId, voice, index, script, true);
+      chunkCacheRef.current.set(chunkCacheKey(index, voice), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
       return data;
     },
-    [messageId],
+    [chunkCacheKey, messageId],
+  );
+
+  const prefetchChunk = useCallback(
+    (index: number, voice: string, total: number) => {
+      if (index >= total) return;
+      if (chunkCacheRef.current.has(chunkCacheKey(index, voice))) return;
+      void loadChunk(index, voice).catch(() => {
+        /* prefetch failure is non-fatal */
+      });
+    },
+    [chunkCacheKey, loadChunk],
   );
 
   const playChunk = useCallback(
@@ -216,7 +237,7 @@ export function useGrokMessageListen({
         audio.onended = () => {
           if (generation !== generationRef.current) return;
           if (index + 1 < total) {
-            void playChunk(index + 1, voice);
+            void playChunkRef.current(index + 1, voice);
           } else {
             stop();
           }
@@ -224,14 +245,13 @@ export function useGrokMessageListen({
       };
 
       const seekAndPlay = async (
-        words: TtsWord[],
-        wordOffset: number,
+        data: ChunkPayload,
         chunkIndex: number,
-        chunkWordCounts: number[],
       ) => {
-        wordsRef.current = words;
-        wordOffsetRef.current = wordOffset;
-        applyTimestampValidation(words, chunkIndex, chunkWordCounts);
+        wordsRef.current = data.words;
+        wordOffsetRef.current = data.wordOffset;
+        const counts = data.chunkWordCounts.length ? data.chunkWordCounts : countsRef.current;
+        applyTimestampValidation(data.words, chunkIndex, counts);
         applyPlaybackRate(audio, speedRef.current);
         audio.currentTime = 0;
         await audio.play();
@@ -247,9 +267,11 @@ export function useGrokMessageListen({
       const alreadyLoaded =
         loadedChunkRef.current === index && loadedVoiceRef.current === voice && Boolean(audio.src);
       if (alreadyLoaded && wordsRef.current.length) {
-        const counts = countsRef.current.length ? countsRef.current : [wordsRef.current.length || 1];
         attachEnded(totalChunksRef.current);
-        await seekAndPlay(wordsRef.current, wordOffsetRef.current, index, counts);
+        const cached = chunkCacheRef.current.get(chunkCacheKey(index, voice));
+        if (cached) {
+          await seekAndPlay(cached, index);
+        }
         return;
       }
 
@@ -265,21 +287,26 @@ export function useGrokMessageListen({
         audio.src = url;
         loadedChunkRef.current = index;
         loadedVoiceRef.current = voice;
-        const counts = data.chunkWordCounts.length ? data.chunkWordCounts : countsRef.current;
-        await seekAndPlay(data.words, data.wordOffset, index, counts);
-        if (index + 1 < data.chunks) {
-          void loadChunk(index + 1, voice).catch(() => {
-            /* prefetch failure is non-fatal */
-          });
-        }
+        await seekAndPlay(data, index);
+        prefetchChunk(index + 1, voice, data.chunks);
       } catch (error) {
         if (generation !== generationRef.current) return;
         stop();
         ttsFailureToast(error);
       }
     },
-    [applyTimestampValidation, loadChunk, startCueLoop, stop, syncCueFromAudio],
+    [
+      applyTimestampValidation,
+      chunkCacheKey,
+      loadChunk,
+      prefetchChunk,
+      startCueLoop,
+      stop,
+      syncCueFromAudio,
+    ],
   );
+
+  playChunkRef.current = playChunk;
 
   const beginPlayback = useCallback(async () => {
     const payload = visibleSpeech();
@@ -294,11 +321,6 @@ export function useGrokMessageListen({
     speedRef.current = rate;
     const voice = voiceRef.current || readStoredTtsVoice();
     await playChunk(0, voice);
-    if (payload.visibleWordCount) {
-      console.info("[tts-visible] grok reply", {
-        visibleWordCount: payload.visibleWordCount,
-      });
-    }
   }, [playChunk, resetLoaded, visibleSpeech]);
 
   const listen = useCallback(() => {
@@ -397,7 +419,7 @@ export function GrokListenBar({
       </Button>
       <select
         aria-label="Voice"
-        className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+        className="h-7 min-w-[5.5rem] rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
         value={voiceId ?? voiceOptions[0]!.voice_id}
         disabled={disabled || phase === "loading"}
         onChange={(event) => onVoiceChange?.(event.target.value)}
