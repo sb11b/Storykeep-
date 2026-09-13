@@ -224,6 +224,25 @@ def pending_user_turn(db: Session, conversation_id: UUID) -> GrokMessage | None:
             .order_by(GrokMessage.created_at.asc())
         ).all()
     )
-    if not rows or rows[-1].role != "user":
-        return None
-    return rows[-1]
+    for row in reversed(rows):
+        if row.role == "user":
+            return row
+    return None
+
+
+def trim_trailing_assistants(db: Session, conversation_id: UUID) -> None:
+    rows = list(
+        db.scalars(
+            select(GrokMessage)
+            .where(GrokMessage.conversation_id == conversation_id)
+            .order_by(GrokMessage.created_at.asc())
+        ).all()
+    )
+    changed = False
+    for row in reversed(rows):
+        if row.role != "assistant":
+            break
+        db.delete(row)
+        changed = True
+    if changed:
+        db.flush()

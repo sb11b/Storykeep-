@@ -313,7 +313,7 @@ export function GrokPane({
     }
     const latest = [...pane.messages]
       .reverse()
-      .find((item) => item.role === "assistant" && item.content && !item.failed);
+      .find((item) => item.role === "assistant" && item.content);
     if (!latest) {
       toast.error("Send a message first — there is no reply to read yet.");
       return;
@@ -420,8 +420,8 @@ export function GrokPane({
                         ...item,
                         waiting: false,
                         id: meta.assistant_message_id!,
-                        failed: false,
-                        error: null,
+                        failed: meta.partial ? item.failed : false,
+                        error: meta.partial ? item.error : null,
                       }
                     : item,
                 ),
@@ -455,7 +455,14 @@ export function GrokPane({
         ...current,
         messages: current.messages.map((item) =>
           item.id === assistantId
-            ? { ...item, waiting: false, failed: true, error: formatted, content: item.content }
+            ? {
+                ...item,
+                waiting: false,
+                failed: true,
+                error: formatted,
+                // Keep any tokens that already landed; never replace with only "Chat failed".
+                content: item.content,
+              }
             : item,
         ),
       }));
@@ -553,6 +560,10 @@ export function GrokPane({
 
   async function retryAssistant(assistantId: string) {
     if (busy || !enabled) return;
+    if (!pane.conversationId) {
+      toast.error("That thread is not ready to retry yet.");
+      return;
+    }
     const messages = pane.messages;
     const assistantIndex = messages.findIndex((item) => item.id === assistantId);
     if (assistantIndex < 1) return;
@@ -568,7 +579,7 @@ export function GrokPane({
     }));
     await runStream({
       message: userLine.content,
-      retry: Boolean(pane.conversationId),
+      retry: true,
       userLine,
       assistantId,
     });
@@ -684,9 +695,7 @@ export function GrokPane({
 
   const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
   const voiceOptions = ttsVoices.length ? ttsVoices : [{ voice_id: "eve", name: "Eve" }];
-  const hasReadableReply = pane.messages.some(
-    (item) => item.role === "assistant" && Boolean(item.content) && !item.failed,
-  );
+  const hasReadableReply = pane.messages.some((item) => item.role === "assistant" && Boolean(item.content));
   const showStickyPlayer = ttsEnabled && !locked && (listen.isActive || hasReadableReply);
   const headerSelectClass =
     "h-7 max-w-[7rem] rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";

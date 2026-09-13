@@ -121,7 +121,7 @@ export function GrokChatMessage({
           Retry
         </Button>
       ) : null}
-      {content && !failed && role === "assistant" ? (
+      {content && role === "assistant" ? (
         <div className="mt-2 flex flex-wrap items-center gap-1">
           <Button
             size="xs"

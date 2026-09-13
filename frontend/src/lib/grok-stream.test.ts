@@ -47,6 +47,29 @@ test("readGrokChatStream delivers deltas", async () => {
   assert.deepEqual(parts, ["Hel", "lo"]);
 });
 
+test("readGrokChatStream first-byte timeout is xAI silent", async () => {
+  const hanging = new ReadableStream<Uint8Array>({
+    start() {
+      /* never enqueue */
+    },
+  });
+  await assert.rejects(
+    () =>
+      readGrokChatStream(
+        new Response(hanging),
+        { onDelta: () => {} },
+        undefined,
+        { firstByteMs: 80, idleAfterMs: 5000 },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 504);
+      assert.match(error.message, /xAI silent/);
+      return true;
+    },
+  );
+});
+
 test("readGrokChatStream idle timeout when stream sends nothing", async () => {
   const hanging = new ReadableStream<Uint8Array>({
     start() {
@@ -64,30 +87,86 @@ test("readGrokChatStream idle timeout when stream sends nothing", async () => {
     (error: unknown) => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.status, 504);
-      assert.match(error.message, /No response \(timeout\)/);
+      assert.match(error.message, /xAI silent/);
       return true;
     },
   );
 });
 
-test("readGrokChatStream hard timeout", async () => {
-  const hanging = new ReadableStream<Uint8Array>({
-    start() {
-      /* never enqueue */
+test("readGrokChatStream does not hard-kill after tokens start", async () => {
+  const encoder = new TextEncoder();
+  let step = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (step === 0) {
+        controller.enqueue(encoder.encode('data: {"delta":"Hel"}\n\n'));
+        step = 1;
+        return;
+      }
+      if (step === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        controller.enqueue(encoder.encode('data: {"delta":"lo"}\n\n data: [DONE]\n\n'));
+        step = 2;
+        return;
+      }
+      controller.close();
     },
   });
+  const parts: string[] = [];
+  await readGrokChatStream(new Response(stream), { onDelta: (text) => parts.push(text) }, undefined, {
+    firstByteMs: 50,
+    hardMs: 80,
+    idleAfterMs: 1000,
+  });
+  assert.deepEqual(parts, ["Hel", "lo"]);
+});
+
+test("readGrokChatStream keeps tokens when a partial 504 arrives", async () => {
+  const parts: string[] = [];
   await assert.rejects(
     () =>
       readGrokChatStream(
-        new Response(hanging),
-        { onDelta: () => {} },
-        undefined,
-        { idleMs: 5000, hardMs: 80 },
+        sseResponse([
+          'data: {"delta":"Partial "}\n\n',
+          'data: {"delta":"answer"}\n\n',
+          'data: {"error":"Chat failed (HTTP 504): Chat timed out after 45s.","status":504,"partial":true,"message":"Chat timed out after 45s."}\n\n',
+        ]),
+        { onDelta: (text) => parts.push(text) },
       ),
     (error: unknown) => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.status, 504);
-      assert.match(error.message, /timed out after 45s/);
+      assert.equal(error.partial, true);
+      assert.match(error.message, /504/);
+      return true;
+    },
+  );
+  assert.deepEqual(parts, ["Partial ", "answer"]);
+});
+
+test("heartbeat does not count as the first token", async () => {
+  const hangingChunks = [
+    'data: {"heartbeat":true}\n\n',
+  ];
+  const encoder = new TextEncoder();
+  let index = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index < hangingChunks.length) {
+        controller.enqueue(encoder.encode(hangingChunks[index++]));
+        return;
+      }
+    },
+  });
+  await assert.rejects(
+    () =>
+      readGrokChatStream(new Response(stream), { onDelta: () => {} }, undefined, {
+        firstByteMs: 80,
+        idleAfterMs: 5000,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.match(error.message, /xAI silent/);
       return true;
     },
   );

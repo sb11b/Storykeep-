@@ -8,6 +8,10 @@ from fastapi import HTTPException
 
 from app.services.chat import (
     MODEL_AUTO,
+    CHAT_FIRST_BYTE_TIMEOUT_SEC,
+    XAI_SILENT_DETAIL,
+    ARTICLE_CHAR_CAP,
+    XAI_CONTEXT_MESSAGES,
     build_xai_messages,
     chat_error_message,
     default_fast_model,
@@ -124,6 +128,17 @@ class GrokConversationTests(unittest.TestCase):
     def test_stream_error_event_includes_message(self):
         event = stream_error_event(504, "Grok timed out after 45s.")
         self.assertEqual(event["message"], "Grok timed out after 45s.")
+
+    def test_first_byte_timeout_is_eight_seconds_xai_silent(self):
+        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 8.0)
+        self.assertEqual(XAI_SILENT_DETAIL, "xAI silent")
+        event = stream_error_event(504, XAI_SILENT_DETAIL)
+        self.assertEqual(event["message"], "xAI silent")
+        self.assertIn("xAI silent", event["error"])
+
+    def test_context_caps(self):
+        self.assertEqual(XAI_CONTEXT_MESSAGES, 12)
+        self.assertEqual(ARTICLE_CHAR_CAP, 8_000)
 
 
 if __name__ == "__main__":

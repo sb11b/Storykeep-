@@ -63,9 +63,11 @@ async function uploadNoteMedia(file: File): Promise<NoteMediaUpload> {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  partial?: boolean;
+  constructor(status: number, message: string, extra?: { partial?: boolean }) {
     super(message);
     this.status = status;
+    this.partial = extra?.partial;
   }
 }
 

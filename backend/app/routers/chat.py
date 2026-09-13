@@ -208,6 +208,7 @@ def chat(
             pending = grok_store.pending_user_turn(db, conversation_id)
             if not pending:
                 raise HTTPException(status_code=400, detail="Nothing to retry on this thread.")
+            grok_store.trim_trailing_assistants(db, conversation_id)
             user_text = pending.content.strip()
             user_message_id = pending.id
             current_files = [
@@ -290,9 +291,9 @@ def chat(
     if history:
         current_files = history[-1].get("files") or current_files
     route_text = chat_attachments.merge_attachment_text(user_text, current_files, include_extracts=True)
-    history_for_route = [
-        {"role": item.get("role"), "content": item.get("content") or ""} for item in history
-    ]
+    history_for_route = chat_service.drop_trailing_assistants(
+        [{"role": item.get("role"), "content": item.get("content") or ""} for item in history]
+    )
     history_window = chat_service.thread_window(history_for_route)
     resolved_model = chat_service.resolve_model_for_request(
         model_choice,
@@ -309,6 +310,35 @@ def chat(
         article = _owned_article(db, user, payload.article_id)
         excerpt = chat_service.article_excerpt(article)
     has_attachments = any(item.get("files") for item in history)
+
+    def _persist_assistant(text: str) -> str | None:
+        cleaned = (text or "").strip()
+        if not persist or not conversation_id or not cleaned:
+            return None
+        try:
+            with SessionLocal() as stream_db:
+                conversation = grok_store.owned_conversation_for_user(stream_db, user_id, conversation_id)
+                assistant_row = grok_store.append_message(
+                    stream_db,
+                    conversation,
+                    role="assistant",
+                    content=cleaned,
+                )
+                grok_store.patch_conversation_for_user(
+                    stream_db,
+                    user_id,
+                    conversation_id,
+                    last_model=resolved_model,
+                )
+                stream_db.commit()
+                return str(assistant_row.id)
+        except Exception:
+            logger.exception(
+                "Failed to persist assistant reply user=%s conversation=%s",
+                user_id,
+                conversation_id,
+            )
+            return None
 
     def events():
         assistant_parts: list[str] = []
@@ -330,6 +360,8 @@ def chat(
                     )
                     + "\n\n"
                 )
+            # Padding comment so proxies flush before the first token.
+            yield ": " + (" " * 2048) + "\n\n"
             for piece in chat_service.stream_completion(
                 history_for_xai,
                 excerpt,
@@ -344,65 +376,83 @@ def chat(
                 yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"
             if persist and conversation_id:
                 assistant_text = "".join(assistant_parts).strip() or "No reply came back."
-                with SessionLocal() as stream_db:
-                    conversation = grok_store.owned_conversation_for_user(stream_db, user_id, conversation_id)
-                    assistant_row = grok_store.append_message(
-                        stream_db,
-                        conversation,
-                        role="assistant",
-                        content=assistant_text,
+                assistant_message_id = _persist_assistant(assistant_text)
+                if assistant_message_id:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": assistant_message_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
                     )
-                    grok_store.patch_conversation_for_user(
-                        stream_db,
-                        user_id,
-                        conversation_id,
-                        last_model=resolved_model,
-                    )
-                    stream_db.commit()
-                    assistant_message_id = str(assistant_row.id)
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "conversation_id": str(conversation_id),
-                            "assistant_message_id": assistant_message_id,
-                            "model": resolved_model,
-                            "model_choice": model_choice,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n\n"
-                )
             yield "data: [DONE]\n\n"
         except HTTPException as exc:
             status_code, detail = chat_service.http_exception_detail(exc)
+            partial_text = "".join(assistant_parts)
             logger.warning(
                 "Chat stream failed user=%s conversation=%s status=%s detail=%s partial_chars=%s",
                 user_id,
                 conversation_id,
                 status_code,
                 detail,
-                sum(len(part) for part in assistant_parts),
+                len(partial_text),
             )
+            saved_id = _persist_assistant(partial_text) if persist else None
+            if saved_id and conversation_id:
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "conversation_id": str(conversation_id),
+                            "assistant_message_id": saved_id,
+                            "model": resolved_model,
+                            "model_choice": model_choice,
+                            "partial": True,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
             yield (
                 "data: "
                 + json.dumps(
-                    chat_service.stream_error_event(status_code, detail, partial=bool(assistant_parts)),
+                    chat_service.stream_error_event(status_code, detail, partial=bool(partial_text)),
                     ensure_ascii=False,
                 )
                 + "\n\n"
             )
         except Exception as exc:
+            partial_text = "".join(assistant_parts)
             logger.exception(
                 "Chat stream unexpected error user=%s conversation=%s partial_chars=%s",
                 user_id,
                 conversation_id,
-                sum(len(part) for part in assistant_parts),
+                len(partial_text),
             )
+            saved_id = _persist_assistant(partial_text) if persist else None
+            if saved_id and conversation_id:
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "conversation_id": str(conversation_id),
+                            "assistant_message_id": saved_id,
+                            "partial": True,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
             yield (
                 "data: "
                 + json.dumps(
-                    chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(assistant_parts)),
+                    chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(partial_text)),
                     ensure_ascii=False,
                 )
                 + "\n\n"
@@ -411,5 +461,5 @@ def chat(
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )

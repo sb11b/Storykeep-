@@ -1,8 +1,14 @@
 import { ApiError } from "@/lib/api";
 import { formatChatError } from "@/lib/grok-chat-error";
 
-export const GROK_STREAM_IDLE_MS = 22_000;
-export const GROK_STREAM_HARD_MS = 45_000;
+/** Client slack over the server's 8s first-byte cut so "xAI silent" can arrive. */
+export const GROK_STREAM_FIRST_BYTE_MS = 12_000;
+/** After tokens started, abort only if the stream goes idle this long. */
+export const GROK_STREAM_IDLE_AFTER_MS = 60_000;
+/** @deprecated first-byte window; kept so older tests still compile. */
+export const GROK_STREAM_IDLE_MS = GROK_STREAM_FIRST_BYTE_MS;
+/** @deprecated do not hard-kill a stream that is still producing tokens. */
+export const GROK_STREAM_HARD_MS = 120_000;
 
 export type GrokStreamMeta = {
   conversation_id?: string;
@@ -10,6 +16,7 @@ export type GrokStreamMeta = {
   assistant_message_id?: string;
   model?: string;
   model_choice?: string;
+  partial?: boolean;
 };
 
 export type GrokStreamHandlers = {
@@ -41,25 +48,22 @@ function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta:
   if (parsed.error) {
     const status = typeof parsed.status === "number" ? parsed.status : 502;
     const detail =
-      (typeof (parsed as { message?: string }).message === "string"
-        ? (parsed as { message?: string }).message
-        : undefined) ||
-      parsed.detail ||
-      parsed.error;
-    throw new ApiError(status, parsed.error || formatChatError(status, detail));
+      (typeof parsed.message === "string" ? parsed.message : undefined) || parsed.detail || parsed.error;
+    throw new ApiError(status, parsed.error || formatChatError(status, detail), {
+      partial: Boolean(parsed.partial),
+    });
   }
   if (parsed.delta) {
     receivedDelta.value = true;
     handlers.onDelta(parsed.delta);
-  } else if (parsed.heartbeat) {
-    receivedDelta.value = true;
   }
   if (
     parsed.conversation_id ||
     parsed.user_message_id ||
     parsed.assistant_message_id ||
     parsed.model ||
-    parsed.model_choice
+    parsed.model_choice ||
+    parsed.partial
   ) {
     handlers.onMeta?.({
       conversation_id: parsed.conversation_id,
@@ -67,13 +71,18 @@ function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta:
       assistant_message_id: parsed.assistant_message_id,
       model: parsed.model,
       model_choice: parsed.model_choice,
+      partial: parsed.partial,
     });
   }
   return "continue" as const;
 }
 
 export type GrokStreamTimeoutOptions = {
+  firstByteMs?: number;
+  idleAfterMs?: number;
+  /** Alias for firstByteMs (no tokens yet). */
   idleMs?: number;
+  /** Only used before the first token; never cuts a stream that already has words. */
   hardMs?: number;
 };
 
@@ -85,23 +94,30 @@ export async function readGrokChatStream(
 ): Promise<void> {
   if (!response.body) throw new ApiError(502, formatChatError(502, "Chat stream was empty"));
 
-  const idleMs = timeouts?.idleMs ?? GROK_STREAM_IDLE_MS;
-  const hardMs = timeouts?.hardMs ?? GROK_STREAM_HARD_MS;
+  const firstByteMs = timeouts?.firstByteMs ?? timeouts?.idleMs ?? GROK_STREAM_FIRST_BYTE_MS;
+  const idleAfterMs = timeouts?.idleAfterMs ?? GROK_STREAM_IDLE_AFTER_MS;
+  const preTokenHardMs = timeouts?.hardMs;
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   const receivedDelta = { value: false };
   const startedAt = Date.now();
-  let streamOpenedAt = Date.now();
+  let lastActivityAt = Date.now();
 
   const throwIfTimedOut = () => {
     const now = Date.now();
-    if (now - startedAt >= hardMs) {
-      throw new ApiError(504, formatChatError(504, "Chat timed out after 45s."));
+    if (!receivedDelta.value) {
+      const budget = preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs;
+      if (now - startedAt >= budget) {
+        throw new ApiError(504, formatChatError(504, "xAI silent"));
+      }
+      return;
     }
-    if (!receivedDelta.value && now - streamOpenedAt >= idleMs) {
-      throw new ApiError(504, formatChatError(504, "No response (timeout)"));
+    if (now - lastActivityAt >= idleAfterMs) {
+      throw new ApiError(504, formatChatError(504, `Chat timed out after ${Math.round(idleAfterMs / 1000)}s.`), {
+        partial: true,
+      });
     }
   };
 
@@ -109,11 +125,11 @@ export async function readGrokChatStream(
     while (true) {
       throwIfTimedOut();
       if (signal?.aborted) throw new DOMException("Chat aborted", "AbortError");
-      const remainingHard = hardMs - (Date.now() - startedAt);
-      const remainingIdle = receivedDelta.value
-        ? remainingHard
-        : idleMs - (Date.now() - streamOpenedAt);
-      const waitMs = Math.max(250, Math.min(remainingHard, remainingIdle, 2000));
+      const now = Date.now();
+      const remaining = receivedDelta.value
+        ? idleAfterMs - (now - lastActivityAt)
+        : (preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs) - (now - startedAt);
+      const waitMs = Math.max(250, Math.min(remaining, 2000));
       const result = await Promise.race([
         reader.read(),
         new Promise<{ value: undefined; done: false; timedOut: true }>((resolve) =>
@@ -128,11 +144,11 @@ export async function readGrokChatStream(
     }
   };
 
-  streamOpenedAt = Date.now();
   try {
     while (true) {
       const { value, done } = await waitForChunk();
       if (done) break;
+      lastActivityAt = Date.now();
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split("\n\n");
       buffer = parts.pop() || "";
@@ -140,9 +156,10 @@ export async function readGrokChatStream(
         if (!part.trim()) continue;
         try {
           const outcome = parseSsePart(part, handlers, receivedDelta);
+          if (receivedDelta.value) lastActivityAt = Date.now();
           if (outcome === "done") {
             if (!receivedDelta.value) {
-              throw new ApiError(504, formatChatError(504, "No response (timeout)"));
+              throw new ApiError(504, formatChatError(504, "xAI silent"));
             }
             return;
           }
@@ -152,7 +169,7 @@ export async function readGrokChatStream(
       }
     }
     if (!receivedDelta.value) {
-      throw new ApiError(504, formatChatError(504, "No response (timeout)"));
+      throw new ApiError(504, formatChatError(504, "xAI silent"));
     }
   } finally {
     try {

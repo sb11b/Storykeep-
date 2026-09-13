@@ -28,7 +28,7 @@ class ChatGuardTests(unittest.TestCase):
 
         article = SimpleNamespace(title="Long", content_text="word " * 8000, content_html=None, summary=None)
         excerpt = article_excerpt(article)
-        self.assertLessEqual(len(excerpt), 12_000 + 80)
+        self.assertLessEqual(len(excerpt), 8_000 + 80)
         self.assertIn("Title: Long", excerpt)
         self.assertTrue(excerpt.endswith("…"))
 
@@ -58,6 +58,36 @@ class ChatGuardTests(unittest.TestCase):
         windowed = thread_window(history, limit=6)
         self.assertEqual(len(windowed), 6)
         self.assertEqual(windowed[-1]["content"], "line 19")
+
+    def test_thread_window_default_is_twelve(self):
+        history = [{"role": "user", "content": f"line {index}"} for index in range(20)]
+        windowed = thread_window(history)
+        self.assertEqual(len(windowed), 12)
+        self.assertEqual(windowed[0]["content"], "line 8")
+
+    def test_drop_trailing_assistants_ends_on_user(self):
+        from app.services.chat import drop_trailing_assistants
+
+        history = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "partial"},
+        ]
+        cleaned = drop_trailing_assistants(history)
+        self.assertEqual(cleaned[-1]["role"], "user")
+        self.assertEqual(cleaned[-1]["content"], "hello")
+
+    def test_messages_for_xai_drops_partial_assistant(self):
+        from app.services.chat import messages_for_xai
+
+        prepared = messages_for_xai(
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "partial"},
+            ],
+            model="grok-4",
+        )
+        self.assertEqual(prepared[-1]["role"], "user")
+        self.assertEqual(prepared[-1]["content"], "hello")
 
     def test_rate_limit_caps_hourly_requests(self):
         from app.config import settings
