@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { showTtsErrorToast } from "@/lib/tts-error-toast";
 import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
 import {
@@ -16,6 +16,9 @@ import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
+
+/** Preparing is allowed to take a moment, never minutes. */
+const PREPARE_TIMEOUT_MS = 15_000;
 
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   audio.playbackRate = rate;
@@ -59,8 +62,23 @@ export function useGrokMessageListen({
   const speedRef = useRef(readStoredTtsSpeed());
   const stopRef = useRef<() => void>(() => {});
   const playChunkRef = useRef<(index: number, voice: string) => Promise<void>>(async () => {});
+  const inflightRef = useRef<AbortController | null>(null);
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [speed, setSpeed] = useState(readStoredTtsSpeed);
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current != null) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
+
+  /** One in-flight request per pane; a second Listen replaces the first. */
+  const abortInflight = useCallback(() => {
+    inflightRef.current?.abort();
+    inflightRef.current = null;
+  }, []);
 
   useEffect(() => {
     voiceRef.current = voiceId;
@@ -142,6 +160,8 @@ export function useGrokMessageListen({
 
   const stop = useCallback(() => {
     generationRef.current += 1;
+    clearWatchdog();
+    abortInflight();
     stopCueLoop();
     lastCueRef.current = null;
     emitCue(null);
@@ -162,9 +182,38 @@ export function useGrokMessageListen({
     resetLoaded();
     setPhase("idle");
     onPlayingChange?.(false);
-  }, [emitCue, markTimestampsUnavailable, onPlayingChange, resetLoaded, stopCueLoop]);
+  }, [
+    abortInflight,
+    clearWatchdog,
+    emitCue,
+    markTimestampsUnavailable,
+    onPlayingChange,
+    resetLoaded,
+    stopCueLoop,
+  ]);
 
   stopRef.current = stop;
+
+  /**
+   * Preparing must always end. If no audio is playing by the deadline, drop the
+   * spinner and say why, once — never re-request in a loop.
+   */
+  const armWatchdog = useCallback(() => {
+    clearWatchdog();
+    watchdogRef.current = setTimeout(() => {
+      watchdogRef.current = null;
+      const audio = audioRef.current;
+      if (audio && !audio.paused) return;
+      console.log("larry-tts", { stage: "timeout", ms: PREPARE_TIMEOUT_MS });
+      stopRef.current();
+      showTtsErrorToast(
+        new ApiError(
+          408,
+          `TTS timed out after ${PREPARE_TIMEOUT_MS / 1000}s (HTTP … or no body).`,
+        ),
+      );
+    }, PREPARE_TIMEOUT_MS);
+  }, [clearWatchdog]);
 
   useEffect(() => {
     const audio = new Audio();
@@ -172,6 +221,8 @@ export function useGrokMessageListen({
     audioRef.current = audio;
     return () => {
       generationRef.current += 1;
+      clearWatchdog();
+      abortInflight();
       stopCueLoop();
       audio.onended = null;
       audio.pause();
@@ -179,7 +230,7 @@ export function useGrokMessageListen({
       releaseTtsPlayback(stopRef.current);
       audioRef.current = null;
     };
-  }, [messageId, stopCueLoop]);
+  }, [abortInflight, clearWatchdog, messageId, stopCueLoop]);
 
   useEffect(() => {
     onPlayingChange?.(phase === "playing" || phase === "paused" || phase === "loading");
@@ -188,7 +239,7 @@ export function useGrokMessageListen({
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
   const loadChunk = useCallback(
-    async (index: number, voice: string) => {
+    async (index: number, voice: string, track = true) => {
       const cached = chunkCacheRef.current.get(chunkCacheKey(index, voice));
       if (cached) return cached;
       // A cleared script is a bug on our side, not an empty reply: read it again.
@@ -197,20 +248,33 @@ export function useGrokMessageListen({
         throw new Error("That reply is still empty — nothing to read yet.");
       }
       scriptRef.current = script;
+      const controller = new AbortController();
+      if (track) {
+        abortInflight();
+        inflightRef.current = controller;
+      }
       console.log("larry-tts", { stage: "POST /tts", chars: script.length, chunk: index });
-      const data = await api.messageSpeech(messageId, voice, index, script, true);
-      chunkCacheRef.current.set(chunkCacheKey(index, voice), data);
-      if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
-      return data;
+      try {
+        const data = await api.messageSpeech(messageId, voice, index, script, true, {
+          signal: controller.signal,
+          timeoutMs: PREPARE_TIMEOUT_MS,
+        });
+        chunkCacheRef.current.set(chunkCacheKey(index, voice), data);
+        if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
+        return data;
+      } finally {
+        if (inflightRef.current === controller) inflightRef.current = null;
+      }
     },
-    [chunkCacheKey, messageId, resolveScript],
+    [abortInflight, chunkCacheKey, messageId, resolveScript],
   );
 
   const prefetchChunk = useCallback(
     (index: number, voice: string, total: number) => {
       if (index >= total) return;
       if (chunkCacheRef.current.has(chunkCacheKey(index, voice))) return;
-      void loadChunk(index, voice).catch(() => {
+      // Untracked: a prefetch must never abort the chunk that is playing.
+      void loadChunk(index, voice, false).catch(() => {
         /* prefetch failure is non-fatal */
       });
     },
@@ -248,6 +312,7 @@ export function useGrokMessageListen({
         audio.currentTime = 0;
         await audio.play();
         applyPlaybackRate(audio, speedRef.current);
+        clearWatchdog();
         if (generation !== generationRef.current) return;
         setPhase("playing");
         if (timestampsValidRef.current) {
@@ -268,6 +333,7 @@ export function useGrokMessageListen({
       }
 
       setPhase("loading");
+      armWatchdog();
       try {
         const data = await loadChunk(index, voice);
         if (generation !== generationRef.current) return;
@@ -289,7 +355,9 @@ export function useGrokMessageListen({
     },
     [
       applyTimestampValidation,
+      armWatchdog,
       chunkCacheKey,
+      clearWatchdog,
       loadChunk,
       prefetchChunk,
       startCueLoop,
@@ -387,7 +455,8 @@ export function GrokListenBar({
   const listenLabel = phase === "paused" ? "Resume" : "Listen";
   const listenDisabled = disabled || phase === "loading" || phase === "playing";
   const pauseDisabled = phase !== "playing";
-  const stopDisabled = phase === "idle" || phase === "loading";
+  // Stop stays live while Preparing so a slow request can be cancelled.
+  const stopDisabled = phase === "idle";
 
   const voiceOptions = voices?.length ? voices : [{ voice_id: "eve", name: "Eve" }];
 

@@ -551,7 +551,14 @@ export const api = {
     request<{ ok: boolean }>(`/api/v1/articles/${id}/tts/release?voice_id=${encodeURIComponent(voiceId)}`, {
       method: "POST",
     }),
-  messageSpeech: async (messageId: string, voiceId: string, chunk: number, visibleText: string, confirm = false) => {
+  messageSpeech: async (
+    messageId: string,
+    voiceId: string,
+    chunk: number,
+    visibleText: string,
+    confirm = false,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ) => {
     const search = new URLSearchParams({ chunk: String(chunk) });
     if (confirm) search.set("confirm", "true");
     return fetchSpeechChunk(
@@ -566,6 +573,7 @@ export const api = {
         }),
       },
       "chat",
+      { signal: opts?.signal, timeoutMs: opts?.timeoutMs, chars: visibleText.length },
     );
   },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),

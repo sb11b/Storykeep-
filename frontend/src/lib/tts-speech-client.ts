@@ -45,35 +45,85 @@ function logTtsFailure(label: string, status: number, body: unknown) {
   console.error(`[tts] ${label} failed`, { status, body });
 }
 
+export type SpeechChunkOptions = {
+  /** Caller abort, e.g. the user pressed Stop. */
+  signal?: AbortSignal;
+  /** Give up rather than spin forever. */
+  timeoutMs?: number;
+  /** Script length, for the log line. */
+  chars?: number;
+};
+
 /** Shared fetch for article visible-speech and chat reply TTS chunk requests. */
 export async function fetchSpeechChunk(
   url: string,
   init: RequestInit,
   logLabel: "article" | "chat",
+  options: SpeechChunkOptions = {},
 ): Promise<SpeechChunkPayload> {
-  const response = await fetch(url, {
-    ...init,
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    let detail: string | null = null;
-    let loggedBody: unknown = null;
-    try {
-      const raw = await response.json();
-      loggedBody = raw;
-      detail = parseErrorPayload(raw);
-    } catch {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  let timedOut = false;
+  const timer = options.timeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, options.timeoutMs)
+    : null;
+  let status = 0;
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      credentials: "include",
+      cache: "no-store",
+    });
+    status = response.status;
+    if (!response.ok) {
+      let detail: string | null = null;
+      let loggedBody: unknown = null;
       try {
-        const text = (await response.text()).slice(0, 240);
-        loggedBody = text;
+        const raw = await response.json();
+        loggedBody = raw;
+        detail = parseErrorPayload(raw);
       } catch {
-        loggedBody = null;
+        try {
+          const text = (await response.text()).slice(0, 240);
+          loggedBody = text;
+        } catch {
+          loggedBody = null;
+        }
       }
+      logTtsFailure(logLabel, status, loggedBody);
+      throw new ApiError(status, detail || httpErrorFallback(status));
     }
-    logTtsFailure(logLabel, response.status, loggedBody);
-    throw new ApiError(response.status, detail || httpErrorFallback(response.status));
+    const data = (await response.json()) as SpeechChunkJson;
+    const payload = parseSpeechChunkJson(data);
+    if (!payload.blob.size) {
+      throw new ApiError(status, `TTS returned no audio (HTTP ${status} with an empty body).`);
+    }
+    return payload;
+  } catch (error) {
+    if (timedOut) {
+      const seconds = Math.round((options.timeoutMs ?? 0) / 1000);
+      throw new ApiError(
+        status || 408,
+        `TTS timed out after ${seconds}s (HTTP ${status || "…"} or no body).`,
+      );
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abortFromCaller);
+    console.log("larry-tts", {
+      stage: `${logLabel} /tts`,
+      chars: options.chars ?? null,
+      ttsStatus: timedOut ? "timeout" : status || "network",
+      ms: Date.now() - startedAt,
+    });
   }
-  const data = (await response.json()) as SpeechChunkJson;
-  return parseSpeechChunkJson(data);
 }
