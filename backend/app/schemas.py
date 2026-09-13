@@ -35,6 +35,7 @@ class ProfileOut(BaseModel):
     display_name: str | None
     avatar_url: str | None = None
     birthdate: date | None = None
+    preferences: dict[str, Any] = Field(default_factory=dict)
     profile_read_only: bool = False
     totp_enabled: bool = False
     email_otp_enabled: bool = False
@@ -551,6 +552,13 @@ class AppearancePreferencesIn(BaseModel):
     topbar_custom: str | None = None
     font_family: str | None = None
     base_font_size: str | None = None
+
+
+class MePatchIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    birthdate: date | None = None
+    avatar_media_id: uuid.UUID | None = None
+    appearance: AppearancePreferencesIn | None = None
 
 
 class PreferencesIn(BaseModel):

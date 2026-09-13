@@ -167,6 +167,11 @@ app.add_middleware(
 
 API = "/api/v1"
 app.include_router(auth.router, prefix=API)
+from app.routers.auth import get_me, patch_me  # noqa: E402
+from app.schemas import ProfileOut  # noqa: E402
+
+app.add_api_route(f"{API}/me", get_me, methods=["GET"], tags=["auth"], response_model=ProfileOut)
+app.add_api_route(f"{API}/me", patch_me, methods=["PATCH"], tags=["auth"], response_model=ProfileOut)
 app.include_router(feeds.router, prefix=API)
 app.include_router(articles.router, prefix=API)
 app.include_router(overlay.router, prefix=API)

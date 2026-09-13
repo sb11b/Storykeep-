@@ -14,6 +14,7 @@ import {
   type AppearanceSettings,
 } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import type { Profile } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,7 +25,7 @@ type ProfileAppearancePanelProps = {
   appearance: AppearanceSettings;
   readOnly: boolean;
   onChange: (next: AppearanceSettings) => void;
-  onSaved: (preferences: Record<string, unknown>) => void;
+  onSaved: (profile: Profile) => void;
 };
 
 function PresetRow({
@@ -76,9 +77,9 @@ function PresetRow({
 export function ProfileAppearancePanel({ appearance, readOnly, onChange, onSaved }: ProfileAppearancePanelProps) {
   async function saveAppearance() {
     try {
-      const preferences = await api.updatePreferences({ appearance });
+      const updated = await api.updateMe({ appearance });
       applyAppearance(appearance);
-      onSaved(preferences);
+      onSaved(updated);
       toast.success("Appearance saved");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save appearance");

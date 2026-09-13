@@ -96,7 +96,7 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
     setUploadingPhoto(true);
     try {
       const uploaded = await api.uploadNoteMedia(file);
-      const updated = await api.updateProfile({ avatar_media_id: uploaded.id });
+      const updated = await api.updateMe({ avatar_media_id: uploaded.id });
       setProfile(updated);
       onUpdated?.(updated);
       toast.success("Profile photo updated");
@@ -290,13 +290,10 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
             appearance={appearance}
             readOnly={readOnly}
             onChange={setAppearance}
-            onSaved={(preferences) => {
-              setProfile((current) => {
-                if (!current) return current;
-                const next = { ...current, preferences };
-                onUpdated?.(next);
-                return next;
-              });
+            onSaved={(updated) => {
+              setProfile(updated);
+              setAppearance(appearanceFromPreferences(updated.preferences));
+              onUpdated?.(updated);
             }}
           />
         ) : null}

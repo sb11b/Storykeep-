@@ -5,7 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { LibraryApp } from "@/components/library-app";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
-import type { User } from "@/lib/types";
+import type { Profile, User } from "@/lib/types";
+import { mergeUserProfile } from "@/lib/user-profile";
 
 export default function HomePage() {
   const router = useRouter();
@@ -52,9 +53,13 @@ export default function HomePage() {
   return (
     <LibraryApp
       user={user}
-      onUserChange={(next) => {
-        applyAppearanceFromUser(next);
-        setUser(next);
+      onUserChange={(patch) => {
+        setUser((current) => {
+          if (!current) return patch as User;
+          const next = mergeUserProfile(current, patch as Profile);
+          applyAppearanceFromUser(next);
+          return next;
+        });
       }}
     />
   );

@@ -91,8 +91,18 @@ export type HealthInfo = { status: string; build: string; built_at: string };
 
 export const api = {
   health: () => request<HealthInfo>("/health"),
-  me: () => request<Profile>("/api/v1/auth/me"),
+  me: () => request<Profile>("/api/v1/me"),
   profile: () => request<Profile>("/api/v1/auth/profile"),
+  updateMe: (payload: {
+    display_name?: string | null;
+    birthdate?: string | null;
+    avatar_media_id?: string | null;
+    appearance?: Record<string, unknown>;
+  }) =>
+    request<Profile>("/api/v1/me", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   updateProfile: (payload: {
     display_name?: string | null;
     birthdate?: string | null;

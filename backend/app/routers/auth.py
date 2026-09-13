@@ -19,6 +19,7 @@ from app.schemas import (
     ChangePasswordIn,
     LoginIn,
     LoginResponseOut,
+    MePatchIn,
     ProfileOut,
     ProfilePatchIn,
     RegisterIn,
@@ -38,7 +39,7 @@ from app.services.demo_lock import (
     user_requires_2fa,
 )
 from app.services.mailer import mailer_configured
-from app.services.user_profile import profile_out, set_avatar_media, user_out
+from app.services.user_profile import merge_appearance_preferences, profile_out, set_avatar_media, user_out
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -155,7 +156,37 @@ def logout(response: Response) -> dict[str, bool]:
 
 
 @router.get("/me", response_model=ProfileOut)
-def me(user: User = Depends(get_current_user)) -> ProfileOut:
+def get_me(user: User = Depends(get_current_user)) -> ProfileOut:
+    return profile_out(user)
+
+
+def _apply_me_patch(db: Session, user: User, payload: MePatchIn) -> None:
+    fields = payload.model_fields_set
+    if "display_name" in fields:
+        user.display_name = (payload.display_name or "").strip()[:120] or None
+    if "birthdate" in fields:
+        user.birthdate = payload.birthdate
+    if "avatar_media_id" in fields:
+        set_avatar_media(db, user, payload.avatar_media_id)
+    if "appearance" in fields and payload.appearance is not None:
+        user.preferences = merge_appearance_preferences(
+            user.preferences or {},
+            payload.appearance.model_dump(exclude_none=True),
+        )
+
+
+@router.patch("/me", response_model=ProfileOut)
+def patch_me(
+    payload: MePatchIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProfileOut:
+    reject_profile_mutation(user)
+    _apply_me_patch(db, user, payload)
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return profile_out(user)
 
 
@@ -171,13 +202,7 @@ def patch_profile(
     user: User = Depends(get_current_user),
 ) -> ProfileOut:
     reject_profile_mutation(user)
-    fields = payload.model_fields_set
-    if "display_name" in fields:
-        user.display_name = (payload.display_name or "").strip()[:120] or None
-    if "birthdate" in fields:
-        user.birthdate = payload.birthdate
-    if "avatar_media_id" in fields:
-        set_avatar_media(db, user, payload.avatar_media_id)
+    _apply_me_patch(db, user, MePatchIn(**payload.model_dump(exclude_unset=True)))
     user.updated_at = datetime.now(timezone.utc)
     db.add(user)
     db.commit()

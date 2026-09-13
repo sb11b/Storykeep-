@@ -46,7 +46,9 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { applyAppearanceFromUser } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import { mergeUserProfile } from "@/lib/user-profile";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   extractWikilinkTargets,
@@ -98,6 +100,7 @@ import type {
   ArticleListItem,
   Backup,
   Category,
+  Profile,
   Feed,
   RssShelf,
   Shelf,
@@ -204,8 +207,12 @@ function shelfKey(shelf: Shelf): string {
 
 const LIST_PAGE = 40;
 
-export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: (user: User) => void }) {
+export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: (patch: Profile) => void }) {
   const router = useRouter();
+
+  useEffect(() => {
+    applyAppearanceFromUser(user);
+  }, [user]);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [rssShelves, setRssShelves] = useState<RssShelf[]>([]);

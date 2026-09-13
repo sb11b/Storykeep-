@@ -40,12 +40,23 @@ def profile_out(user: User) -> ProfileOut:
         display_name=user.display_name,
         avatar_url=avatar_url_for(user),
         birthdate=user.birthdate,
+        preferences=user.preferences or {},
         profile_read_only=profile_is_read_only(user),
         totp_enabled=bool(user.totp_enabled),
         email_otp_enabled=bool(user.email_otp_enabled),
         email_otp_available=mailer_configured(),
         has_backup_codes=bool(user.backup_code_hashes),
     )
+
+
+def merge_appearance_preferences(preferences: dict, appearance: dict | None) -> dict:
+    current = dict(preferences or {})
+    if not appearance:
+        return current
+    merged = dict(current.get("appearance") or {})
+    merged.update({key: value for key, value in appearance.items() if value is not None})
+    current["appearance"] = merged
+    return current
 
 
 def set_avatar_media(db: Session, user: User, media_id: UUID | None) -> None:
