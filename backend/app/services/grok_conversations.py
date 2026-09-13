@@ -72,8 +72,9 @@ def create_conversation(
     *,
     pane: str | None = None,
     model: str = "auto",
+    reasoning: str = "auto",
 ) -> GrokConversation:
-    row = GrokConversation(user_id=user.id, title="New chat", pane=pane, model=model)
+    row = GrokConversation(user_id=user.id, title="New chat", pane=pane, model=model, reasoning=reasoning)
     db.add(row)
     db.flush()
     return row
@@ -128,9 +129,12 @@ def patch_conversation(
     title: str | None = None,
     model: str | None = None,
     last_model: str | None = None,
+    reasoning: str | None = None,
+    last_reasoning: str | None = None,
     recap_question: bool | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
+    reasoning_provided: bool = False,
     recap_provided: bool = False,
 ) -> GrokConversation:
     return patch_conversation_for_user(
@@ -140,9 +144,12 @@ def patch_conversation(
         title=title,
         model=model,
         last_model=last_model,
+        reasoning=reasoning,
+        last_reasoning=last_reasoning,
         recap_question=recap_question,
         title_provided=title_provided,
         model_provided=model_provided,
+        reasoning_provided=reasoning_provided,
         recap_provided=recap_provided,
     )
 
@@ -155,9 +162,12 @@ def patch_conversation_for_user(
     title: str | None = None,
     model: str | None = None,
     last_model: str | None = None,
+    reasoning: str | None = None,
+    last_reasoning: str | None = None,
     recap_question: bool | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
+    reasoning_provided: bool = False,
     recap_provided: bool = False,
 ) -> GrokConversation:
     row = owned_conversation_for_user(db, user_id, conversation_id)
@@ -166,10 +176,14 @@ def patch_conversation_for_user(
         row.title = resolve_patched_title(title or "", first_user)
     if model_provided and model is not None:
         row.model = model
+    if reasoning_provided and reasoning is not None:
+        row.reasoning = reasoning
     if recap_provided and recap_question is not None:
         row.recap_question = recap_question
     if last_model is not None:
         row.last_model = last_model
+    if last_reasoning is not None:
+        row.last_reasoning = last_reasoning
     row.updated_at = datetime.now(timezone.utc)
     db.add(row)
     db.flush()

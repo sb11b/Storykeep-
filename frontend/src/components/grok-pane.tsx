@@ -32,7 +32,7 @@ import {
 } from "@/lib/larry-attach";
 import { toastActionError } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
-import { grokModelLabel } from "@/lib/grok-model";
+import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -54,6 +54,8 @@ export type GrokPaneState = {
   conversationId: string | null;
   modelChoice: string;
   lastResolvedModel: string | null;
+  reasoningEffort: string;
+  lastResolvedReasoning: string | null;
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
@@ -75,6 +77,8 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     conversationId: null,
     modelChoice: "auto",
     lastResolvedModel: null,
+    reasoningEffort: "low",
+    lastResolvedReasoning: null,
     messages: [],
     draft: "",
     includeArticle: false,
@@ -430,6 +434,7 @@ export function GrokPane({
           retry,
           conversation_id: pane.conversationId,
           model: pane.modelChoice,
+          reasoning_effort: pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort,
           article_id: articleId,
           include_article: includeDecision.include,
           recap_question: pane.recapQuestion,
@@ -486,6 +491,9 @@ export function GrokPane({
             }
             if (meta.model) {
               next = { ...next, lastResolvedModel: meta.model };
+            }
+            if (meta.reasoning_effort) {
+              next = { ...next, lastResolvedReasoning: meta.reasoning_effort };
             }
             return next;
           });
@@ -703,13 +711,39 @@ export function GrokPane({
   }
 
   async function setModelChoice(next: string) {
-    patch({ modelChoice: next });
+    const reasoning = next === "auto" ? "auto" : pane.reasoningEffort === "auto" ? "low" : pane.reasoningEffort;
+    patch({ modelChoice: next, reasoningEffort: next === "auto" ? pane.reasoningEffort : reasoning });
     if (!pane.conversationId || !persist) return;
     try {
-      const updated = await api.patchChatConversation(pane.conversationId, { model: next });
+      const updated = await api.patchChatConversation(pane.conversationId, {
+        model: next,
+        reasoning: next === "auto" ? "auto" : reasoning,
+      });
       patch({
         modelChoice: updated.model,
         lastResolvedModel: updated.last_model ?? pane.lastResolvedModel,
+        reasoningEffort:
+          updated.model === "auto"
+            ? pane.reasoningEffort
+            : isGrokReasoningEffort(updated.reasoning)
+              ? updated.reasoning
+              : reasoning,
+        lastResolvedReasoning: updated.last_reasoning ?? pane.lastResolvedReasoning,
+      });
+      onHistoryChanged?.();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function setReasoningEffort(next: string) {
+    patch({ reasoningEffort: next });
+    if (pane.modelChoice === "auto" || !pane.conversationId || !persist) return;
+    try {
+      const updated = await api.patchChatConversation(pane.conversationId, { reasoning: next });
+      patch({
+        reasoningEffort: isGrokReasoningEffort(updated.reasoning) ? updated.reasoning : next,
+        lastResolvedReasoning: updated.last_reasoning ?? pane.lastResolvedReasoning,
       });
       onHistoryChanged?.();
     } catch {
@@ -812,7 +846,7 @@ export function GrokPane({
                   {label}
                 </button>
                 <p className="truncate text-[10px] text-muted-foreground">
-                  {grokModelLabel(pane.modelChoice, pane.lastResolvedModel)}
+                  {grokModelLabel(pane.modelChoice, pane.lastResolvedModel, pane.lastResolvedReasoning)}
                 </p>
               </>
             )}
@@ -853,6 +887,26 @@ export function GrokPane({
                 {item === "auto" ? "Auto" : item}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="inline-flex items-center gap-1">
+          <span className="text-muted-foreground">Reasoning</span>
+          <select
+            aria-label={`Reasoning for ${label}`}
+            value={pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort}
+            disabled={!enabled || pane.modelChoice === "auto"}
+            onChange={(event) => void setReasoningEffort(event.target.value)}
+            className={headerSelectClass}
+          >
+            {pane.modelChoice === "auto" ? (
+              <option value="auto">Auto</option>
+            ) : (
+              GROK_REASONING_EFFORTS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))
+            )}
           </select>
         </label>
         {ttsEnabled && !locked && !showStickyPlayer ? (

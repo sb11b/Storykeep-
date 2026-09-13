@@ -580,10 +580,14 @@ export const api = {
     );
   },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
-  chatHealth: () => request<{ ok: boolean; model: string; ttft_ms: number | null }>("/api/v1/chat/health"),
+  chatHealth: () =>
+    request<{ ok: boolean; model: string; reasoning: string; ttft_ms: number | null }>("/api/v1/chat/health"),
   chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
   chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
-  patchChatConversation: (id: string, payload: { title?: string; model?: string; recap_question?: boolean }) =>
+  patchChatConversation: (
+    id: string,
+    payload: { title?: string; model?: string; reasoning?: string; recap_question?: boolean },
+  ) =>
     request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -595,6 +599,7 @@ export const api = {
       message: string;
       conversation_id?: string | null;
       model?: string;
+      reasoning_effort?: string;
       article_id: string | null;
       include_article: boolean;
       recap_question?: boolean;

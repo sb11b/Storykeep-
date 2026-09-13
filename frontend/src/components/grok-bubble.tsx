@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
 import { toastActionError } from "@/lib/toast-message";
-import { grokModelLabel } from "@/lib/grok-model";
+import { grokModelLabel, isGrokReasoningEffort } from "@/lib/grok-model";
 import type { GrokConversation, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import {
@@ -95,7 +95,7 @@ export function GrokBubble({
   const [locked, setLocked] = useState(false);
   const dictation = useDictation();
   const [persist, setPersist] = useState(false);
-  const [chatModels, setChatModels] = useState<string[]>(["grok-4.6", "grok-4.20-0309-non-reasoning"]);
+  const [chatModels, setChatModels] = useState<string[]>(["grok-4.6", "grok-4.3"]);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -339,6 +339,8 @@ export function GrokBubble({
         conversationId: detail.id,
         modelChoice: detail.model || "auto",
         lastResolvedModel: detail.last_model ?? null,
+        reasoningEffort: isGrokReasoningEffort(detail.reasoning) ? detail.reasoning : "low",
+        lastResolvedReasoning: detail.last_reasoning ?? null,
         messages: detail.messages.map((item) => ({
           id: item.id,
           role: item.role,
@@ -504,7 +506,7 @@ export function GrokBubble({
                   >
                     <span className="line-clamp-2">{row.title}</span>
                     <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-                      {grokModelLabel(row.model || "auto", row.last_model)}
+                      {grokModelLabel(row.model || "auto", row.last_model, row.last_reasoning)}
                     </span>
                   </button>
                 )}

@@ -257,6 +257,7 @@ export type ChatStatus = {
   models?: string[];
   default_model?: string;
   fast_model?: string;
+  reasoning_efforts?: string[];
   requests_per_hour: number;
   persist?: boolean;
 };
@@ -267,6 +268,8 @@ export type GrokConversation = {
   pane: string | null;
   model: string;
   last_model: string | null;
+  reasoning?: string;
+  last_reasoning?: string | null;
   recap_question?: boolean;
   created_at: string;
   updated_at: string;

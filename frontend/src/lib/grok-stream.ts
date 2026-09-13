@@ -16,6 +16,7 @@ export type GrokStreamMeta = {
   assistant_message_id?: string;
   model?: string;
   model_choice?: string;
+  reasoning_effort?: string;
   partial?: boolean;
 };
 
@@ -37,6 +38,7 @@ type StreamPayload = {
   assistant_message_id?: string;
   model?: string;
   model_choice?: string;
+  reasoning_effort?: string;
 };
 
 function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta: { value: boolean }) {
@@ -63,6 +65,7 @@ function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta:
     parsed.assistant_message_id ||
     parsed.model ||
     parsed.model_choice ||
+    parsed.reasoning_effort ||
     parsed.partial
   ) {
     handlers.onMeta?.({
@@ -71,6 +74,7 @@ function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta:
       assistant_message_id: parsed.assistant_message_id,
       model: parsed.model,
       model_choice: parsed.model_choice,
+      reasoning_effort: parsed.reasoning_effort,
       partial: parsed.partial,
     });
   }

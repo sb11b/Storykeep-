@@ -72,7 +72,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `S3_PREFIX` | Object prefix, default `storykeep` |
 | `API_ORIGIN` | Next.js rewrite target for the API |
 | `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen, dictation, and the Junior chat bubble. Server only — never in git or the browser. |
-| `XAI_CHAT_MODEL` | Chat model, default `grok-4.6` (current xAI Grok chat id). Dead aliases such as `grok-4-fast-non-reasoning` are rewritten. |
+| `XAI_CHAT_MODEL` | Chat model, default `grok-4.6`. Auto uses grok-4.6 with reasoning `low` (short) or `xhigh` (school/code). |
 
 The Junior bubble is a movable panel. Replies stay in the session until **Add to notes**, which creates or updates a StoryKeep addition (`guid storykeep-note:` / `StoryKeep/Additions/`). It never overwrites `Steve's Surface Vault/**`. Chat is capped at 120 requests per hour per user (`CHAT_REQUESTS_PER_HOUR`). Dictation uses streaming STT at `$0.20/hr` via the server.
 

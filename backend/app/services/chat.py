@@ -19,8 +19,11 @@ from app.models import Article
 logger = logging.getLogger(__name__)
 
 MODEL_AUTO = "auto"
+REASONING_AUTO = "auto"
 CURRENT_CHAT_MODEL = "grok-4.6"
-CURRENT_FAST_MODEL = "grok-4.20-0309-non-reasoning"
+CURRENT_FAST_MODEL = "grok-4.3"
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+DEFAULT_REASONING_EFFORT = "low"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
 CHAT_FIRST_BYTE_TIMEOUT_SEC = 8.0
@@ -37,6 +40,8 @@ _DEAD_MODEL_ALIASES = {
     "grok-4-1-fast": CURRENT_FAST_MODEL,
     "grok-4-1-fast-non-reasoning": CURRENT_FAST_MODEL,
     "grok-4-1-fast-reasoning": CURRENT_CHAT_MODEL,
+    "grok-4.20-0309-non-reasoning": CURRENT_FAST_MODEL,
+    "grok-4.20-0309-reasoning": CURRENT_CHAT_MODEL,
     "grok-4": CURRENT_CHAT_MODEL,
     "grok-3": CURRENT_CHAT_MODEL,
     "grok-3-mini": CURRENT_FAST_MODEL,
@@ -203,13 +208,39 @@ def model_uses_reasoning(model: str) -> bool:
     lowered = rewrite_xai_model(model).lower()
     if "non-reasoning" in lowered:
         return False
-    return lowered.startswith("grok-4.6") or lowered.startswith("grok-4.5")
+    return lowered.startswith("grok-4.6") or lowered.startswith("grok-4.5") or lowered.startswith("grok-4.3")
 
 
-def attach_reasoning_effort(payload: dict[str, object], model: str) -> dict[str, object]:
+def clamp_reasoning_effort(model: str, effort: str) -> str:
+    cleaned = (effort or DEFAULT_REASONING_EFFORT).strip().lower()
+    if cleaned not in REASONING_EFFORTS:
+        cleaned = DEFAULT_REASONING_EFFORT
+    rewritten = rewrite_xai_model(model).lower()
+    if cleaned == "xhigh" and not rewritten.startswith("grok-4.6"):
+        return "high"
+    return cleaned
+
+
+def attach_reasoning_effort(
+    payload: dict[str, object],
+    model: str,
+    effort: str | None = None,
+) -> dict[str, object]:
     if model_uses_reasoning(model):
-        payload["reasoning_effort"] = "low"
+        payload["reasoning_effort"] = clamp_reasoning_effort(model, effort or DEFAULT_REASONING_EFFORT)
     return payload
+
+
+def normalize_reasoning_effort(choice: str | None) -> str:
+    cleaned = (choice or REASONING_AUTO).strip().lower()
+    if not cleaned or cleaned == REASONING_AUTO:
+        return REASONING_AUTO
+    if cleaned not in REASONING_EFFORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown reasoning. Choose auto or one of: {', '.join(REASONING_EFFORTS)}.",
+        )
+    return cleaned
 
 
 def normalize_model_choice(choice: str | None) -> str:
@@ -249,8 +280,22 @@ def resolve_model_for_request(choice: str, message: str, history: list[dict[str,
     normalized = normalize_model_choice(choice)
     if normalized != MODEL_AUTO:
         return rewrite_xai_model(normalized)
-    picked = default_fast_model() if pick_fast_for_auto(message, history) else default_full_model()
-    return rewrite_xai_model(picked)
+    return CURRENT_CHAT_MODEL
+
+
+def resolve_reasoning_for_request(
+    model_choice: str,
+    reasoning_choice: str | None,
+    message: str,
+    history: list[dict[str, str]] | None = None,
+) -> str:
+    normalized_model = normalize_model_choice(model_choice)
+    if normalized_model == MODEL_AUTO:
+        return "low" if pick_fast_for_auto(message, history) else "xhigh"
+    cleaned = normalize_reasoning_effort(reasoning_choice)
+    if cleaned == REASONING_AUTO:
+        return "low" if pick_fast_for_auto(message, history) else "xhigh"
+    return clamp_reasoning_effort(normalized_model, cleaned)
 
 
 def model_label(choice: str, resolved: str | None = None) -> str:
@@ -431,6 +476,7 @@ def ping_xai() -> dict[str, object]:
     """Streaming 1-token probe for GET /chat/health. Stops at first visible token."""
     key = require_key()
     model = rewrite_xai_model(default_full_model())
+    reasoning = DEFAULT_REASONING_EFFORT
     payload = attach_reasoning_effort(
         {
             "model": model,
@@ -440,6 +486,7 @@ def ping_xai() -> dict[str, object]:
             "temperature": 0,
         },
         model,
+        reasoning,
     )
     started = time.perf_counter()
     try:
@@ -458,15 +505,17 @@ def ping_xai() -> dict[str, object]:
                     if xai_status == 401:
                         detail = "xAI auth failed"
                     logger.warning(
-                        "xAI health ping HTTP %s model=%s ttft_ms=%s detail=%s",
+                        "xAI health ping HTTP %s model=%s reasoning=%s ttft_ms=%s detail=%s",
                         xai_status,
                         model,
+                        reasoning,
                         ttft_ms,
                         detail,
                     )
                     return {
                         "ok": False,
                         "model": model,
+                        "reasoning": reasoning,
                         "ttft_ms": ttft_ms,
                         "xai_status": xai_status,
                         "message": detail,
@@ -481,14 +530,16 @@ def ping_xai() -> dict[str, object]:
                     if text:
                         ttft_ms = int((time.perf_counter() - started) * 1000)
                         logger.info(
-                            "xAI health ping ok model=%s xai_status=%s ttft_ms=%s",
+                            "xAI health ping ok model=%s reasoning=%s xai_status=%s ttft_ms=%s",
                             model,
+                            reasoning,
                             xai_status,
                             ttft_ms,
                         )
                         return {
                             "ok": True,
                             "model": model,
+                            "reasoning": reasoning,
                             "ttft_ms": ttft_ms,
                             "xai_status": xai_status,
                         }
@@ -496,6 +547,7 @@ def ping_xai() -> dict[str, object]:
                 return {
                     "ok": False,
                     "model": model,
+                    "reasoning": reasoning,
                     "ttft_ms": ttft_ms,
                     "xai_status": xai_status,
                     "message": XAI_SILENT_DETAIL,
@@ -503,8 +555,21 @@ def ping_xai() -> dict[str, object]:
     except httpx.HTTPError as exc:
         ttft_ms = int((time.perf_counter() - started) * 1000)
         detail = _transport_error_detail(exc)
-        logger.warning("xAI health ping failed model=%s ttft_ms=%s detail=%s", model, ttft_ms, detail)
-        return {"ok": False, "model": model, "ttft_ms": ttft_ms, "xai_status": None, "message": detail}
+        logger.warning(
+            "xAI health ping failed model=%s reasoning=%s ttft_ms=%s detail=%s",
+            model,
+            reasoning,
+            ttft_ms,
+            detail,
+        )
+        return {
+            "ok": False,
+            "model": model,
+            "reasoning": reasoning,
+            "ttft_ms": ttft_ms,
+            "xai_status": None,
+            "message": detail,
+        }
 
 
 def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
@@ -658,15 +723,18 @@ async def stream_completion(
     recap_question: bool = False,
     model: str,
     model_choice: str = MODEL_AUTO,
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
     user_id: UUID | None = None,
     has_attachments: bool = False,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
+    reasoning_effort = clamp_reasoning_effort(model, reasoning_effort)
     latest_user = next((_content_text(item.get("content")) for item in reversed(history) if item.get("role") == "user"), "")
     logger.info(
-        "xAI chat start model=%s choice=%s user=%s chars=%s",
+        "xAI chat start model=%s reasoning_effort=%s choice=%s user=%s chars=%s",
         model,
+        reasoning_effort,
         model_choice,
         user_id,
         len(latest_user or ""),
@@ -687,6 +755,7 @@ async def stream_completion(
             "temperature": 0.6,
         },
         model,
+        reasoning_effort,
     )
     started = time.perf_counter()
     first_visible_at: float | None = None

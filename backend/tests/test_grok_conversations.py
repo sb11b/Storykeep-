@@ -20,6 +20,7 @@ from app.services.chat import (
     parse_xai_error_body,
     pick_fast_for_auto,
     resolve_model_for_request,
+    resolve_reasoning_for_request,
     stream_error_event,
     thread_window,
     validate_payload,
@@ -71,21 +72,22 @@ class GrokConversationTests(unittest.TestCase):
     def test_non_empty_patch_title_is_used(self):
         self.assertEqual(resolve_patched_title("My homework", "ignored"), "My homework")
 
-    def test_auto_picks_fast_for_short_simple_prompt(self):
-        self.assertTrue(pick_fast_for_auto("What is GDP?"))
-        resolved = resolve_model_for_request(MODEL_AUTO, "What is GDP?", [])
-        self.assertEqual(resolved, default_fast_model())
+    def test_auto_uses_grok_46_with_low_or_xhigh(self):
+        from app.services.chat import CURRENT_CHAT_MODEL
 
-    def test_auto_picks_full_for_coding_prompt(self):
+        self.assertTrue(pick_fast_for_auto("hello"))
+        self.assertEqual(resolve_model_for_request(MODEL_AUTO, "hello", []), CURRENT_CHAT_MODEL)
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "hello", []), "low")
         prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"
         self.assertFalse(pick_fast_for_auto(prompt))
-        resolved = resolve_model_for_request(MODEL_AUTO, prompt, [])
-        self.assertEqual(resolved, default_full_model())
+        self.assertEqual(resolve_model_for_request(MODEL_AUTO, prompt, []), CURRENT_CHAT_MODEL)
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "xhigh")
 
     def test_locked_model_skips_auto_routing(self):
         resolved = resolve_model_for_request("grok-4.6", "hi", [])
         self.assertEqual(resolved, "grok-4.6")
         self.assertEqual(resolve_model_for_request("grok-4", "hi", []), "grok-4.6")
+        self.assertEqual(resolve_reasoning_for_request("grok-4.6", "high", "hello", []), "high")
 
     def test_rewrites_dead_fast_alias(self):
         from app.services.chat import CURRENT_CHAT_MODEL, CURRENT_FAST_MODEL, rewrite_xai_model
@@ -134,9 +136,9 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(text, "Hello")
         self.assertTrue(active)
 
-    def test_default_models_use_non_reasoning_fast_path(self):
-        self.assertIn("non-reasoning", default_fast_model())
-        self.assertTrue(default_full_model())
+    def test_default_chat_model_is_grok_46(self):
+        self.assertEqual(default_full_model(), "grok-4.6")
+        self.assertTrue(default_fast_model())
 
     def test_key_format_ok_requires_xai_prefix(self):
         self.assertIsInstance(key_format_ok(), bool)

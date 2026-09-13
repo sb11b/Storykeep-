@@ -30,6 +30,7 @@ class ChatIn(BaseModel):
     message: str = Field(default="", max_length=8000)
     conversation_id: UUID | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
     article_id: UUID | None = None
     include_article: bool = False
     recap_question: bool = False
@@ -77,6 +78,8 @@ def _conversation_detail(row) -> GrokConversationDetailOut:
         pane=row.pane,
         model=row.model or chat_service.MODEL_AUTO,
         last_model=row.last_model,
+        reasoning=getattr(row, "reasoning", None) or chat_service.REASONING_AUTO,
+        last_reasoning=getattr(row, "last_reasoning", None),
         recap_question=bool(row.recap_question),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -96,6 +99,7 @@ def chat_status(user: User = Depends(get_current_user)) -> dict:
         "models": models,
         "default_model": chat_service.default_full_model(),
         "fast_model": chat_service.default_fast_model(),
+        "reasoning_efforts": list(chat_service.REASONING_EFFORTS),
         "requests_per_hour": int(settings.chat_requests_per_hour or 120),
         "persist": grok_store.should_persist(user),
         "key_configured": chat_service.key_configured(),
@@ -110,6 +114,7 @@ def chat_health(user: User = Depends(get_current_user)) -> dict:
         return {
             "ok": False,
             "model": chat_service.default_full_model(),
+            "reasoning": chat_service.DEFAULT_REASONING_EFFORT,
             "ttft_ms": None,
             "message": "XAI_API_KEY is not set or must start with xai-.",
         }
@@ -150,15 +155,20 @@ def patch_conversation(
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     fields = payload.model_fields_set
     model_value = chat_service.normalize_model_choice(payload.model) if "model" in fields else None
+    reasoning_value = (
+        chat_service.normalize_reasoning_effort(payload.reasoning) if "reasoning" in fields else None
+    )
     row = grok_store.patch_conversation(
         db,
         user,
         conversation_id,
         title=payload.title,
         model=model_value,
+        reasoning=reasoning_value,
         recap_question=payload.recap_question,
         title_provided="title" in fields,
         model_provided="model" in fields,
+        reasoning_provided="reasoning" in fields,
         recap_provided="recap_question" in fields,
     )
     db.commit()
@@ -194,7 +204,14 @@ async def chat(
     persist = grok_store.should_persist(user)
     conversation_id = payload.conversation_id
     user_message_id: UUID | None = None
-    model_choice = chat_service.normalize_model_choice(payload.model) if payload.model else chat_service.MODEL_AUTO
+    incoming_model = chat_service.normalize_model_choice(payload.model) if payload.model else None
+    incoming_reasoning = (
+        chat_service.normalize_reasoning_effort(payload.reasoning_effort)
+        if payload.reasoning_effort is not None
+        else None
+    )
+    model_choice = incoming_model or chat_service.MODEL_AUTO
+    reasoning_choice = incoming_reasoning or chat_service.REASONING_AUTO
     recap_question = bool(payload.recap_question)
 
     user_text = payload.message.strip()
@@ -225,9 +242,19 @@ async def chat(
                 for item in (pending.files or [])
             ]
             model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
-            if payload.model:
-                model_choice = chat_service.normalize_model_choice(payload.model)
+            reasoning_choice = chat_service.normalize_reasoning_effort(
+                getattr(conversation, "reasoning", None) or chat_service.REASONING_AUTO
+            )
+            if incoming_model is not None:
+                model_choice = incoming_model
                 conversation.model = model_choice
+            if incoming_reasoning is not None:
+                reasoning_choice = incoming_reasoning
+            conversation.reasoning = (
+                chat_service.REASONING_AUTO
+                if model_choice == chat_service.MODEL_AUTO
+                else reasoning_choice
+            )
             conversation.recap_question = recap_question
             db.add(conversation)
             db.commit()
@@ -235,9 +262,19 @@ async def chat(
         elif conversation_id:
             conversation = grok_store.owned_conversation(db, user, conversation_id)
             model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
-            if payload.model:
-                model_choice = chat_service.normalize_model_choice(payload.model)
+            reasoning_choice = chat_service.normalize_reasoning_effort(
+                getattr(conversation, "reasoning", None) or chat_service.REASONING_AUTO
+            )
+            if incoming_model is not None:
+                model_choice = incoming_model
                 conversation.model = model_choice
+            if incoming_reasoning is not None:
+                reasoning_choice = incoming_reasoning
+            conversation.reasoning = (
+                chat_service.REASONING_AUTO
+                if model_choice == chat_service.MODEL_AUTO
+                else reasoning_choice
+            )
             conversation.recap_question = recap_question
             db.add(conversation)
             is_first = not conversation.messages
@@ -259,9 +296,18 @@ async def chat(
             db.commit()
             history = grok_store.conversation_history(db, conversation_id)
         else:
-            if payload.model:
-                model_choice = chat_service.normalize_model_choice(payload.model)
-            conversation = grok_store.create_conversation(db, user, model=model_choice)
+            if incoming_model is not None:
+                model_choice = incoming_model
+            if incoming_reasoning is not None:
+                reasoning_choice = incoming_reasoning
+            stored_reasoning = (
+                chat_service.REASONING_AUTO
+                if model_choice == chat_service.MODEL_AUTO
+                else reasoning_choice
+            )
+            conversation = grok_store.create_conversation(
+                db, user, model=model_choice, reasoning=stored_reasoning
+            )
             conversation.recap_question = recap_question
             db.add(conversation)
             conversation_id = conversation.id
@@ -284,8 +330,10 @@ async def chat(
             db.commit()
             history = grok_store.conversation_history(db, conversation_id)
     else:
-        if payload.model:
-            model_choice = chat_service.normalize_model_choice(payload.model)
+        if incoming_model is not None:
+            model_choice = incoming_model
+        if incoming_reasoning is not None:
+            reasoning_choice = incoming_reasoning
         current_files = chat_attachments.preview_files(db, user, media_ids) if media_ids else []
         history = [{"role": "user", "content": user_text, "files": current_files}]
 
@@ -296,11 +344,19 @@ async def chat(
         [{"role": item.get("role"), "content": item.get("content") or ""} for item in history]
     )
     history_window = chat_service.thread_window(history_for_route)
+    route_message = route_text or user_text or "attached file"
     resolved_model = chat_service.resolve_model_for_request(
         model_choice,
-        route_text or user_text or "attached file",
+        route_message,
         history_window,
     )
+    resolved_reasoning = chat_service.resolve_reasoning_for_request(
+        model_choice,
+        reasoning_choice,
+        route_message,
+        history_window,
+    )
+    resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
     history_for_xai = chat_service.validate_payload(prepared)
     excerpt = None
@@ -330,6 +386,7 @@ async def chat(
                     user_id,
                     conversation_id,
                     last_model=resolved_model,
+                    last_reasoning=resolved_reasoning,
                 )
                 stream_db.commit()
                 return str(assistant_row.id)
@@ -349,11 +406,12 @@ async def chat(
 
         def _log(reason: str) -> None:
             logger.info(
-                "larry-chat ttft_ms=%s flushed=%s reason=%s model=%s user=%s conversation=%s chars=%s",
+                "larry-chat ttft_ms=%s flushed=%s reason=%s model=%s reasoning_effort=%s user=%s conversation=%s chars=%s",
                 ttft_ms if ttft_ms is not None else -1,
                 flushed,
                 reason,
                 resolved_model,
+                resolved_reasoning,
                 user_id,
                 conversation_id,
                 sum(len(part) for part in assistant_parts),
@@ -368,11 +426,18 @@ async def chat(
                 "user_message_id": str(user_message_id) if user_message_id else None,
                 "model": resolved_model,
                 "model_choice": model_choice,
+                "reasoning_effort": resolved_reasoning,
             }
             if persist and conversation_id and user_message_id:
                 yield chat_service.encode_sse({k: v for k, v in meta.items() if v is not None})
             else:
-                yield chat_service.encode_sse({"model": resolved_model, "model_choice": model_choice})
+                yield chat_service.encode_sse(
+                    {
+                        "model": resolved_model,
+                        "model_choice": model_choice,
+                        "reasoning_effort": resolved_reasoning,
+                    }
+                )
             await asyncio.sleep(0)
             async for piece in chat_service.stream_completion(
                 history_for_xai,
@@ -381,6 +446,7 @@ async def chat(
                 recap_question=recap_question,
                 model=resolved_model,
                 model_choice=model_choice,
+                reasoning_effort=resolved_reasoning,
                 user_id=user_id,
                 has_attachments=has_attachments,
             ):
@@ -404,6 +470,7 @@ async def chat(
                             "assistant_message_id": assistant_message_id,
                             "model": resolved_model,
                             "model_choice": model_choice,
+                            "reasoning_effort": resolved_reasoning,
                         }
                     )
             yield chat_service.encode_sse("[DONE]")
@@ -421,6 +488,7 @@ async def chat(
                         "assistant_message_id": saved_id,
                         "model": resolved_model,
                         "model_choice": model_choice,
+                        "reasoning_effort": resolved_reasoning,
                         "partial": True,
                     }
                 )
