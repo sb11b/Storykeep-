@@ -32,7 +32,7 @@ import {
 } from "@/lib/larry-attach";
 import { toastActionError } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
-import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
+import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,7 @@ export type ChatLine = {
   error?: string | null;
   failed?: boolean;
   waiting?: boolean;
+  routeLabel?: string | null;
 };
 
 export type GrokPaneState = {
@@ -494,6 +495,20 @@ export function GrokPane({
             }
             if (meta.reasoning_effort) {
               next = { ...next, lastResolvedReasoning: meta.reasoning_effort };
+            }
+            const routed = autoRouteLabel(
+              meta.model_choice || current.modelChoice,
+              meta.model,
+              meta.reasoning_effort,
+            );
+            if (routed) {
+              const targetId = meta.assistant_message_id || assistantId;
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === targetId || item.id === assistantId ? { ...item, routeLabel: routed } : item,
+                ),
+              };
             }
             return next;
           });
@@ -1036,6 +1051,7 @@ export function GrokPane({
                 activeWord={listenTarget?.id === item.id ? activeWord : null}
                 assistantName={label}
                 files={item.files}
+                routeLabel={item.role === "assistant" ? item.routeLabel : null}
                 statusLine={
                   item.role === "assistant" &&
                   visibleStatus &&

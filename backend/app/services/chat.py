@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -47,38 +48,39 @@ _DEAD_MODEL_ALIASES = {
     "grok-3-mini": CURRENT_FAST_MODEL,
 }
 XAI_MODELS_CACHE_SEC = 900.0
+AUTO_LOW_MAX_CHARS = 400
+# Auto reasoning looks at the current turn only. Default is low.
+_AUTO_XHIGH_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\bcode\b",
+        r"\banaly[sz]e\b",
+        r"\bplan\b",
+        r"rewrite paper",
+        r"\bdebug\b",
+        r"\bhomework\b",
+        r"\bassignment\b",
+        r"\bleetcode\b",
+        r"```",
+        r"\bpython\b",
+        r"\bjavascript\b",
+        r"\btypescript\b",
+        r"stack trace",
+        r"\balgorithm\b",
+        r"\bimplement\b",
+        r"\bcompile\b",
+        r"\bsyntax\b",
+        r"\brecursion\b",
+        r"\bdat\b",
+    )
+)
+# Kept for older tests that imported CODE_KEYWORDS; Auto routing no longer uses this list.
 CODE_KEYWORDS = (
-    "python",
-    "javascript",
-    "typescript",
-    "java",
-    "sql",
-    "debug",
-    "error",
-    "stack trace",
-    "function",
-    "class ",
-    "import ",
-    "def ",
-    "const ",
-    "let ",
-    "var ",
-    "algorithm",
-    "homework",
-    "assignment",
-    "implement",
-    "leetcode",
-    "compile",
-    "syntax",
-    "```",
     "code",
-    "program",
-    "loop",
-    "array",
-    "recursion",
-    "explain why",
-    "write a ",
-    "fix this",
+    "analyze",
+    "plan",
+    "rewrite paper",
+    "debug",
 )
 ARTICLE_CHAR_CAP = 8_000
 ATTACHMENT_CHAR_CAP = 12_000
@@ -257,23 +259,21 @@ def normalize_model_choice(choice: str | None) -> str:
     return cleaned
 
 
-def pick_fast_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
+def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
+    """True when Auto should use xhigh. Current user turn only; default is low."""
+    del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
+    if not text:
+        return False
+    if len(text) >= AUTO_LOW_MAX_CHARS:
+        return True
     lower = text.lower()
-    if len(text) > 180:
-        return False
-    if text.count("\n") >= 2:
-        return False
-    if any(keyword in lower for keyword in CODE_KEYWORDS):
-        return False
-    if history:
-        for item in history[-4:]:
-            prior = (item.get("content") or "").lower()
-            if any(keyword in prior for keyword in CODE_KEYWORDS):
-                return False
-            if len(prior) > 240:
-                return False
-    return True
+    return any(pattern.search(lower) for pattern in _AUTO_XHIGH_PATTERNS)
+
+
+def pick_fast_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
+    """True when Auto should use low reasoning (short / conversational)."""
+    return not pick_xhigh_for_auto(message, history)
 
 
 def resolve_model_for_request(choice: str, message: str, history: list[dict[str, str]] | None = None) -> str:
@@ -291,10 +291,10 @@ def resolve_reasoning_for_request(
 ) -> str:
     normalized_model = normalize_model_choice(model_choice)
     if normalized_model == MODEL_AUTO:
-        return "low" if pick_fast_for_auto(message, history) else "xhigh"
+        return "xhigh" if pick_xhigh_for_auto(message) else "low"
     cleaned = normalize_reasoning_effort(reasoning_choice)
     if cleaned == REASONING_AUTO:
-        return "low" if pick_fast_for_auto(message, history) else "xhigh"
+        return "xhigh" if pick_xhigh_for_auto(message) else "low"
     return clamp_reasoning_effort(normalized_model, cleaned)
 
 

@@ -73,15 +73,28 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(resolve_patched_title("My homework", "ignored"), "My homework")
 
     def test_auto_uses_grok_46_with_low_or_xhigh(self):
-        from app.services.chat import CURRENT_CHAT_MODEL
+        from app.services.chat import CURRENT_CHAT_MODEL, AUTO_LOW_MAX_CHARS
 
         self.assertTrue(pick_fast_for_auto("hello"))
         self.assertEqual(resolve_model_for_request(MODEL_AUTO, "hello", []), CURRENT_CHAT_MODEL)
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "hello", []), "low")
+        self.assertEqual(
+            resolve_reasoning_for_request(MODEL_AUTO, "auto", "how was your morning", []),
+            "low",
+        )
+        long_history = [{"role": "assistant", "content": "Here is a python function and a plan.\n" + ("x" * 500)}]
+        self.assertEqual(
+            resolve_reasoning_for_request(MODEL_AUTO, "auto", "how was your morning", long_history),
+            "low",
+        )
         prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"
         self.assertFalse(pick_fast_for_auto(prompt))
         self.assertEqual(resolve_model_for_request(MODEL_AUTO, prompt, []), CURRENT_CHAT_MODEL)
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "xhigh")
+        dat_plan = "DAT plan\n" + ("Week 1 analyze the dataset and rewrite paper notes.\n" * 20)
+        self.assertGreaterEqual(len(dat_plan), AUTO_LOW_MAX_CHARS)
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "xhigh")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "please analyze this", []), "xhigh")
 
     def test_locked_model_skips_auto_routing(self):
         resolved = resolve_model_for_request("grok-4.6", "hi", [])

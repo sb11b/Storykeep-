@@ -26,6 +26,7 @@ export function GrokChatMessage({
   listening,
   activeWord,
   statusLine,
+  routeLabel,
   onRegisterBody,
   onListen,
   onAddToNotes,
@@ -45,6 +46,8 @@ export function GrokChatMessage({
   listening?: boolean;
   activeWord?: number | null;
   statusLine?: string | null;
+  /** Auto routing, e.g. "Auto → 4.6 · low". Not inside the Listen body. */
+  routeLabel?: string | null;
   onRegisterBody?: (messageId: string, element: HTMLElement | null) => void;
   /** `trigger` is the Listen button, so the reply body is one closest() away. */
   onListen?: (messageId: string, trigger: HTMLElement) => void;
@@ -88,6 +91,11 @@ export function GrokChatMessage({
       <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
         {role === "user" ? "You" : content || failed ? `${assistantName} replied` : assistantName}
       </p>
+      {role === "assistant" && routeLabel ? (
+        <p className="mb-1 text-[11px] text-muted-foreground" data-junior-route="">
+          {routeLabel}
+        </p>
+      ) : null}
       {statusLine || (waiting && !failed && !content) ? (
         <p className="mb-1 flex items-center gap-2 text-sm font-medium" role="status">
           {waiting && !content ? <LoaderCircle className="size-4 animate-spin shrink-0" /> : null}

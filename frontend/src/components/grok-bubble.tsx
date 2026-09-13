@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
 import { toastActionError } from "@/lib/toast-message";
-import { grokModelLabel, isGrokReasoningEffort } from "@/lib/grok-model";
+import { autoRouteLabel, grokModelLabel, isGrokReasoningEffort } from "@/lib/grok-model";
 import type { GrokConversation, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import {
@@ -341,7 +341,7 @@ export function GrokBubble({
         lastResolvedModel: detail.last_model ?? null,
         reasoningEffort: isGrokReasoningEffort(detail.reasoning) ? detail.reasoning : "low",
         lastResolvedReasoning: detail.last_reasoning ?? null,
-        messages: detail.messages.map((item) => ({
+        messages: detail.messages.map((item, index, all) => ({
           id: item.id,
           role: item.role,
           content: item.content,
@@ -353,6 +353,10 @@ export function GrokBubble({
             url: file.url,
             byte_size: file.byte_size,
           })),
+          routeLabel:
+            item.role === "assistant" && index === all.length - 1
+              ? autoRouteLabel(detail.model || "auto", detail.last_model, detail.last_reasoning)
+              : null,
         })),
         draft: "",
         recapQuestion: Boolean(detail.recap_question),

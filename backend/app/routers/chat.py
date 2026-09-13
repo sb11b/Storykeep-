@@ -354,7 +354,7 @@ async def chat(
         model_choice,
         reasoning_choice,
         route_message,
-        history_window,
+        None,
     )
     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
