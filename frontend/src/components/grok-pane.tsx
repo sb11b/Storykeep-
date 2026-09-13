@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Send, X } from "lucide-react";
+import { LoaderCircle, Mic, Send, Square, X } from "lucide-react";
 import { toast } from "sonner";
+import { useDictation } from "@/components/dictation";
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,6 +79,7 @@ export function GrokPane({
   articleBody,
   enabled,
   ttsEnabled,
+  sttEnabled,
   locked,
   onFocus,
   onUpdate,
@@ -102,6 +104,7 @@ export function GrokPane({
   articleBody?: string | null;
   enabled: boolean;
   ttsEnabled: boolean;
+  sttEnabled: boolean;
   locked: boolean;
   chatModels: string[];
   persist: boolean;
@@ -116,8 +119,10 @@ export function GrokPane({
   panelOpen?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const stopRef = useRef<() => void>(() => {});
   const abortRef = useRef<AbortController | null>(null);
+  const dictation = useDictation();
   const [busy, setBusy] = useState(false);
 
   const abortInFlight = useCallback(() => {
@@ -139,6 +144,15 @@ export function GrokPane({
   }, [panelOpen, abortInFlight, onUpdate]);
 
   useEffect(() => () => abortInFlight(), [abortInFlight]);
+
+  useEffect(() => {
+    if (!panelOpen) dictation?.stop();
+  }, [panelOpen, dictation]);
+
+  useEffect(() => {
+    const el = draftRef.current;
+    if (el) dictation?.attach(el);
+  }, [dictation, pane.draft]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
@@ -454,31 +468,89 @@ export function GrokPane({
         </p>
       ) : null}
       <form
-        className="flex shrink-0 gap-2 border-t p-2"
+        className="flex shrink-0 flex-col gap-1.5 border-t p-2"
         onSubmit={(event) => {
           event.preventDefault();
           void send();
         }}
       >
-        <Textarea
-          className="min-h-12 max-h-28 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
-          value={pane.draft}
-          onChange={(event) => patch({ draft: event.target.value })}
-          placeholder={
-            pane.includeArticle && articleId ? "Ask about this article or school coding…" : "Ask Grok for school coding help…"
-          }
-          disabled={!enabled}
-          onFocus={onFocus}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void send();
+        <div className="flex gap-2">
+          <Textarea
+            ref={draftRef}
+            dictate={false}
+            className="min-h-12 max-h-28 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
+            value={pane.draft}
+            onChange={(event) => patch({ draft: event.target.value })}
+            placeholder={
+              pane.includeArticle && articleId ? "Ask about this article or school coding…" : "Ask Grok for school coding help…"
             }
-          }}
-        />
-        <Button type="submit" size="icon" disabled={busy || !pane.draft.trim() || !enabled} aria-label="Send">
-          {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
-        </Button>
+            disabled={!enabled}
+            onFocus={() => {
+              onFocus();
+              if (draftRef.current) dictation?.attach(draftRef.current);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+          />
+          {sttEnabled && !locked ? (
+            <div className="flex shrink-0 flex-col gap-1">
+              <Button
+                type="button"
+                size="icon"
+                variant={dictation?.listening && !dictation.sessionContinuous ? "destructive" : "outline"}
+                className="size-9"
+                aria-label={dictation?.listening && !dictation.sessionContinuous ? "Stop dictation" : "Tap to talk"}
+                title="Tap to talk (one utterance)"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  const el = draftRef.current;
+                  if (!el) return;
+                  dictation?.startFor(el, { continuous: false });
+                }}
+              >
+                <Mic className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant={dictation?.listening && dictation.sessionContinuous ? "destructive" : "outline"}
+                className="size-9"
+                aria-label={
+                  dictation?.listening && dictation.sessionContinuous ? "Stop continuous dictation" : "Continuous dictation"
+                }
+                title="Continuous (stays open until Stop)"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  const el = draftRef.current;
+                  if (!el) return;
+                  if (dictation?.listening && dictation.sessionContinuous) {
+                    dictation.stop();
+                    return;
+                  }
+                  dictation?.startFor(el, { continuous: true });
+                }}
+              >
+                {dictation?.listening && dictation.sessionContinuous ? (
+                  <Square className="size-3.5 fill-current" />
+                ) : (
+                  <span className="text-[9px] font-semibold leading-none">Cont</span>
+                )}
+              </Button>
+            </div>
+          ) : null}
+          <Button type="submit" size="icon" className="size-9 shrink-0 self-end" disabled={busy || !pane.draft.trim() || !enabled} aria-label="Send">
+            {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
+          </Button>
+        </div>
+        {dictation?.listening && sttEnabled && !locked ? (
+          <p className="text-[10px] text-muted-foreground">
+            {dictation.sessionContinuous ? "Continuous — speak, then pause; Stop when done." : "Listening — one utterance…"}
+          </p>
+        ) : null}
       </form>
     </div>
   );

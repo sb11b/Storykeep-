@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
 import { grokModelLabel } from "@/lib/grok-model";
 import type { GrokConversation } from "@/lib/types";
@@ -85,7 +86,9 @@ export function GrokBubble({
   const [focusedPaneId, setFocusedPaneId] = useState<string>(() => panes[0]!.id);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [sttEnabled, setSttEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
+  const dictation = useDictation();
   const [persist, setPersist] = useState(false);
   const [chatModels, setChatModels] = useState<string[]>(["grok-4", "grok-4-fast"]);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
@@ -143,7 +146,15 @@ export function GrokBubble({
       .tts()
       .then((row) => setTtsEnabled(row.enabled))
       .catch(() => setTtsEnabled(false));
+    api
+      .stt()
+      .then((row) => setSttEnabled(row.enabled))
+      .catch(() => setSttEnabled(false));
   }, []);
+
+  useEffect(() => {
+    if (!open) dictation?.stop();
+  }, [open, dictation]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -177,6 +188,10 @@ export function GrokBubble({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        if (dictation?.listening) {
+          dictation.stop();
+          return;
+        }
         if (listening && activeListenStopRef.current) {
           activeListenStopRef.current();
           return;
@@ -196,7 +211,7 @@ export function GrokBubble({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [exitFullscreen, fullscreen, listening, open]);
+  }, [dictation, exitFullscreen, fullscreen, listening, open]);
 
   function handleActivateListen(stop: (() => void) | null) {
     activeListenStopRef.current = stop;
@@ -204,6 +219,7 @@ export function GrokBubble({
   }
 
   function closePanel() {
+    dictation?.stop();
     exitFullscreen();
     setOpen(false);
   }
@@ -542,6 +558,7 @@ export function GrokBubble({
                   articleBody={articleBody}
                   enabled={Boolean(enabled)}
                   ttsEnabled={ttsEnabled}
+                  sttEnabled={sttEnabled}
                   locked={locked}
                   onFocus={() => setFocusedPaneId(pane.id)}
                   onUpdate={(updater) => updatePane(pane.id, updater)}
@@ -568,6 +585,7 @@ export function GrokBubble({
             articleBody={articleBody}
             enabled={Boolean(enabled)}
             ttsEnabled={ttsEnabled}
+            sttEnabled={sttEnabled}
             locked={locked}
             onFocus={() => setFocusedPaneId(focusedPane.id)}
             onUpdate={(updater) => updatePane(focusedPane.id, updater)}

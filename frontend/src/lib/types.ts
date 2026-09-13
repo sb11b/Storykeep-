@@ -302,6 +302,15 @@ export type TtsStatus = {
   voices: TtsVoice[];
 };
 
+export type SttStatus = {
+  enabled: boolean;
+  locked: boolean;
+  provider: string;
+  mode: string;
+  price: string;
+  sessions_per_hour: number;
+};
+
 export type FeedCandidate = {
   url: string;
   title: string | null;

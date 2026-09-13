@@ -16,14 +16,37 @@ import { cn } from "@/lib/utils";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
 
+type StartOptions = {
+  /** When true, keep the session open across utterances until Stop. */
+  continuous?: boolean;
+};
+
 type DictationApi = {
   listening: boolean;
+  sessionContinuous: boolean;
   continuous: boolean;
   setContinuous: (value: boolean) => void;
-  startFor: (field: Field) => void;
+  startFor: (field: Field, options?: StartOptions) => void;
   stop: () => void;
   attach: (field: Field | null) => void;
 };
+
+function sttToast(message: string) {
+  const text = message.trim();
+  toast.error(text || "STT failed");
+}
+
+function micDeniedMessage(error: unknown) {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+      return "Mic denied — allow microphone access in your browser.";
+    }
+    if (error.name === "NotFoundError") {
+      return "No microphone found.";
+    }
+  }
+  return error instanceof Error ? error.message : "Microphone is not available";
+}
 
 const DictationContext = createContext<DictationApi | null>(null);
 
@@ -75,6 +98,7 @@ function floatToPcm16(input: Float32Array) {
 export function DictationProvider({ children }: { children: ReactNode }) {
   const [listening, setListening] = useState(false);
   const [continuous, setContinuous] = useState(false);
+  const [sessionContinuousMode, setSessionContinuousMode] = useState(false);
   const [interim, setInterim] = useState("");
   const fieldRef = useRef<Field | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -88,9 +112,11 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const lastRawFinalRef = useRef("");
   const listeningRef = useRef(false);
   const continuousRef = useRef(false);
+  const sessionContinuousRef = useRef(false);
   const stoppingRef = useRef(false);
   const stopTimerRef = useRef<number | null>(null);
   const startingRef = useRef(false);
+  const closedCleanlyRef = useRef(false);
   useEffect(() => {
     continuousRef.current = continuous;
     listeningRef.current = listening;
@@ -104,11 +130,13 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   };
 
   const teardown = useCallback(() => {
+    closedCleanlyRef.current = true;
     clearStopTimer();
     listeningRef.current = false;
     stoppingRef.current = false;
     startingRef.current = false;
     setListening(false);
+    setSessionContinuousMode(false);
     interimRef.current = "";
     committedRef.current = "";
     lastRawFinalRef.current = "";
@@ -171,7 +199,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   }, [commitFinal, teardown]);
 
   const startFor = useCallback(
-    (field: Field) => {
+    (field: Field, options?: StartOptions) => {
       const live = socketRef.current;
       if (listeningRef.current || startingRef.current || (live && live.readyState <= WebSocket.OPEN)) {
         if (listeningRef.current && fieldRef.current === field) {
@@ -185,6 +213,9 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       fieldRef.current = field;
       field.focus();
       startingRef.current = true;
+      const sessionContinuous = options?.continuous ?? continuousRef.current;
+      sessionContinuousRef.current = sessionContinuous;
+      setSessionContinuousMode(sessionContinuous);
       committedRef.current = "";
       lastRawFinalRef.current = "";
       interimRef.current = "";
@@ -198,7 +229,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           }
           const protocol = window.location.protocol === "https:" ? "wss" : "ws";
           const params = new URLSearchParams();
-          if (continuousRef.current) params.set("continuous", "true");
+          if (sessionContinuous) params.set("continuous", "true");
           const socket = new WebSocket(`${protocol}://${window.location.host}/api/v1/stt?${params.toString()}`);
           socket.binaryType = "arraybuffer";
           socketRef.current = socket;
@@ -233,23 +264,41 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                   lastRawFinalRef.current = msg.text;
                   commitFinal(msg.text);
                 }
-                teardown();
+                lastRawFinalRef.current = "";
+                if (!sessionContinuousRef.current) {
+                  teardown();
+                }
                 return;
               }
               if (msg.type === "error" || msg.type === "timeout" || msg.type === "idle") {
-                if (msg.message) toast.error(msg.message);
-                requestStop();
+                const label =
+                  msg.type === "timeout"
+                    ? msg.message || "STT timeout"
+                    : msg.type === "idle"
+                      ? msg.message || "Mic idle, tap to resume"
+                      : msg.message || "STT failed";
+                sttToast(label);
+                teardown();
               }
             } catch {
               /* ignore */
             }
           };
           socket.onerror = () => {
-            toast.error("Dictation could not connect");
+            sttToast("STT connection failed");
             teardown();
           };
-          socket.onclose = () => {
-            if (listeningRef.current || startingRef.current) teardown();
+          socket.onclose = (event) => {
+            if (closedCleanlyRef.current) {
+              closedCleanlyRef.current = false;
+              return;
+            }
+            if (!listeningRef.current && !startingRef.current) return;
+            if (event.code === 4403) sttToast("Demo account — dictation is off");
+            else if (event.code === 4503) sttToast("STT is off until XAI_API_KEY is set on the server");
+            else if (event.code === 4409) sttToast("Dictation is already open in another tab");
+            else if (event.code === 4429) sttToast("STT rate limit reached");
+            teardown();
           };
           await new Promise<void>((resolve, reject) => {
             socket.onopen = () => resolve();
@@ -270,7 +319,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           mute.connect(context.destination);
           audioRef.current = { stream, context, processor };
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Microphone is not available");
+          sttToast(micDeniedMessage(error));
           teardown();
         }
       })();
@@ -326,6 +375,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
 
   const api: DictationApi = {
     listening,
+    sessionContinuous: sessionContinuousMode,
     continuous,
     setContinuous,
     startFor,

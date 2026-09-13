@@ -12,6 +12,7 @@ import type {
   Stats,
   Tag,
   TtsPlan,
+  SttStatus,
   TtsStatus,
   TtsWord,
   User,
@@ -524,6 +525,7 @@ export const api = {
       body: JSON.stringify({ backup_type }),
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
+  stt: () => request<SttStatus>("/api/v1/stt"),
   ttsPlan: (id: string, voiceId: string, opts?: { includeNotes?: boolean }) => {
     const search = new URLSearchParams({ voice_id: voiceId });
     if (opts?.includeNotes) search.set("include_notes", "true");

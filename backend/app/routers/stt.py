@@ -24,6 +24,7 @@ router = APIRouter(tags=["stt"])
 
 XAI_STT_WS = "wss://api.x.ai/v1/stt"
 IDLE_SECONDS = 15.0
+CONTINUOUS_IDLE_SECONDS = 20.0
 MAX_CLIP_SECONDS = 120.0
 CONTINUOUS_MAX_SECONDS = 30 * 60.0
 
@@ -93,7 +94,7 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
         _active_streams.add(user_key)
 
     continuous = (websocket.query_params.get("continuous") or "").lower() in {"1", "true", "yes"}
-    idle = CONTINUOUS_MAX_SECONDS if continuous else IDLE_SECONDS
+    idle_limit = CONTINUOUS_IDLE_SECONDS if continuous else IDLE_SECONDS
     max_age = CONTINUOUS_MAX_SECONDS if continuous else MAX_CLIP_SECONDS
     query = urlencode(
         {
@@ -146,6 +147,9 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
                 except json.JSONDecodeError:
                     continue
                 kind = (payload.get("type") or "").lower()
+                if kind == "ping":
+                    last_audio = time.monotonic()
+                    continue
                 if kind in {"stop", "audio.done"}:
                     await xai.send(json.dumps({"type": "audio.done"}))
                     return
@@ -169,7 +173,9 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
                     )
                 elif kind == "transcript.done":
                     await websocket.send_json({"type": "done", "text": msg.get("text") or ""})
-                    return
+                    if not continuous:
+                        return
+                    last_audio = time.monotonic()
                 elif kind == "error":
                     await websocket.send_json({"type": "error", "message": msg.get("message") or "STT failed"})
                     return
@@ -179,14 +185,15 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
                 await asyncio.sleep(1)
                 now = time.monotonic()
                 if now - started > max_age:
-                    await websocket.send_json({"type": "timeout", "message": "Dictation time limit reached."})
+                    await websocket.send_json({"type": "timeout", "message": "STT timeout"})
                     try:
                         await xai.send(json.dumps({"type": "audio.done"}))
                     except Exception:
                         pass
                     return
-                if not continuous and now - last_audio > idle:
-                    await websocket.send_json({"type": "idle", "message": "Stopped after silence."})
+                if now - last_audio > idle_limit:
+                    idle_message = "Mic idle, tap to resume" if continuous else "Stopped after silence."
+                    await websocket.send_json({"type": "idle", "message": idle_message})
                     try:
                         await xai.send(json.dumps({"type": "audio.done"}))
                     except Exception:
