@@ -120,8 +120,10 @@ def patch_conversation(
     title: str | None = None,
     model: str | None = None,
     last_model: str | None = None,
+    recap_question: bool | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
+    recap_provided: bool = False,
 ) -> GrokConversation:
     return patch_conversation_for_user(
         db,
@@ -130,8 +132,10 @@ def patch_conversation(
         title=title,
         model=model,
         last_model=last_model,
+        recap_question=recap_question,
         title_provided=title_provided,
         model_provided=model_provided,
+        recap_provided=recap_provided,
     )
 
 
@@ -143,8 +147,10 @@ def patch_conversation_for_user(
     title: str | None = None,
     model: str | None = None,
     last_model: str | None = None,
+    recap_question: bool | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
+    recap_provided: bool = False,
 ) -> GrokConversation:
     row = owned_conversation_for_user(db, user_id, conversation_id)
     if title_provided:
@@ -152,6 +158,8 @@ def patch_conversation_for_user(
         row.title = resolve_patched_title(title or "", first_user)
     if model_provided and model is not None:
         row.model = model
+    if recap_provided and recap_question is not None:
+        row.recap_question = recap_question
     if last_model is not None:
         row.last_model = last_model
     row.updated_at = datetime.now(timezone.utc)

@@ -30,6 +30,7 @@ class ChatIn(BaseModel):
     model: str | None = None
     article_id: UUID | None = None
     include_article: bool = False
+    recap_question: bool = False
     retry: bool = False
 
 
@@ -44,6 +45,7 @@ def _conversation_detail(row) -> GrokConversationDetailOut:
         pane=row.pane,
         model=row.model or chat_service.MODEL_AUTO,
         last_model=row.last_model,
+        recap_question=bool(row.recap_question),
         created_at=row.created_at,
         updated_at=row.updated_at,
         messages=[GrokMessageOut.model_validate(item) for item in row.messages],
@@ -123,8 +125,10 @@ def patch_conversation(
         conversation_id,
         title=payload.title,
         model=model_value,
+        recap_question=payload.recap_question,
         title_provided="title" in fields,
         model_provided="model" in fields,
+        recap_provided="recap_question" in fields,
     )
     db.commit()
     db.refresh(row)
@@ -159,6 +163,7 @@ def chat(
     conversation_id = payload.conversation_id
     user_message_id: UUID | None = None
     model_choice = chat_service.normalize_model_choice(payload.model) if payload.model else chat_service.MODEL_AUTO
+    recap_question = bool(payload.recap_question)
 
     user_text = payload.message.strip()
 
@@ -176,8 +181,9 @@ def chat(
             if payload.model:
                 model_choice = chat_service.normalize_model_choice(payload.model)
                 conversation.model = model_choice
-                db.add(conversation)
-                db.commit()
+            conversation.recap_question = recap_question
+            db.add(conversation)
+            db.commit()
             history = grok_store.conversation_history(db, conversation_id)
         elif conversation_id:
             conversation = grok_store.owned_conversation(db, user, conversation_id)
@@ -185,7 +191,8 @@ def chat(
             if payload.model:
                 model_choice = chat_service.normalize_model_choice(payload.model)
                 conversation.model = model_choice
-                db.add(conversation)
+            conversation.recap_question = recap_question
+            db.add(conversation)
             is_first = not conversation.messages
             user_row = grok_store.append_message(
                 db,
@@ -201,6 +208,8 @@ def chat(
             if payload.model:
                 model_choice = chat_service.normalize_model_choice(payload.model)
             conversation = grok_store.create_conversation(db, user, model=model_choice)
+            conversation.recap_question = recap_question
+            db.add(conversation)
             conversation_id = conversation.id
             is_first = True
             user_row = grok_store.append_message(
@@ -256,6 +265,7 @@ def chat(
                 history_for_xai,
                 excerpt,
                 include_article=include_article,
+                recap_question=recap_question,
                 model=resolved_model,
                 model_choice=model_choice,
                 user_id=user_id,

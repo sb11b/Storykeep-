@@ -640,6 +640,7 @@ class GrokConversationOut(BaseModel):
     pane: str | None = None
     model: str = "auto"
     last_model: str | None = None
+    recap_question: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -662,3 +663,4 @@ class GrokConversationDetailOut(GrokConversationOut):
 class GrokConversationPatchIn(BaseModel):
     title: str | None = Field(default=None, max_length=80)
     model: str | None = Field(default=None, max_length=64)
+    recap_question: bool | None = None

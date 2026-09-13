@@ -4,14 +4,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Mic, Send, Square, X } from "lucide-react";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
+import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { GrokChatMessage } from "@/components/grok-chat-message";
+import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
+import { folderById } from "@/lib/folders";
 import { formatChatError } from "@/lib/grok-chat-error";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { grokModelLabel } from "@/lib/grok-model";
+import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
+import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type ChatRole = "user" | "assistant";
@@ -21,10 +26,8 @@ export type ChatLine = {
   content: string;
   error?: string | null;
   failed?: boolean;
-  /** True while waiting for first token from the stream */
   waiting?: boolean;
 };
-export type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
 export type GrokPaneState = {
   id: string;
@@ -34,7 +37,9 @@ export type GrokPaneState = {
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
-  noteDest: GrokNoteDestination;
+  noteDest: NoteDestination;
+  noteFolderId: string | null;
+  recapQuestion: boolean;
 };
 
 export function createGrokPane(): GrokPaneState {
@@ -47,6 +52,8 @@ export function createGrokPane(): GrokPaneState {
     draft: "",
     includeArticle: false,
     noteDest: "notes",
+    noteFolderId: null,
+    recapQuestion: false,
   };
 }
 
@@ -91,6 +98,7 @@ export function GrokPane({
   chatModels,
   persist,
   panelOpen = true,
+  ttsVoices = [],
 }: {
   pane: GrokPaneState;
   label: string;
@@ -111,12 +119,12 @@ export function GrokPane({
   onFocus: () => void;
   onUpdate: (updater: (pane: GrokPaneState) => GrokPaneState) => void;
   onRemove?: () => void;
-  onSavedNote: (noteId?: string, destination?: GrokNoteDestination) => Promise<void>;
+  onSavedNote: (noteId?: string, destination?: NoteDestination, folderId?: string | null) => Promise<void>;
   onActivateListen: (stop: (() => void) | null) => void;
   onStopArticleListen?: () => void;
   onHistoryChanged?: () => void;
-  /** When false, abort any in-flight stream for this pane */
   panelOpen?: boolean;
+  ttsVoices?: TtsVoice[];
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -124,11 +132,30 @@ export function GrokPane({
   const abortRef = useRef<AbortController | null>(null);
   const dictation = useDictation();
   const [busy, setBusy] = useState(false);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
+  const [listenTarget, setListenTarget] = useState<{ id: string; bodyEl: HTMLElement } | null>(null);
+  const [activeWord, setActiveWord] = useState<number | null>(null);
+  const pendingListenRef = useRef(false);
+  const activeBodyRef = useRef<HTMLElement | null>(null);
+  activeBodyRef.current = listenTarget?.bodyEl ?? null;
 
   const abortInFlight = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
   }, []);
+
+  useEffect(() => {
+    void api.folders().then(setFolders).catch(() => setFolders([]));
+  }, []);
+
+  useEffect(() => {
+    if (!ttsVoices.length) return;
+    const stored = readStoredTtsVoice(ttsVoices[0]!.voice_id);
+    if (ttsVoices.some((voice) => voice.voice_id === stored)) setVoiceId(stored);
+    else setVoiceId(ttsVoices[0]!.voice_id);
+  }, [ttsVoices]);
 
   useEffect(() => {
     if (!panelOpen) {
@@ -157,6 +184,61 @@ export function GrokPane({
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [pane.messages]);
+
+  const listen = useGrokMessageListen({
+    messageId: listenTarget?.id ?? "",
+    bodyRef: activeBodyRef,
+    voiceId,
+    disabled: !listenTarget || !ttsEnabled || locked,
+    onCue: setActiveWord,
+    onPlayingChange: (active) => {
+      if (active) {
+        onStopArticleListen?.();
+        onActivateListen(() => stopRef.current());
+      } else {
+        onActivateListen(null);
+        setListenTarget(null);
+        setActiveWord(null);
+      }
+    },
+  });
+
+  const listenApiRef = useRef(listen);
+  listenApiRef.current = listen;
+  stopRef.current = listen.stop;
+
+  useEffect(() => {
+    if (pendingListenRef.current && listenTarget) {
+      pendingListenRef.current = false;
+      listenApiRef.current.listen();
+    }
+  }, [listenTarget]);
+
+  useEffect(() => {
+    if (!panelOpen) listenApiRef.current.stop();
+  }, [panelOpen]);
+
+  const registerBody = useCallback((messageId: string, element: HTMLElement | null) => {
+    if (listenTarget?.id === messageId && element) {
+      setListenTarget({ id: messageId, bodyEl: element });
+    }
+  }, [listenTarget?.id]);
+
+  function requestListen(messageId: string, bodyEl: HTMLElement) {
+    if (listen.isActive && listenTarget?.id !== messageId) {
+      listen.stop();
+    }
+    if (listen.isActive && listenTarget?.id === messageId) {
+      if (listen.phase === "playing") {
+        listen.pause();
+      } else {
+        listen.listen();
+      }
+      return;
+    }
+    pendingListenRef.current = true;
+    setListenTarget({ id: messageId, bodyEl });
+  }
 
   async function runStream(options: {
     message: string;
@@ -188,6 +270,7 @@ export function GrokPane({
           model: pane.modelChoice,
           article_id: articleId,
           include_article: includeDecision.include,
+          recap_question: pane.recapQuestion,
         },
         (delta) => {
           onUpdate((current) => ({
@@ -326,15 +409,27 @@ export function GrokPane({
       if (articleId && isComposedNote(articleGuid)) {
         const existing = (articleBody || "").trim();
         const next = existing ? `${existing}\n\n## Grok\n\n${body}` : body;
-        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next);
+        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next, pane.noteDest, false, pane.noteFolderId);
         toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
-        await onSavedNote(articleId, pane.noteDest);
+        await onSavedNote(articleId, pane.noteDest, pane.noteFolderId);
         return;
       }
       const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
-      const article = await api.composeVaultNote(titleFromReply(body), markdown, ["grok"], pane.noteDest);
-      toast.success(`Saved to StoryKeep/${DESTINATION_LABEL[pane.noteDest]}.`);
-      await onSavedNote(article.id, pane.noteDest);
+      const article = await api.composeVaultNote(
+        titleFromReply(body),
+        markdown,
+        ["grok"],
+        pane.noteDest,
+        false,
+        pane.noteFolderId,
+      );
+      const folderName = folderById(folders, pane.noteFolderId)?.name;
+      toast.success(
+        folderName
+          ? `Saved to StoryKeep/${DESTINATION_LABEL[pane.noteDest]}/${folderName}.`
+          : `Saved to StoryKeep/${DESTINATION_LABEL[pane.noteDest]}.`,
+      );
+      await onSavedNote(article.id, pane.noteDest, pane.noteFolderId);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");
     }
@@ -359,7 +454,49 @@ export function GrokPane({
     }
   }
 
+  async function setRecapQuestion(next: boolean) {
+    patch({ recapQuestion: next });
+    if (!pane.conversationId || !persist) return;
+    try {
+      await api.patchChatConversation(pane.conversationId, { recap_question: next });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function createNoteFolder() {
+    const name = window.prompt("New folder name");
+    if (!name?.trim()) return;
+    try {
+      const row = await api.createFolder(pane.noteDest, name.trim());
+      setFolders((current) => [...current, row]);
+      patch({ noteFolderId: row.id });
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not create folder");
+    }
+  }
+
+  function handleNoteDestChange(next: NoteDestination | "") {
+    if (!next) return;
+    patch({ noteDest: next, noteFolderId: null });
+  }
+
+  function handleVoiceChange(next: string) {
+    setVoiceId(next);
+    writeStoredTtsVoice(next);
+  }
+
+  function handleSpeedChange(next: number) {
+    setPlaybackSpeed(next);
+    writeStoredTtsSpeed(next);
+    listen.changeSpeed(next);
+  }
+
   const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
+  const voiceOptions = ttsVoices.length ? ttsVoices : [{ voice_id: "eve", name: "Eve" }];
+  const showStickyPlayer = listen.isActive;
+  const headerSelectClass =
+    "h-7 max-w-[7rem] rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";
 
   return (
     <div
@@ -385,15 +522,16 @@ export function GrokPane({
           ) : null}
         </div>
       ) : null}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
-        <label className="inline-flex items-center gap-1.5">
+
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-2 py-1.5 text-xs">
+        <label className="inline-flex items-center gap-1">
           <span className="text-muted-foreground">Model</span>
           <select
             aria-label="Grok model"
             value={pane.modelChoice}
             disabled={!enabled}
             onChange={(event) => void setModelChoice(event.target.value)}
-            className="h-7 max-w-[10rem] rounded-md border border-input bg-background px-2 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            className={headerSelectClass}
           >
             {modelOptions.map((item) => (
               <option key={item} value={item}>
@@ -402,11 +540,71 @@ export function GrokPane({
             ))}
           </select>
         </label>
-        <span className="text-[10px] text-muted-foreground">
-          {grokModelLabel(pane.modelChoice, pane.lastResolvedModel)}
-        </span>
+        {ttsEnabled && !locked ? (
+          <>
+            <label className="inline-flex items-center gap-1">
+              <span className="text-muted-foreground">Voice</span>
+              <select
+                aria-label="TTS voice"
+                value={voiceId}
+                disabled={listen.phase === "loading"}
+                onChange={(event) => handleVoiceChange(event.target.value)}
+                className={headerSelectClass}
+              >
+                {voiceOptions.map((voice) => (
+                  <option key={voice.voice_id} value={voice.voice_id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-1">
+              <span className="text-muted-foreground">Speed</span>
+              <select
+                aria-label="Playback speed"
+                value={playbackSpeed}
+                disabled={listen.phase === "loading"}
+                onChange={(event) => handleSpeedChange(Number(event.target.value))}
+                className={cn(headerSelectClass, "max-w-[4rem]")}
+              >
+                {TTS_SPEEDS.map((rate) => (
+                  <option key={rate} value={rate}>
+                    {rate === 1 ? "1×" : `${rate}×`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
+        <label className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={pane.recapQuestion}
+            disabled={!enabled}
+            onChange={(event) => void setRecapQuestion(event.target.checked)}
+          />
+          Recap my question
+        </label>
+        {!(articleId && isComposedNote(articleGuid)) ? (
+          <>
+            <DestinationSelect
+              value={pane.noteDest}
+              onChange={handleNoteDestChange}
+              className="max-w-[6.5rem] text-[11px]"
+            />
+            <FolderSelect
+              shelf={pane.noteDest}
+              folders={folders}
+              value={pane.noteFolderId}
+              onChange={(next) => patch({ noteFolderId: next })}
+              onCreateFolder={() => void createNoteFolder()}
+              className="max-w-[6.5rem] text-[11px]"
+            />
+          </>
+        ) : null}
       </div>
-      <label className="flex shrink-0 items-start gap-2 border-b px-3 py-2 text-xs leading-snug">
+
+      <label className="flex shrink-0 items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-snug">
         <input
           type="checkbox"
           className="mt-0.5"
@@ -414,50 +612,58 @@ export function GrokPane({
           disabled={!articleId}
           onChange={(event) => patch({ includeArticle: event.target.checked })}
         />
-        <span>
+        <span className="text-muted-foreground">
           Include current article
-          {!articleId ? (
-            <span className="block text-[11px] text-muted-foreground">Open an article to ground this pane.</span>
-          ) : pane.includeArticle ? (
-            <span className="block text-[11px] text-muted-foreground">Uses up to ~12k characters from this article.</span>
-          ) : (
-            <span className="block text-[11px] text-muted-foreground">Off — this pane uses its thread only.</span>
-          )}
+          {!articleId ? " — open an article to ground this pane." : pane.includeArticle ? " — up to ~12k chars." : " — off, thread only."}
         </span>
       </label>
-      <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
-        {pane.messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {pane.includeArticle && articleId
-              ? "Ask about this article or school coding."
-              : "Ask for school coding help — explanations, debugging, or fenced code."}
-          </p>
-        ) : (
-          pane.messages.map((item) => (
-            <GrokChatMessage
-              key={item.id}
-              id={item.id}
-              role={item.role}
-              content={item.content}
-              error={item.error}
-              failed={item.failed}
-              waiting={item.waiting}
-              busy={busy}
-              ttsAvailable={ttsEnabled && !locked}
-              noteDest={pane.noteDest}
-              showNoteDest={!(articleId && isComposedNote(articleGuid)) && item.role === "assistant"}
-              onNoteDestChange={(dest) => patch({ noteDest: dest })}
-              onAddToNotes={(body) => void addToNotes(body)}
-              onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
-              onActivateListen={(stop) => {
-                stopRef.current = stop ?? (() => {});
-                onActivateListen(stop);
-              }}
-              onStopArticleListen={onStopArticleListen}
-            />
-          ))
-        )}
+
+      <div ref={listRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {showStickyPlayer ? (
+          <GrokListenBar
+            phase={listen.phase}
+            disabled={!ttsEnabled || locked}
+            speed={listen.speed}
+            voiceId={voiceId}
+            voices={voiceOptions}
+            onListen={listen.listen}
+            onPause={listen.pause}
+            onStop={listen.stop}
+            onSpeedChange={handleSpeedChange}
+            onVoiceChange={handleVoiceChange}
+          />
+        ) : null}
+        <div className="space-y-3 px-3 py-3">
+          {pane.messages.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {pane.includeArticle && articleId
+                ? "Ask about this article or school coding."
+                : "Ask for school coding help — explanations, debugging, or fenced code."}
+            </p>
+          ) : (
+            pane.messages.map((item) => (
+              <GrokChatMessage
+                key={item.id}
+                id={item.id}
+                role={item.role}
+                content={item.content}
+                error={item.error}
+                failed={item.failed}
+                waiting={item.waiting}
+                busy={busy}
+                ttsAvailable={ttsEnabled && !locked}
+                listening={listenTarget?.id === item.id && listen.isActive}
+                activeWord={listenTarget?.id === item.id ? activeWord : null}
+                onRegisterBody={registerBody}
+                onListen={requestListen}
+                onAddToNotes={(body) => void addToNotes(body)}
+                onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
+              />
+            ))
+          )}
+        </div>
       </div>
+
       {locked ? (
         <p className="shrink-0 border-t px-3 py-2 text-xs text-muted-foreground">
           Demo accounts cannot use chat, dictation, or Listen.

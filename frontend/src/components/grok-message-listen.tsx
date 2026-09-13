@@ -32,12 +32,14 @@ function ttsFailureToast(error: unknown) {
 export function useGrokMessageListen({
   messageId,
   bodyRef,
+  voiceId,
   disabled,
   onPlayingChange,
   onCue,
 }: {
   messageId: string;
   bodyRef: RefObject<HTMLElement | null>;
+  voiceId: string;
   disabled?: boolean;
   onPlayingChange?: (active: boolean) => void;
   onCue?: (wordIndex: number | null) => void;
@@ -152,7 +154,7 @@ export function useGrokMessageListen({
     claimTtsPlayback(stopRef.current);
     const generation = generationRef.current + 1;
     generationRef.current = generation;
-    const voice = readStoredTtsVoice();
+    const voice = voiceId || readStoredTtsVoice();
     const rate = readStoredTtsSpeed();
     setSpeed(rate);
     setPhase("loading");
@@ -203,7 +205,7 @@ export function useGrokMessageListen({
       stop();
       ttsFailureToast(error);
     }
-  }, [messageId, startCueLoop, stop, syncCueFromAudio, visibleSpeech]);
+  }, [messageId, startCueLoop, stop, syncCueFromAudio, visibleSpeech, voiceId]);
 
   const listen = useCallback(() => {
     if (disabled) return;
@@ -253,26 +255,42 @@ export function GrokListenBar({
   phase,
   disabled,
   speed,
+  voiceId,
+  voices,
   onListen,
   onPause,
   onStop,
   onSpeedChange,
+  onVoiceChange,
+  compact,
 }: {
   phase: "idle" | "loading" | "playing" | "paused";
   disabled?: boolean;
   speed: number;
+  voiceId?: string;
+  voices?: { voice_id: string; name: string }[];
   onListen: () => void;
   onPause: () => void;
   onStop: () => void;
   onSpeedChange: (rate: number) => void;
+  onVoiceChange?: (voiceId: string) => void;
+  compact?: boolean;
 }) {
   const listenLabel = phase === "paused" ? "Resume" : "Listen";
   const listenDisabled = disabled || phase === "loading" || phase === "playing";
   const pauseDisabled = phase !== "playing";
   const stopDisabled = phase === "idle" || phase === "loading";
 
+  const voiceOptions = voices?.length ? voices : [{ voice_id: "eve", name: "Eve" }];
+
   return (
-    <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-xs">
+    <div
+      className={
+        compact
+          ? "flex flex-wrap items-center gap-1 text-xs"
+          : "sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b bg-popover/95 px-2 py-1.5 text-xs backdrop-blur-sm"
+      }
+    >
       <Button size="xs" variant="outline" disabled={listenDisabled} onClick={onListen}>
         {phase === "loading" ? <LoaderCircle className="size-3 animate-spin" /> : <Volume2 className="size-3" />}
         {phase === "loading" ? "Preparing…" : listenLabel}
@@ -285,6 +303,21 @@ export function GrokListenBar({
         <Square className="size-3" />
         Stop
       </Button>
+      {onVoiceChange ? (
+        <select
+          aria-label="Voice"
+          className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+          value={voiceId ?? voiceOptions[0]!.voice_id}
+          disabled={disabled || phase === "loading"}
+          onChange={(event) => onVoiceChange(event.target.value)}
+        >
+          {voiceOptions.map((voice) => (
+            <option key={voice.voice_id} value={voice.voice_id}>
+              {voice.name}
+            </option>
+          ))}
+        </select>
+      ) : null}
       <select
         aria-label="Playback speed"
         className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"

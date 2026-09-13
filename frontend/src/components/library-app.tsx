@@ -1649,11 +1649,11 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         sourceRef={article?.source_ref ?? null}
         articleBody={article?.content_text ?? null}
         onStopArticleListen={() => listenRef.current?.stop()}
-        onSavedNote={async (noteId, destination) => {
+        onSavedNote={async (noteId, destination, folderId) => {
           await loadNav();
           const currentId = selectedIdRef.current;
           if (noteId && noteId !== currentId) {
-            setShelf({ kind: destination || "notes" });
+            setShelf(folderId ? { kind: destination || "notes", folderId } : { kind: destination || "notes" });
             openArticle(noteId);
             return;
           }

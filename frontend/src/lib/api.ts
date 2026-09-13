@@ -600,7 +600,7 @@ export const api = {
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
   chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
-  patchChatConversation: (id: string, payload: { title?: string; model?: string }) =>
+  patchChatConversation: (id: string, payload: { title?: string; model?: string; recap_question?: boolean }) =>
     request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -614,6 +614,7 @@ export const api = {
       model?: string;
       article_id: string | null;
       include_article: boolean;
+      recap_question?: boolean;
       retry?: boolean;
     },
     onDelta: (text: string) => void,

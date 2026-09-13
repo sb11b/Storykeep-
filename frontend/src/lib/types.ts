@@ -267,6 +267,7 @@ export type GrokConversation = {
   pane: string | null;
   model: string;
   last_model: string | null;
+  recap_question?: boolean;
   created_at: string;
   updated_at: string;
 };

@@ -51,6 +51,14 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(len(body), 12)
         self.assertEqual(body[-1]["content"], "m19")
 
+    def test_build_xai_messages_recap_toggle(self):
+        history = [{"role": "user", "content": "What is GDP?"}]
+        direct = build_xai_messages(history, None, include_article=False, recap_question=False)
+        recap = build_xai_messages(history, None, include_article=False, recap_question=True)
+        self.assertIn("Answer directly", direct[0]["content"])
+        self.assertIn("Recap my question", recap[0]["content"])
+        self.assertNotIn("Recap my question", direct[0]["content"])
+
     def test_empty_patch_title_falls_back_to_first_user_message(self):
         self.assertEqual(resolve_patched_title("", "Explain Python lists"), "Explain Python lists")
         self.assertEqual(resolve_patched_title("   ", "First question"), "First question")

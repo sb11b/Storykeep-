@@ -75,6 +75,11 @@ Rules:
 - You cannot run tools, search X, generate images, or speak aloud.
 - If Steve wants a reply kept, tell him to use Add to notes.
 - Be concise, accurate, and useful for learning.
+- Answer directly. Do not recap or quote the user's message unless they ask.
+"""
+
+RECAP_MODE_APPEND = """
+Steve enabled "Recap my question" for this thread. You may briefly restate his question before answering when it helps clarity.
 """
 
 ARTICLE_MODE_APPEND = """
@@ -439,11 +444,19 @@ def article_excerpt(article: Article, limit: int = ARTICLE_CHAR_CAP) -> str:
     return f"Title: {title}\n\n{body}"
 
 
-def build_xai_messages(history: list[dict[str, str]], excerpt: str | None, *, include_article: bool) -> list[dict[str, str]]:
+def build_xai_messages(
+    history: list[dict[str, str]],
+    excerpt: str | None,
+    *,
+    include_article: bool,
+    recap_question: bool = False,
+) -> list[dict[str, str]]:
     if include_article and excerpt:
         system = SYSTEM_PROMPT + ARTICLE_MODE_APPEND + "\n\nCurrent article excerpt (truncated):\n" + excerpt
     else:
         system = SYSTEM_PROMPT + GENERAL_MODE_APPEND
+    if recap_question:
+        system += RECAP_MODE_APPEND
     windowed = thread_window(history)
     return [{"role": "system", "content": system}, *windowed]
 
@@ -453,6 +466,7 @@ def stream_completion(
     excerpt: str | None,
     *,
     include_article: bool,
+    recap_question: bool = False,
     model: str,
     model_choice: str = MODEL_AUTO,
     user_id: UUID | None = None,
@@ -470,7 +484,12 @@ def stream_completion(
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
     payload = {
         "model": model,
-        "messages": build_xai_messages(history, excerpt, include_article=include_article),
+        "messages": build_xai_messages(
+            history,
+            excerpt,
+            include_article=include_article,
+            recap_question=recap_question,
+        ),
         "stream": True,
         "max_tokens": max_tokens,
         "temperature": 0.6,

@@ -15,7 +15,8 @@ import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
 import { grokModelLabel } from "@/lib/grok-model";
-import type { GrokConversation } from "@/lib/types";
+import type { GrokConversation, TtsVoice } from "@/lib/types";
+import type { NoteDestination } from "@/lib/destinations";
 import { cn } from "@/lib/utils";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
@@ -74,7 +75,7 @@ export function GrokBubble({
   articleGuid?: string | null;
   sourceRef?: string | null;
   articleBody?: string | null;
-  onSavedNote: (noteId?: string, destination?: "notes" | "schoolwork") => Promise<void>;
+  onSavedNote: (noteId?: string, destination?: NoteDestination, folderId?: string | null) => Promise<void>;
   onStopArticleListen?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -86,6 +87,7 @@ export function GrokBubble({
   const [focusedPaneId, setFocusedPaneId] = useState<string>(() => panes[0]!.id);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsVoices, setTtsVoices] = useState<TtsVoice[]>([]);
   const [sttEnabled, setSttEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
   const dictation = useDictation();
@@ -144,8 +146,14 @@ export function GrokBubble({
       });
     api
       .tts()
-      .then((row) => setTtsEnabled(row.enabled))
-      .catch(() => setTtsEnabled(false));
+      .then((row) => {
+        setTtsEnabled(row.enabled);
+        setTtsVoices(row.voices ?? []);
+      })
+      .catch(() => {
+        setTtsEnabled(false);
+        setTtsVoices([]);
+      });
     api
       .stt()
       .then((row) => setSttEnabled(row.enabled))
@@ -257,6 +265,7 @@ export function GrokBubble({
       ...pane,
       conversationId: null,
       messages: [],
+      recapQuestion: false,
     }));
   }
 
@@ -274,6 +283,7 @@ export function GrokBubble({
           content: item.content,
         })),
         draft: "",
+        recapQuestion: Boolean(detail.recap_question),
       }));
     } catch {
       /* ignore */
@@ -570,6 +580,7 @@ export function GrokBubble({
                   chatModels={chatModels}
                   persist={persist}
                   panelOpen={open}
+                  ttsVoices={ttsVoices}
                 />
               </div>
             ))}
@@ -596,6 +607,7 @@ export function GrokBubble({
             chatModels={chatModels}
             persist={persist}
             panelOpen={open}
+            ttsVoices={ttsVoices}
           />
         )}
       </div>
