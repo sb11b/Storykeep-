@@ -117,11 +117,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  getPreferences: () => request<Record<string, unknown>>("/api/v1/preferences"),
   updatePreferences: (payload: Record<string, unknown>) =>
     request<Record<string, unknown>>("/api/v1/preferences", {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  ttsVoices: () => request<{ voices: import("@/lib/types").TtsVoice[] }>("/api/v1/tts/voices"),
   changePassword: (payload: { current_password: string; new_password: string; confirm_password: string }) =>
     request<{ ok: boolean }>("/api/v1/auth/change-password", {
       method: "POST",

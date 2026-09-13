@@ -144,16 +144,14 @@ export function GrokBubble({
         setLocked(false);
         setPersist(false);
       });
-    api
-      .tts()
-      .then((row) => {
-        setTtsEnabled(row.enabled);
-        setTtsVoices(row.voices ?? []);
-      })
-      .catch(() => {
-        setTtsEnabled(false);
-        setTtsVoices([]);
-      });
+    Promise.all([
+      api.tts().catch(() => ({ enabled: false, provider: "xai", voices: [] as TtsVoice[] })),
+      api.ttsVoices().catch(() => ({ voices: [] as TtsVoice[] })),
+    ]).then(([status, voicesPayload]) => {
+      setTtsEnabled(status.enabled);
+      const voices = voicesPayload.voices?.length ? voicesPayload.voices : status.voices ?? [];
+      setTtsVoices(voices);
+    });
     api
       .stt()
       .then((row) => setSttEnabled(row.enabled))

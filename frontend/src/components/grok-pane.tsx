@@ -152,9 +152,27 @@ export function GrokPane({
 
   useEffect(() => {
     if (!ttsVoices.length) return;
-    const stored = readStoredTtsVoice(ttsVoices[0]!.voice_id);
-    if (ttsVoices.some((voice) => voice.voice_id === stored)) setVoiceId(stored);
-    else setVoiceId(ttsVoices[0]!.voice_id);
+    let cancelled = false;
+    void api
+      .getPreferences()
+      .then((prefs) => {
+        if (cancelled) return;
+        const saved = typeof prefs.tts_voice_id === "string" ? prefs.tts_voice_id : null;
+        const local = readStoredTtsVoice(ttsVoices[0]!.voice_id);
+        const pick = [saved, local].find((item) => item && ttsVoices.some((voice) => voice.voice_id === item));
+        const next = pick || ttsVoices[0]!.voice_id;
+        setVoiceId(next);
+        writeStoredTtsVoice(next);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const stored = readStoredTtsVoice(ttsVoices[0]!.voice_id);
+        if (ttsVoices.some((voice) => voice.voice_id === stored)) setVoiceId(stored);
+        else setVoiceId(ttsVoices[0]!.voice_id);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [ttsVoices]);
 
   useEffect(() => {
@@ -482,8 +500,14 @@ export function GrokPane({
   }
 
   function handleVoiceChange(next: string) {
+    if (listen.isActive) {
+      listenApiRef.current.stop();
+    }
     setVoiceId(next);
     writeStoredTtsVoice(next);
+    void api.updatePreferences({ tts_voice_id: next }).catch(() => {
+      /* ignore */
+    });
   }
 
   function handleSpeedChange(next: number) {
@@ -540,14 +564,13 @@ export function GrokPane({
             ))}
           </select>
         </label>
-        {ttsEnabled && !locked ? (
+        {ttsEnabled && !locked && !showStickyPlayer ? (
           <>
             <label className="inline-flex items-center gap-1">
               <span className="text-muted-foreground">Voice</span>
               <select
                 aria-label="TTS voice"
                 value={voiceId}
-                disabled={listen.phase === "loading"}
                 onChange={(event) => handleVoiceChange(event.target.value)}
                 className={headerSelectClass}
               >
@@ -563,7 +586,6 @@ export function GrokPane({
               <select
                 aria-label="Playback speed"
                 value={playbackSpeed}
-                disabled={listen.phase === "loading"}
                 onChange={(event) => handleSpeedChange(Number(event.target.value))}
                 className={cn(headerSelectClass, "max-w-[4rem]")}
               >

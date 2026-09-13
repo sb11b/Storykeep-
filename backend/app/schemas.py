@@ -576,6 +576,7 @@ class PreferencesIn(BaseModel):
     theme: str | None = None
     items_per_page: int | None = Field(default=None, ge=10, le=200)
     mark_read_on_open: bool | None = None
+    tts_voice_id: str | None = Field(default=None, max_length=64)
     appearance: AppearancePreferencesIn | None = None
 
 

@@ -181,6 +181,13 @@ def tts_status(user: User = Depends(get_current_user)) -> dict:
     }
 
 
+@router.get("/tts/voices")
+def tts_voices(user: User = Depends(get_current_user)) -> dict:
+    reject_locked(user)
+    _ = user
+    return {"voices": tts_service.list_voices()}
+
+
 @router.get("/articles/{article_id}/tts/plan")
 def speech_plan(
     article_id: UUID,

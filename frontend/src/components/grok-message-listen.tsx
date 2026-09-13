@@ -53,9 +53,23 @@ export function useGrokMessageListen({
   const lastCueRef = useRef<number | null>(null);
   const countsRef = useRef<number[]>([]);
   const timestampsValidRef = useRef(false);
+  const scriptRef = useRef("");
+  const loadedChunkRef = useRef<number | null>(null);
+  const loadedVoiceRef = useRef<string | null>(null);
+  const totalChunksRef = useRef(1);
+  const voiceRef = useRef(voiceId);
+  const speedRef = useRef(readStoredTtsSpeed());
   const stopRef = useRef<() => void>(() => {});
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [speed, setSpeed] = useState(readStoredTtsSpeed);
+
+  useEffect(() => {
+    voiceRef.current = voiceId;
+  }, [voiceId]);
+
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
 
   const stopCueLoop = useCallback(() => {
     if (cueRafRef.current != null) {
@@ -71,14 +85,35 @@ export function useGrokMessageListen({
     [onCue],
   );
 
+  const markTimestampsUnavailable = useCallback(() => {
+    timestampsValidRef.current = false;
+    stopCueLoop();
+    lastCueRef.current = null;
+    emitCue(null);
+  }, [emitCue, stopCueLoop]);
+
+  const applyTimestampValidation = useCallback(
+    (words: TtsWord[], chunkIndex: number, chunkWordCounts: number[]) => {
+      const valid = timestampsMatchChunk(words, chunkIndex, chunkWordCounts);
+      timestampsValidRef.current = valid;
+      if (!valid) {
+        markTimestampsUnavailable();
+        return false;
+      }
+      return true;
+    },
+    [markTimestampsUnavailable],
+  );
+
   const syncCueFromAudio = useCallback(() => {
     if (!timestampsValidRef.current) return;
     const audio = audioRef.current;
     const words = wordsRef.current;
     if (!audio || !words.length) return;
-    const local = wordIndexAtTime(words, audio.currentTime);
+    const currentTime = audio.currentTime;
+    const local = wordIndexAtTime(words, currentTime);
     if (local == null) return;
-    if (cueAheadOfVoice(words, local, audio.currentTime)) return;
+    if (cueAheadOfVoice(words, local, currentTime)) return;
     const next = wordOffsetRef.current + local;
     if (next !== lastCueRef.current) {
       lastCueRef.current = next;
@@ -97,26 +132,37 @@ export function useGrokMessageListen({
     cueRafRef.current = requestAnimationFrame(tick);
   }, [stopCueLoop, syncCueFromAudio]);
 
+  const resetLoaded = useCallback(() => {
+    loadedChunkRef.current = null;
+    loadedVoiceRef.current = null;
+    countsRef.current = [];
+    totalChunksRef.current = 1;
+    scriptRef.current = "";
+  }, []);
+
   const stop = useCallback(() => {
     generationRef.current += 1;
     stopCueLoop();
     lastCueRef.current = null;
     emitCue(null);
-    timestampsValidRef.current = false;
+    markTimestampsUnavailable();
     releaseTtsPlayback(stopRef.current);
     const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
+      audio.onloadedmetadata = null;
       audio.pause();
-      audio.currentTime = 0;
+      audio.removeAttribute("src");
+      audio.load();
     }
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    resetLoaded();
     setPhase("idle");
     onPlayingChange?.(false);
-  }, [emitCue, onPlayingChange, stopCueLoop]);
+  }, [emitCue, markTimestampsUnavailable, onPlayingChange, resetLoaded, stopCueLoop]);
 
   stopRef.current = stop;
 
@@ -145,67 +191,115 @@ export function useGrokMessageListen({
     return buildVisibleSpeechScript(root);
   }, [bodyRef]);
 
+  const loadChunk = useCallback(
+    async (index: number, voice: string) => {
+      const script = scriptRef.current;
+      if (!script.trim()) {
+        throw new Error("Nothing visible to read in this reply.");
+      }
+      const data = await api.messageSpeech(messageId, voice, index, script, true);
+      if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
+      return data;
+    },
+    [messageId],
+  );
+
+  const playChunk = useCallback(
+    async (index: number, voice: string) => {
+      claimTtsPlayback(stopRef.current);
+      const generation = generationRef.current + 1;
+      generationRef.current = generation;
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      const attachEnded = (total: number) => {
+        audio.onended = () => {
+          if (generation !== generationRef.current) return;
+          if (index + 1 < total) {
+            void playChunk(index + 1, voice);
+          } else {
+            stop();
+          }
+        };
+      };
+
+      const seekAndPlay = async (
+        words: TtsWord[],
+        wordOffset: number,
+        chunkIndex: number,
+        chunkWordCounts: number[],
+      ) => {
+        wordsRef.current = words;
+        wordOffsetRef.current = wordOffset;
+        applyTimestampValidation(words, chunkIndex, chunkWordCounts);
+        applyPlaybackRate(audio, speedRef.current);
+        audio.currentTime = 0;
+        await audio.play();
+        applyPlaybackRate(audio, speedRef.current);
+        if (generation !== generationRef.current) return;
+        setPhase("playing");
+        if (timestampsValidRef.current) {
+          syncCueFromAudio();
+          startCueLoop();
+        }
+      };
+
+      const alreadyLoaded =
+        loadedChunkRef.current === index && loadedVoiceRef.current === voice && Boolean(audio.src);
+      if (alreadyLoaded && wordsRef.current.length) {
+        const counts = countsRef.current.length ? countsRef.current : [wordsRef.current.length || 1];
+        attachEnded(totalChunksRef.current);
+        await seekAndPlay(wordsRef.current, wordOffsetRef.current, index, counts);
+        return;
+      }
+
+      setPhase("loading");
+      try {
+        const data = await loadChunk(index, voice);
+        if (generation !== generationRef.current) return;
+        totalChunksRef.current = data.chunks;
+        attachEnded(data.chunks);
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        const url = URL.createObjectURL(data.blob);
+        objectUrlRef.current = url;
+        audio.src = url;
+        loadedChunkRef.current = index;
+        loadedVoiceRef.current = voice;
+        const counts = data.chunkWordCounts.length ? data.chunkWordCounts : countsRef.current;
+        await seekAndPlay(data.words, data.wordOffset, index, counts);
+        if (index + 1 < data.chunks) {
+          void loadChunk(index + 1, voice).catch(() => {
+            /* prefetch failure is non-fatal */
+          });
+        }
+      } catch (error) {
+        if (generation !== generationRef.current) return;
+        stop();
+        ttsFailureToast(error);
+      }
+    },
+    [applyTimestampValidation, loadChunk, startCueLoop, stop, syncCueFromAudio],
+  );
+
   const beginPlayback = useCallback(async () => {
     const payload = visibleSpeech();
     if (!payload?.script.trim()) {
       toast.error("Nothing visible to read in this reply.");
       return;
     }
-    claimTtsPlayback(stopRef.current);
-    const generation = generationRef.current + 1;
-    generationRef.current = generation;
-    const voice = voiceId || readStoredTtsVoice();
+    scriptRef.current = payload.script;
+    resetLoaded();
     const rate = readStoredTtsSpeed();
     setSpeed(rate);
-    setPhase("loading");
-    try {
-      const data = await api.messageSpeech(messageId, voice, 0, payload.script);
-      if (generation !== generationRef.current) return;
-      const audio = audioRef.current;
-      if (!audio) return;
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-      const url = URL.createObjectURL(data.blob);
-      objectUrlRef.current = url;
-      audio.src = url;
-      wordsRef.current = data.words;
-      wordOffsetRef.current = data.wordOffset;
-      countsRef.current = data.chunkWordCounts.length ? data.chunkWordCounts : [data.words.length || 1];
-      timestampsValidRef.current = timestampsMatchChunk(data.words, 0, countsRef.current);
-      applyPlaybackRate(audio, rate);
-      audio.onended = () => {
-        if (generation !== generationRef.current) return;
-        stop();
-      };
-      await audio.play();
-      if (generation !== generationRef.current) return;
-      setPhase("playing");
-      if (timestampsValidRef.current) {
-        syncCueFromAudio();
-        startCueLoop();
-      } else {
-        console.warn("[tts-visible] grok reply word timestamps unavailable", {
-          ttsWordCount: data.ttsWordCount,
-          visibleWordCount: payload.visibleWordCount,
-          timedWords: data.words.length,
-        });
-      }
-      if (payload.visibleWordCount !== data.ttsWordCount) {
-        console.warn("[tts-visible] grok reply word count mismatch", {
-          ttsWordCount: data.ttsWordCount,
-          visibleWordCount: payload.visibleWordCount,
-        });
-      } else {
-        console.info("[tts-visible] grok reply", {
-          ttsWordCount: data.ttsWordCount,
-          visibleWordCount: payload.visibleWordCount,
-        });
-      }
-    } catch (error) {
-      if (generation !== generationRef.current) return;
-      stop();
-      ttsFailureToast(error);
+    speedRef.current = rate;
+    const voice = voiceRef.current || readStoredTtsVoice();
+    await playChunk(0, voice);
+    if (payload.visibleWordCount) {
+      console.info("[tts-visible] grok reply", {
+        visibleWordCount: payload.visibleWordCount,
+      });
     }
-  }, [messageId, startCueLoop, stop, syncCueFromAudio, visibleSpeech, voiceId]);
+  }, [playChunk, resetLoaded, visibleSpeech]);
 
   const listen = useCallback(() => {
     if (disabled) return;
@@ -213,7 +307,7 @@ export function useGrokMessageListen({
       const audio = audioRef.current;
       if (!audio) return;
       claimTtsPlayback(stopRef.current);
-      applyPlaybackRate(audio, speed);
+      applyPlaybackRate(audio, speedRef.current);
       void audio.play().then(() => {
         setPhase("playing");
         startCueLoop();
@@ -221,7 +315,7 @@ export function useGrokMessageListen({
       return;
     }
     if (phase === "idle") void beginPlayback();
-  }, [beginPlayback, disabled, phase, speed, startCueLoop]);
+  }, [beginPlayback, disabled, phase, startCueLoop]);
 
   const pause = useCallback(() => {
     if (phase !== "playing") return;
@@ -230,15 +324,13 @@ export function useGrokMessageListen({
     setPhase("paused");
   }, [phase, stopCueLoop]);
 
-  const changeSpeed = useCallback(
-    (rate: number) => {
-      writeStoredTtsSpeed(rate);
-      setSpeed(rate);
-      const audio = audioRef.current;
-      if (audio) applyPlaybackRate(audio, rate);
-    },
-    [],
-  );
+  const changeSpeed = useCallback((rate: number) => {
+    writeStoredTtsSpeed(rate);
+    setSpeed(rate);
+    speedRef.current = rate;
+    const audio = audioRef.current;
+    if (audio) applyPlaybackRate(audio, rate);
+  }, []);
 
   return {
     phase,
@@ -303,21 +395,19 @@ export function GrokListenBar({
         <Square className="size-3" />
         Stop
       </Button>
-      {onVoiceChange ? (
-        <select
-          aria-label="Voice"
-          className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-          value={voiceId ?? voiceOptions[0]!.voice_id}
-          disabled={disabled || phase === "loading"}
-          onChange={(event) => onVoiceChange(event.target.value)}
-        >
-          {voiceOptions.map((voice) => (
-            <option key={voice.voice_id} value={voice.voice_id}>
-              {voice.name}
-            </option>
-          ))}
-        </select>
-      ) : null}
+      <select
+        aria-label="Voice"
+        className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+        value={voiceId ?? voiceOptions[0]!.voice_id}
+        disabled={disabled || phase === "loading"}
+        onChange={(event) => onVoiceChange?.(event.target.value)}
+      >
+        {voiceOptions.map((voice) => (
+          <option key={voice.voice_id} value={voice.voice_id}>
+            {voice.name}
+          </option>
+        ))}
+      </select>
       <select
         aria-label="Playback speed"
         className="h-7 rounded-md border border-input bg-background px-1.5 text-[0.72rem] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
