@@ -30,7 +30,7 @@ function DropdownMenuContent({
     MenuPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset"
   > & {
-    /** Raise above fixed overlays such as the Grok panel (z-80). */
+    /** Raise above fixed overlays such as the chat pane (z-80). */
     elevated?: boolean;
   }) {
   const z = elevated ? "z-[100]" : "z-50";

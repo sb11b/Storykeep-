@@ -14,7 +14,7 @@ export type GrokMenuItem = {
 };
 
 /**
- * Self-contained ⋯ menu for the Grok panel.
+ * Self-contained ⋯ menu for the chat pane.
  *
  * The panel is a fixed z-80 layer, so the menu is portaled to <body> with a
  * fixed position measured from the trigger and a z-index above the panel.

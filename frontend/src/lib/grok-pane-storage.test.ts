@@ -4,30 +4,30 @@ import { labelFromPreferences, labelsFromPanes, mergePreferenceLabels, scrubDefa
 import { createGrokPane, defaultGrokPaneName } from "@/components/grok-pane";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 
-test("the default pane name is Larry, not Grok", () => {
-  assert.equal(DEFAULT_PANE_NAME, "Larry (the asparagus)");
-  assert.equal(defaultGrokPaneName(0), "Larry (the asparagus)");
-  assert.equal(defaultGrokPaneName(1), "Larry (the asparagus) 2");
-  assert.equal(createGrokPane(0).displayName, "Larry (the asparagus)");
+test("the default pane name is Junior, not Larry or Grok", () => {
+  assert.equal(DEFAULT_PANE_NAME, "Junior");
+  assert.equal(defaultGrokPaneName(0), "Junior");
+  assert.equal(defaultGrokPaneName(1), "Junior 2");
+  assert.equal(createGrokPane(0).displayName, "Junior");
 });
 
 test("labelFromPreferences reads by pane index", () => {
-  const labels = { "0": "Larry (the asparagus)", "1": "Junior" };
-  assert.equal(labelFromPreferences(labels, 0, DEFAULT_PANE_NAME), "Larry (the asparagus)");
-  assert.equal(labelFromPreferences(labels, 1, defaultGrokPaneName(1)), "Junior");
+  const labels = { "0": "Junior", "1": "Study buddy" };
+  assert.equal(labelFromPreferences(labels, 0, DEFAULT_PANE_NAME), "Junior");
+  assert.equal(labelFromPreferences(labels, 1, defaultGrokPaneName(1)), "Study buddy");
   assert.equal(labelFromPreferences(labels, 2, defaultGrokPaneName(2)), defaultGrokPaneName(2));
 });
 
 test("mergePreferenceLabels applies index keys", () => {
   const panes = [createGrokPane(0), createGrokPane(1)];
-  const merged = mergePreferenceLabels(panes, { "1": "Junior" });
+  const merged = mergePreferenceLabels(panes, { "1": "Study buddy" });
   assert.equal(merged[0]!.displayName, DEFAULT_PANE_NAME);
-  assert.equal(merged[1]!.displayName, "Junior");
+  assert.equal(merged[1]!.displayName, "Study buddy");
 });
 
 test("labelsFromPanes exports index map", () => {
-  const panes = [{ ...createGrokPane(0), displayName: "Big Larry" }];
-  assert.deepEqual(labelsFromPanes(panes), { "0": "Big Larry" });
+  const panes = [{ ...createGrokPane(0), displayName: "Study buddy" }];
+  assert.deepEqual(labelsFromPanes(panes), { "0": "Study buddy" });
 });
 
 test("labelsFromPanes skips the default label", () => {
@@ -36,24 +36,25 @@ test("labelsFromPanes skips the default label", () => {
 });
 
 test("mergePreferenceLabels keeps a custom local name over a default preference", () => {
-  const panes = [{ ...createGrokPane(0), displayName: "Big Larry" }];
+  const panes = [{ ...createGrokPane(0), displayName: "Study buddy" }];
   const merged = mergePreferenceLabels(panes, { "0": DEFAULT_PANE_NAME });
-  assert.equal(merged[0]!.displayName, "Big Larry");
+  assert.equal(merged[0]!.displayName, "Study buddy");
 });
 
-test("a stored legacy Grok label does not override the Larry default", () => {
+test("a stored legacy Grok or Larry label does not override the Junior default", () => {
   const panes = [createGrokPane(0), createGrokPane(1)];
-  const merged = mergePreferenceLabels(panes, { "0": "Grok", "1": "Grok panel 2" });
+  const merged = mergePreferenceLabels(panes, { "0": "Grok", "1": "Larry (the asparagus) 2" });
   assert.equal(merged[0]!.displayName, DEFAULT_PANE_NAME);
   assert.equal(merged[1]!.displayName, defaultGrokPaneName(1));
 });
 
-test("scrubDefaultPaneLabels drops both current and legacy default labels", () => {
+test("scrubDefaultPaneLabels drops current and legacy default labels", () => {
   const scrubbed = scrubDefaultPaneLabels({
     "0": "Grok",
     "1": "Grok panel 2",
-    "2": defaultGrokPaneName(2),
-    "3": "Larry the second",
+    "2": "Larry (the asparagus)",
+    "3": "Junior",
+    "4": "Larry the second",
   });
-  assert.deepEqual(scrubbed, { "3": "Larry the second" });
+  assert.deepEqual(scrubbed, { "4": "Larry the second" });
 });

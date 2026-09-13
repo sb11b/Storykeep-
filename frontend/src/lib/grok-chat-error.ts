@@ -8,5 +8,8 @@ export function formatChatError(status: number, detail: string, assistantName?: 
 /** The backend names the upstream model; the UI shows the pane's name instead. */
 export function withAssistantName(message: string, assistantName?: string): string {
   if (!assistantName) return message;
-  return message.replace(/\bGrok\b/g, assistantName);
+  return message
+    .replace(/Larry \(the asparagus\)/g, assistantName)
+    .replace(/\bLarry\b/g, assistantName)
+    .replace(/\bGrok\b/g, assistantName);
 }

@@ -25,6 +25,7 @@ export function GrokChatMessage({
   ttsAvailable,
   listening,
   activeWord,
+  statusLine,
   onRegisterBody,
   onListen,
   onAddToNotes,
@@ -34,7 +35,7 @@ export function GrokChatMessage({
   role: "user" | "assistant";
   content: string;
   files?: LarryAttachment[];
-  /** Custom pane name, e.g. "Larry (the asparagus)". */
+  /** Custom pane name, e.g. "Junior". */
   assistantName?: string;
   error?: string | null;
   failed?: boolean;
@@ -43,6 +44,7 @@ export function GrokChatMessage({
   ttsAvailable: boolean;
   listening?: boolean;
   activeWord?: number | null;
+  statusLine?: string | null;
   onRegisterBody?: (messageId: string, element: HTMLElement | null) => void;
   /** `trigger` is the Listen button, so the reply body is one closest() away. */
   onListen?: (messageId: string, trigger: HTMLElement) => void;
@@ -95,7 +97,10 @@ export function GrokChatMessage({
           </div>
         )
       ) : waiting && !failed ? (
-        <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin shrink-0" />
+          <span>{statusLine || `${assistantName} is working…`}</span>
+        </p>
       ) : null}
       {role === "user" && files.length ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">

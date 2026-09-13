@@ -21,7 +21,7 @@ export function loadSavedGrokPanes(): GrokPaneState[] | null {
       return {
         ...createGrokPane(index),
         id: row.id || crypto.randomUUID(),
-        // A stored legacy "Grok" label upgrades to the current default.
+        // A stored legacy "Grok" / "Larry" label upgrades to Junior.
         displayName: isDefaultPaneName(stored, index) ? defaultGrokPaneName(index) : stored,
       };
     });

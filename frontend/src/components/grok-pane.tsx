@@ -10,7 +10,7 @@ import { DestinationSelect, FolderSelect } from "@/components/destination-contro
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
-import { DEFAULT_PANE_NAME, defaultGrokPaneName } from "@/lib/grok-pane-name";
+import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, type ChatStatusKind } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -184,6 +184,9 @@ export function GrokPane({
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
+  const thinkingTimerRef = useRef<number | null>(null);
+  const gotDeltaRef = useRef(false);
   const pendingListenRef = useRef(false);
   const listenTargetRef = useRef<ListenTarget | null>(null);
   const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
@@ -194,6 +197,33 @@ export function GrokPane({
   const abortInFlight = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+  }, []);
+
+  const clearStreamStatus = useCallback(() => {
+    if (thinkingTimerRef.current != null) {
+      window.clearTimeout(thinkingTimerRef.current);
+      thinkingTimerRef.current = null;
+    }
+    gotDeltaRef.current = false;
+    setStreamStatus(null);
+  }, []);
+
+  const beginStreamStatus = useCallback(() => {
+    if (thinkingTimerRef.current != null) window.clearTimeout(thinkingTimerRef.current);
+    gotDeltaRef.current = false;
+    setStreamStatus("working");
+    thinkingTimerRef.current = window.setTimeout(() => {
+      if (!gotDeltaRef.current) setStreamStatus("thinking");
+    }, 700);
+  }, []);
+
+  const markWriting = useCallback(() => {
+    gotDeltaRef.current = true;
+    if (thinkingTimerRef.current != null) {
+      window.clearTimeout(thinkingTimerRef.current);
+      thinkingTimerRef.current = null;
+    }
+    setStreamStatus("writing");
   }, []);
 
   useEffect(() => {
@@ -228,6 +258,7 @@ export function GrokPane({
   useEffect(() => {
     if (!panelOpen) {
       abortInFlight();
+      clearStreamStatus();
       setBusy(false);
       onUpdate((current) => ({
         ...current,
@@ -236,9 +267,12 @@ export function GrokPane({
         ),
       }));
     }
-  }, [panelOpen, abortInFlight, onUpdate]);
+  }, [panelOpen, abortInFlight, clearStreamStatus, onUpdate]);
 
-  useEffect(() => () => abortInFlight(), [abortInFlight]);
+  useEffect(() => () => {
+    abortInFlight();
+    clearStreamStatus();
+  }, [abortInFlight, clearStreamStatus]);
 
   useEffect(() => {
     if (!panelOpen) dictation?.stop();
@@ -369,6 +403,7 @@ export function GrokPane({
     }
 
     setBusy(true);
+    beginStreamStatus();
     try {
       await api.streamChat(
         {
@@ -382,6 +417,7 @@ export function GrokPane({
           media_ids: retry ? undefined : options.mediaIds,
         },
         (delta) => {
+          markWriting();
           onUpdate((current) => ({
             ...current,
             messages: current.messages.map((item) =>
@@ -470,6 +506,7 @@ export function GrokPane({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
+      clearStreamStatus();
       onUpdate((current) => ({
         ...current,
         messages: current.messages.map((item) =>
@@ -863,6 +900,12 @@ export function GrokPane({
         </span>
       </label>
 
+      {streamStatus ? (
+        <p className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground" aria-live="polite">
+          {chatStatusLine(label, streamStatus)}
+        </p>
+      ) : null}
+
       <div ref={listRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {showStickyPlayer ? (
           <GrokListenBar
@@ -901,6 +944,9 @@ export function GrokPane({
                 activeWord={listenTarget?.id === item.id ? activeWord : null}
                 assistantName={label}
                 files={item.files}
+                statusLine={
+                  item.waiting && streamStatus ? chatStatusLine(label, streamStatus) : null
+                }
                 onRegisterBody={registerBody}
                 onListen={requestListen}
                 onAddToNotes={(body) => void addToNotes(body, item.id)}

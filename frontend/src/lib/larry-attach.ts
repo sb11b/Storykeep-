@@ -16,7 +16,7 @@ export type LarryAttachment = {
   byte_size?: number | null;
 };
 
-/** Chip shown above the Larry composer before Send. */
+/** Chip shown above the Junior composer before Send. */
 export type PendingAttachment = {
   id: string;
   name: string;
