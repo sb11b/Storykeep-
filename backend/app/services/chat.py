@@ -17,10 +17,11 @@ from app.models import Article
 logger = logging.getLogger(__name__)
 
 MODEL_AUTO = "auto"
-CHAT_STREAM_TIMEOUT_SEC = 60.0
+CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
-CHAT_FIRST_BYTE_TIMEOUT_SEC = 20.0
+CHAT_FIRST_BYTE_TIMEOUT_SEC = 30.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
+XAI_MODELS_CACHE_SEC = 900.0
 CODE_KEYWORDS = (
     "python",
     "javascript",
@@ -93,6 +94,8 @@ Steve disconnected the current article (or has no article open). You are in gene
 
 _rate_lock = threading.Lock()
 _rate_hits: dict[str, deque[float]] = defaultdict(deque)
+_models_lock = threading.Lock()
+_models_cache: tuple[float, set[str]] | None = None
 
 
 def chat_url() -> str:
@@ -193,10 +196,12 @@ def chat_error_message(status: int, detail: str) -> str:
 
 
 def stream_error_event(status: int, detail: str, *, partial: bool = False) -> dict[str, object]:
+    message = detail.strip() or "Unknown error."
     return {
-        "error": chat_error_message(status, detail),
+        "error": chat_error_message(status, message),
+        "message": message,
         "status": status,
-        "detail": detail.strip() or "Unknown error.",
+        "detail": message,
         "partial": partial,
     }
 
@@ -244,14 +249,14 @@ def require_key() -> str:
 
 
 def _chat_timeout(*, streaming: bool) -> httpx.Timeout:
-    if streaming:
-        return httpx.Timeout(
-            connect=CHAT_CONNECT_TIMEOUT_SEC,
-            read=CHAT_STREAM_TIMEOUT_SEC,
-            write=10.0,
-            pool=10.0,
-        )
-    return httpx.Timeout(CHAT_HEALTH_TIMEOUT_SEC, connect=CHAT_CONNECT_TIMEOUT_SEC)
+    total = CHAT_STREAM_TIMEOUT_SEC if streaming else CHAT_HEALTH_TIMEOUT_SEC
+    return httpx.Timeout(
+        timeout=total,
+        connect=CHAT_CONNECT_TIMEOUT_SEC,
+        read=total,
+        write=10.0,
+        pool=10.0,
+    )
 
 
 def _auth_headers(key: str) -> dict[str, str]:
@@ -264,8 +269,70 @@ def _transport_error_detail(exc: httpx.HTTPError) -> str:
     if isinstance(exc, httpx.ConnectError):
         return f"xAI unreachable: {exc}"
     if isinstance(exc, httpx.ReadTimeout):
-        return f"xAI stopped responding after {int(CHAT_STREAM_TIMEOUT_SEC)}s"
+        return f"Grok timed out after {int(CHAT_STREAM_TIMEOUT_SEC)}s."
     return f"xAI unreachable: {exc}"
+
+
+def map_xai_http_error(status_code: int, detail: str, model: str) -> HTTPException:
+    cleaned = (detail or "").strip() or f"xAI returned HTTP {status_code}."
+    if status_code == 401:
+        return HTTPException(status_code=401, detail="xAI auth failed")
+    if status_code == 404:
+        return HTTPException(status_code=400, detail=f"Invalid xAI model: {model}")
+    if status_code == 400:
+        return HTTPException(status_code=400, detail=cleaned)
+    return HTTPException(status_code=502, detail=f"xAI HTTP {status_code}: {cleaned}")
+
+
+def fetch_xai_model_ids(key: str) -> set[str]:
+    global _models_cache
+    now = time.time()
+    with _models_lock:
+        if _models_cache and now - _models_cache[0] < XAI_MODELS_CACHE_SEC:
+            return _models_cache[1]
+    names: set[str] = set(available_models())
+    try:
+        with httpx.Client(timeout=_chat_timeout(streaming=False)) as client:
+            response = client.get(
+                "https://api.x.ai/v1/models",
+                headers=_auth_headers(key),
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                for row in payload.get("data") or []:
+                    if isinstance(row, dict):
+                        model_id = row.get("id")
+                        if isinstance(model_id, str) and model_id.strip():
+                            names.add(model_id.strip())
+                        for alias in row.get("aliases") or []:
+                            if isinstance(alias, str) and alias.strip():
+                                names.add(alias.strip())
+    except httpx.HTTPError as exc:
+        logger.warning("xAI model list fetch failed: %s", exc)
+    with _models_lock:
+        _models_cache = (now, names)
+    return names
+
+
+def validate_xai_model(model: str) -> None:
+    key = require_key()
+    try:
+        with httpx.Client(timeout=_chat_timeout(streaming=False)) as client:
+            response = client.get(
+                f"https://api.x.ai/v1/models/{model}",
+                headers=_auth_headers(key),
+            )
+            if response.status_code == 404:
+                raise HTTPException(status_code=400, detail=f"Invalid xAI model: {model}")
+            if response.status_code == 401:
+                raise HTTPException(status_code=401, detail="xAI auth failed")
+            if response.status_code >= 400:
+                detail = parse_xai_error_body(response.text, response.status_code)
+                raise HTTPException(status_code=400, detail=detail)
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=_transport_error_detail(exc)) from exc
 
 
 def ping_xai() -> dict[str, object]:
@@ -284,11 +351,14 @@ def ping_xai() -> dict[str, object]:
         with httpx.Client(timeout=_chat_timeout(streaming=False)) as client:
             response = client.post(chat_url(), json=payload, headers=_auth_headers(key))
             ms = int((time.perf_counter() - started) * 1000)
-            if response.status_code >= 400:
-                detail = parse_xai_error_body(response.text, response.status_code)
+            xai_status = response.status_code
+            if xai_status >= 400:
+                detail = parse_xai_error_body(response.text, xai_status)
+                if xai_status == 401:
+                    detail = "xAI auth failed"
                 logger.warning(
                     "xAI health ping HTTP %s model=%s ms=%s detail=%s",
-                    response.status_code,
+                    xai_status,
                     model,
                     ms,
                     detail,
@@ -297,16 +367,16 @@ def ping_xai() -> dict[str, object]:
                     "ok": False,
                     "model": model,
                     "ms": ms,
-                    "status": response.status_code,
-                    "error": detail,
+                    "xai_status": xai_status,
+                    "message": detail,
                 }
-            logger.info("xAI health ping ok model=%s status=%s ms=%s", model, response.status_code, ms)
-            return {"ok": True, "model": model, "ms": ms, "status": response.status_code}
+            logger.info("xAI health ping ok model=%s xai_status=%s ms=%s", model, xai_status, ms)
+            return {"ok": True, "model": model, "ms": ms, "xai_status": xai_status}
     except httpx.HTTPError as exc:
         ms = int((time.perf_counter() - started) * 1000)
         detail = _transport_error_detail(exc)
         logger.warning("xAI health ping failed model=%s ms=%s detail=%s", model, ms, detail)
-        return {"ok": False, "model": model, "ms": ms, "error": detail}
+        return {"ok": False, "model": model, "ms": ms, "xai_status": None, "message": detail}
 
 
 def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
@@ -388,9 +458,10 @@ def stream_completion(
     user_id: UUID | None = None,
 ) -> Iterator[str]:
     key = require_key()
+    validate_xai_model(model)
     latest_user = next((item["content"] for item in reversed(history) if item.get("role") == "user"), "")
     logger.info(
-        "xAI chat model=%s choice=%s user=%s chars=%s",
+        "xAI chat start model=%s choice=%s user=%s chars=%s",
         model,
         model_choice,
         user_id,
@@ -425,10 +496,7 @@ def stream_completion(
                         time.perf_counter() - started,
                         detail,
                     )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"xAI HTTP {status_code}: {detail}",
-                    )
+                    raise map_xai_http_error(status_code, detail, model)
                 for line in response.iter_lines():
                     elapsed = time.perf_counter() - started
                     if elapsed >= CHAT_STREAM_TIMEOUT_SEC:
@@ -505,6 +573,8 @@ def _parse_sse_chunk(raw: str) -> tuple[str, bool]:
         if isinstance(fallback, str) and fallback:
             visible = fallback
     reasoning = delta.get("reasoning_content")
+    if not visible and isinstance(reasoning, str) and reasoning:
+        visible = reasoning
     active = bool(visible) or (isinstance(reasoning, str) and bool(reasoning))
     return visible, active
 

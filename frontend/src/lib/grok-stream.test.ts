@@ -87,7 +87,7 @@ test("readGrokChatStream hard timeout", async () => {
     (error: unknown) => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.status, 504);
-      assert.match(error.message, /timed out after 60s/);
+      assert.match(error.message, /timed out after 45s/);
       return true;
     },
   );

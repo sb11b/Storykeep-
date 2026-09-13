@@ -28,10 +28,14 @@ def title_from_user_line(content: str) -> str:
 
 
 def owned_conversation(db: Session, user: User, conversation_id: UUID) -> GrokConversation:
+    return owned_conversation_for_user(db, user.id, conversation_id)
+
+
+def owned_conversation_for_user(db: Session, user_id: UUID, conversation_id: UUID) -> GrokConversation:
     row = db.scalar(
         select(GrokConversation).where(
             GrokConversation.id == conversation_id,
-            GrokConversation.user_id == user.id,
+            GrokConversation.user_id == user_id,
         )
     )
     if not row:
@@ -119,7 +123,30 @@ def patch_conversation(
     title_provided: bool = False,
     model_provided: bool = False,
 ) -> GrokConversation:
-    row = owned_conversation(db, user, conversation_id)
+    return patch_conversation_for_user(
+        db,
+        user.id,
+        conversation_id,
+        title=title,
+        model=model,
+        last_model=last_model,
+        title_provided=title_provided,
+        model_provided=model_provided,
+    )
+
+
+def patch_conversation_for_user(
+    db: Session,
+    user_id: UUID,
+    conversation_id: UUID,
+    *,
+    title: str | None = None,
+    model: str | None = None,
+    last_model: str | None = None,
+    title_provided: bool = False,
+    model_provided: bool = False,
+) -> GrokConversation:
+    row = owned_conversation_for_user(db, user_id, conversation_id)
     if title_provided:
         first_user = first_user_message_content(db, conversation_id)
         row.title = resolve_patched_title(title or "", first_user)

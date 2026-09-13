@@ -2,7 +2,7 @@ import { ApiError } from "@/lib/api";
 import { formatChatError } from "@/lib/grok-chat-error";
 
 export const GROK_STREAM_IDLE_MS = 22_000;
-export const GROK_STREAM_HARD_MS = 60_000;
+export const GROK_STREAM_HARD_MS = 45_000;
 
 export type GrokStreamMeta = {
   conversation_id?: string;
@@ -19,6 +19,8 @@ export type GrokStreamHandlers = {
 
 type StreamPayload = {
   delta?: string;
+  heartbeat?: boolean;
+  message?: string;
   error?: string;
   status?: number;
   detail?: string;
@@ -38,8 +40,19 @@ function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta:
   const parsed = JSON.parse(data) as StreamPayload;
   if (parsed.error) {
     const status = typeof parsed.status === "number" ? parsed.status : 502;
-    const detail = parsed.detail || parsed.error;
+    const detail =
+      (typeof (parsed as { message?: string }).message === "string"
+        ? (parsed as { message?: string }).message
+        : undefined) ||
+      parsed.detail ||
+      parsed.error;
     throw new ApiError(status, parsed.error || formatChatError(status, detail));
+  }
+  if (parsed.delta) {
+    receivedDelta.value = true;
+    handlers.onDelta(parsed.delta);
+  } else if (parsed.heartbeat) {
+    receivedDelta.value = true;
   }
   if (
     parsed.conversation_id ||
@@ -55,10 +68,6 @@ function parseSsePart(part: string, handlers: GrokStreamHandlers, receivedDelta:
       model: parsed.model,
       model_choice: parsed.model_choice,
     });
-  }
-  if (parsed.delta) {
-    receivedDelta.value = true;
-    handlers.onDelta(parsed.delta);
   }
   return "continue" as const;
 }
@@ -89,7 +98,7 @@ export async function readGrokChatStream(
   const throwIfTimedOut = () => {
     const now = Date.now();
     if (now - startedAt >= hardMs) {
-      throw new ApiError(504, formatChatError(504, "Chat timed out after 60s."));
+      throw new ApiError(504, formatChatError(504, "Chat timed out after 45s."));
     }
     if (!receivedDelta.value && now - streamOpenedAt >= idleMs) {
       throw new ApiError(504, formatChatError(504, "No response (timeout)"));

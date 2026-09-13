@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models import User
 from app.routers.articles import _owned_article
@@ -77,7 +77,8 @@ def chat_health(user: User = Depends(get_current_user)) -> dict:
             "ok": False,
             "model": chat_service.default_fast_model(),
             "ms": 0,
-            "error": "XAI_API_KEY is not set or must start with xai-.",
+            "xai_status": None,
+            "message": "XAI_API_KEY is not set or must start with xai-.",
         }
     return chat_service.ping_xai()
 
@@ -151,7 +152,8 @@ def chat(
 ) -> StreamingResponse:
     reject_locked(user)
     chat_service.require_key()
-    chat_service.enforce_rate_limit(user.id)
+    user_id = user.id
+    chat_service.enforce_rate_limit(user_id)
 
     persist = grok_store.should_persist(user)
     conversation_id = payload.conversation_id
@@ -256,32 +258,34 @@ def chat(
                 include_article=include_article,
                 model=resolved_model,
                 model_choice=model_choice,
-                user_id=user.id,
+                user_id=user_id,
             ):
                 assistant_parts.append(piece)
                 yield f"data: {json.dumps({'delta': piece}, ensure_ascii=False)}\n\n"
             if persist and conversation_id:
                 assistant_text = "".join(assistant_parts).strip() or "Grok did not return a reply."
-                conversation = grok_store.owned_conversation(db, user, conversation_id)
-                assistant_row = grok_store.append_message(
-                    db,
-                    conversation,
-                    role="assistant",
-                    content=assistant_text,
-                )
-                grok_store.patch_conversation(
-                    db,
-                    user,
-                    conversation_id,
-                    last_model=resolved_model,
-                )
-                db.commit()
+                with SessionLocal() as stream_db:
+                    conversation = grok_store.owned_conversation_for_user(stream_db, user_id, conversation_id)
+                    assistant_row = grok_store.append_message(
+                        stream_db,
+                        conversation,
+                        role="assistant",
+                        content=assistant_text,
+                    )
+                    grok_store.patch_conversation_for_user(
+                        stream_db,
+                        user_id,
+                        conversation_id,
+                        last_model=resolved_model,
+                    )
+                    stream_db.commit()
+                    assistant_message_id = str(assistant_row.id)
                 yield (
                     "data: "
                     + json.dumps(
                         {
                             "conversation_id": str(conversation_id),
-                            "assistant_message_id": str(assistant_row.id),
+                            "assistant_message_id": assistant_message_id,
                             "model": resolved_model,
                             "model_choice": model_choice,
                         },
@@ -291,11 +295,10 @@ def chat(
                 )
             yield "data: [DONE]\n\n"
         except HTTPException as exc:
-            db.rollback()
             status_code, detail = chat_service.http_exception_detail(exc)
             logger.warning(
                 "Chat stream failed user=%s conversation=%s status=%s detail=%s partial_chars=%s",
-                user.id,
+                user_id,
                 conversation_id,
                 status_code,
                 detail,
@@ -310,10 +313,9 @@ def chat(
                 + "\n\n"
             )
         except Exception as exc:
-            db.rollback()
             logger.exception(
                 "Chat stream unexpected error user=%s conversation=%s partial_chars=%s",
-                user.id,
+                user_id,
                 conversation_id,
                 sum(len(part) for part in assistant_parts),
             )

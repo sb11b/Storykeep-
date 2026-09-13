@@ -94,10 +94,10 @@ class GrokConversationTests(unittest.TestCase):
         cleaned = validate_payload(windowed)
         self.assertEqual(cleaned[-1]["role"], "user")
 
-    def test_parse_sse_chunk_treats_reasoning_as_activity_not_visible(self):
+    def test_parse_sse_chunk_streams_reasoning_when_no_content(self):
         raw = '{"choices":[{"delta":{"reasoning_content":"thinking"}}]}'
         text, active = _parse_sse_chunk(raw)
-        self.assertEqual(text, "")
+        self.assertEqual(text, "thinking")
         self.assertTrue(active)
 
     def test_parse_sse_chunk_returns_visible_content(self):
@@ -112,6 +112,10 @@ class GrokConversationTests(unittest.TestCase):
 
     def test_key_format_ok_requires_xai_prefix(self):
         self.assertIsInstance(key_format_ok(), bool)
+
+    def test_stream_error_event_includes_message(self):
+        event = stream_error_event(504, "Grok timed out after 45s.")
+        self.assertEqual(event["message"], "Grok timed out after 45s.")
 
 
 if __name__ == "__main__":
