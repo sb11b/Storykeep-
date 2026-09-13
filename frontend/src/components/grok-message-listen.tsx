@@ -14,7 +14,7 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
-import { GROK_REPLY_SELECTOR, grokReplySpeechScript } from "@/lib/grok-reply-speech";
+import { GROK_REPLY_SELECTOR, grokReplySpeechScript, replyBodySelector } from "@/lib/grok-reply-speech";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
@@ -195,10 +195,15 @@ export function useGrokMessageListen({
   const visibleSpeech = useCallback(() => {
     const pinned = scriptOverride?.trim();
     if (pinned) {
-      return { script: pinned, visibleWordCount: pinned.match(/\S+/g)?.length ?? 0, source: "innerText" as const, selector: GROK_REPLY_SELECTOR };
+      return {
+        script: pinned,
+        visibleWordCount: pinned.match(/\S+/g)?.length ?? 0,
+        source: "innerText" as const,
+        selector: messageId ? replyBodySelector(messageId) : GROK_REPLY_SELECTOR,
+      };
     }
     return grokReplySpeechScript(bodyRef.current, fallbackText);
-  }, [bodyRef, fallbackText, scriptOverride]);
+  }, [bodyRef, fallbackText, messageId, scriptOverride]);
 
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
@@ -208,7 +213,7 @@ export function useGrokMessageListen({
       if (cached) return cached;
       const script = scriptRef.current;
       if (!script.trim()) {
-        throw new Error("This reply has no text to read yet.");
+        throw new Error(`selector miss: ${replyBodySelector(messageId)}`);
       }
       console.info("[grok-tts] POST /tts", { messageId, chunk: index, chars: script.length });
       const data = await api.messageSpeech(messageId, voice, index, script, true);
@@ -316,14 +321,9 @@ export function useGrokMessageListen({
   const beginPlayback = useCallback(async () => {
     const payload = visibleSpeech();
     const script = payload.script.trim();
-    console.info("[grok-tts] begin playback", {
-      messageId,
-      chars: script.length,
-      selector: payload.selector,
-      source: payload.source,
-    });
+    console.log("larry-tts", script.length, script.slice(0, 80));
     if (!script.length) {
-      showTtsErrorToast(new Error("This reply has no text to read yet."));
+      showTtsErrorToast(new Error(`selector miss: ${payload.selector}`));
       return;
     }
     scriptRef.current = script;

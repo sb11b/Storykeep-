@@ -1,4 +1,5 @@
-import { createGrokPane, defaultGrokPaneName, type GrokPaneState } from "@/components/grok-pane";
+import { createGrokPane, type GrokPaneState } from "@/components/grok-pane";
+import { defaultGrokPaneName, isDefaultPaneName } from "@/lib/grok-pane-name";
 
 const GROK_PANES_KEY = "storykeep-grok-panes";
 
@@ -15,11 +16,15 @@ export function loadSavedGrokPanes(): GrokPaneState[] | null {
     if (!raw) return null;
     const saved = JSON.parse(raw) as SavedPaneMeta[];
     if (!Array.isArray(saved) || !saved.length) return null;
-    return saved.map((row, index) => ({
-      ...createGrokPane(index),
-      id: row.id || crypto.randomUUID(),
-      displayName: row.displayName?.trim() || defaultGrokPaneName(index),
-    }));
+    return saved.map((row, index) => {
+      const stored = row.displayName?.trim() || "";
+      return {
+        ...createGrokPane(index),
+        id: row.id || crypto.randomUUID(),
+        // A stored legacy "Grok" label upgrades to the current default.
+        displayName: isDefaultPaneName(stored, index) ? defaultGrokPaneName(index) : stored,
+      };
+    });
   } catch {
     return null;
   }
@@ -57,22 +62,22 @@ export function mergePreferenceLabels(
   if (!labels || !Object.keys(labels).length) return panes;
   return panes.map((pane, index) => {
     const defaultName = defaultGrokPaneName(index);
-    const fromPref = labels[String(index)]?.trim();
+    const fromPref = labels[String(index)]?.trim() || "";
     const fromPane = pane.displayName?.trim() || defaultName;
-    const prefIsCustom = Boolean(fromPref && fromPref !== defaultName);
-    const paneIsCustom = fromPane !== defaultName;
-    if (prefIsCustom) return { ...pane, displayName: fromPref! };
+    const prefIsCustom = Boolean(fromPref) && !isDefaultPaneName(fromPref, index);
+    const paneIsCustom = !isDefaultPaneName(fromPane, index);
+    if (prefIsCustom) return { ...pane, displayName: fromPref };
     if (paneIsCustom) return pane;
-    return { ...pane, displayName: fromPref || defaultName };
+    return { ...pane, displayName: defaultName };
   });
 }
 
-/** Only persist names that differ from the default Grok / Grok panel N label. */
+/** Only persist names Steve typed, never a default label. */
 export function labelsFromPanes(panes: GrokPaneState[]): Record<string, string> {
   const out: Record<string, string> = {};
   panes.forEach((pane, index) => {
     const name = pane.displayName?.trim() || defaultGrokPaneName(index);
-    if (name !== defaultGrokPaneName(index)) out[String(index)] = name;
+    if (!isDefaultPaneName(name, index)) out[String(index)] = name;
   });
   return out;
 }
@@ -84,7 +89,7 @@ export function scrubDefaultPaneLabels(labels: Record<string, string> | undefine
     const index = Number(key);
     const trimmed = value?.trim();
     if (!trimmed) continue;
-    if (!Number.isNaN(index) && trimmed === defaultGrokPaneName(index)) continue;
+    if (!Number.isNaN(index) && isDefaultPaneName(trimmed, index)) continue;
     out[key] = trimmed;
   }
   return out;

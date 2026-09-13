@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GROK_REPLY_SELECTOR, grokReplySpeechScript } from "@/lib/grok-reply-speech";
+import {
+  GROK_REPLY_SELECTOR,
+  grokReplySpeechScript,
+  readRenderedReplyText,
+  replyBodySelector,
+} from "@/lib/grok-reply-speech";
 
 function fakeBody(innerText: string, textContent = ""): HTMLElement {
   return {
@@ -40,4 +45,35 @@ test("grokReplySpeechScript reports empty only when there is truly no text", () 
   const result = grokReplySpeechScript(fakeBody("   "), "   ");
   assert.equal(result.script, "");
   assert.equal(result.source, "empty");
+});
+
+test("replyBodySelector targets one reply body by message id", () => {
+  assert.equal(replyBodySelector("abc-123"), 'div.note-md[data-grok-reply-body="abc-123"]');
+});
+
+function withDocument(match: HTMLElement | null, run: () => void) {
+  const previous = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = { querySelector: () => match };
+  try {
+    run();
+  } finally {
+    (globalThis as { document?: unknown }).document = previous;
+  }
+}
+
+test("readRenderedReplyText returns trimmed innerText from the document", () => {
+  withDocument(fakeBody("  Hello Steve, here is the fix.  "), () => {
+    const result = readRenderedReplyText("abc-123");
+    assert.equal(result.text, "Hello Steve, here is the fix.");
+    assert.equal(result.found, true);
+    assert.equal(result.selector, replyBodySelector("abc-123"));
+  });
+});
+
+test("readRenderedReplyText reports a selector miss when nothing matches", () => {
+  withDocument(null, () => {
+    const result = readRenderedReplyText("abc-123");
+    assert.equal(result.text, "");
+    assert.equal(result.found, false);
+  });
 });

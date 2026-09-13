@@ -9,7 +9,8 @@ import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
-import { resolveGrokReplyText } from "@/lib/grok-reply-speech";
+import { readRenderedReplyText, replyBodySelector } from "@/lib/grok-reply-speech";
+import { DEFAULT_PANE_NAME, defaultGrokPaneName } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -47,9 +48,7 @@ export type GrokPaneState = {
   recapQuestion: boolean;
 };
 
-export function defaultGrokPaneName(index: number) {
-  return index === 0 ? "Grok" : `Grok panel ${index + 1}`;
-}
+export { DEFAULT_PANE_NAME, defaultGrokPaneName };
 
 export function createGrokPane(paneIndex = 0): GrokPaneState {
   return {
@@ -71,13 +70,14 @@ function isComposedNote(guid?: string | null) {
   return Boolean(guid?.startsWith("storykeep-note:"));
 }
 
-function titleFromReply(reply: string) {
-  const line = reply.trim().split("\n").find((item) => item.trim()) || "Grok note";
-  return line.replace(/^#+\s*/, "").replace(/^["“]+|["”]+$/g, "").slice(0, 80) || "Grok note";
+function titleFromReply(reply: string, assistantName: string) {
+  const fallback = `${assistantName} note`;
+  const line = reply.trim().split("\n").find((item) => item.trim()) || fallback;
+  return line.replace(/^#+\s*/, "").replace(/^["“]+|["”]+$/g, "").slice(0, 80) || fallback;
 }
 
-function noteMarkdown(reply: string, articleTitle: string | null, sourceRef: string | null) {
-  const heading = titleFromReply(reply);
+function noteMarkdown(reply: string, articleTitle: string | null, sourceRef: string | null, assistantName: string) {
+  const heading = titleFromReply(reply, assistantName);
   const source = articleTitle || sourceRef;
   if (!source) return `# ${heading}\n\n${reply.trim()}`;
   return `# ${heading}\n\nAbout: ${source}${sourceRef ? `\nPath: ${sourceRef}` : ""}\n\n${reply.trim()}`;
@@ -278,7 +278,7 @@ export function GrokPane({
   /** Sticky bar with no active target reads the newest assistant reply. */
   function listenLatestReply() {
     if (listenTarget) {
-      void requestListen(listenTarget.id, listenTarget.bodyEl);
+      requestListen(listenTarget.id, listenTarget.bodyEl);
       return;
     }
     const latest = [...pane.messages]
@@ -288,11 +288,10 @@ export function GrokPane({
       toast.error("Send a message first — there is no reply to read yet.");
       return;
     }
-    const el = bodyElementsRef.current.get(latest.id);
-    void requestListen(latest.id, el ?? null);
+    requestListen(latest.id, bodyElementsRef.current.get(latest.id) ?? null);
   }
 
-  async function requestListen(messageId: string, bodyEl: HTMLElement | null) {
+  function requestListen(messageId: string, bodyEl: HTMLElement | null) {
     if (listen.isActive && listenTarget?.id !== messageId) {
       listen.stop();
     }
@@ -304,15 +303,18 @@ export function GrokPane({
       }
       return;
     }
-    const markdown = pane.messages.find((item) => item.id === messageId)?.content ?? null;
-    const el = bodyEl ?? bodyElementsRef.current.get(messageId) ?? null;
-    const resolved = await resolveGrokReplyText(el, markdown);
-    if (!resolved.script) {
-      toast.error("This reply has no text to read yet.");
+    const { text, selector } = readRenderedReplyText(messageId);
+    if (!text.length) {
+      toast.error(`selector miss: ${selector}`);
       return;
     }
+    const el =
+      document.querySelector<HTMLElement>(selector) ??
+      bodyEl ??
+      bodyElementsRef.current.get(messageId) ??
+      null;
     pendingListenRef.current = true;
-    setListenTarget({ id: messageId, bodyEl: el ?? bodyEl!, script: resolved.script });
+    setListenTarget({ id: messageId, bodyEl: el!, script: text });
   }
 
   async function runStream(options: {
@@ -413,7 +415,7 @@ export function GrokPane({
         return;
       }
       const status = error instanceof ApiError ? error.status : 502;
-      const detail = error instanceof ApiError ? error.message : "Grok did not reply";
+      const detail = error instanceof ApiError ? error.message : `${label} did not reply`;
       const formatted =
         detail.startsWith("Chat failed (HTTP") ? detail : formatChatError(status, detail);
       onUpdate((current) => ({
@@ -483,15 +485,15 @@ export function GrokPane({
     try {
       if (articleId && isComposedNote(articleGuid)) {
         const existing = (articleBody || "").trim();
-        const next = existing ? `${existing}\n\n## Grok\n\n${body}` : body;
-        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body), next, pane.noteDest, false, pane.noteFolderId);
+        const next = existing ? `${existing}\n\n## ${label}\n\n${body}` : body;
+        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body, label), next, pane.noteDest, false, pane.noteFolderId);
         toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
         await onSavedNote(articleId, pane.noteDest, pane.noteFolderId);
         return;
       }
-      const markdown = noteMarkdown(body, articleTitle, sourceRef || null);
+      const markdown = noteMarkdown(body, articleTitle, sourceRef || null, label);
       const article = await api.composeVaultNote(
-        titleFromReply(body),
+        titleFromReply(body, label),
         markdown,
         ["grok"],
         pane.noteDest,
@@ -654,7 +656,7 @@ export function GrokPane({
         <label className="inline-flex items-center gap-1">
           <span className="text-muted-foreground">Model</span>
           <select
-            aria-label="Grok model"
+            aria-label={`Model for ${label}`}
             value={pane.modelChoice}
             disabled={!enabled}
             onChange={(event) => void setModelChoice(event.target.value)}
@@ -783,7 +785,7 @@ export function GrokPane({
                 activeWord={listenTarget?.id === item.id ? activeWord : null}
                 assistantName={label}
                 onRegisterBody={registerBody}
-                onListen={(messageId, element) => void requestListen(messageId, element)}
+                onListen={requestListen}
                 onAddToNotes={(body) => void addToNotes(body)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
               />
@@ -816,7 +818,9 @@ export function GrokPane({
             value={pane.draft}
             onChange={(event) => patch({ draft: event.target.value })}
             placeholder={
-              pane.includeArticle && articleId ? "Ask about this article or school coding…" : "Ask Grok for school coding help…"
+              pane.includeArticle && articleId
+                ? "Ask about this article or school coding…"
+                : `Ask ${label} for school coding help…`
             }
             disabled={!enabled}
             onFocus={() => {

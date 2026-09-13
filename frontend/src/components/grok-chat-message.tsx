@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
+import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
@@ -14,7 +15,7 @@ export function GrokChatMessage({
   id,
   role,
   content,
-  assistantName = "Grok",
+  assistantName = DEFAULT_PANE_NAME,
   error,
   failed,
   waiting,
@@ -50,7 +51,6 @@ export function GrokChatMessage({
     const root = bodyRef.current;
     if (!root || role !== "assistant" || !content) return;
     root.innerHTML = sanitizeHtml(renderMarkdown(content));
-    root.dataset.grokReplyBody = id;
     buildVisibleSpeechScript(root);
   }, [content, id, role]);
 
@@ -78,7 +78,7 @@ export function GrokChatMessage({
       </p>
       {content ? (
         role === "assistant" ? (
-          <div ref={bodyRef} className="note-md" onClick={onCodeCopyClick} />
+          <div ref={bodyRef} className="note-md" data-grok-reply-body={id} onClick={onCodeCopyClick} />
         ) : (
           <div ref={bodyRef} className="whitespace-pre-wrap">
             {content}

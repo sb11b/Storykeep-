@@ -673,7 +673,7 @@ export function GrokBubble({
         {fullscreen && !locked && panes.length < MAX_PANES ? (
           <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={addPane}>
             <Plus className="size-3.5" />
-            Add Grok
+            Add pane
           </Button>
         ) : null}
         {fullscreen ? (

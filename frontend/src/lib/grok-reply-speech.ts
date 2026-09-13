@@ -3,6 +3,27 @@ import { normalizeVisibleSpeechScript, visibleSpeechPlaintext, wrapVisibleSpeech
 /** The assistant markdown body Listen reads from. */
 export const GROK_REPLY_SELECTOR = "div.note-md[data-grok-reply-body]";
 
+/** Selector for one rendered reply body, by message id. */
+export function replyBodySelector(messageId: string): string {
+  return `div.note-md[data-grok-reply-body="${messageId}"]`;
+}
+
+export type RenderedReplyText = { text: string; selector: string; found: boolean };
+
+/**
+ * Read the reply the user is looking at, straight off the document.
+ *
+ * `innerText` is what is on screen, so this is the only source of truth for
+ * whether there is anything to speak.
+ */
+export function readRenderedReplyText(messageId: string): RenderedReplyText {
+  const selector = replyBodySelector(messageId);
+  const el = typeof document === "undefined" ? null : document.querySelector<HTMLElement>(selector);
+  const text = (el?.innerText ?? "").trim();
+  console.log("larry-tts", text.length, text.slice(0, 80));
+  return { text, selector, found: Boolean(el) };
+}
+
 export type GrokReplySpeech = {
   script: string;
   visibleWordCount: number;
@@ -68,25 +89,4 @@ export function grokReplySpeechScript(
   }
 
   return { script: "", visibleWordCount: 0, source: "empty", selector };
-}
-
-/**
- * Resolve reply text for Listen, retrying once after a frame so a reply that is
- * still painting does not read as empty.
- */
-export async function resolveGrokReplyText(
-  root: HTMLElement | null,
-  markdownFallback?: string | null,
-): Promise<GrokReplySpeech> {
-  let payload = grokReplySpeechScript(root, markdownFallback);
-  if (!payload.script && typeof requestAnimationFrame === "function") {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    payload = grokReplySpeechScript(root, markdownFallback);
-  }
-  console.info("[grok-tts] reply text", {
-    chars: payload.script.length,
-    selector: payload.selector,
-    source: payload.source,
-  });
-  return payload;
 }
