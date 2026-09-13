@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { GrokChatMessage } from "@/components/grok-chat-message";
@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { DESTINATION_LABEL, type NoteDestination } from "@/lib/destinations";
 import { formatChatError } from "@/lib/grok-chat-error";
+import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { grokModelLabel } from "@/lib/grok-model";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,8 @@ export type ChatLine = {
   content: string;
   error?: string | null;
   failed?: boolean;
+  /** True while waiting for first token from the stream */
+  waiting?: boolean;
 };
 export type GrokNoteDestination = Extract<NoteDestination, "notes" | "schoolwork">;
 
@@ -85,6 +88,7 @@ export function GrokPane({
   onHistoryChanged,
   chatModels,
   persist,
+  panelOpen = true,
 }: {
   pane: GrokPaneState;
   label: string;
@@ -108,10 +112,33 @@ export function GrokPane({
   onActivateListen: (stop: (() => void) | null) => void;
   onStopArticleListen?: () => void;
   onHistoryChanged?: () => void;
+  /** When false, abort any in-flight stream for this pane */
+  panelOpen?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const stopRef = useRef<() => void>(() => {});
+  const abortRef = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const abortInFlight = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!panelOpen) {
+      abortInFlight();
+      setBusy(false);
+      onUpdate((current) => ({
+        ...current,
+        messages: current.messages.map((item) =>
+          item.waiting ? { ...item, waiting: false } : item,
+        ),
+      }));
+    }
+  }, [panelOpen, abortInFlight, onUpdate]);
+
+  useEffect(() => () => abortInFlight(), [abortInFlight]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
@@ -124,6 +151,19 @@ export function GrokPane({
     assistantId: string;
   }) {
     const { message, retry = false, userLine, assistantId } = options;
+    abortInFlight();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const includeDecision = shouldIncludeArticle(
+      pane.includeArticle,
+      articleId,
+      articleBody,
+    );
+    if (pane.includeArticle && includeDecision.skippedHuge) {
+      toast.info("Article too large to include — sending without full text.");
+    }
+
     setBusy(true);
     try {
       await api.streamChat(
@@ -133,14 +173,20 @@ export function GrokPane({
           conversation_id: pane.conversationId,
           model: pane.modelChoice,
           article_id: articleId,
-          include_article: Boolean(pane.includeArticle && articleId),
+          include_article: includeDecision.include,
         },
         (delta) => {
           onUpdate((current) => ({
             ...current,
             messages: current.messages.map((item) =>
               item.id === assistantId
-                ? { ...item, content: item.content + delta, failed: false, error: null }
+                ? {
+                    ...item,
+                    waiting: false,
+                    content: item.content + delta,
+                    failed: false,
+                    error: null,
+                  }
                 : item,
             ),
           }));
@@ -164,7 +210,13 @@ export function GrokPane({
                 ...next,
                 messages: next.messages.map((item) =>
                   item.id === assistantId
-                    ? { ...item, id: meta.assistant_message_id!, failed: false, error: null }
+                    ? {
+                        ...item,
+                        waiting: false,
+                        id: meta.assistant_message_id!,
+                        failed: false,
+                        error: null,
+                      }
                     : item,
                 ),
               };
@@ -176,8 +228,18 @@ export function GrokPane({
           });
           if (meta.conversation_id || meta.assistant_message_id) onHistoryChanged?.();
         },
+        controller.signal,
       );
     } catch (error) {
+      if (controller.signal.aborted) {
+        onUpdate((current) => ({
+          ...current,
+          messages: current.messages.map((item) =>
+            item.id === assistantId ? { ...item, waiting: false } : item,
+          ),
+        }));
+        return;
+      }
       const status = error instanceof ApiError ? error.status : 502;
       const detail = error instanceof ApiError ? error.message : "Grok did not reply";
       const formatted =
@@ -186,13 +248,20 @@ export function GrokPane({
         ...current,
         messages: current.messages.map((item) =>
           item.id === assistantId
-            ? { ...item, failed: true, error: formatted, content: item.content }
+            ? { ...item, waiting: false, failed: true, error: formatted, content: item.content }
             : item,
         ),
       }));
       toast.error(formatted);
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
+      onUpdate((current) => ({
+        ...current,
+        messages: current.messages.map((item) =>
+          item.id === assistantId && item.waiting ? { ...item, waiting: false } : item,
+        ),
+      }));
     }
   }
 
@@ -204,7 +273,11 @@ export function GrokPane({
     onUpdate((current) => ({
       ...current,
       draft: "",
-      messages: [...current.messages, userLine, { id: assistantId, role: "assistant", content: "" }],
+      messages: [
+        ...current.messages,
+        userLine,
+        { id: assistantId, role: "assistant", content: "", waiting: true },
+      ],
     }));
     await runStream({ message: content, userLine, assistantId });
   }
@@ -219,7 +292,9 @@ export function GrokPane({
     onUpdate((current) => ({
       ...current,
       messages: current.messages.map((item) =>
-        item.id === assistantId ? { ...item, content: "", failed: false, error: null } : item,
+        item.id === assistantId
+          ? { ...item, content: "", failed: false, error: null, waiting: true }
+          : item,
       ),
     }));
     await runStream({
@@ -352,6 +427,7 @@ export function GrokPane({
               content={item.content}
               error={item.error}
               failed={item.failed}
+              waiting={item.waiting}
               busy={busy}
               ttsAvailable={ttsEnabled && !locked}
               noteDest={pane.noteDest}

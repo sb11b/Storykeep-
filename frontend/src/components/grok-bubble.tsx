@@ -552,6 +552,7 @@ export function GrokBubble({
                   onHistoryChanged={() => void refreshHistory()}
                   chatModels={chatModels}
                   persist={persist}
+                  panelOpen={open}
                 />
               </div>
             ))}
@@ -576,6 +577,7 @@ export function GrokBubble({
             onHistoryChanged={() => void refreshHistory()}
             chatModels={chatModels}
             persist={persist}
+            panelOpen={open}
           />
         )}
       </div>

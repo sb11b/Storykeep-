@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_AUTO = "auto"
 XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
-CHAT_STREAM_TIMEOUT_SEC = 90.0
+CHAT_STREAM_TIMEOUT_SEC = 60.0
 CHAT_CONNECT_TIMEOUT_SEC = 15.0
 CODE_KEYWORDS = (
     "python",

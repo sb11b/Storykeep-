@@ -27,6 +27,7 @@ import type {
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 import { formatChatError } from "@/lib/grok-chat-error";
+import { readGrokChatStream, type GrokStreamMeta } from "@/lib/grok-stream";
 
 export type NoteMediaUpload = {
   id: string;
@@ -614,13 +615,8 @@ export const api = {
       retry?: boolean;
     },
     onDelta: (text: string) => void,
-    onMeta?: (meta: {
-      conversation_id?: string;
-      user_message_id?: string;
-      assistant_message_id?: string;
-      model?: string;
-      model_choice?: string;
-    }) => void,
+    onMeta?: (meta: GrokStreamMeta) => void,
+    signal?: AbortSignal,
   ) => {
     const response = await fetch("/api/v1/chat", {
       method: "POST",
@@ -628,6 +624,7 @@ export const api = {
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal,
     });
     if (!response.ok) {
       let detail = response.statusText;
@@ -639,60 +636,7 @@ export const api = {
       }
       throw new ApiError(response.status, formatChatError(response.status, detail));
     }
-    if (!response.body) throw new ApiError(502, formatChatError(502, "Chat stream was empty"));
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-      for (const part of parts) {
-        const line = part.split("\n").find((item) => item.startsWith("data:"));
-        if (!line) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") return;
-        try {
-          const parsed = JSON.parse(data) as {
-            delta?: string;
-            error?: string;
-            status?: number;
-            detail?: string;
-            partial?: boolean;
-            conversation_id?: string;
-            user_message_id?: string;
-            assistant_message_id?: string;
-            model?: string;
-            model_choice?: string;
-          };
-          if (parsed.error) {
-            const status = typeof parsed.status === "number" ? parsed.status : 502;
-            const detail = parsed.detail || parsed.error;
-            throw new ApiError(status, parsed.error || formatChatError(status, detail));
-          }
-          if (
-            parsed.conversation_id ||
-            parsed.user_message_id ||
-            parsed.assistant_message_id ||
-            parsed.model ||
-            parsed.model_choice
-          ) {
-            onMeta?.({
-              conversation_id: parsed.conversation_id,
-              user_message_id: parsed.user_message_id,
-              assistant_message_id: parsed.assistant_message_id,
-              model: parsed.model,
-              model_choice: parsed.model_choice,
-            });
-          }
-          if (parsed.delta) onDelta(parsed.delta);
-        } catch (error) {
-          if (error instanceof ApiError) throw error;
-        }
-      }
-    }
+    await readGrokChatStream(response, { onDelta, onMeta }, signal);
   },
   articleSpeechVisible: async (
     id: string,

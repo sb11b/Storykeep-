@@ -20,6 +20,7 @@ export function GrokChatMessage({
   content,
   error,
   failed,
+  waiting,
   busy,
   ttsAvailable,
   noteDest,
@@ -35,6 +36,7 @@ export function GrokChatMessage({
   content: string;
   error?: string | null;
   failed?: boolean;
+  waiting?: boolean;
   busy?: boolean;
   ttsAvailable: boolean;
   noteDest: GrokNoteDestination;
@@ -95,9 +97,9 @@ export function GrokChatMessage({
             {content}
           </div>
         )
-      ) : failed && error ? null : (
+      ) : waiting && !failed ? (
         <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
-      )}
+      ) : null}
       {failed && error ? (
         <p className="mt-1 text-xs text-destructive whitespace-pre-wrap">{error}</p>
       ) : null}
