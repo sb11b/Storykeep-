@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.auth import decode_access_token
 from app.database import get_db
 from app.models import User
+from app.services.demo_lock import reject_authentication
 
 
 def get_current_user(
@@ -21,4 +22,5 @@ def get_current_user(
     user = db.get(User, decode_access_token(token))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    reject_authentication(user)
     return user

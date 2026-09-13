@@ -35,6 +35,7 @@ from app.services.demo_lock import (
     email_is_locked,
     is_locked,
     profile_is_read_only,
+    reject_authentication,
     reject_profile_mutation,
     user_requires_2fa,
 )
@@ -104,9 +105,13 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
 
 @router.post("/login", response_model=LoginResponseOut)
 def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)) -> LoginResponseOut:
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = payload.email.lower()
+    if email_is_locked(email):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")
+    user = db.scalar(select(User).where(User.email == email))
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    reject_authentication(user)
     if user_requires_2fa(user):
         challenge = auth_challenges.create_login_challenge(db, user)
         db.commit()
@@ -146,6 +151,7 @@ def login_two_factor(payload: TwoFactorVerifyIn, response: Response, db: Session
     auth_challenges.consume_login_challenge(db, payload.challenge_id)
     db.commit()
     db.refresh(user)
+    reject_authentication(user)
     return _issue_login(response, user)
 
 

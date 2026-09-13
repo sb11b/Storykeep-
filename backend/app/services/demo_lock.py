@@ -39,6 +39,12 @@ def reject_locked(user: User) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")
 
 
+def reject_authentication(user: User | None) -> None:
+    """Block sign-in and invalidate existing sessions for closed demo accounts."""
+    if user is not None and is_locked(user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Demo account closed")
+
+
 def profile_is_read_only(user: User | None) -> bool:
     return is_locked(user)
 
