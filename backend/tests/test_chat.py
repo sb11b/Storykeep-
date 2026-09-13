@@ -48,6 +48,8 @@ class ChatGuardTests(unittest.TestCase):
         self.assertNotIn("cannot generate images", system)
         self.assertNotIn("faceapp", system)
         self.assertIn("imagine", system)
+        self.assertNotIn("already applied", system)
+        self.assertNotIn("imagine will apply", system)
 
     def test_system_prompt_does_not_claim_no_image_tools(self):
         from app.services.chat import SYSTEM_PROMPT
@@ -58,6 +60,8 @@ class ChatGuardTests(unittest.TestCase):
         self.assertNotIn("cannot generate images", lower)
         self.assertNotIn("faceapp", lower)
         self.assertIn("imagine", lower)
+        self.assertNotIn("already applied", lower)
+        self.assertNotIn("imagine will apply", lower)
 
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"

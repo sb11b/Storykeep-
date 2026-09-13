@@ -34,6 +34,7 @@ import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
+import { collectImageMediaIds, imageToolIntent, MISSING_PHOTO_DETAIL } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -639,6 +640,8 @@ export function GrokPane({
     const content = pane.draft.trim();
     const files = pane.pendingAttachments ?? [];
     if ((!content && !files.length) || busy || !enabled) return;
+    const imageIds = collectImageMediaIds(files, pane.messages);
+    const intent = imageToolIntent(content, imageIds.length > 0);
     const userLine: ChatLine = {
       id: crypto.randomUUID(),
       role: "user",
@@ -650,20 +653,126 @@ export function GrokPane({
       ...current,
       draft: "",
       pendingAttachments: [],
-      streamStatus: "working",
+      streamStatus: intent ? "generating" : "working",
       messages: [
         ...current.messages,
         userLine,
         { id: assistantId, role: "assistant", content: "", waiting: true },
       ],
     }));
-    setStreamStatus("working");
+    setStreamStatus(intent ? "generating" : "working");
+    if (intent === "edit" && !imageIds.length) {
+      onUpdate((current) => ({
+        ...current,
+        streamStatus: null,
+        messages: current.messages.map((item) =>
+          item.id === assistantId
+            ? { ...item, waiting: false, failed: true, error: MISSING_PHOTO_DETAIL }
+            : item,
+        ),
+      }));
+      setStreamStatus(null);
+      return;
+    }
+    if (intent) {
+      await runImagineFromChat({
+        prompt: content,
+        mediaIds: imageIds,
+        userLine,
+        assistantId,
+      });
+      return;
+    }
     await runStream({
       message: content || (files[0] ? `Please look at ${files.map((item) => item.name).join(", ")}.` : ""),
       userLine,
       assistantId,
       mediaIds: files.map((item) => item.id),
     });
+  }
+
+  async function runImagineFromChat(options: {
+    prompt: string;
+    mediaIds: string[];
+    userLine: ChatLine;
+    assistantId: string;
+  }) {
+    const { prompt, mediaIds, userLine, assistantId } = options;
+    abortInFlight();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBusy(true);
+    applyStreamStatus("generating");
+    const routeLabel = autoRouteLabel(pane.modelChoice, "grok-4.6", "low") || undefined;
+    try {
+      const result = await api.chatImagine(
+        {
+          prompt,
+          conversation_id: pane.conversationId,
+          media_ids: mediaIds.length ? mediaIds : undefined,
+        },
+        controller.signal,
+      );
+      onUpdate((current) => ({
+        ...current,
+        conversationId: result.conversation_id || current.conversationId,
+        lastResolvedModel: "grok-4.6",
+        lastResolvedReasoning: "low",
+        streamStatus: null,
+        messages: current.messages.map((item) => {
+          if (item.id === userLine.id) {
+            return {
+              id: result.user_message.id,
+              role: "user" as const,
+              content: result.user_message.content,
+              files: result.user_message.files,
+            };
+          }
+          if (item.id === assistantId) {
+            return {
+              id: result.assistant_message.id,
+              role: "assistant" as const,
+              content: result.assistant_message.content,
+              files: result.assistant_message.files,
+              waiting: false,
+              failed: false,
+              error: null,
+              routeLabel,
+            };
+          }
+          return item;
+        }),
+      }));
+      onHistoryChanged?.();
+    } catch (error) {
+      if (controller.signal.aborted) {
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: null,
+          messages: current.messages.map((item) =>
+            item.id === assistantId ? { ...item, waiting: false } : item,
+          ),
+        }));
+        return;
+      }
+      const status = error instanceof ApiError ? error.status : 502;
+      const detail = error instanceof ApiError ? error.message : "Could not generate that image.";
+      const formatted = formatChatError(status, detail, label);
+      onUpdate((current) => ({
+        ...current,
+        streamStatus: null,
+        messages: current.messages.map((item) =>
+          item.id === assistantId
+            ? { ...item, waiting: false, failed: true, error: formatted, content: "" }
+            : item,
+        ),
+      }));
+      toast.error(formatted);
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+      setBusy(false);
+      clearStreamStatus();
+    }
   }
 
   async function imagine() {
@@ -679,8 +788,16 @@ export function GrokPane({
     setBusy(true);
     applyStreamStatus("working");
     try {
+      const pendingImages = (pane.pendingAttachments ?? [])
+        .filter((item) => item.kind === "image")
+        .map((item) => item.id);
       const result = await api.chatImagine(
-        { prompt, conversation_id: pane.conversationId },
+        {
+          prompt,
+          conversation_id: pane.conversationId,
+          media_ids:
+            pendingImages.length && imageToolIntent(prompt, true) === "edit" ? pendingImages : undefined,
+        },
         controller.signal,
       );
       onUpdate((current) => ({
@@ -731,13 +848,37 @@ export function GrokPane({
     if (!userLine || userLine.role !== "user") return;
     onUpdate((current) => ({
       ...current,
-      streamStatus: "working",
+      streamStatus: "generating",
       messages: current.messages.map((item) =>
         item.id === assistantId
           ? { ...item, content: "", failed: false, error: null, waiting: true }
           : item,
       ),
     }));
+    setStreamStatus("generating");
+    const retryImages = collectImageMediaIds(null, messages.slice(0, assistantIndex));
+    const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
+    if (retryIntent === "edit" && !retryImages.length) {
+      onUpdate((current) => ({
+        ...current,
+        streamStatus: null,
+        messages: current.messages.map((item) =>
+          item.id === assistantId
+            ? { ...item, waiting: false, failed: true, error: MISSING_PHOTO_DETAIL }
+            : item,
+        ),
+      }));
+      return;
+    }
+    if (retryIntent) {
+      await runImagineFromChat({
+        prompt: userLine.content,
+        mediaIds: retryImages,
+        userLine,
+        assistantId,
+      });
+      return;
+    }
     setStreamStatus("working");
     await runStream({
       message: userLine.content,

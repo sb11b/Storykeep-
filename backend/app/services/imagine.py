@@ -344,6 +344,10 @@ def persist_imagine_turn(
     prompt: str,
     conversation_id: UUID | None,
     media: NoteMedia,
+    source_media_ids: list[UUID] | None = None,
+    assistant_content: str | None = None,
+    last_model: str | None = None,
+    last_reasoning: str | None = None,
 ) -> tuple[Any, GrokMessage, GrokMessage]:
     if conversation_id:
         conversation = grok_store.owned_conversation(db, user, conversation_id)
@@ -360,11 +364,13 @@ def persist_imagine_turn(
         set_title_from_user=is_first,
         created_at=now,
     )
+    if source_media_ids:
+        chat_attachments.attach_to_message(db, user, user_row, source_media_ids)
     assistant_row = grok_store.append_message(
         db,
         conversation,
         role="assistant",
-        content=assistant_image_markdown(prompt, media.id),
+        content=assistant_content or assistant_image_markdown(prompt, media.id),
         created_at=now + timedelta(milliseconds=1),
     )
     chat_attachments.attach_to_message(
@@ -373,6 +379,13 @@ def persist_imagine_turn(
         assistant_row,
         [media.id],
         allow_assistant=True,
+    )
+    grok_store.patch_conversation_for_user(
+        db,
+        user.id,
+        conversation.id,
+        last_model=last_model,
+        last_reasoning=last_reasoning,
     )
     db.commit()
     user_row = db.scalar(

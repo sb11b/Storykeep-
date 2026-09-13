@@ -51,6 +51,7 @@ class ChatIn(BaseModel):
 class ImagineIn(BaseModel):
     prompt: str = Field(default="", max_length=4000)
     conversation_id: UUID | None = None
+    media_ids: list[UUID] = Field(default_factory=list, max_length=5)
 
 
 def _file_out(row) -> GrokMessageFileOut:
@@ -214,15 +215,39 @@ def imagine_image(
     if payload.conversation_id:
         grok_store.owned_conversation(db, user, payload.conversation_id)
     imagine_service.enforce_imagine_rate_limit(user.id)
-    image_bytes = imagine_service.generate_image_bytes(prompt)
-    media = imagine_service.save_generated_image(db, user, prompt, image_bytes)
-    conversation, user_row, assistant_row = imagine_service.persist_imagine_turn(
-        db,
-        user,
-        prompt=prompt,
-        conversation_id=payload.conversation_id,
-        media=media,
-    )
+    source_ids = list(payload.media_ids or [])
+    source_images = []
+    if source_ids:
+        preview = chat_attachments.preview_files(db, user, source_ids)
+        source_images = [item for item in preview if item.get("kind") == "image"]
+        if not source_images:
+            raise HTTPException(status_code=400, detail=chat_image.MISSING_PHOTO_DETAIL)
+        source_url = chat_image.owned_image_data_url(db, user, source_images[0])
+        result = chat_image.produce_chat_image("edit", prompt, source_url)
+        image_bytes = result.payload
+        media = imagine_service.save_generated_image(db, user, result.prompt, image_bytes)
+        markdown = chat_image.markdown_for_result(result, media.id)
+        conversation, user_row, assistant_row = imagine_service.persist_imagine_turn(
+            db,
+            user,
+            prompt=prompt,
+            conversation_id=payload.conversation_id,
+            media=media,
+            source_media_ids=[source_images[0]["media_id"]],
+            assistant_content=markdown,
+            last_model=chat_image.IMAGE_JOB_MODEL,
+            last_reasoning=chat_image.IMAGE_JOB_REASONING,
+        )
+    else:
+        image_bytes = imagine_service.generate_image_bytes(prompt)
+        media = imagine_service.save_generated_image(db, user, prompt, image_bytes)
+        conversation, user_row, assistant_row = imagine_service.persist_imagine_turn(
+            db,
+            user,
+            prompt=prompt,
+            conversation_id=payload.conversation_id,
+            media=media,
+        )
     return {
         "conversation_id": conversation.id,
         "user_message": _message_out(user_row),
@@ -237,192 +262,6 @@ def _sse_headers() -> dict[str, str]:
         "X-Accel-Buffering": "no",
         "Content-Encoding": "identity",
     }
-
-
-def _persist_chat_image_and_rewrite(
-    *,
-    user_id: UUID,
-    conversation_id: UUID | None,
-    persist: bool,
-    prefix: str,
-    result: chat_image.ChatImageResult,
-) -> tuple[str | None, str]:
-    with SessionLocal() as stream_db:
-        user = stream_db.get(User, user_id)
-        if user is None:
-            raise HTTPException(status_code=500, detail="Could not save that image in the thread.")
-        media = imagine_service.save_generated_image(stream_db, user, result.prompt, result.payload)
-        body = chat_image.markdown_for_result(result, media.id)
-        if not persist or not conversation_id:
-            return None, body
-        markdown = f"{prefix}{body}"
-        assistant_row = imagine_service.persist_generated_assistant(
-            stream_db,
-            user,
-            conversation_id=conversation_id,
-            markdown=markdown,
-            media=media,
-            last_model=chat_image.IMAGE_JOB_MODEL,
-            last_reasoning=chat_image.IMAGE_JOB_REASONING,
-        )
-        return str(assistant_row.id), body
-
-
-def _chat_image_stream(
-    *,
-    request: Request,
-    persist: bool,
-    conversation_id: UUID | None,
-    user_message_id: UUID | None,
-    user_id: UUID,
-    model_choice: str,
-    intent: chat_image.ImageIntent,
-    user_text: str,
-    source_url: str | None,
-) -> StreamingResponse:
-    async def events():
-        started = time.perf_counter()
-        ttft_ms: int | None = None
-        flushed = False
-        assistant_parts: list[str] = []
-
-        def _log(reason: str) -> None:
-            logger.info(
-                "larry-chat ttft_ms=%s flushed=%s reason=%s model=%s reasoning_effort=%s user=%s conversation=%s chars=%s",
-                ttft_ms if ttft_ms is not None else -1,
-                flushed,
-                reason,
-                chat_image.IMAGE_JOB_MODEL,
-                chat_image.IMAGE_JOB_REASONING,
-                user_id,
-                conversation_id,
-                sum(len(part) for part in assistant_parts),
-            )
-
-        produce = None
-        saved = False
-        try:
-            yield chat_service.SSE_PADDING
-            await asyncio.sleep(0)
-            meta = {
-                "conversation_id": str(conversation_id) if conversation_id else None,
-                "user_message_id": str(user_message_id) if user_message_id else None,
-                "model": chat_image.IMAGE_JOB_MODEL,
-                "model_choice": model_choice,
-                "reasoning_effort": chat_image.IMAGE_JOB_REASONING,
-                "stream_status": "generating",
-            }
-            yield chat_service.encode_sse({k: v for k, v in meta.items() if v is not None})
-            await asyncio.sleep(0)
-            assistant_parts.append(chat_image.GENERATING_DELTA)
-            flushed = True
-            ttft_ms = int((time.perf_counter() - started) * 1000)
-            yield chat_service.encode_sse({"delta": chat_image.GENERATING_DELTA})
-            await asyncio.sleep(0)
-
-            logger.info(
-                "junior-image start intent=%s has_source=%s user=%s conversation=%s",
-                intent,
-                bool(source_url),
-                user_id,
-                conversation_id,
-            )
-            loop = asyncio.get_running_loop()
-            produce = loop.run_in_executor(
-                None,
-                lambda: chat_image.produce_chat_image(intent, user_text, source_url),
-            )
-            disconnected = False
-            waited = 0
-            while not produce.done():
-                try:
-                    disconnected = await request.is_disconnected()
-                except Exception:
-                    disconnected = True
-                if disconnected:
-                    logger.info("junior-image client disconnected; waiting to save user=%s", user_id)
-                    break
-                done, _pending = await asyncio.wait({produce}, timeout=8.0)
-                waited += 8
-                if done:
-                    break
-                # 4KB comment so Railway/proxies flush; tiny heartbeat events get buffered.
-                yield chat_service.SSE_PADDING
-                yield chat_service.encode_sse({"heartbeat": True})
-                if waited == 8 and not disconnected:
-                    note = "This usually takes about a minute.\n\n"
-                    assistant_parts.append(note)
-                    yield chat_service.encode_sse({"delta": note})
-                await asyncio.sleep(0)
-
-            result = await asyncio.shield(produce)
-            assistant_id, markdown_body = await asyncio.shield(
-                asyncio.to_thread(
-                    _persist_chat_image_and_rewrite,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    persist=persist,
-                    prefix="".join(assistant_parts),
-                    result=result,
-                )
-            )
-            saved = True
-            if disconnected:
-                _log("disconnected-saved")
-                return
-            assistant_parts.append(markdown_body)
-            yield chat_service.encode_sse({"delta": markdown_body})
-            if persist and conversation_id and assistant_id:
-                yield chat_service.encode_sse(
-                    {
-                        "conversation_id": str(conversation_id),
-                        "assistant_message_id": assistant_id,
-                        "model": chat_image.IMAGE_JOB_MODEL,
-                        "model_choice": model_choice,
-                        "reasoning_effort": chat_image.IMAGE_JOB_REASONING,
-                    }
-                )
-            yield chat_service.encode_sse("[DONE]")
-            _log("done")
-        except HTTPException as exc:
-            status_code, detail = chat_service.http_exception_detail(exc)
-            partial_text = "".join(assistant_parts)
-            flushed = flushed or bool(partial_text)
-            _log(f"http-{status_code}")
-            yield chat_service.encode_sse(
-                chat_service.stream_error_event(status_code, detail, partial=bool(partial_text))
-            )
-        except asyncio.CancelledError:
-            _log("cancelled")
-            if produce is not None and not saved:
-                try:
-                    result = await asyncio.shield(produce)
-                    await asyncio.shield(
-                        asyncio.to_thread(
-                            _persist_chat_image_and_rewrite,
-                            user_id=user_id,
-                            conversation_id=conversation_id,
-                            persist=persist,
-                            prefix="".join(assistant_parts),
-                            result=result,
-                        )
-                    )
-                    _log("cancelled-saved")
-                except Exception:
-                    logger.exception("junior-image save after cancel failed user=%s", user_id)
-            raise
-        except Exception as exc:
-            logger.exception(
-                "Chat image stream unexpected error user=%s conversation=%s",
-                user_id,
-                conversation_id,
-            )
-            _log("error")
-            yield chat_service.encode_sse(
-                chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(assistant_parts))
-            )
-
-    return StreamingResponse(events(), media_type="text/event-stream", headers=_sse_headers())
 
 
 @router.post("/chat")
@@ -575,27 +414,6 @@ async def chat(
 
     if history:
         current_files = history[-1].get("files") or current_files
-    thread_images = chat_image.collect_thread_images(current_files, history)
-    has_thread_image = bool(thread_images)
-    intent = chat_image.image_tool_intent(user_text, has_thread_image)
-    if intent == "edit" and not has_thread_image:
-        intent = None
-    if intent:
-        source_url = chat_image.owned_image_data_url(db, user, thread_images[0]) if has_thread_image else None
-        imagine_service.require_imagine_key()
-        imagine_service.enforce_imagine_rate_limit(user.id)
-        return _chat_image_stream(
-            request=request,
-            persist=persist,
-            conversation_id=conversation_id,
-            user_message_id=user_message_id,
-            user_id=user_id,
-            model_choice=model_choice,
-            intent=intent,
-            user_text=user_text,
-            source_url=source_url,
-        )
-
     route_text = chat_attachments.merge_attachment_text(user_text, current_files, include_extracts=True)
     history_for_route = chat_service.drop_trailing_assistants(
         [{"role": item.get("role"), "content": item.get("content") or ""} for item in history]

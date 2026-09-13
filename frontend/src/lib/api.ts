@@ -583,7 +583,10 @@ export const api = {
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   chatHealth: () =>
     request<{ ok: boolean; model: string; reasoning: string; ttft_ms: number | null }>("/api/v1/chat/health"),
-  chatImagine: (body: { prompt: string; conversation_id?: string | null }, signal?: AbortSignal) =>
+  chatImagine: (
+    body: { prompt: string; conversation_id?: string | null; media_ids?: string[] },
+    signal?: AbortSignal,
+  ) =>
     request<{ conversation_id: string; user_message: GrokMessage; assistant_message: GrokMessage }>(
       "/api/v1/chat/imagine",
       { method: "POST", body: JSON.stringify(body), signal },
