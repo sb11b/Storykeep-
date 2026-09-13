@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   mediaDownloadUrl,
   mediaIdFromUrl,
+  sniffImageContentType,
   storykeepDownloadFilename,
 } from "./chat-media-download";
 
@@ -18,4 +19,5 @@ test("media ids come from the stable /media URL", () => {
   const id = "11111111-1111-4111-8111-111111111111";
   assert.equal(mediaIdFromUrl(`/api/v1/media/${id}`), id);
   assert.equal(mediaDownloadUrl(id), `/api/v1/media/${id}`);
+  assert.equal(sniffImageContentType(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0])), "image/jpeg");
 });

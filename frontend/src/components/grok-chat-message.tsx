@@ -3,9 +3,9 @@
 import { type MouseEvent, useEffect, useRef } from "react";
 import { Copy, Download, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
-import { mediaDownloadUrl, storykeepDownloadFilename } from "@/lib/chat-media-download";
+import { downloadChatPicture, mediaDownloadUrl } from "@/lib/chat-media-download";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
@@ -13,7 +13,20 @@ import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
+function toastDownloadError(error: unknown) {
+  toast.error(error instanceof Error ? error.message : "Could not download that picture.");
+}
+
 function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
+  const trigger = (event.target as HTMLElement).closest<HTMLElement>(".sk-chat-image-download");
+  if (trigger) {
+    event.preventDefault();
+    event.stopPropagation();
+    const mediaId = trigger.getAttribute("data-media-id") || "";
+    const url = trigger.getAttribute("data-media-url");
+    void downloadChatPicture({ mediaId, url }).catch(toastDownloadError);
+    return;
+  }
   onCodeCopyClick(event);
 }
 
@@ -31,15 +44,19 @@ function ChatPicture({
   return (
     <figure className="sk-chat-image mt-2">
       <img src={src} alt={alt} className="max-h-80 w-auto max-w-full rounded-md border" />
-      <a
-        className={cn(buttonVariants({ size: "xs", variant: "outline" }), "mt-1.5 no-underline")}
-        href={src}
-        download={storykeepDownloadFilename(mediaId, contentType)}
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        className="mt-1.5"
         aria-label="Download picture"
+        onClick={() => {
+          void downloadChatPicture({ mediaId, url: src, contentType }).catch(toastDownloadError);
+        }}
       >
         <Download className="size-3" />
         Download picture
-      </a>
+      </Button>
     </figure>
   );
 }

@@ -162,11 +162,16 @@
 .sk-chat-image-download {
   display: inline-block;
   margin-top: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   font-size: 0.75rem;
   font-weight: 500;
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 3px;
+  cursor: pointer;
 }
 
 .sk-page-surface {

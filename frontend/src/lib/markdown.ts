@@ -43,11 +43,10 @@ function inlineWithWikilinks(value: string, resolver?: WikilinkResolver): string
 
 function mediaImageHtml(alt: string, url: string): string {
   const id = url.split("/").pop() || "";
-  const name = `storykeep-${id}.jpg`;
   return (
     `<figure class="sk-chat-image">` +
     `<img src="${url}" alt="${alt}" />` +
-    `<a class="sk-chat-image-download" href="${url}" download="${name}" data-media-id="${id}">Download picture</a>` +
+    `<button type="button" class="sk-chat-image-download" data-media-id="${id}" data-media-url="${url}" aria-label="Download picture">Download picture</button>` +
     `</figure>`
   );
 }
