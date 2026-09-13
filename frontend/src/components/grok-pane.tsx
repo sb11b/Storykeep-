@@ -1,13 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Mic, MoreHorizontal, Pencil, Send, Square, X } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { LoaderCircle, Mic, Pencil, Send, Square, X } from "lucide-react";
+import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
@@ -169,6 +164,7 @@ export function GrokPane({
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const pendingListenRef = useRef(false);
   const activeBodyRef = useRef<HTMLElement | null>(null);
+  const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   activeBodyRef.current = listenTarget?.bodyEl ?? null;
 
   const abortInFlight = useCallback(() => {
@@ -273,10 +269,33 @@ export function GrokPane({
   }, [panelOpen]);
 
   const registerBody = useCallback((messageId: string, element: HTMLElement | null) => {
+    if (element) bodyElementsRef.current.set(messageId, element);
+    else bodyElementsRef.current.delete(messageId);
     if (listenTarget?.id === messageId && element) {
       setListenTarget({ id: messageId, bodyEl: element });
     }
   }, [listenTarget?.id]);
+
+  /** Sticky bar with no active target reads the newest assistant reply. */
+  function listenLatestReply() {
+    if (listenTarget) {
+      requestListen(listenTarget.id, listenTarget.bodyEl);
+      return;
+    }
+    const latest = [...pane.messages]
+      .reverse()
+      .find((item) => item.role === "assistant" && item.content && !item.failed);
+    if (!latest) {
+      toast.error("Send a message first — there is no reply to read yet.");
+      return;
+    }
+    const el = bodyElementsRef.current.get(latest.id);
+    if (!el) {
+      toast.error("That reply is still rendering. Try Listen again in a moment.");
+      return;
+    }
+    requestListen(latest.id, el);
+  }
 
   function requestListen(messageId: string, bodyEl: HTMLElement) {
     if (listen.isActive && listenTarget?.id !== messageId) {
@@ -554,7 +573,10 @@ export function GrokPane({
 
   const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
   const voiceOptions = ttsVoices.length ? ttsVoices : [{ voice_id: "eve", name: "Eve" }];
-  const showStickyPlayer = listen.isActive;
+  const hasReadableReply = pane.messages.some(
+    (item) => item.role === "assistant" && Boolean(item.content) && !item.failed,
+  );
+  const showStickyPlayer = ttsEnabled && !locked && (listen.isActive || hasReadableReply);
   const headerSelectClass =
     "h-7 max-w-[7rem] rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";
 
@@ -606,21 +628,17 @@ export function GrokPane({
             )}
           </div>
           {!renamingLabel && onStartRename ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button size="icon-xs" variant="ghost" aria-label={`Options for ${label}`}>
-                    <MoreHorizontal className="size-3.5 text-muted-foreground" />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent elevated align="start" className="min-w-36">
-                <DropdownMenuItem onClick={() => onStartRename?.()}>
-                  <Pencil className="size-3.5" />
-                  Rename pane
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <GrokRowMenu
+              label={label}
+              items={[
+                {
+                  key: "rename-pane",
+                  label: "Rename pane",
+                  icon: <Pencil className="size-3.5" />,
+                  onSelect: () => onStartRename(),
+                },
+              ]}
+            />
           ) : null}
           {canRemove ? (
             <Button size="icon-xs" variant="ghost" onClick={onRemove} aria-label={`Remove ${label}`}>
@@ -733,7 +751,7 @@ export function GrokPane({
             speed={listen.speed}
             voiceId={voiceId}
             voices={voiceOptions}
-            onListen={listen.listen}
+            onListen={listenLatestReply}
             onPause={listen.pause}
             onStop={listen.stop}
             onSpeedChange={handleSpeedChange}

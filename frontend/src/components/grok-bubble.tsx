@@ -2,15 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { LoaderCircle, Maximize2, MessageSquarePlus, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
+import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
 import { api } from "@/lib/api";
@@ -357,7 +352,6 @@ export function GrokBubble({
   }
 
   async function deleteConversation(row: GrokConversation) {
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
     if (!window.confirm(`Delete "${row.title}"? This cannot be undone.`)) return;
     try {
       await api.deleteChatConversation(row.id);
@@ -505,40 +499,25 @@ export function GrokBubble({
                   </button>
                 )}
                 {!renaming ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="mt-0.5 shrink-0 opacity-60 hover:opacity-100 data-popup-open:opacity-100"
-                          aria-label={`Options for ${row.title}`}
-                          onPointerDown={(event) => event.stopPropagation()}
-                        >
-                          <MoreHorizontal className="size-3 text-muted-foreground" />
-                        </Button>
-                      }
-                    />
-                    <DropdownMenuContent elevated align="start" className="min-w-40">
-                      <DropdownMenuItem
-                        onClick={() => {
-                          startRename(row);
-                        }}
-                      >
-                        <Pencil className="size-3.5" />
-                        Rename thread
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={() => {
-                          void deleteConversation(row);
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                        Delete thread
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <GrokRowMenu
+                    label={row.title}
+                    className="mt-0.5"
+                    items={[
+                      {
+                        key: "rename",
+                        label: "Rename thread",
+                        icon: <Pencil className="size-3.5" />,
+                        onSelect: () => startRename(row),
+                      },
+                      {
+                        key: "delete",
+                        label: "Delete thread",
+                        icon: <Trash2 className="size-3.5" />,
+                        destructive: true,
+                        onSelect: () => void deleteConversation(row),
+                      },
+                    ]}
+                  />
                 ) : null}
               </div>
             );
@@ -679,21 +658,17 @@ export function GrokBubble({
           </p>
         </div>
         {renamingPaneId !== focusedPaneId ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button size="icon-xs" variant="ghost" aria-label={`Options for ${focusedPane.displayName}`}>
-                  <MoreHorizontal className="size-3.5" />
-                </Button>
-              }
-            />
-            <DropdownMenuContent elevated align="start" className="min-w-36">
-              <DropdownMenuItem onClick={() => startPaneRename(focusedPaneId)}>
-                <Pencil className="size-3.5" />
-                Rename pane
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <GrokRowMenu
+            label={focusedPane.displayName}
+            items={[
+              {
+                key: "rename-pane",
+                label: "Rename pane",
+                icon: <Pencil className="size-3.5" />,
+                onSelect: () => startPaneRename(focusedPaneId),
+              },
+            ]}
+          />
         ) : null}
         {fullscreen && !locked && panes.length < MAX_PANES ? (
           <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={addPane}>

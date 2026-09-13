@@ -190,11 +190,11 @@ export function useGrokMessageListen({
   }, [onPlayingChange, phase]);
 
   const visibleSpeech = useCallback(() => {
-    const root = bodyRef.current;
-    const payload = grokReplySpeechScript(root, fallbackText);
-    if (!payload.script.trim()) return null;
+    const payload = grokReplySpeechScript(bodyRef.current, fallbackText);
+    const chars = payload.script.length;
+    console.info("[grok-tts] reply text", { messageId, chars, source: payload.source });
     return payload;
-  }, [bodyRef, fallbackText]);
+  }, [bodyRef, fallbackText, messageId]);
 
   const chunkCacheKey = useCallback((index: number, voice: string) => `${messageId}:${voice}:${index}`, [messageId]);
 
@@ -204,9 +204,9 @@ export function useGrokMessageListen({
       if (cached) return cached;
       const script = scriptRef.current;
       if (!script.trim()) {
-        throw new Error("Nothing visible to read in this reply.");
+        throw new Error("This reply has no text to read yet.");
       }
-      console.info("[grok-tts] /tts request", { messageId, chunk: index, chars: script.length });
+      console.info("[grok-tts] POST /tts", { messageId, chunk: index, chars: script.length });
       const data = await api.messageSpeech(messageId, voice, index, script, true);
       chunkCacheRef.current.set(chunkCacheKey(index, voice), data);
       if (data.chunkWordCounts.length) countsRef.current = data.chunkWordCounts;
@@ -311,12 +311,12 @@ export function useGrokMessageListen({
 
   const beginPlayback = useCallback(async () => {
     const payload = visibleSpeech();
-    if (!payload?.script.trim()) {
-      showTtsErrorToast(new Error("Nothing visible to read in this reply."));
+    const script = payload.script.trim();
+    if (!script.length) {
+      showTtsErrorToast(new Error("This reply has no text to read yet."));
       return;
     }
-    console.info("[grok-tts] speech script", { messageId, chars: payload.script.length });
-    scriptRef.current = payload.script;
+    scriptRef.current = script;
     resetLoaded();
     const rate = readStoredTtsSpeed();
     setSpeed(rate);
