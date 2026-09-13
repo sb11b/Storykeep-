@@ -328,6 +328,8 @@ export function GrokBubble({
       messages: [],
       recapQuestion: false,
       pendingAttachments: [],
+      savedNoteId: null,
+      conversationTitle: null,
     }));
   }
 
@@ -341,6 +343,8 @@ export function GrokBubble({
         lastResolvedModel: detail.last_model ?? null,
         reasoningEffort: isGrokReasoningEffort(detail.reasoning) ? detail.reasoning : "low",
         lastResolvedReasoning: detail.last_reasoning ?? null,
+        savedNoteId: detail.saved_note_id ?? null,
+        conversationTitle: detail.title || null,
         messages: detail.messages.map((item, index, all) => ({
           id: item.id,
           role: item.role,
@@ -376,7 +380,7 @@ export function GrokBubble({
       setPanes((current) =>
         current.map((pane) =>
           pane.conversationId === row.id
-            ? { ...pane, conversationId: null, messages: [], draft: "", recapQuestion: false, pendingAttachments: [] }
+            ? { ...pane, conversationId: null, messages: [], draft: "", recapQuestion: false, pendingAttachments: [], savedNoteId: null, conversationTitle: null }
             : pane,
         ),
       );
@@ -410,6 +414,11 @@ export function GrokBubble({
       const updated = await api.patchChatConversation(conversationId, { title: draft });
       setConversations((current) =>
         current.map((row) => (row.id === conversationId ? { ...row, title: updated.title } : row)),
+      );
+      setPanes((current) =>
+        current.map((pane) =>
+          pane.conversationId === conversationId ? { ...pane, conversationTitle: updated.title } : pane,
+        ),
       );
     } catch {
       /* ignore */

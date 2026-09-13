@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Pencil, Send, Square, X } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Pencil, Save, Send, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
-import type { NoteDestination } from "@/lib/destinations";
 import { folderById } from "@/lib/folders";
 import { formatChatError, chatTimeoutToast, withAssistantName } from "@/lib/grok-chat-error";
 import {
@@ -32,6 +31,7 @@ import {
 } from "@/lib/larry-attach";
 import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
+import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
@@ -65,6 +65,8 @@ export type GrokPaneState = {
   recapQuestion: boolean;
   pendingAttachments: PendingAttachment[];
   streamStatus?: ChatStatusKind | null;
+  savedNoteId: string | null;
+  conversationTitle: string | null;
 };
 
 export { DEFAULT_PANE_NAME, defaultGrokPaneName };
@@ -88,6 +90,8 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     recapQuestion: false,
     pendingAttachments: [],
     streamStatus: null,
+    savedNoteId: null,
+    conversationTitle: null,
   };
 }
 
@@ -192,6 +196,7 @@ export function GrokPane({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
+  const [savingChat, setSavingChat] = useState(false);
   const thinkingTimerRef = useRef<number | null>(null);
   const gotDeltaRef = useRef(false);
   const pendingListenRef = useRef(false);
@@ -464,7 +469,12 @@ export function GrokPane({
           onUpdate((current) => {
             let next = current;
             if (meta.conversation_id && meta.conversation_id !== current.conversationId) {
-              next = { ...next, conversationId: meta.conversation_id };
+              const firstUser = current.messages.find((item) => item.role === "user")?.content || "";
+              next = {
+                ...next,
+                conversationId: meta.conversation_id,
+                conversationTitle: current.conversationTitle || firstUser.trim().split("\n")[0] || null,
+              };
             }
             if (meta.user_message_id && userLine) {
               next = {
@@ -773,6 +783,69 @@ export function GrokPane({
     }
   }
 
+  async function saveChat() {
+    if (savingChat) return;
+    const dest = (pane.noteDest || "").trim();
+    if (!dest) {
+      toast.error("Pick a shelf before saving this chat.");
+      document.getElementById(shelfSelectId)?.focus();
+      return;
+    }
+    const turns = saveableThreadTurns(pane.messages);
+    if (!turns.length) {
+      toast.error("Nothing to save — this thread is empty.");
+      return;
+    }
+    const title = threadNoteTitle({
+      conversationTitle: pane.conversationTitle,
+      firstUserLine: turns.find((item) => item.role === "user")?.content,
+    });
+    const markdown = threadNoteMarkdown(turns, { title, userName: "Steve", assistantName: "Junior" });
+    setSavingChat(true);
+    try {
+      let article: Awaited<ReturnType<typeof api.composeVaultNote>> | null = null;
+      let updated = false;
+      if (pane.savedNoteId) {
+        try {
+          article = await api.updateComposedNote(
+            pane.savedNoteId,
+            title,
+            markdown,
+            dest,
+            false,
+            pane.noteFolderId,
+          );
+          updated = true;
+        } catch (error) {
+          if (!(error instanceof ApiError && error.status === 404)) {
+            throw error;
+          }
+        }
+      }
+      if (!article) {
+        article = await api.composeVaultNote(title, markdown, ["grok"], dest, false, pane.noteFolderId);
+      }
+      patch({ savedNoteId: article.id, conversationTitle: title });
+      if (pane.conversationId && persist) {
+        try {
+          await api.patchChatConversation(pane.conversationId, { saved_note_id: article.id });
+        } catch {
+          /* note is saved; linking it to the thread is best-effort */
+        }
+      }
+      const folderName = folderById(folders, pane.noteFolderId)?.name;
+      const where = folderName
+        ? `${destinationLabel(dest, customShelves)} / ${folderName}`
+        : destinationLabel(dest, customShelves);
+      toast.success(updated ? `Updated “${title}” on ${where}.` : `Saved “${title}” to ${where}.`);
+      await onSavedNote(article.id, dest, pane.noteFolderId);
+    } catch (error) {
+      toastErrorFromUnknown(error, "Could not save this chat");
+    } finally {
+      setSavingChat(false);
+    }
+  }
+
   function patch(partial: Partial<GrokPaneState>) {
     onUpdate((current) => ({ ...current, ...partial }));
   }
@@ -868,6 +941,8 @@ export function GrokPane({
   const showStickyPlayer = ttsEnabled && !locked && (listen.isActive || hasReadableReply);
   const visibleStatus = pane.streamStatus ?? streamStatus;
   const lastAssistantId = [...pane.messages].reverse().find((item) => item.role === "assistant")?.id ?? null;
+  const shelfSelectId = `junior-shelf-${pane.id}`;
+  const canSaveChat = saveableThreadTurns(pane.messages).length > 0;
   const headerSelectClass =
     "h-7 max-w-[7rem] rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";
 
@@ -1019,25 +1094,35 @@ export function GrokPane({
           />
           Recap my question
         </label>
-        {!(articleId && isComposedNote(articleGuid)) ? (
-          <>
-            <DestinationSelect
-              value={pane.noteDest}
-              onChange={handleNoteDestChange}
-              customShelves={customShelves}
-              onCreateShelf={onCreateNoteShelf}
-              className="max-w-[6.5rem] text-[11px]"
-            />
-            <FolderSelect
-              shelf={pane.noteDest}
-              folders={folders}
-              value={pane.noteFolderId}
-              onChange={(next) => patch({ noteFolderId: next })}
-              onCreateFolder={() => void createNoteFolder()}
-              className="max-w-[6.5rem] text-[11px]"
-            />
-          </>
-        ) : null}
+        <DestinationSelect
+          id={shelfSelectId}
+          value={pane.noteDest}
+          onChange={handleNoteDestChange}
+          customShelves={customShelves}
+          onCreateShelf={onCreateNoteShelf}
+          className="max-w-[6.5rem] text-[11px]"
+        />
+        <FolderSelect
+          shelf={pane.noteDest}
+          folders={folders}
+          value={pane.noteFolderId}
+          onChange={(next) => patch({ noteFolderId: next })}
+          onCreateFolder={() => void createNoteFolder()}
+          className="max-w-[6.5rem] text-[11px]"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7"
+          disabled={!canSaveChat || savingChat}
+          aria-label="Save chat"
+          title={canSaveChat ? "Save this whole thread as a StoryKeep note" : "Nothing to save"}
+          onClick={() => void saveChat()}
+        >
+          <Save className="size-3.5" />
+          {savingChat ? "Saving…" : "Save chat"}
+        </Button>
       </div>
 
       <label className="flex shrink-0 items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-snug">

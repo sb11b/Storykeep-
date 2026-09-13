@@ -72,6 +72,27 @@ class GrokConversationTests(unittest.TestCase):
     def test_non_empty_patch_title_is_used(self):
         self.assertEqual(resolve_patched_title("My homework", "ignored"), "My homework")
 
+    def test_patch_conversation_stores_saved_note_id(self) -> None:
+        from unittest.mock import MagicMock
+
+        from app.services.grok_conversations import patch_conversation_for_user
+
+        user_id = uuid4()
+        conversation_id = uuid4()
+        note_id = uuid4()
+        row = SimpleNamespace(id=conversation_id, user_id=user_id, saved_note_id=None, title="New chat")
+        db = MagicMock()
+        db.scalar.return_value = row
+        patched = patch_conversation_for_user(
+            db,
+            user_id,
+            conversation_id,
+            saved_note_id=note_id,
+            saved_note_provided=True,
+        )
+        self.assertEqual(patched.saved_note_id, note_id)
+        db.add.assert_called()
+
     def test_auto_uses_grok_46_with_low_or_xhigh(self):
         from app.services.chat import CURRENT_CHAT_MODEL, AUTO_LOW_MAX_CHARS
 

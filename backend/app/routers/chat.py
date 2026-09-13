@@ -87,6 +87,7 @@ def _conversation_detail(row) -> GrokConversationDetailOut:
         reasoning=getattr(row, "reasoning", None) or chat_service.REASONING_AUTO,
         last_reasoning=getattr(row, "last_reasoning", None),
         recap_question=bool(row.recap_question),
+        saved_note_id=getattr(row, "saved_note_id", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
         messages=[_message_out(item) for item in row.messages],
@@ -173,10 +174,12 @@ def patch_conversation(
         model=model_value,
         reasoning=reasoning_value,
         recap_question=payload.recap_question,
+        saved_note_id=payload.saved_note_id,
         title_provided="title" in fields,
         model_provided="model" in fields,
         reasoning_provided="reasoning" in fields,
         recap_provided="recap_question" in fields,
+        saved_note_provided="saved_note_id" in fields,
     )
     db.commit()
     db.refresh(row)

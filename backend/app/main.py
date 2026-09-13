@@ -169,6 +169,9 @@ def _create_schema() -> None:
     _try_sql(
         "ALTER TABLE grok_conversations ADD COLUMN IF NOT EXISTS recap_question BOOLEAN NOT NULL DEFAULT false"
     )
+    _try_sql(
+        "ALTER TABLE grok_conversations ADD COLUMN IF NOT EXISTS saved_note_id UUID REFERENCES articles(id) ON DELETE SET NULL"
+    )
 
 
 def _seed_in_background() -> None:

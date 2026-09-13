@@ -138,10 +138,12 @@ def patch_conversation(
     reasoning: str | None = None,
     last_reasoning: str | None = None,
     recap_question: bool | None = None,
+    saved_note_id: UUID | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
     reasoning_provided: bool = False,
     recap_provided: bool = False,
+    saved_note_provided: bool = False,
 ) -> GrokConversation:
     return patch_conversation_for_user(
         db,
@@ -153,10 +155,12 @@ def patch_conversation(
         reasoning=reasoning,
         last_reasoning=last_reasoning,
         recap_question=recap_question,
+        saved_note_id=saved_note_id,
         title_provided=title_provided,
         model_provided=model_provided,
         reasoning_provided=reasoning_provided,
         recap_provided=recap_provided,
+        saved_note_provided=saved_note_provided,
     )
 
 
@@ -171,10 +175,12 @@ def patch_conversation_for_user(
     reasoning: str | None = None,
     last_reasoning: str | None = None,
     recap_question: bool | None = None,
+    saved_note_id: UUID | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
     reasoning_provided: bool = False,
     recap_provided: bool = False,
+    saved_note_provided: bool = False,
 ) -> GrokConversation:
     row = owned_conversation_for_user(db, user_id, conversation_id)
     if title_provided:
@@ -186,6 +192,8 @@ def patch_conversation_for_user(
         row.reasoning = reasoning
     if recap_provided and recap_question is not None:
         row.recap_question = recap_question
+    if saved_note_provided:
+        row.saved_note_id = saved_note_id
     if last_model is not None:
         row.last_model = last_model
     if last_reasoning is not None:

@@ -592,7 +592,7 @@ export const api = {
   chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
   patchChatConversation: (
     id: string,
-    payload: { title?: string; model?: string; reasoning?: string; recap_question?: boolean },
+    payload: { title?: string; model?: string; reasoning?: string; recap_question?: boolean; saved_note_id?: string | null },
   ) =>
     request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
       method: "PATCH",

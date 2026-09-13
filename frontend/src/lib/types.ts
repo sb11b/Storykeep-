@@ -272,6 +272,7 @@ export type GrokConversation = {
   reasoning?: string;
   last_reasoning?: string | null;
   recap_question?: boolean;
+  saved_note_id?: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -651,6 +651,7 @@ class GrokConversationOut(BaseModel):
     reasoning: str = "auto"
     last_reasoning: str | None = None
     recap_question: bool = False
+    saved_note_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -685,3 +686,4 @@ class GrokConversationPatchIn(BaseModel):
     model: str | None = Field(default=None, max_length=64)
     reasoning: str | None = Field(default=None, max_length=16)
     recap_question: bool | None = None
+    saved_note_id: uuid.UUID | None = None
