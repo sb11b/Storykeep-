@@ -147,11 +147,26 @@
   border-color: color-mix(in oklab, currentColor 22%, transparent) !important;
 }
 
-.sk-attachment-link {
-  color: var(--primary);
+.sk-chat-image {
+  margin: 0.5rem 0 0;
+  max-width: 100%;
+}
+.sk-chat-image img {
+  display: block;
+  max-height: 20rem;
+  width: auto;
+  max-width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+}
+.sk-chat-image-download {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 3px;
-  font-weight: 500;
 }
 
 .sk-page-surface {

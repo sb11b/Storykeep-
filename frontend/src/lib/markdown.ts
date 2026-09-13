@@ -41,9 +41,20 @@ function inlineWithWikilinks(value: string, resolver?: WikilinkResolver): string
   return pieces.join("");
 }
 
+function mediaImageHtml(alt: string, url: string): string {
+  const id = url.split("/").pop() || "";
+  const name = `storykeep-${id}.jpg`;
+  return (
+    `<figure class="sk-chat-image">` +
+    `<img src="${url}" alt="${alt}" />` +
+    `<a class="sk-chat-image-download" href="${url}?download=1" download="${name}" data-media-id="${id}">Download picture</a>` +
+    `</figure>`
+  );
+}
+
 function inline(value: string, resolver?: WikilinkResolver): string {
   const escaped = inlineWithWikilinks(value, resolver)
-    .replace(MEDIA_IMAGE, '<img src="$2" alt="$1" />')
+    .replace(MEDIA_IMAGE, (_all, alt: string, url: string) => mediaImageHtml(alt, url))
     .replace(
       MEDIA_FILE,
       '<a class="sk-attachment-link" href="$2" download="$1">$1</a>',

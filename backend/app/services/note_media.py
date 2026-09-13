@@ -54,6 +54,31 @@ def _sniff_suffix(payload: bytes, suffix: str) -> str:
     return suffix
 
 
+def storykeep_download_filename(media_id: UUID, content_type: str | None, filename: str | None = None) -> str:
+    """Stable Save-as name: storykeep-{id}.jpg (or the real type's extension)."""
+    suffix = _normalize_suffix(filename or "")
+    if suffix not in ALLOWED_SUFFIXES:
+        ctype = (content_type or "").split(";", 1)[0].strip().lower()
+        suffix = {
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "application/pdf": ".pdf",
+            "text/plain": ".txt",
+            "text/markdown": ".md",
+            "text/csv": ".csv",
+        }.get(ctype, "")
+        if not suffix and ctype.startswith("image/"):
+            suffix = ".jpg"
+        if not suffix:
+            suffix = ".bin"
+    if suffix == ".jpeg":
+        suffix = ".jpg"
+    return f"storykeep-{media_id}{suffix}"
+
+
 def is_image_media(row: NoteMedia) -> bool:
     suffix = Path(row.filename).suffix.lower()
     if suffix == ".jpeg":

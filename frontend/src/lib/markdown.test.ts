@@ -138,9 +138,12 @@ test("wrapWikilink wraps selection as wiki link", () => {
   assert.equal(result.selectionEnd, 17);
 });
 
-test("Junior Imagine markdown renders a media image", () => {
+test("Junior Imagine markdown renders a media image with Download picture", () => {
   const id = "11111111-1111-1111-1111-111111111111";
   const html = renderMarkdown(`Here's the image.\n\n![a red notebook on a desk](/api/v1/media/${id})`);
   assert.match(html, /Here's the image/);
   assert.match(html, new RegExp(`<img src="/api/v1/media/${id}" alt="a red notebook on a desk" />`));
+  assert.match(html, /Download picture/);
+  assert.match(html, new RegExp(`download="storykeep-${id}\\.jpg"`));
+  assert.match(html, new RegExp(`href="/api/v1/media/${id}\\?download=1"`));
 });

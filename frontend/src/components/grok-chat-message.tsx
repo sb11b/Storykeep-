@@ -1,16 +1,64 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Copy, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
+import { type MouseEvent, useEffect, useRef } from "react";
+import { Copy, Download, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
+import { downloadChatPicture } from "@/lib/chat-media-download";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
+
+function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
+  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>("a.sk-chat-image-download");
+  if (link) {
+    event.preventDefault();
+    event.stopPropagation();
+    const mediaId = link.getAttribute("data-media-id") || "";
+    void downloadChatPicture({ mediaId, url: link.getAttribute("href") }).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Could not download that picture.");
+    });
+    return;
+  }
+  onCodeCopyClick(event);
+}
+
+function ChatPicture({
+  mediaId,
+  url,
+  alt,
+  contentType,
+}: {
+  mediaId: string;
+  url: string;
+  alt: string;
+  contentType?: string | null;
+}) {
+  return (
+    <figure className="sk-chat-image mt-2">
+      <img src={url} alt={alt} className="max-h-80 w-auto max-w-full rounded-md border" />
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        className="mt-1.5"
+        aria-label="Download picture"
+        onClick={() => {
+          void downloadChatPicture({ mediaId, url, contentType }).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "Could not download that picture.");
+          });
+        }}
+      >
+        <Download className="size-3" />
+        Download picture
+      </Button>
+    </figure>
+  );
+}
 
 export function GrokChatMessage({
   id,
@@ -80,6 +128,12 @@ export function GrokChatMessage({
     }
   }, [activeWord, content, listening]);
 
+  const imageFiles = files.filter((file) => file.kind === "image" && file.media_id);
+  const otherFiles = files.filter((file) => file.kind !== "image");
+  const extraAssistantImages = imageFiles.filter(
+    (file) => !content.includes(`/api/v1/media/${file.media_id}`),
+  );
+
   return (
     <div
       data-role={role}
@@ -104,7 +158,7 @@ export function GrokChatMessage({
       ) : null}
       {content ? (
         role === "assistant" ? (
-          <div ref={bodyRef} className="note-md markdown" data-larry-reply-body={id} onClick={onCodeCopyClick} />
+          <div ref={bodyRef} className="note-md markdown" data-larry-reply-body={id} onClick={onReplyBodyClick} />
         ) : (
           <div ref={bodyRef} className="whitespace-pre-wrap">
             {content}
@@ -112,20 +166,30 @@ export function GrokChatMessage({
         )
       ) : null}
       {role === "assistant"
-        ? files
-            .filter((file) => file.kind === "image" && !content.includes(`/api/v1/media/${file.media_id}`))
-            .map((file) => (
-              <img
-                key={file.media_id}
-                src={file.url || `/api/v1/media/${file.media_id}`}
-                alt={file.filename}
-                className="mt-2 max-h-80 w-auto max-w-full rounded-md border"
-              />
-            ))
+        ? extraAssistantImages.map((file) => (
+            <ChatPicture
+              key={file.media_id}
+              mediaId={file.media_id}
+              url={file.url || `/api/v1/media/${file.media_id}`}
+              alt={file.filename}
+              contentType={file.content_type}
+            />
+          ))
         : null}
-      {role === "user" && files.length ? (
+      {role === "user"
+        ? imageFiles.map((file) => (
+            <ChatPicture
+              key={file.media_id}
+              mediaId={file.media_id}
+              url={file.url || `/api/v1/media/${file.media_id}`}
+              alt={file.filename}
+              contentType={file.content_type}
+            />
+          ))
+        : null}
+      {role === "user" && otherFiles.length ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">
-          {files.map((file) => (
+          {otherFiles.map((file) => (
             <li
               key={file.media_id}
               className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px]"
