@@ -192,11 +192,7 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
   const src = objectUrl || fileUrl;
   return (
     <div className="pdf-host bg-muted">
-      {error ? (
-        <p className="pointer-events-none absolute top-0 z-10 w-full bg-background/90 px-3 py-2 text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
+      {error ? <p className="px-3 py-2 text-sm text-destructive">{error}</p> : null}
       <object data={src} type="application/pdf">
         <iframe title="PDF snapshot" src={src} />
       </object>
@@ -1165,8 +1161,15 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     />
   );
 
+  const pdfRestoreOpen = Boolean(article?.offline_view === "pdf" && article.offline_archive_id);
+
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-[var(--storykeep-page-bg)]">
+    <div
+      className={cn(
+        "flex min-h-full bg-[var(--storykeep-page-bg)]",
+        pdfRestoreOpen ? "min-h-0 flex-col lg:flex-row" : "h-full min-h-0 overflow-hidden",
+      )}
+    >
       <aside className={cn("hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex", readerFull && "!hidden")}>{nav}</aside>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetContent side="left" className="w-80 overflow-hidden bg-sidebar p-0 text-sidebar-foreground">
@@ -1177,7 +1180,12 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--storykeep-page-bg)]",
+          !pdfRestoreOpen && "overflow-hidden",
+        )}
+      >
         <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
@@ -1299,7 +1307,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           </div>
         </header>
 
-        <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1")}>
+        <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1", !pdfRestoreOpen && "overflow-hidden")}>
           <section className={cn("sk-page-surface flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
@@ -1455,7 +1463,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </ShelfScroller>
           </section>
 
-          <section className={cn("sk-page-surface flex h-full min-h-0 flex-col overflow-hidden", !selectedId && "hidden lg:flex", readerFull && "flex")}>
+          <section className={cn("sk-page-surface flex min-h-0 flex-col", !pdfRestoreOpen && "overflow-hidden", !selectedId && "hidden lg:flex", readerFull && "flex")}>
             {selectedId && article ? (
               <Reader
                 article={article}
@@ -2686,7 +2694,7 @@ function Reader({
   }, [article.author, article.title, includeNotesInListen]);
 
   return (
-    <div className="reader-shell">
+    <div className={cn("reader-shell", pdfOffline && "min-h-0")}>
       <div className="reader-chrome sticky top-0 z-30 border-b border-border bg-[var(--storykeep-top-bar)] px-5 py-2">
         <ListenControls
           ref={listenRef}
@@ -2761,14 +2769,14 @@ function Reader({
         ref={scrollRef}
         className={cn(
           "min-h-0 flex-1",
-          pdfOffline ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
+          pdfOffline ? "flex min-h-0 flex-1 flex-col" : "overflow-y-auto overscroll-contain",
         )}
       >
       <article
         ref={articleRef}
         className={cn(
           pdfOffline
-            ? "flex h-full min-h-0 w-full max-w-none flex-1 flex-col overflow-hidden px-5 pt-4"
+            ? "flex min-h-0 w-full max-w-none flex-1 flex-col px-5 pt-4"
             : cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl"),
         )}
       >
