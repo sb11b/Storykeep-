@@ -191,6 +191,11 @@ async def upload_note_media(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     kind = "image" if is_image_media(row) else "file"
+    extract_text = ""
+    if kind == "file":
+        from app.services.chat_attachments import extract_text_for_media
+
+        extract_text = extract_text_for_media(row)
     return {
         "id": str(row.id),
         "url": f"/api/v1/media/{row.id}",
@@ -198,6 +203,7 @@ async def upload_note_media(
         "filename": row.filename,
         "kind": kind,
         "byte_size": row.byte_size,
+        "extract_text": extract_text or None,
     }
 
 

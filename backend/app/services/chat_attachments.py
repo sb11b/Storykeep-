@@ -56,8 +56,20 @@ def extract_text_for_media(row: NoteMedia) -> str:
     path = Path(row.storage_path)
     if not path.is_file():
         return ""
+    payload = path.read_bytes()
+    if suffix == ".docx":
+        from app.services.docx_chat import DOCX_READ_ERROR, extract_chat_docx
+
+        try:
+            text, _html = extract_chat_docx(payload, row.filename)
+        except ValueError:
+            return DOCX_READ_ERROR
+        except Exception:
+            logger.exception("Could not extract chat Word attachment %s", row.filename)
+            return DOCX_READ_ERROR
+        return (text or "").strip()[:ATTACHMENT_CHAR_CAP]
     try:
-        _title, text = extract_document(row.filename, path.read_bytes(), max_pdf_pages=PDF_PAGE_CAP)
+        _title, text = extract_document(row.filename, payload, max_pdf_pages=PDF_PAGE_CAP)
     except ValueError:
         return ""
     except Exception:

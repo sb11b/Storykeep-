@@ -16,6 +16,7 @@ export type LarryAttachment = {
   kind: "image" | "file";
   url: string;
   byte_size?: number | null;
+  extract_text?: string | null;
 };
 
 /** Chip shown above the Junior composer before Send. */
@@ -26,6 +27,7 @@ export type PendingAttachment = {
   url: string;
   kind: "image" | "file";
   content_type: string;
+  extract_text?: string | null;
 };
 
 /** Copy a live FileList before the input is reset — resetting empties the list in Chrome. */
@@ -56,6 +58,10 @@ export function isAllowedLarryFile(file: File): boolean {
 }
 
 export function rejectLarryFile(file: File): string | null {
+  const suffix = suffixOf(file.name);
+  if (suffix === ".doc") {
+    return `${file.name} is a legacy .doc file. Save as .docx and attach again.`;
+  }
   if (!isAllowedLarryFile(file)) {
     return `${file.name} is not a PDF, TXT, MD, DOCX, CSV, PNG, JPG, GIF, or WebP.`;
   }
@@ -83,6 +89,7 @@ export function pendingToMessageFile(item: PendingAttachment): LarryAttachment {
     kind: item.kind,
     url: item.url || `/api/v1/media/${item.id}`,
     byte_size: item.size,
+    extract_text: item.extract_text || null,
   };
 }
 
@@ -115,6 +122,7 @@ export async function uploadLarryAttachment(file: File): Promise<PendingAttachme
       url?: string;
       kind?: "image" | "file";
       byte_size?: number | null;
+      extract_text?: string | null;
     };
     const id = uploaded.id || "";
     const name = uploaded.filename || file.name;
@@ -129,6 +137,7 @@ export async function uploadLarryAttachment(file: File): Promise<PendingAttachme
       url: uploaded.url || `/api/v1/media/${id}`,
       kind: uploaded.kind === "image" ? "image" : "file",
       content_type: file.type || "application/octet-stream",
+      extract_text: uploaded.extract_text || null,
     };
   } catch (error) {
     if (!(error instanceof ApiError)) {

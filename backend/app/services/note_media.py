@@ -49,6 +49,8 @@ def _sniff_suffix(payload: bytes, suffix: str) -> str:
         return ".webp"
     if payload[:4] == b"%PDF":
         return ".pdf"
+    if payload[:8].startswith(b"\xd0\xcf\x11\xe0"):
+        return ".doc"
     if suffix == ".docx" and payload[:2] == b"PK":
         return ".docx"
     return suffix
@@ -126,9 +128,17 @@ def save_note_media(db: Session, user: User, filename: str, payload: bytes, cont
     if len(payload) > MAX_MEDIA_BYTES:
         raise ValueError("Attachments must be 10 MB or smaller.")
     suffix = _normalize_suffix(filename)
+    if suffix == ".doc":
+        raise ValueError("Legacy Word .doc is not supported. Save as .docx and attach again.")
     if suffix not in ALLOWED_SUFFIXES:
         raise ValueError("Use PDF, TXT, MD, DOCX, CSV, PNG, JPG, GIF, or WebP.")
     suffix = _sniff_suffix(payload, suffix)
+    if suffix == ".doc":
+        raise ValueError("Legacy Word .doc is not supported. Save as .docx and attach again.")
+    if suffix == ".docx":
+        from app.services.docx_chat import inspect_docx_bytes
+
+        inspect_docx_bytes(payload, filename)
     if suffix not in ALLOWED_SUFFIXES:
         raise ValueError("That file type is not allowed.")
     media_id = uuid4()

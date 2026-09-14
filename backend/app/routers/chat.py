@@ -62,6 +62,7 @@ def _file_out(row) -> GrokMessageFileOut:
         kind=row.kind,
         url=f"/api/v1/media/{row.media_id}",
         byte_size=row.byte_size,
+        extract_text=getattr(row, "extract_text", None) or None,
     )
 
 

@@ -201,19 +201,33 @@ export function GrokChatMessage({
           ))
         : null}
       {role === "user" && otherFiles.length ? (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {otherFiles.map((file) => (
-            <li
-              key={file.media_id}
-              className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px]"
-            >
-              <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <a href={file.url} target="_blank" rel="noreferrer" className="truncate hover:underline">
-                {file.filename}
-              </a>
-              <span className="shrink-0 text-muted-foreground">{formatFileSize(file.byte_size)}</span>
-            </li>
-          ))}
+        <ul className="mt-2 space-y-2">
+          {otherFiles.map((file) => {
+            const extract = (file.extract_text || "").trim();
+            const failed = /couldn['’]t read that Word file/i.test(extract);
+            return (
+              <li key={file.media_id} className="space-y-1">
+                <div className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px]">
+                  <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <a href={file.url} target="_blank" rel="noreferrer" className="truncate hover:underline">
+                    {file.filename}
+                  </a>
+                  <span className="shrink-0 text-muted-foreground">{formatFileSize(file.byte_size)}</span>
+                </div>
+                {extract ? (
+                  <div
+                    className={
+                      failed
+                        ? "whitespace-pre-wrap text-sm text-destructive"
+                        : "whitespace-pre-wrap text-sm text-foreground"
+                    }
+                  >
+                    {extract}
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       {failed && error ? (

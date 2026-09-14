@@ -288,6 +288,7 @@ export type GrokMessageFile = {
   kind: "image" | "file";
   url: string;
   byte_size?: number | null;
+  extract_text?: string | null;
 };
 
 export type GrokMessage = {

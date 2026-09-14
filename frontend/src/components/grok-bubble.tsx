@@ -400,6 +400,7 @@ export function GrokBubble({
             kind: file.kind,
             url: file.url,
             byte_size: file.byte_size,
+            extract_text: file.extract_text,
           })),
           routeLabel:
             item.role === "assistant" && index === all.length - 1

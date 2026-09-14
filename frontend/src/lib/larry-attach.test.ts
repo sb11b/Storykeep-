@@ -20,6 +20,10 @@ test("Larry accepts the documented file types and rejects the rest", () => {
   assert.equal(isAllowedLarryFile(fakeFile("photo.jpeg", 12)), true);
   assert.equal(isAllowedLarryFile(fakeFile("shot.webp", 12)), true);
   assert.equal(isAllowedLarryFile(fakeFile("old.doc", 12)), false);
+  assert.equal(
+    rejectLarryFile(fakeFile("old.doc", 12)),
+    "old.doc is a legacy .doc file. Save as .docx and attach again.",
+  );
   assert.equal(rejectLarryFile(fakeFile("huge.pdf", 11 * 1024 * 1024)), "huge.pdf is larger than 10 MB.");
 });
 

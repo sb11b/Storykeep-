@@ -673,6 +673,7 @@ class GrokMessageFileOut(BaseModel):
     kind: str
     url: str
     byte_size: int | None = None
+    extract_text: str | None = None
 
 
 class GrokMessageOut(BaseModel):
