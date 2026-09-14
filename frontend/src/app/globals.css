@@ -227,28 +227,28 @@
 .reader-chrome {
   flex: none;
 }
+/* The pages stack in the article column's own scroller, so the pane must never
+   become a bounded flex box that a tall toolbar can crush to zero height. */
 .pdf-host {
-  display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  overflow: hidden;
+  display: block;
+  width: 100%;
+  overflow: visible;
   pointer-events: auto;
 }
-/* Before the first paint the pane still sits in the normal article flow, where
-   flex:1 resolves to zero. pdf.js must never measure a zero-height box. */
-.pdf-host[data-pdf-pending="1"] {
-  min-height: 60vh;
-}
 .pdf-host[data-pdf-failed="1"] {
-  min-height: 0;
   background: transparent;
 }
 .pdf-host[data-pdf-failed="1"] .pdf-scroller {
   display: none;
 }
 .pdf-host:fullscreen,
-.pdf-host:-webkit-full-screen,
+.pdf-host:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--storykeep-page-bg, var(--background));
+}
 .reader-shell:fullscreen,
 .reader-shell:-webkit-full-screen {
   width: 100%;
@@ -257,12 +257,10 @@
 }
 .pdf-scroller {
   box-sizing: border-box;
-  flex: 1 1 auto;
+  display: block;
+  width: 100%;
   height: auto;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: scroll;
-  overscroll-behavior: contain;
+  overflow: visible;
   pointer-events: auto;
   outline: none;
 }

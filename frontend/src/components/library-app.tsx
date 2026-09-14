@@ -208,28 +208,32 @@ function PdfSnapshotViewer({
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const onWheel = (event: WheelEvent) => {
-      scroller.scrollTop += event.deltaY;
-      event.preventDefault();
+    const scrollHost = () => {
+      let node: HTMLElement | null = scroller;
+      while (node) {
+        const style = window.getComputedStyle(node);
+        const scrolls = style.overflowY === "auto" || style.overflowY === "scroll";
+        if (scrolls && node.scrollHeight > node.clientHeight + 1) return node;
+        node = node.parentElement;
+      }
+      return null;
     };
     const onKey = (event: KeyboardEvent) => {
+      const host = scrollHost();
+      if (!host) return;
       const line = 48;
-      const page = Math.max(scroller.clientHeight - 24, 80);
-      if (event.key === "ArrowDown") scroller.scrollTop += line;
-      else if (event.key === "ArrowUp") scroller.scrollTop -= line;
-      else if (event.key === "PageDown") scroller.scrollTop += page;
-      else if (event.key === "PageUp") scroller.scrollTop -= page;
-      else if (event.key === "Home") scroller.scrollTop = 0;
-      else if (event.key === "End") scroller.scrollTop = scroller.scrollHeight;
+      const page = Math.max(host.clientHeight - 24, 80);
+      if (event.key === "ArrowDown") host.scrollTop += line;
+      else if (event.key === "ArrowUp") host.scrollTop -= line;
+      else if (event.key === "PageDown") host.scrollTop += page;
+      else if (event.key === "PageUp") host.scrollTop -= page;
+      else if (event.key === "Home") host.scrollTop = 0;
+      else if (event.key === "End") host.scrollTop = host.scrollHeight;
       else return;
       event.preventDefault();
     };
-    scroller.addEventListener("wheel", onWheel, { passive: false });
     scroller.addEventListener("keydown", onKey);
-    return () => {
-      scroller.removeEventListener("wheel", onWheel);
-      scroller.removeEventListener("keydown", onKey);
-    };
+    return () => scroller.removeEventListener("keydown", onKey);
   }, []);
 
   useEffect(() => {
@@ -330,23 +334,31 @@ function PdfSnapshotViewer({
         : 0;
       if (firstHeight <= 0) throw new Error("PDF pages rendered with no height.");
       if (cancelled) return;
+      const measure = () => {
+        let node: HTMLElement | null = scroller;
+        while (node) {
+          const style = window.getComputedStyle(node);
+          if (
+            (style.overflowY === "auto" || style.overflowY === "scroll") &&
+            node.scrollHeight > node.clientHeight + 1
+          ) {
+            return { clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
+          }
+          node = node.parentElement;
+        }
+        return { clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight };
+      };
       setStats({
         status: response.status,
         pageCount: doc.numPages,
         firstCanvasHeight: firstHeight,
-        clientHeight: scroller.clientHeight,
-        scrollHeight: scroller.scrollHeight,
+        ...measure(),
       });
       setLoading(false);
       onReadyRef.current?.();
-      scroller.focus();
       window.requestAnimationFrame(() => {
         if (cancelled) return;
-        setStats((current) =>
-          current
-            ? { ...current, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight }
-            : current,
-        );
+        setStats((current) => (current ? { ...current, ...measure() } : current));
       });
     })().catch((caught) => {
       if (cancelled) return;
@@ -382,7 +394,7 @@ function PdfSnapshotViewer({
       {stats && !error ? (
         <p className="reader-chrome px-3 py-1 text-[0.7rem] text-muted-foreground">
           {stats.pageCount} page{stats.pageCount === 1 ? "" : "s"} · HTTP {stats.status} · first canvas{" "}
-          {stats.firstCanvasHeight}px · scroller {stats.clientHeight}/{stats.scrollHeight}
+          {stats.firstCanvasHeight}px · article scroll {stats.clientHeight}/{stats.scrollHeight}
         </p>
       ) : null}
       <div
@@ -3000,20 +3012,13 @@ function Reader({
       </div>
       <div
         ref={scrollRef}
-        className={cn(
-          "min-h-0 flex-1",
-          pdfLocked ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
-        )}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
       <article
         ref={articleRef}
-        className={cn(
-          pdfLocked
-            ? "flex min-h-0 w-full max-w-none flex-1 flex-col overflow-hidden px-5 pt-4"
-            : cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl"),
-        )}
+        className={cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl")}
       >
-        <div className={pdfIntent ? "reader-chrome" : undefined}>
+        <div>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <Button variant="ghost" className="lg:hidden -ml-2" onClick={onBack}>
             Back to list
