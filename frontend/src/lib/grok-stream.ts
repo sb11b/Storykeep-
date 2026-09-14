@@ -128,6 +128,20 @@ export async function readGrokChatStream(
   let lastActivityAt = Date.now();
   let firstDeltaAt: number | null = null;
 
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new DOMException("Chat aborted", "AbortError");
+  };
+
+  if (signal) {
+    const onAbort = () => {
+      void reader.cancel().catch(() => {
+        /* ignore */
+      });
+    };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+
   const throwIfTimedOut = () => {
     const now = Date.now();
     if (!receivedDelta.value) {
@@ -148,7 +162,7 @@ export async function readGrokChatStream(
   const waitForChunk = async () => {
     while (true) {
       throwIfTimedOut();
-      if (signal?.aborted) throw new DOMException("Chat aborted", "AbortError");
+      throwIfAborted();
       const now = Date.now();
       const remaining = receivedDelta.value
         ? idle.ms - (now - lastActivityAt)
@@ -170,6 +184,7 @@ export async function readGrokChatStream(
 
   try {
     while (true) {
+      throwIfAborted();
       const { value, done } = await waitForChunk();
       if (done) break;
       lastActivityAt = Date.now();

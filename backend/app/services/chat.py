@@ -80,6 +80,8 @@ MERGED_MESSAGE_CHAR_CAP = MESSAGE_CHAR_CAP + ATTACHMENT_CHAR_CAP
 MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
 TOTAL_CHAR_CAP = 48_000
+SEND_CONTEXT_CHAR_CAP = 24_000
+SEND_CONTEXT_TOO_LARGE = "Too large — deselect Include or start a new chat."
 MAX_TOKENS_CAP = 2048
 
 SYSTEM_PROMPT = """You are StoryKeep's school coding assistant for Steve — a personal RSS reader and student workspace.
@@ -651,12 +653,46 @@ def validate_payload(messages: list[dict]) -> list[dict]:
     return cleaned
 
 
-def article_excerpt(article: Article, limit: int = ARTICLE_CHAR_CAP) -> str:
+def article_body_text(article: Article) -> str:
     body = (article.content_text or "").strip()
     if not body and article.content_html:
         body = _strip_tags(article.content_html)
     if not body:
         body = (article.summary or "").strip()
+    return body
+
+
+def send_context_chars(
+    history: list[dict],
+    *,
+    article_body: str | None = None,
+    note_body: str | None = None,
+) -> int:
+    total = 0
+    for item in thread_window(history):
+        total += len(_content_text(item.get("content")))
+        for file in item.get("files") or []:
+            if isinstance(file, dict):
+                total += len(str(file.get("extract_text") or ""))
+    if article_body:
+        total += len(article_body)
+    if note_body and note_body != article_body:
+        total += len(note_body)
+    return total
+
+
+def reject_oversized_send(
+    history: list[dict],
+    *,
+    article_body: str | None = None,
+    note_body: str | None = None,
+) -> None:
+    if send_context_chars(history, article_body=article_body, note_body=note_body) > SEND_CONTEXT_CHAR_CAP:
+        raise HTTPException(status_code=400, detail=SEND_CONTEXT_TOO_LARGE)
+
+
+def article_excerpt(article: Article, limit: int = ARTICLE_CHAR_CAP) -> str:
+    body = article_body_text(article)
     if len(body) > limit:
         body = body[: limit - 1].rstrip() + "…"
     title = (article.title or "Untitled").strip()
@@ -738,6 +774,7 @@ async def stream_completion(
     has_attachments: bool = False,
     include_note: bool = False,
     note_excerpt: str | None = None,
+    cancelled: asyncio.Event | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
@@ -796,6 +833,8 @@ async def stream_completion(
                     raise map_xai_http_error(status_code, detail, model)
                 lines = response.aiter_lines()
                 while True:
+                    if cancelled is not None and cancelled.is_set():
+                        return
                     elapsed = time.perf_counter() - started
                     if first_visible_at is None:
                         wait = CHAT_FIRST_BYTE_TIMEOUT_SEC - elapsed
@@ -803,8 +842,22 @@ async def stream_completion(
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
                     else:
                         wait = CHAT_IDLE_AFTER_TOKEN_SEC
+                    line: str | None = None
+                    remaining = wait
+                    aborted = False
                     try:
-                        line = await asyncio.wait_for(_anext_or_none(lines), timeout=wait)
+                        while remaining > 0:
+                            if cancelled is not None and cancelled.is_set():
+                                aborted = True
+                                break
+                            step = min(0.15, remaining)
+                            try:
+                                line = await asyncio.wait_for(_anext_or_none(lines), timeout=step)
+                                break
+                            except asyncio.TimeoutError:
+                                remaining -= step
+                        else:
+                            raise asyncio.TimeoutError()
                     except asyncio.TimeoutError as exc:
                         if first_visible_at is None or not yielded_any:
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
@@ -812,6 +865,8 @@ async def stream_completion(
                             status_code=504,
                             detail=CHAT_IDLE_TIMEOUT_DETAIL,
                         ) from exc
+                    if aborted or (cancelled is not None and cancelled.is_set()):
+                        return
                     if line is None:
                         break
                     if not line:

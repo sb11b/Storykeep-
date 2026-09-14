@@ -588,19 +588,25 @@ async def chat(
     history_for_xai = chat_service.validate_payload(prepared)
     excerpt = None
     note_excerpt = None
+    article_body = None
+    note_body = None
     include_article = bool(payload.include_article)
     include_note = bool(payload.include_note_id)
     if include_article:
         if not payload.article_id:
             raise HTTPException(status_code=400, detail="Open an article before attaching it to chat.")
         article = _owned_article(db, user, payload.article_id)
+        article_body = chat_service.article_body_text(article)
         excerpt = chat_service.article_excerpt(article)
     if include_note:
         if include_article and payload.article_id == payload.include_note_id:
             note_excerpt = excerpt
+            note_body = article_body
         else:
             note = _owned_article(db, user, payload.include_note_id)
+            note_body = chat_service.article_body_text(note)
             note_excerpt = chat_service.article_excerpt(note)
+    chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
     has_attachments = any(item.get("files") for item in history)
 
     def _persist_assistant(text: str) -> str | None:
@@ -652,6 +658,19 @@ async def chat(
                 sum(len(part) for part in assistant_parts),
             )
 
+        cancelled = asyncio.Event()
+
+        async def watch_disconnect() -> None:
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        cancelled.set()
+                        return
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                raise
+
+        watch = asyncio.create_task(watch_disconnect())
         try:
             # Flush padding first so proxies start the SSE body before xAI tokens.
             yield chat_service.SSE_PADDING
@@ -686,8 +705,11 @@ async def chat(
                 has_attachments=has_attachments,
                 include_note=include_note,
                 note_excerpt=note_excerpt,
+                cancelled=cancelled,
             ):
-                if await request.is_disconnected():
+                if cancelled.is_set() or await request.is_disconnected():
+                    cancelled.set()
+                    assistant_parts.append(piece)
                     _log("aborted")
                     _persist_assistant("".join(assistant_parts))
                     return
@@ -697,6 +719,10 @@ async def chat(
                 flushed = True
                 yield chat_service.encode_sse({"delta": piece})
                 await asyncio.sleep(0)
+            if cancelled.is_set() or await request.is_disconnected():
+                _log("aborted")
+                _persist_assistant("".join(assistant_parts))
+                return
             if persist and conversation_id:
                 assistant_text = "".join(assistant_parts).strip() or "No reply came back."
                 assistant_message_id = _persist_assistant(assistant_text)
@@ -760,6 +786,13 @@ async def chat(
             yield chat_service.encode_sse(
                 chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(partial_text))
             )
+        finally:
+            cancelled.set()
+            watch.cancel()
+            try:
+                await watch
+            except (asyncio.CancelledError, Exception):
+                pass
 
     return StreamingResponse(
         events(),

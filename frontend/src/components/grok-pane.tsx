@@ -32,9 +32,9 @@ import {
   type PendingAttachment,
 } from "@/lib/larry-attach";
 import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
-import { shouldIncludeArticle } from "@/lib/grok-stream";
+import { chatContextOverCap, GROK_CONTEXT_TOAST } from "@/lib/grok-context";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
-import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
+import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
@@ -190,6 +190,7 @@ export function GrokPane({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const stopRef = useRef<() => void>(() => {});
   const abortRef = useRef<AbortController | null>(null);
+  const abortingRef = useRef(false);
   const inFlightRef = useRef(false);
   const dictation = useDictation();
   const [busy, setBusy] = useState(false);
@@ -201,6 +202,8 @@ export function GrokPane({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
+  const [aborting, setAborting] = useState(false);
+  const [inFlightSpend, setInFlightSpend] = useState<string | null>(null);
   const [savingChat, setSavingChat] = useState(false);
   const [notePickerOpen, setNotePickerOpen] = useState(false);
   const [noteQuery, setNoteQuery] = useState("");
@@ -220,7 +223,6 @@ export function GrokPane({
 
   const abortInFlight = useCallback(() => {
     abortRef.current?.abort();
-    abortRef.current = null;
   }, []);
 
   const applyStreamStatus = useCallback(
@@ -249,6 +251,20 @@ export function GrokPane({
     setStreamStatus(null);
     onUpdate((current) => (current.streamStatus == null ? current : { ...current, streamStatus: null }));
   }, [onUpdate]);
+
+  const stopGeneration = useCallback(() => {
+    dictation?.abort();
+    abortingRef.current = true;
+    setAborting(true);
+    abortRef.current?.abort();
+    setBusy(false);
+    clearStreamStatus();
+    onUpdate((current) => ({
+      ...current,
+      streamStatus: null,
+      messages: current.messages.map((item) => (item.waiting ? { ...item, waiting: false } : item)),
+    }));
+  }, [clearStreamStatus, dictation, onUpdate]);
 
   const beginStreamStatus = useCallback(() => {
     if (thinkingTimerRef.current != null) window.clearTimeout(thinkingTimerRef.current);
@@ -340,10 +356,14 @@ export function GrokPane({
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       dictation?.abort();
+      if (abortRef.current || busy) {
+        event.preventDefault();
+        stopGeneration();
+      }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [dictation]);
+  }, [busy, dictation, stopGeneration]);
 
   useEffect(() => {
     const el = draftRef.current;
@@ -502,18 +522,11 @@ export function GrokPane({
     mediaIds?: string[];
   }) {
     const { message, retry = false, userLine, assistantId } = options;
-    abortInFlight();
     const controller = new AbortController();
     abortRef.current = controller;
-
-    const includeDecision = shouldIncludeArticle(
-      pane.includeArticle,
-      articleId,
-      articleBody,
-    );
-    if (pane.includeArticle && includeDecision.skippedHuge) {
-      toast.info("Article too large to include — sending without full text.");
-    }
+    abortingRef.current = false;
+    setAborting(false);
+    setInFlightSpend(null);
 
     setBusy(true);
     beginStreamStatus();
@@ -526,7 +539,7 @@ export function GrokPane({
           model: pane.modelChoice,
           reasoning_effort: pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort,
           article_id: articleId,
-          include_article: includeDecision.include,
+          include_article: Boolean(pane.includeArticle && articleId),
           include_note_id: pane.includeNoteId || undefined,
           recap_question: pane.recapQuestion,
           media_ids: retry ? undefined : options.mediaIds,
@@ -619,17 +632,17 @@ export function GrokPane({
                 ),
               };
             }
-            const routed = autoRouteLabel(
-              meta.model_choice || current.modelChoice,
-              meta.model,
-              meta.reasoning_effort,
-            );
-            if (routed) {
+            if (meta.model || meta.reasoning_effort) {
+              const spend = spendChipLabel(
+                meta.model || next.lastResolvedModel,
+                meta.reasoning_effort || next.lastResolvedReasoning,
+              );
+              setInFlightSpend(spend);
               const targetId = meta.assistant_message_id || assistantId;
               next = {
                 ...next,
                 messages: next.messages.map((item) =>
-                  item.id === targetId || item.id === assistantId ? { ...item, routeLabel: routed } : item,
+                  item.id === targetId || item.id === assistantId ? { ...item, routeLabel: spend } : item,
                 ),
               };
             }
@@ -683,6 +696,8 @@ export function GrokPane({
       toast.error(timeoutToast || formatted);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
+      abortingRef.current = false;
+      setAborting(false);
       setBusy(false);
       clearStreamStatus();
       onUpdate((current) => ({
@@ -748,6 +763,20 @@ export function GrokPane({
     });
   }
 
+  function contextTooLarge(draft: string, extraMessages: ChatLine[] = pane.messages) {
+    const noteBody =
+      pane.includeNoteId && articleId && pane.includeNoteId === articleId ? articleBody : null;
+    return chatContextOverCap({
+      messages: extraMessages,
+      draft,
+      includeArticle: Boolean(pane.includeArticle && articleId),
+      articleBody,
+      includeNote: Boolean(pane.includeNoteId),
+      noteBody,
+      pendingExtracts: (pane.pendingAttachments ?? []).map((item) => item.extract_text),
+    });
+  }
+
   async function send() {
     const content = pane.draft.trim();
     const pending = pane.pendingAttachments ?? [];
@@ -756,10 +785,15 @@ export function GrokPane({
       return;
     }
     const files = pending.filter((item) => item.id);
-    if ((!content && !files.length) || busy || !enabled || inFlightRef.current) return;
+    if ((!content && !files.length) || busy || aborting || abortingRef.current || !enabled || inFlightRef.current) {
+      return;
+    }
+    if (contextTooLarge(content)) {
+      toast.error(GROK_CONTEXT_TOAST);
+      return;
+    }
     dictation?.abort();
     inFlightRef.current = true;
-    abortInFlight();
     try {
     const imageIds = thisTurnImageMediaIds(files);
     const intent = imageToolIntent(content, imageIds.length > 0);
@@ -819,12 +853,14 @@ export function GrokPane({
     assistantId: string;
   }) {
     const { prompt, mediaIds, userLine, assistantId } = options;
-    abortInFlight();
     const controller = new AbortController();
     abortRef.current = controller;
+    abortingRef.current = false;
+    setAborting(false);
     setBusy(true);
     applyStreamStatus("generating");
-    const routeLabel = autoRouteLabel(pane.modelChoice, "grok-4.6", "low") || undefined;
+    const routeLabel = spendChipLabel("grok-4.6", "low");
+    setInFlightSpend(routeLabel);
     try {
       const result = await api.chatImagine(
         {
@@ -898,6 +934,8 @@ export function GrokPane({
       toast.error("Could not generate that image.");
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
+      abortingRef.current = false;
+      setAborting(false);
       setBusy(false);
       clearStreamStatus();
     }
@@ -909,9 +947,8 @@ export function GrokPane({
       toast.error("Type a prompt for the image.");
       return;
     }
-    if (busy || !enabled || locked || inFlightRef.current) return;
+    if (busy || aborting || abortingRef.current || !enabled || locked || inFlightRef.current) return;
     inFlightRef.current = true;
-    abortInFlight();
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy(true);
@@ -965,6 +1002,8 @@ export function GrokPane({
       toastErrorFromUnknown(error, "Could not generate that image.");
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
+      abortingRef.current = false;
+      setAborting(false);
       setBusy(false);
       clearStreamStatus();
       inFlightRef.current = false;
@@ -972,7 +1011,7 @@ export function GrokPane({
   }
 
   async function retryAssistant(assistantId: string) {
-    if (busy || !enabled || inFlightRef.current) return;
+    if (busy || aborting || abortingRef.current || !enabled || inFlightRef.current) return;
     if (!pane.conversationId) {
       toast.error("That thread is not ready to retry yet.");
       return;
@@ -982,8 +1021,11 @@ export function GrokPane({
     if (assistantIndex < 1) return;
     const userLine = messages[assistantIndex - 1];
     if (!userLine || userLine.role !== "user") return;
+    if (contextTooLarge("")) {
+      toast.error(GROK_CONTEXT_TOAST);
+      return;
+    }
     inFlightRef.current = true;
-    abortInFlight();
     try {
     const retryImages = thisTurnImageMediaIds(userLine.files);
     const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
@@ -1777,7 +1819,7 @@ export function GrokPane({
               </Button>
             </div>
           ) : null}
-          {busy ? (
+          {busy || aborting ? (
             <Button
               type="button"
               size="icon"
@@ -1785,11 +1827,7 @@ export function GrokPane({
               className="size-9 shrink-0 self-end"
               aria-label="Stop"
               title="Stop generating"
-              onClick={() => {
-                dictation?.abort();
-                abortInFlight();
-                clearStreamStatus();
-              }}
+              onClick={() => stopGeneration()}
             >
               <Square className="size-3.5 fill-current" />
             </Button>
@@ -1798,13 +1836,18 @@ export function GrokPane({
               type="submit"
               size="icon"
               className="size-9 shrink-0 self-end"
-              disabled={!enabled || (!pane.draft.trim() && !(pane.pendingAttachments ?? []).length)}
+              disabled={!enabled || aborting || (!pane.draft.trim() && !(pane.pendingAttachments ?? []).length)}
               aria-label="Send"
             >
               <Send className="size-4" />
             </Button>
           )}
         </div>
+        {(busy || aborting) && inFlightSpend ? (
+          <p className="text-[11px] text-muted-foreground" data-junior-spend="" data-junior-route="">
+            {inFlightSpend}
+          </p>
+        ) : null}
         {dictation?.listening && sttEnabled && !locked ? (
           <p className="text-[10px] text-muted-foreground">
             {dictation.continuous || dictation.sessionContinuous

@@ -21,6 +21,13 @@ export function autoRouteLabel(
   return `Auto → ${short}`;
 }
 
+/** Per-turn spend chip. Always includes model and reasoning (never silent on xhigh). */
+export function spendChipLabel(model?: string | null, reasoning?: string | null): string {
+  const resolvedModel = (model || "").trim() || "grok-4.6";
+  const resolvedReasoning = (reasoning || "").trim() || "low";
+  return `this turn · ${resolvedModel} · ${resolvedReasoning}`;
+}
+
 export function grokModelLabel(
   choice: string,
   lastModel?: string | null,

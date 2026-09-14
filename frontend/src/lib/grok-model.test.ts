@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { autoRouteLabel, grokModelLabel } from "./grok-model";
+import { autoRouteLabel, grokModelLabel, spendChipLabel } from "./grok-model";
 
 test("grokModelLabel shows resolved model and reasoning for Auto", () => {
   assert.equal(grokModelLabel("auto", "grok-4.6", "low"), "Auto → 4.6 · low");
@@ -14,4 +14,10 @@ test("autoRouteLabel is the reply badge", () => {
   assert.equal(autoRouteLabel("auto", "grok-4.6", "low"), "Auto → 4.6 · low");
   assert.equal(autoRouteLabel("auto", "grok-4.6", "xhigh"), "Auto → 4.6 · xhigh");
   assert.equal(autoRouteLabel("grok-4.6", "grok-4.6", "low"), null);
+});
+
+test("spendChipLabel always prints model and reasoning", () => {
+  assert.equal(spendChipLabel("grok-4.6", "low"), "this turn · grok-4.6 · low");
+  assert.equal(spendChipLabel("grok-4.6", "xhigh"), "this turn · grok-4.6 · xhigh");
+  assert.equal(spendChipLabel(null, null), "this turn · grok-4.6 · low");
 });

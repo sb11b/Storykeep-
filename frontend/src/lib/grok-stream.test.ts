@@ -38,6 +38,19 @@ test("shouldIncludeArticle skips huge bodies", () => {
   });
 });
 
+test("readGrokChatStream aborts immediately when the caller cancels", async () => {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"delta":"Hel"}\n\n'));
+    },
+  });
+  const abort = new AbortController();
+  const pending = readGrokChatStream(new Response(stream), { onDelta: () => {} }, abort.signal);
+  abort.abort();
+  await assert.rejects(pending, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
+});
+
 test("readGrokChatStream delivers deltas", async () => {
   const parts: string[] = [];
   await readGrokChatStream(

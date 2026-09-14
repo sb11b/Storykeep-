@@ -226,7 +226,7 @@ export function GrokChatMessage({
         {role === "user" ? "You" : content || failed ? `${assistantName} replied` : assistantName}
       </p>
       {role === "assistant" && routeLabel ? (
-        <p className="mb-1 text-[11px] text-muted-foreground" data-junior-route="">
+        <p className="mb-1 text-[11px] text-muted-foreground" data-junior-route="" data-junior-spend="">
           {routeLabel}
         </p>
       ) : null}
