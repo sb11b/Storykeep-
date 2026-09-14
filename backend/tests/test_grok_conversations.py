@@ -93,7 +93,7 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(patched.saved_note_id, note_id)
         db.add.assert_called()
 
-    def test_auto_uses_grok_46_with_low_or_xhigh(self):
+    def test_auto_keeps_normal_turns_on_low(self):
         from app.services.chat import CURRENT_CHAT_MODEL, AUTO_LOW_MAX_CHARS
 
         self.assertTrue(pick_fast_for_auto("hello"))
@@ -109,13 +109,24 @@ class GrokConversationTests(unittest.TestCase):
             "low",
         )
         prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"
-        self.assertFalse(pick_fast_for_auto(prompt))
+        self.assertTrue(pick_fast_for_auto(prompt))
         self.assertEqual(resolve_model_for_request(MODEL_AUTO, prompt, []), CURRENT_CHAT_MODEL)
-        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "xhigh")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "low")
         dat_plan = "DAT plan\n" + ("Week 1 analyze the dataset and rewrite paper notes.\n" * 20)
         self.assertGreaterEqual(len(dat_plan), AUTO_LOW_MAX_CHARS)
-        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "xhigh")
-        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "please analyze this", []), "xhigh")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "low")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "please analyze this", []), "low")
+
+    def test_auto_uses_xhigh_only_when_asked(self):
+        self.assertEqual(
+            resolve_reasoning_for_request(MODEL_AUTO, "auto", "think harder about this proof", []),
+            "xhigh",
+        )
+        self.assertEqual(
+            resolve_reasoning_for_request(MODEL_AUTO, "auto", "do a deep dive on my schema", []),
+            "xhigh",
+        )
+        self.assertFalse(pick_fast_for_auto("think harder about this proof"))
 
     def test_locked_model_skips_auto_routing(self):
         resolved = resolve_model_for_request("grok-4.6", "hi", [])

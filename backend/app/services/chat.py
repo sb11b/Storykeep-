@@ -49,29 +49,20 @@ _DEAD_MODEL_ALIASES = {
 }
 XAI_MODELS_CACHE_SEC = 900.0
 AUTO_LOW_MAX_CHARS = 400
-# Auto reasoning looks at the current turn only. Default is low.
+# Auto stays on low for ordinary conversation, including school coding. Only an
+# explicit ask for deeper reasoning moves the current turn to xhigh.
 _AUTO_XHIGH_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"\bcode\b",
-        r"\banaly[sz]e\b",
-        r"\bplan\b",
-        r"rewrite paper",
-        r"\bdebug\b",
-        r"\bhomework\b",
-        r"\bassignment\b",
-        r"\bleetcode\b",
-        r"```",
-        r"\bpython\b",
-        r"\bjavascript\b",
-        r"\btypescript\b",
-        r"stack trace",
-        r"\balgorithm\b",
-        r"\bimplement\b",
-        r"\bcompile\b",
-        r"\bsyntax\b",
-        r"\brecursion\b",
-        r"\bdat\b",
+        r"\bthink (?:really |very |much )?(?:hard|harder|deeply|deeper)\b",
+        r"\bdeep dive\b",
+        r"\bdeep think\b",
+        r"\bmax(?:imum)? (?:reasoning|effort)\b",
+        r"\bxhigh\b",
+        r"\breason (?:hard|harder)\b",
+        r"\btake your time\b",
+        r"\bstep by step\b",
+        r"\bwork through (?:this|it) carefully\b",
     )
 )
 # Kept for older tests that imported CODE_KEYWORDS; Auto routing no longer uses this list.
@@ -266,13 +257,11 @@ def normalize_model_choice(choice: str | None) -> str:
 
 
 def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
-    """True when Auto should use xhigh. Current user turn only; default is low."""
+    """True only when the current turn asks for deeper reasoning. Default is low."""
     del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
     if not text:
         return False
-    if len(text) >= AUTO_LOW_MAX_CHARS:
-        return True
     lower = text.lower()
     return any(pattern.search(lower) for pattern in _AUTO_XHIGH_PATTERNS)
 
