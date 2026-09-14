@@ -906,21 +906,10 @@ async def stream_completion(
                     else:
                         wait = CHAT_IDLE_AFTER_TOKEN_SEC
                     line: str | None = None
-                    remaining = wait
-                    aborted = False
                     try:
-                        while remaining > 0:
-                            if cancelled is not None and cancelled.is_set():
-                                aborted = True
-                                break
-                            step = min(0.15, remaining)
-                            try:
-                                line = await asyncio.wait_for(_anext_or_none(lines), timeout=step)
-                                break
-                            except asyncio.TimeoutError:
-                                remaining -= step
-                        else:
-                            raise asyncio.TimeoutError()
+                        # One wait_for for the whole window. Sliced 0.15s waits cancel
+                        # httpx aiter_lines and drop tokens that already arrived.
+                        line = await asyncio.wait_for(_anext_or_none(lines), timeout=wait)
                     except asyncio.TimeoutError as exc:
                         if first_token_at is None:
                             _xai_ttft_log(
@@ -935,7 +924,7 @@ async def stream_completion(
                             status_code=504,
                             detail=CHAT_IDLE_TIMEOUT_DETAIL,
                         ) from exc
-                    if aborted or (cancelled is not None and cancelled.is_set()):
+                    if cancelled is not None and cancelled.is_set():
                         return
                     if line is None:
                         break
