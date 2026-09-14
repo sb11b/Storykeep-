@@ -16,6 +16,7 @@ import {
   Inbox,
   Library,
   LoaderCircle,
+  GripVertical,
   Maximize2,
   Menu,
   Minimize2,
@@ -36,7 +37,9 @@ import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect, FolderSelect, RssShelfSelect } from "@/components/destination-controls";
 import { NoteAttachmentChips } from "@/components/note-attachments";
 import { NoteComposer } from "@/components/note-composer";
+import { useMovableWindow } from "@/components/movable-window";
 import { SchoolToolsBar } from "@/components/school-tools-bar";
+import { COMPOSE_POS_KEY } from "@/lib/movable-window";
 import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
 import { ProfilePage } from "@/components/profile-page";
 import { ShelfSwitcher } from "@/components/shelf-switcher";
@@ -4120,6 +4123,12 @@ function AddFeedDialog({
     }
   }
   const [composeFull, setComposeFull] = useState(false);
+  const composeMove = useMovableWindow({
+    storageKey: COMPOSE_POS_KEY,
+    open: open && !composeFull,
+    defaultMode: "center",
+    estimatedSize: { w: 640, h: 560 },
+  });
   const [fileTitle, setFileTitle] = useState("");
   const [fileTags, setFileTags] = useState("");
   const bookmarklet =
@@ -4151,6 +4160,8 @@ function AddFeedDialog({
       }}
     >
       <DialogContent
+        data-movable-window=""
+        style={composeFull ? undefined : { left: composeMove.pos.x, top: composeMove.pos.y }}
         className={cn(
           "max-h-[90vh]",
           tab === "vault" && !composeFull
@@ -4158,14 +4169,22 @@ function AddFeedDialog({
             : tab !== "vault"
               ? "overflow-y-auto"
               : "",
+          !composeFull && "!top-0 !left-0 !translate-x-0 !translate-y-0 duration-0",
           composeFull &&
             "!top-0 !left-0 !flex h-[100dvh] !max-h-none w-[100vw] !max-w-none sm:!max-w-none !translate-x-0 !translate-y-0 flex-col overflow-hidden rounded-none p-3",
         )}
       >
         {composeFull ? null : (
           <>
-        <DialogHeader className="shrink-0">
-          <DialogTitle>Collect</DialogTitle>
+        <DialogHeader
+          data-drag-handle
+          className="shrink-0 cursor-grab active:cursor-grabbing"
+          onPointerDown={composeMove.onHandlePointerDown}
+        >
+          <DialogTitle className="flex items-center gap-1.5">
+            <GripVertical className="size-3.5 text-muted-foreground" aria-hidden />
+            Collect
+          </DialogTitle>
           <DialogDescription>
             Subscribe to a site, save a page, upload a file, import OPML, or add vault notes.
           </DialogDescription>

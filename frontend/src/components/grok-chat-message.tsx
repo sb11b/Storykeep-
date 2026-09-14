@@ -5,6 +5,7 @@ import { Copy, Download, FileDown, LoaderCircle, NotebookPen, Paperclip, Volume2
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CorrectionCheck, DestinationSelect, FolderSelect } from "@/components/destination-controls";
+import { MovableWindow } from "@/components/movable-window";
 import { SchoolToolsBar } from "@/components/school-tools-bar";
 import type { GrokMessage } from "@/lib/types";
 import { onCodeCopyClick } from "@/lib/code-copy";
@@ -195,6 +196,7 @@ export function GrokChatMessage({
   const [savingWord, setSavingWord] = useState(false);
   const [savingText, setSavingText] = useState<"md" | "txt" | null>(null);
   const [filing, setFiling] = useState(false);
+  const [draft, setDraft] = useState(content);
   const [dest, setDest] = useState<FilingDestination>(noteDest);
   const [folderId, setFolderId] = useState<string | null>(noteFolderId);
   const [isCorrection, setIsCorrection] = useState(false);
@@ -230,6 +232,11 @@ export function GrokChatMessage({
     setDest(noteDest);
     setFolderId(noteFolderId);
   }, [filing, noteDest, noteFolderId]);
+
+  useEffect(() => {
+    if (!filing) return;
+    setDraft(content);
+  }, [filing, content]);
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -507,53 +514,61 @@ export function GrokChatMessage({
           onSavedNote={onSchoolSavedNote}
         />
       ) : null}
-      {content && role === "assistant" && filing ? (
-        <div className="mt-2 flex flex-col gap-1.5 rounded-md border bg-background p-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <DestinationSelect
-              value={dest}
-              onChange={(next) => {
-                if (!next) return;
-                setDest(next);
-                setFolderId(null);
-                onRememberFiling?.(next, null);
-              }}
-              customShelves={customShelves}
-              onCreateShelf={onCreateNoteShelf}
-              className="max-w-[8.5rem] text-[11px]"
+      {content && role === "assistant" ? (
+        <MovableWindow open={filing} title="Add to notes" onClose={() => setFiling(false)}>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <DestinationSelect
+                value={dest}
+                onChange={(next) => {
+                  if (!next) return;
+                  setDest(next);
+                  setFolderId(null);
+                  onRememberFiling?.(next, null);
+                }}
+                customShelves={customShelves}
+                onCreateShelf={onCreateNoteShelf}
+                className="max-w-[8.5rem] text-[11px]"
+              />
+              <FolderSelect
+                shelf={dest}
+                folders={folders}
+                value={folderId}
+                onChange={(next) => {
+                  setFolderId(next);
+                  onRememberFiling?.(dest, next);
+                }}
+                onCreateFolder={() => onCreateFolder?.(dest)}
+                className="max-w-[8.5rem] text-[11px]"
+              />
+            </div>
+            <textarea
+              aria-label="Note text"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              className="min-h-[7rem] w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />
-            <FolderSelect
-              shelf={dest}
-              folders={folders}
-              value={folderId}
-              onChange={(next) => {
-                setFolderId(next);
-                onRememberFiling?.(dest, next);
-              }}
-              onCreateFolder={() => onCreateFolder?.(dest)}
-              className="max-w-[8.5rem] text-[11px]"
-            />
+            <CorrectionCheck checked={isCorrection} onChange={setIsCorrection} />
+            <div className="flex flex-wrap gap-1">
+              <Button
+                size="xs"
+                disabled={savingNote || !draft.trim()}
+                onClick={() => {
+                  setSavingNote(true);
+                  onRememberFiling?.(dest, folderId);
+                  onAddToNotes({ content: draft, dest, folderId, isCorrection });
+                  setFiling(false);
+                  setSavingNote(false);
+                }}
+              >
+                Save
+              </Button>
+              <Button size="xs" variant="outline" onClick={() => setFiling(false)}>
+                Cancel
+              </Button>
+            </div>
           </div>
-          <CorrectionCheck checked={isCorrection} onChange={setIsCorrection} />
-          <div className="flex flex-wrap gap-1">
-            <Button
-              size="xs"
-              disabled={savingNote}
-              onClick={() => {
-                setSavingNote(true);
-                onRememberFiling?.(dest, folderId);
-                onAddToNotes({ content, dest, folderId, isCorrection });
-                setFiling(false);
-                setSavingNote(false);
-              }}
-            >
-              Save
-            </Button>
-            <Button size="xs" variant="outline" onClick={() => setFiling(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
+        </MovableWindow>
       ) : null}
     </div>
   );
