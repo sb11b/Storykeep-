@@ -163,6 +163,7 @@ function snapshotStamp(iso: string): string {
 
 function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
   const fileUrl = `/api/v1/archives/${encodeURIComponent(archiveId)}/file`;
+  const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,35 +172,82 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
+    const onWheel = (event: WheelEvent) => {
+      scroller.scrollTop += event.deltaY;
+      event.preventDefault();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      const line = 48;
+      const page = Math.max(scroller.clientHeight - 24, 80);
+      if (event.key === "ArrowDown") scroller.scrollTop += line;
+      else if (event.key === "ArrowUp") scroller.scrollTop -= line;
+      else if (event.key === "PageDown") scroller.scrollTop += page;
+      else if (event.key === "PageUp") scroller.scrollTop -= page;
+      else if (event.key === "Home") scroller.scrollTop = 0;
+      else if (event.key === "End") scroller.scrollTop = scroller.scrollHeight;
+      else return;
+      event.preventDefault();
+    };
+    scroller.addEventListener("wheel", onWheel, { passive: false });
+    scroller.addEventListener("keydown", onKey);
+    return () => {
+      scroller.removeEventListener("wheel", onWheel);
+      scroller.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    const host = hostRef.current;
+    if (!scroller) return;
     let cancelled = false;
-    let widthObserver: ResizeObserver | null = null;
-    let widthTimer: number | undefined;
+    let boxObserver: ResizeObserver | null = null;
+    let boxTimer: number | undefined;
     scroller.replaceChildren();
     setError(null);
     setLoading(true);
 
-    const waitForScrollerWidth = () =>
-      new Promise<number>((resolve) => {
-        const read = () => scroller.clientWidth;
-        const finish = (width: number) => {
-          widthObserver?.disconnect();
-          widthObserver = null;
-          if (widthTimer !== undefined) {
-            window.clearTimeout(widthTimer);
-            widthTimer = undefined;
-          }
-          resolve(width);
+    const constrainScroller = () => {
+      const cap = host?.clientHeight ?? 0;
+      if (cap > 0) {
+        scroller.style.maxHeight = `${cap}px`;
+      }
+    };
+
+    const waitForScrollerBox = () =>
+      new Promise<{ width: number; height: number }>((resolve) => {
+        const read = () => {
+          constrainScroller();
+          return {
+            width: scroller.clientWidth,
+            height: scroller.clientHeight || host?.clientHeight || 0,
+          };
         };
-        if (read() > 0) {
-          finish(read());
+        const finish = () => {
+          boxObserver?.disconnect();
+          boxObserver = null;
+          if (boxTimer !== undefined) {
+            window.clearTimeout(boxTimer);
+            boxTimer = undefined;
+          }
+          const box = read();
+          resolve({
+            width: Math.max(box.width, 320),
+            height: box.height,
+          });
+        };
+        const box = read();
+        if (box.width > 0 && box.height > 0) {
+          finish();
           return;
         }
-        widthObserver = new ResizeObserver(() => {
-          const width = read();
-          if (width > 0) finish(width);
+        boxObserver = new ResizeObserver(() => {
+          const next = read();
+          if (next.width > 0 && next.height > 0) finish();
         });
-        widthObserver.observe(scroller);
-        widthTimer = window.setTimeout(() => finish(Math.max(read(), 320)), 8000);
+        boxObserver.observe(scroller);
+        if (host) boxObserver.observe(host);
+        boxTimer = window.setTimeout(finish, 8000);
       });
 
     void (async () => {
@@ -218,24 +266,46 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
       const doc = await pdfjs.getDocument({ url: blobUrl }).promise;
-      const width = await waitForScrollerWidth();
+      const box = await waitForScrollerBox();
       if (cancelled) return;
+      const width = box.width;
       for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
         if (cancelled) return;
         const page = await doc.getPage(pageNumber);
         const unscaled = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: Math.max(0.25, width / unscaled.width) });
+        const scale = width / unscaled.width;
+        const viewport = page.getViewport({ scale });
         const wrap = document.createElement("div");
         wrap.className = "pdf-page";
+        wrap.style.display = "block";
+        wrap.style.width = "100%";
+        wrap.style.height = `${Math.ceil(unscaled.height * scale)}px`;
         const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+        canvas.style.display = "block";
+        canvas.style.width = "100%";
+        canvas.style.height = "auto";
+        canvas.style.pointerEvents = "none";
         wrap.appendChild(canvas);
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Could not draw the PDF snapshot.");
         await page.render({ canvasContext: context, viewport }).promise;
         if (cancelled) return;
         scroller.appendChild(wrap);
+      }
+      constrainScroller();
+      if (doc.numPages > 1 && scroller.scrollHeight <= scroller.clientHeight) {
+        const cap = host?.clientHeight || scroller.clientHeight;
+        if (cap > 0) {
+          scroller.style.height = `${cap}px`;
+          scroller.style.maxHeight = `${cap}px`;
+          scroller.style.minHeight = "0";
+          scroller.style.overflowY = "scroll";
+        }
+      }
+      if (doc.numPages > 1 && scroller.scrollHeight <= scroller.clientHeight) {
+        throw new Error("PDF pages did not overflow the reader pane. Reload and try again.");
       }
       if (!cancelled) {
         setLoading(false);
@@ -248,9 +318,11 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
     });
     return () => {
       cancelled = true;
-      widthObserver?.disconnect();
-      if (widthTimer !== undefined) window.clearTimeout(widthTimer);
+      boxObserver?.disconnect();
+      if (boxTimer !== undefined) window.clearTimeout(boxTimer);
       scroller.replaceChildren();
+      scroller.style.height = "";
+      scroller.style.maxHeight = "";
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
@@ -259,7 +331,7 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
   }, [fileUrl]);
 
   return (
-    <div className="pdf-host bg-muted">
+    <div ref={hostRef} className="pdf-host bg-muted">
       {error ? <p className="reader-chrome px-3 py-2 text-sm text-destructive">{error}</p> : null}
       {loading && !error ? (
         <p className="reader-chrome px-3 py-2 text-sm text-muted-foreground">Loading PDF snapshot…</p>

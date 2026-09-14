@@ -220,7 +220,6 @@
 .reader-shell {
   display: flex;
   min-height: 0;
-  height: 100%;
   flex: 1 1 auto;
   flex-direction: column;
   overflow: hidden;
@@ -238,11 +237,11 @@
 }
 .pdf-scroller {
   box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
   flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: scroll;
   overscroll-behavior: contain;
   pointer-events: auto;
   outline: none;
@@ -255,6 +254,7 @@
   display: block;
   width: 100%;
   height: auto;
+  pointer-events: none;
 }
 
 .article-body {
