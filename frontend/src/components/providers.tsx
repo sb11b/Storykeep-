@@ -9,7 +9,7 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <DictationProvider>
-        <div className="flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden">{children}</div>
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">{children}</div>
         <Toaster position="bottom-left" />
       </DictationProvider>
     </ThemeProvider>

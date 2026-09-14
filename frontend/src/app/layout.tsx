@@ -33,10 +33,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${newsreader.variable} ${sourceSerif.variable} h-dvh overflow-hidden antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${newsreader.variable} ${sourceSerif.variable} h-full overflow-hidden antialiased`}
       suppressHydrationWarning
     >
-      <body className="flex h-dvh min-h-0 flex-col overflow-hidden">
+      <body className="flex h-full min-h-0 flex-col overflow-hidden">
         <Providers>{children}</Providers>
       </body>
     </html>
