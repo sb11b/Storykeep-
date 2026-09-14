@@ -140,12 +140,20 @@ test("wrapWikilink wraps selection as wiki link", () => {
 
 test("Junior Imagine markdown renders a media image with Download picture", () => {
   const id = "11111111-1111-1111-1111-111111111111";
-  const html = renderMarkdown(`Here's the image.\n\n![a red notebook on a desk](/api/v1/media/${id})`);
-  assert.match(html, /Here's the image/);
+  const html = renderMarkdown(`![a red notebook on a desk](/api/v1/media/${id})`);
+  assert.doesNotMatch(html, /Here's the image/);
   assert.match(html, new RegExp(`<img src="/api/v1/media/${id}" alt="a red notebook on a desk" />`));
   assert.match(html, /Download picture/);
   assert.match(html, /aria-label="Download picture"/);
   assert.match(html, new RegExp(`data-media-id="${id}"`));
   assert.match(html, new RegExp(`data-media-url="/api/v1/media/${id}"`));
   assert.doesNotMatch(html, /sk-chat-image-download" href=/);
+});
+
+test("Junior Imagine HTML img in the assistant body still renders pixels", () => {
+  const id = "11111111-1111-1111-1111-111111111111";
+  const html = renderMarkdown(`<img src="/api/v1/media/${id}" alt="aged portrait">`);
+  assert.match(html, new RegExp(`<img src="/api/v1/media/${id}" alt="aged portrait" />`));
+  assert.match(html, /Download picture/);
+  assert.doesNotMatch(html, /implemented and passing/);
 });

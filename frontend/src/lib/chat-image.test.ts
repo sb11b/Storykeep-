@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectImageMediaIds, imageToolIntent, thisTurnImageMediaIds } from "./chat-image";
+import { collectImageMediaIds, hasMediaImage, imageToolIntent, thisTurnImageMediaIds } from "./chat-image";
 
 test("make me look older with a selfie is edit", () => {
   assert.equal(imageToolIntent("Make me look older", true), "edit");
@@ -103,4 +103,11 @@ test("this-turn image ids ignore prior thread photos", () => {
     thisTurnImageMediaIds([{ kind: "image", media_id: "from-message" }]),
     ["from-message"],
   );
+});
+
+test("hasMediaImage accepts a real media img tag", () => {
+  const id = "11111111-1111-1111-1111-111111111111";
+  assert.equal(hasMediaImage(`<img src="/api/v1/media/${id}" alt="aged">`), true);
+  assert.equal(hasMediaImage(`![aged](/api/v1/media/${id})`), true);
+  assert.equal(hasMediaImage("Here's the image."), false);
 });

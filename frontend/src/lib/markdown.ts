@@ -7,6 +7,7 @@ function escapeHtml(value: string): string {
 }
 
 const MEDIA_IMAGE = /!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
+const HTML_MEDIA_IMG = /<img\b[^>]*\bsrc="(\/api\/v1\/media\/[0-9a-fA-F-]{36})"[^>]*>/gi;
 const MEDIA_FILE = /(?<!!)\[([^\]]+)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
 const MEDIA_LINE = /^(!?\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\))$/;
 const FENCE_OPEN = /^(`{3})([\w-+#.]*)?\s*$/;
@@ -341,7 +342,14 @@ function renderMarkdownBlocks(source: string, resolver?: WikilinkResolver): stri
     .join("");
 }
 
+function htmlMediaImagesToMarkdown(source: string): string {
+  return source.replace(HTML_MEDIA_IMG, (tag, url: string) => {
+    const alt = (tag.match(/\balt="([^"]*)"/i)?.[1] || "generated image").replace(/]/g, "");
+    return `![${alt}](${url})`;
+  });
+}
+
 export function renderMarkdown(source: string, resolver?: WikilinkResolver): string {
-  const normalized = (source || "").replace(/\r\n/g, "\n");
+  const normalized = htmlMediaImagesToMarkdown((source || "").replace(/\r\n/g, "\n"));
   return renderMarkdownBlocks(normalized, resolver);
 }

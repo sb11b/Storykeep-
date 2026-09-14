@@ -1,14 +1,18 @@
 import { createGrokPane, type GrokPaneState } from "@/components/grok-pane";
+import { asFilingDestination } from "@/lib/destinations";
 import { defaultGrokPaneName, isDefaultPaneName } from "@/lib/grok-pane-name";
 
 const GROK_PANES_KEY = "storykeep-grok-panes";
+const FOLDER_ID = /^[0-9a-fA-F-]{36}$/;
 
 type SavedPaneMeta = {
   id: string;
   displayName: string;
+  noteDest?: string;
+  noteFolderId?: string | null;
 };
 
-/** Load pane shells from localStorage (stable ids + display names). */
+/** Load pane shells from localStorage (stable ids + display names + last filing). */
 export function loadSavedGrokPanes(): GrokPaneState[] | null {
   if (typeof window === "undefined") return null;
   try {
@@ -18,11 +22,14 @@ export function loadSavedGrokPanes(): GrokPaneState[] | null {
     if (!Array.isArray(saved) || !saved.length) return null;
     return saved.map((row, index) => {
       const stored = row.displayName?.trim() || "";
+      const folderId = typeof row.noteFolderId === "string" && FOLDER_ID.test(row.noteFolderId) ? row.noteFolderId : null;
       return {
         ...createGrokPane(index),
         id: row.id || crypto.randomUUID(),
         // A stored legacy "Grok" / "Larry" label upgrades to Junior.
         displayName: isDefaultPaneName(stored, index) ? defaultGrokPaneName(index) : stored,
+        noteDest: asFilingDestination(row.noteDest, "notes"),
+        noteFolderId: folderId,
       };
     });
   } catch {
@@ -36,6 +43,8 @@ export function saveGrokPanes(panes: GrokPaneState[]) {
     const payload: SavedPaneMeta[] = panes.map((pane, index) => ({
       id: pane.id,
       displayName: pane.displayName?.trim() || defaultGrokPaneName(index),
+      noteDest: pane.noteDest,
+      noteFolderId: pane.noteFolderId,
     }));
     window.localStorage.setItem(GROK_PANES_KEY, JSON.stringify(payload));
   } catch {

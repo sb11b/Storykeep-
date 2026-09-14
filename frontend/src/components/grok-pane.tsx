@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
-import { GrokChatMessage } from "@/components/grok-chat-message";
+import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, type ChatStatusKind } from "@/lib/grok-pane-name";
@@ -34,7 +34,7 @@ import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { shouldIncludeArticle } from "@/lib/grok-stream";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { autoRouteLabel, grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort } from "@/lib/grok-model";
-import { imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
+import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -62,6 +62,8 @@ export type GrokPaneState = {
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
+  includeNoteId: string | null;
+  includeNoteTitle: string | null;
   noteDest: FilingDestination;
   noteFolderId: string | null;
   recapQuestion: boolean;
@@ -87,6 +89,8 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     messages: [],
     draft: "",
     includeArticle: false,
+    includeNoteId: null,
+    includeNoteTitle: null,
     noteDest: "notes",
     noteFolderId: null,
     recapQuestion: false,
@@ -95,10 +99,6 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     savedNoteId: null,
     conversationTitle: null,
   };
-}
-
-function isComposedNote(guid?: string | null) {
-  return Boolean(guid?.startsWith("storykeep-note:"));
 }
 
 function titleFromReply(reply: string, assistantName: string) {
@@ -122,7 +122,7 @@ export function GrokPane({
   canRemove,
   articleId,
   articleTitle,
-  articleGuid,
+  articleGuid: _articleGuid,
   sourceRef,
   articleBody,
   enabled,
@@ -201,6 +201,10 @@ export function GrokPane({
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
   const [savingChat, setSavingChat] = useState(false);
+  const [notePickerOpen, setNotePickerOpen] = useState(false);
+  const [noteQuery, setNoteQuery] = useState("");
+  const [noteChoices, setNoteChoices] = useState<Array<{ id: string; title: string }>>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
   const thinkingTimerRef = useRef<number | null>(null);
   const gotDeltaRef = useRef(false);
   const generatingRef = useRef(false);
@@ -259,6 +263,26 @@ export function GrokPane({
   useEffect(() => {
     void api.folders().then(setFolders).catch(() => setFolders([]));
   }, []);
+
+  useEffect(() => {
+    if (!notePickerOpen) return;
+    let cancelled = false;
+    setLoadingNotes(true);
+    void api
+      .noteTitles(noteQuery, 20)
+      .then((payload) => {
+        if (!cancelled) setNoteChoices(payload.items || []);
+      })
+      .catch(() => {
+        if (!cancelled) setNoteChoices([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingNotes(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [notePickerOpen, noteQuery]);
 
   useEffect(() => {
     if (!ttsVoices.length) return;
@@ -449,6 +473,7 @@ export function GrokPane({
           reasoning_effort: pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort,
           article_id: articleId,
           include_article: includeDecision.include,
+          include_note_id: pane.includeNoteId || undefined,
           recap_question: pane.recapQuestion,
           media_ids: retry ? undefined : options.mediaIds,
         },
@@ -590,8 +615,13 @@ export function GrokPane({
                 waiting: false,
                 failed: true,
                 error: formatted,
-                // Keep any tokens that already landed; never replace with only "Chat failed".
-                content: item.content,
+                // Keep streamed words; drop fake Imagine captions with no media id.
+                content:
+                  hasMediaImage(item.content) || /\/api\/v1\/media\//.test(item.content)
+                    ? item.content
+                    : /Generating the image|Here's the image/i.test(item.content)
+                      ? ""
+                      : item.content,
               }
             : item,
         ),
@@ -636,6 +666,10 @@ export function GrokPane({
           continue;
         }
         const uploaded = await uploadLarryAttachment(file);
+        if (!uploaded.id) {
+          toast.error("No attach without a media id.");
+          continue;
+        }
         onUpdate((current) => {
           const pending = current.pendingAttachments ?? [];
           if (pending.some((item) => item.id === uploaded.id)) return current;
@@ -747,7 +781,7 @@ export function GrokPane({
       );
       const reply = result.assistant_message;
       const hasPixels =
-        MEDIA_MARKDOWN.test(reply.content || "") ||
+        hasMediaImage(reply.content || "") ||
         (reply.files || []).some((file) => file.kind === "image" && file.media_id);
       if (!hasPixels) {
         throw new ApiError(502, "Could not generate that image.");
@@ -806,7 +840,7 @@ export function GrokPane({
             : item,
         ),
       }));
-      toast.error(formatted);
+      toast.error("Could not generate that image.");
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
@@ -841,7 +875,7 @@ export function GrokPane({
       );
       const reply = result.assistant_message;
       const hasPixels =
-        MEDIA_MARKDOWN.test(reply.content || "") ||
+        hasMediaImage(reply.content || "") ||
         (reply.files || []).some((file) => file.kind === "image" && file.media_id);
       if (!hasPixels) {
         throw new ApiError(502, "Could not generate that image.");
@@ -929,9 +963,12 @@ export function GrokPane({
     }
   }
 
-  async function addToNotes(content: string, assistantId?: string) {
-    const body = content.trim();
+  async function addToNotes(payload: AddToNotesPayload, assistantId?: string) {
+    const body = payload.content.trim();
     if (!body) return;
+    const dest = payload.dest;
+    const folderId = payload.folderId;
+    patch({ noteDest: dest, noteFolderId: folderId });
     const fromUser =
       assistantId != null
         ? (() => {
@@ -942,15 +979,6 @@ export function GrokPane({
         : [];
     const extra = attachmentMarkdown(fromUser);
     try {
-      if (articleId && isComposedNote(articleGuid)) {
-        const existing = (articleBody || "").trim();
-        const chunk = extra ? `${body}\n\n${extra}` : body;
-        const next = existing ? `${existing}\n\n## ${label}\n\n${chunk}` : chunk;
-        await api.updateComposedNote(articleId, articleTitle || titleFromReply(body, label), next, pane.noteDest, false, pane.noteFolderId);
-        toast.success("Appended to this StoryKeep addition. The vault original was not touched.");
-        await onSavedNote(articleId, pane.noteDest, pane.noteFolderId);
-        return;
-      }
       const markdown = extra
         ? `${noteMarkdown(body, articleTitle, sourceRef || null, label)}\n\n${extra}`
         : noteMarkdown(body, articleTitle, sourceRef || null, label);
@@ -958,17 +986,17 @@ export function GrokPane({
         titleFromReply(body, label),
         markdown,
         ["grok"],
-        pane.noteDest,
-        false,
-        pane.noteFolderId,
+        dest,
+        payload.isCorrection,
+        folderId,
       );
-      const folderName = folderById(folders, pane.noteFolderId)?.name;
+      const folderName = folderById(folders, folderId)?.name;
       toast.success(
         folderName
-          ? `Saved to StoryKeep/${destinationLabel(pane.noteDest, customShelves)}/${folderName}.`
-          : `Saved to StoryKeep/${destinationLabel(pane.noteDest, customShelves)}.`,
+          ? `Saved to StoryKeep/${destinationLabel(dest, customShelves)}/${folderName}.`
+          : `Saved to StoryKeep/${destinationLabel(dest, customShelves)}.`,
       );
-      await onSavedNote(article.id, pane.noteDest, pane.noteFolderId);
+      await onSavedNote(article.id, dest, folderId);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");
     }
@@ -1092,13 +1120,13 @@ export function GrokPane({
     }
   }
 
-  async function createNoteFolder() {
-    const name = window.prompt(`New folder on ${destinationLabel(pane.noteDest, customShelves)}`);
+  async function createNoteFolder(shelf: FilingDestination = pane.noteDest) {
+    const name = window.prompt(`New folder on ${destinationLabel(shelf, customShelves)}`);
     if (!name?.trim()) return;
     try {
-      const row = await api.createFolder(pane.noteDest, name.trim());
+      const row = await api.createFolder(shelf, name.trim());
       setFolders((current) => [...current, row]);
-      patch({ noteFolderId: row.id });
+      patch({ noteDest: shelf, noteFolderId: row.id });
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not create folder");
     }
@@ -1316,20 +1344,6 @@ export function GrokPane({
         </Button>
       </div>
 
-      <label className="flex shrink-0 items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-snug">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={pane.includeArticle}
-          disabled={!articleId}
-          onChange={(event) => patch({ includeArticle: event.target.checked })}
-        />
-        <span className="text-muted-foreground">
-          Include current article
-          {!articleId ? " — open an article to ground this pane." : pane.includeArticle ? " — up to 8k chars." : " — off, thread only."}
-        </span>
-      </label>
-
       {visibleStatus ? (
         <p
           data-junior-status={visibleStatus}
@@ -1380,6 +1394,13 @@ export function GrokPane({
                 assistantName={label}
                 files={item.files}
                 wordEnabled={!locked}
+                noteDest={pane.noteDest}
+                noteFolderId={pane.noteFolderId}
+                folders={folders}
+                customShelves={customShelves}
+                onCreateNoteShelf={onCreateNoteShelf}
+                onCreateFolder={(shelf) => void createNoteFolder(shelf)}
+                onRememberFiling={(dest, folderId) => patch({ noteDest: dest, noteFolderId: folderId })}
                 routeLabel={item.role === "assistant" ? item.routeLabel : null}
                 statusLine={
                   item.role === "assistant" &&
@@ -1390,7 +1411,7 @@ export function GrokPane({
                 }
                 onRegisterBody={registerBody}
                 onListen={requestListen}
-                onAddToNotes={(body) => void addToNotes(body, item.id)}
+                onAddToNotes={(payload) => void addToNotes(payload, item.id)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
               />
             ))
@@ -1440,9 +1461,89 @@ export function GrokPane({
           void attachFiles(picked);
         }}
       >
-        {(pane.pendingAttachments ?? []).length || uploadingFiles ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <label className="inline-flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={pane.includeArticle}
+                disabled={!articleId}
+                onChange={(event) => patch({ includeArticle: event.target.checked })}
+              />
+              Include current article
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={Boolean(pane.includeNoteId) || notePickerOpen}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setNotePickerOpen(true);
+                    return;
+                  }
+                  setNotePickerOpen(false);
+                  patch({ includeNoteId: null, includeNoteTitle: null });
+                }}
+              />
+              Include note…
+            </label>
+            {pane.includeNoteTitle ? (
+              <span className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5">
+                <span className="truncate">{pane.includeNoteTitle}</span>
+                <button
+                  type="button"
+                  className="rounded-full p-0.5 hover:bg-background"
+                  aria-label="Stop including that note"
+                  onClick={() => {
+                    setNotePickerOpen(false);
+                    patch({ includeNoteId: null, includeNoteTitle: null });
+                  }}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ) : null}
+          </div>
+          {notePickerOpen ? (
+            <div className="rounded-md border bg-background p-1.5">
+              <Input
+                value={noteQuery}
+                onChange={(event) => setNoteQuery(event.target.value)}
+                placeholder="Search notes…"
+                className="h-7 text-[12px]"
+                aria-label="Search notes to include"
+              />
+              <ul className="mt-1 max-h-32 overflow-y-auto">
+                {loadingNotes ? (
+                  <li className="px-1 py-1 text-[11px] text-muted-foreground">Loading…</li>
+                ) : noteChoices.length ? (
+                  noteChoices.map((note) => (
+                    <li key={note.id}>
+                      <button
+                        type="button"
+                        className="w-full truncate rounded px-1 py-0.5 text-left text-[12px] hover:bg-muted"
+                        onClick={() => {
+                          patch({ includeNoteId: note.id, includeNoteTitle: note.title });
+                          setNotePickerOpen(false);
+                          setNoteQuery("");
+                        }}
+                      >
+                        {note.title}
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <li className="px-1 py-1 text-[11px] text-muted-foreground">No notes match.</li>
+                )}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+        {(pane.pendingAttachments ?? []).filter((file) => file.id).length || uploadingFiles ? (
           <ul className="flex flex-wrap gap-1.5" aria-label="Files to send">
-            {(pane.pendingAttachments ?? []).map((file) => (
+            {(pane.pendingAttachments ?? [])
+              .filter((file) => file.id)
+              .map((file) => (
               <li
                 key={file.id}
                 className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px]"
@@ -1453,6 +1554,9 @@ export function GrokPane({
                   <Paperclip className="ml-1.5 size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
                 )}
                 <span className="truncate">{file.name}</span>
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground" title={file.id}>
+                  {file.id}
+                </span>
                 <span className="shrink-0 text-muted-foreground">{formatFileSize(file.size)}</span>
                 <button
                   type="button"

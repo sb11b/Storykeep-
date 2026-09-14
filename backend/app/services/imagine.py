@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import logging
 import re
 import threading
@@ -42,18 +43,24 @@ def image_alt(prompt: str) -> str:
     return (cleaned[:80] or "generated image").rstrip()
 
 
+def assistant_image_tag(prompt: str, media_id: UUID) -> str:
+    alt = html.escape(image_alt(prompt), quote=True)
+    return f'<img src="/api/v1/media/{media_id}" alt="{alt}">'
+
+
 def assistant_image_markdown(prompt: str, media_id: UUID) -> str:
-    return f"Here's the image.\n\n![generated image](/api/v1/media/{media_id})"
+    """Persisted assistant body: a real media <img>, never a fake caption."""
+    return assistant_image_tag(prompt, media_id)
 
 
 def assistant_edit_markdown(prompt: str, media_id: UUID) -> str:
-    return f"Here's the edited image.\n\n![edited image](/api/v1/media/{media_id})"
+    return assistant_image_tag(prompt, media_id)
 
 
 def assistant_inspired_markdown(prompt: str, media_id: UUID) -> str:
     return (
-        "Here's a new generated portrait inspired by your photo — not a pixel-perfect edit.\n\n"
-        f"![generated image](/api/v1/media/{media_id})"
+        "Inspired by your photo — not a pixel-perfect edit.\n\n"
+        f"{assistant_image_tag(prompt, media_id)}"
     )
 
 

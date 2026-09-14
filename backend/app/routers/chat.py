@@ -36,6 +36,7 @@ class ChatIn(BaseModel):
     reasoning_effort: str | None = None
     article_id: UUID | None = None
     include_article: bool = False
+    include_note_id: UUID | None = None
     recap_question: bool = False
     retry: bool = False
     media_ids: list[UUID] = Field(default_factory=list, max_length=5)
@@ -580,12 +581,20 @@ async def chat(
     prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
     history_for_xai = chat_service.validate_payload(prepared)
     excerpt = None
+    note_excerpt = None
     include_article = bool(payload.include_article)
+    include_note = bool(payload.include_note_id)
     if include_article:
         if not payload.article_id:
             raise HTTPException(status_code=400, detail="Open an article before attaching it to chat.")
         article = _owned_article(db, user, payload.article_id)
         excerpt = chat_service.article_excerpt(article)
+    if include_note:
+        if include_article and payload.article_id == payload.include_note_id:
+            note_excerpt = excerpt
+        else:
+            note = _owned_article(db, user, payload.include_note_id)
+            note_excerpt = chat_service.article_excerpt(note)
     has_attachments = any(item.get("files") for item in history)
 
     def _persist_assistant(text: str) -> str | None:
@@ -669,6 +678,8 @@ async def chat(
                 reasoning_effort=resolved_reasoning,
                 user_id=user_id,
                 has_attachments=has_attachments,
+                include_note=include_note,
+                note_excerpt=note_excerpt,
             ):
                 if await request.is_disconnected():
                     _log("aborted")

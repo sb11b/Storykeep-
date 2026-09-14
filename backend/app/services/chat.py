@@ -110,9 +110,15 @@ Steve enabled "Recap my question" for this thread. You may briefly restate his q
 
 ARTICLE_MODE_APPEND = """
 Steve connected the current article. An excerpt is below.
-- Ground answers in that excerpt when the question is about this article.
+- Answer from this article excerpt only. Do not use other StoryKeep notes or the rest of the vault.
 - Do not invent quotes or facts that are not supported by the excerpt.
-- If Steve asks something outside the excerpt, you may use general knowledge and say clearly what is from the article vs general knowledge.
+- If Steve asks something outside the excerpt, say the article does not cover it.
+"""
+
+NOTE_MODE_APPEND = """
+Steve attached one StoryKeep note (not the whole vault). An excerpt is below.
+- Use only that note excerpt plus the chat. Do not pull in other notes.
+- Do not invent quotes or facts that are not supported by the excerpt.
 """
 
 GENERAL_MODE_APPEND = """
@@ -664,11 +670,19 @@ def build_xai_messages(
     include_article: bool,
     recap_question: bool = False,
     has_attachments: bool = False,
+    include_note: bool = False,
+    note_excerpt: str | None = None,
 ) -> list[dict]:
+    system = SYSTEM_PROMPT
+    grounded = False
     if include_article and excerpt:
-        system = SYSTEM_PROMPT + ARTICLE_MODE_APPEND + "\n\nCurrent article excerpt (truncated):\n" + excerpt
-    else:
-        system = SYSTEM_PROMPT + GENERAL_MODE_APPEND
+        system += ARTICLE_MODE_APPEND + "\n\nCurrent article excerpt (truncated):\n" + excerpt
+        grounded = True
+    if include_note and note_excerpt:
+        system += NOTE_MODE_APPEND + "\n\nIncluded note excerpt (truncated):\n" + note_excerpt
+        grounded = True
+    if not grounded:
+        system += GENERAL_MODE_APPEND
     if recap_question:
         system += RECAP_MODE_APPEND
     if has_attachments:
@@ -722,6 +736,8 @@ async def stream_completion(
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
     user_id: UUID | None = None,
     has_attachments: bool = False,
+    include_note: bool = False,
+    note_excerpt: str | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
@@ -745,6 +761,8 @@ async def stream_completion(
                 include_article=include_article,
                 recap_question=recap_question,
                 has_attachments=has_attachments,
+                include_note=include_note,
+                note_excerpt=note_excerpt,
             ),
             "stream": True,
             "max_tokens": max_tokens,

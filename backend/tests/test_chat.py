@@ -77,6 +77,24 @@ class ChatGuardTests(unittest.TestCase):
         system = messages[0]["content"]
         self.assertIn("Current article excerpt", system)
         self.assertIn("Body text", system)
+        self.assertIn("Answer from this article excerpt only", system)
+        self.assertIn("Do not use other StoryKeep notes or the rest of the vault", system)
+
+    def test_note_include_is_capped_and_not_the_vault(self):
+        note = "Title: Lab\n\nOnly this note"
+        messages = build_xai_messages(
+            [{"role": "user", "content": "Summarize"}],
+            None,
+            include_article=False,
+            include_note=True,
+            note_excerpt=note,
+        )
+        system = messages[0]["content"]
+        self.assertIn("Included note excerpt", system)
+        self.assertIn("Only this note", system)
+        self.assertIn("not the whole vault", system)
+        self.assertNotIn("Current article excerpt", system)
+        self.assertNotIn("general-knowledge mode", system)
 
     def test_thread_window_limits_context(self):
         history = [{"role": "user", "content": f"line {index}"} for index in range(20)]

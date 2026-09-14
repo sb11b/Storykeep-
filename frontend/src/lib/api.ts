@@ -618,6 +618,7 @@ export const api = {
       reasoning_effort?: string;
       article_id: string | null;
       include_article: boolean;
+      include_note_id?: string | null;
       recap_question?: boolean;
       retry?: boolean;
       media_ids?: string[];

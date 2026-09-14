@@ -146,4 +146,13 @@ export function collectImageMediaIds(
   return thisTurnImageMediaIds(pending);
 }
 
-export const MEDIA_MARKDOWN = /!\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\)/;
+/** True when the assistant body already has a real /media photo. */
+export function hasMediaImage(content: string | null | undefined): boolean {
+  const text = content || "";
+  return (
+    /!\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\)/.test(text) ||
+    /<img\b[^>]*\bsrc="\/api\/v1\/media\/[0-9a-fA-F-]{36}"/i.test(text)
+  );
+}
+
+export const MEDIA_MARKDOWN = /(?:!\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\)|<img\b[^>]*\bsrc="\/api\/v1\/media\/[0-9a-fA-F-]{36}")/i;

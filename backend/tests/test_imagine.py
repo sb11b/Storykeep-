@@ -38,16 +38,15 @@ class ImagineServiceTests(unittest.TestCase):
     def test_assistant_markdown_uses_media_url(self):
         media_id = uuid4()
         text = assistant_image_markdown("a red notebook on a desk", media_id)
-        self.assertIn("Here's the image.", text)
-        self.assertIn(f"/api/v1/media/{media_id}", text)
-        self.assertIn("![generated image]", text)
-        self.assertRegex(text, r"!\[generated image\]\(/api/v1/media/[0-9a-fA-F-]{36}\)")
+        self.assertNotIn("Here's the image.", text)
+        self.assertIn(f'<img src="/api/v1/media/{media_id}"', text)
+        self.assertIn('alt="a red notebook on a desk"', text)
         edited = assistant_edit_markdown("make me look older", media_id)
-        self.assertIn("Here's the edited image.", edited)
-        self.assertIn("![edited image]", edited)
-        self.assertIn(f"/api/v1/media/{media_id}", edited)
+        self.assertNotIn("Here's the edited image.", edited)
+        self.assertIn(f'<img src="/api/v1/media/{media_id}"', edited)
         inspired = assistant_inspired_markdown("older portrait", media_id)
-        self.assertIn("inspired by your photo", inspired)
+        self.assertIn("Inspired by your photo", inspired)
+        self.assertIn(f'<img src="/api/v1/media/{media_id}"', inspired)
         self.assertNotIn("FaceApp", inspired)
 
     def test_edit_image_posts_owned_data_uri(self):

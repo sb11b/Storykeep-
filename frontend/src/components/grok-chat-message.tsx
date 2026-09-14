@@ -4,13 +4,16 @@ import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { Copy, Download, FileDown, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { CorrectionCheck, DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import { downloadChatPicture, resolveChatImageSrc } from "@/lib/chat-media-download";
+import type { CustomNoteShelf, FilingDestination } from "@/lib/custom-note-shelves";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 import { downloadChatMessageDocx, isPersistedMessageId } from "@/lib/chat-message-docx";
 import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
+import type { Folder } from "@/lib/types";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +77,13 @@ function ChatPicture({
   );
 }
 
+export type AddToNotesPayload = {
+  content: string;
+  dest: FilingDestination;
+  folderId: string | null;
+  isCorrection: boolean;
+};
+
 export function GrokChatMessage({
   id,
   role,
@@ -90,6 +100,13 @@ export function GrokChatMessage({
   statusLine,
   routeLabel,
   wordEnabled = true,
+  noteDest = "notes",
+  noteFolderId = null,
+  folders = [],
+  customShelves = [],
+  onCreateNoteShelf,
+  onCreateFolder,
+  onRememberFiling,
   onRegisterBody,
   onListen,
   onAddToNotes,
@@ -112,16 +129,34 @@ export function GrokChatMessage({
   /** Auto routing, e.g. "Auto → 4.6 · low". Not inside the Listen body. */
   routeLabel?: string | null;
   wordEnabled?: boolean;
+  noteDest?: FilingDestination;
+  noteFolderId?: string | null;
+  folders?: Folder[];
+  customShelves?: CustomNoteShelf[];
+  onCreateNoteShelf?: () => void | Promise<void>;
+  onCreateFolder?: (shelf: FilingDestination) => void;
+  onRememberFiling?: (dest: FilingDestination, folderId: string | null) => void;
   onRegisterBody?: (messageId: string, element: HTMLElement | null) => void;
   /** `trigger` is the Listen button, so the reply body is one closest() away. */
   onListen?: (messageId: string, trigger: HTMLElement) => void;
-  onAddToNotes: (content: string) => void;
+  onAddToNotes: (payload: AddToNotesPayload) => void;
   onRetry?: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [savingWord, setSavingWord] = useState(false);
+  const [filing, setFiling] = useState(false);
+  const [dest, setDest] = useState<FilingDestination>(noteDest);
+  const [folderId, setFolderId] = useState<string | null>(noteFolderId);
+  const [isCorrection, setIsCorrection] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
   const canDownloadWord =
     wordEnabled && role === "assistant" && Boolean(content) && !failed && !waiting && isPersistedMessageId(id);
+
+  useEffect(() => {
+    if (filing) return;
+    setDest(noteDest);
+    setFolderId(noteFolderId);
+  }, [filing, noteDest, noteFolderId]);
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -148,7 +183,7 @@ export function GrokChatMessage({
   }, [activeWord, content, listening]);
 
   const imageFiles = files.filter((file) => file.kind === "image" && file.media_id);
-  const otherFiles = files.filter((file) => file.kind !== "image");
+  const otherFiles = files.filter((file) => file.kind !== "image" && file.media_id);
   const extraAssistantImages = imageFiles.filter(
     (file) => !content.includes(`/api/v1/media/${file.media_id}`),
   );
@@ -218,6 +253,9 @@ export function GrokChatMessage({
                   <a href={file.url} target="_blank" rel="noreferrer" className="truncate hover:underline">
                     {file.filename}
                   </a>
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground" title={file.media_id}>
+                    {file.media_id}
+                  </span>
                   <span className="shrink-0 text-muted-foreground">{formatFileSize(file.byte_size)}</span>
                 </div>
                 {extract ? (
@@ -284,10 +322,67 @@ export function GrokChatMessage({
             {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
             Word
           </Button>
-          <Button size="xs" variant="outline" onClick={() => onAddToNotes(content)}>
+          <Button
+            size="xs"
+            variant={filing ? "secondary" : "outline"}
+            onClick={() => {
+              setDest(noteDest);
+              setFolderId(noteFolderId);
+              setIsCorrection(false);
+              setFiling((open) => !open);
+            }}
+          >
             <NotebookPen className="size-3" />
             Add to notes
           </Button>
+        </div>
+      ) : null}
+      {content && role === "assistant" && filing ? (
+        <div className="mt-2 flex flex-col gap-1.5 rounded-md border bg-background p-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <DestinationSelect
+              value={dest}
+              onChange={(next) => {
+                if (!next) return;
+                setDest(next);
+                setFolderId(null);
+                onRememberFiling?.(next, null);
+              }}
+              customShelves={customShelves}
+              onCreateShelf={onCreateNoteShelf}
+              className="max-w-[8.5rem] text-[11px]"
+            />
+            <FolderSelect
+              shelf={dest}
+              folders={folders}
+              value={folderId}
+              onChange={(next) => {
+                setFolderId(next);
+                onRememberFiling?.(dest, next);
+              }}
+              onCreateFolder={() => onCreateFolder?.(dest)}
+              className="max-w-[8.5rem] text-[11px]"
+            />
+          </div>
+          <CorrectionCheck checked={isCorrection} onChange={setIsCorrection} />
+          <div className="flex flex-wrap gap-1">
+            <Button
+              size="xs"
+              disabled={savingNote}
+              onClick={() => {
+                setSavingNote(true);
+                onRememberFiling?.(dest, folderId);
+                onAddToNotes({ content, dest, folderId, isCorrection });
+                setFiling(false);
+                setSavingNote(false);
+              }}
+            >
+              Save
+            </Button>
+            <Button size="xs" variant="outline" onClick={() => setFiling(false)}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : null}
     </div>

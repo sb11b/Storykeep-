@@ -145,10 +145,10 @@ class ChatImageIntentTests(unittest.TestCase):
             ChatImageResult(payload=b"x", kind="inspired", prompt="older portrait"),
             media_id,
         )
-        self.assertIn("inspired by your photo", text)
+        self.assertIn("Inspired by your photo", text)
         self.assertIn("not a pixel-perfect edit", text)
-        self.assertIn(f"/api/v1/media/{media_id}", text)
-        self.assertIn("![", text)
+        self.assertIn(f'<img src="/api/v1/media/{media_id}"', text)
+        self.assertNotIn("Here's the image.", text)
         self.assertNotIn("FaceApp", text)
 
     def test_edit_markdown_always_has_media_url(self):
