@@ -235,6 +235,18 @@
   overflow: hidden;
   pointer-events: auto;
 }
+/* Before the first paint the pane still sits in the normal article flow, where
+   flex:1 resolves to zero. pdf.js must never measure a zero-height box. */
+.pdf-host[data-pdf-pending="1"] {
+  min-height: 60vh;
+}
+.pdf-host[data-pdf-failed="1"] {
+  min-height: 0;
+  background: transparent;
+}
+.pdf-host[data-pdf-failed="1"] .pdf-scroller {
+  display: none;
+}
 .pdf-host:fullscreen,
 .pdf-host:-webkit-full-screen,
 .reader-shell:fullscreen,

@@ -163,6 +163,14 @@ function snapshotStamp(iso: string): string {
 
 const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
 
+type PdfPaintStats = {
+  status: number;
+  pageCount: number;
+  firstCanvasHeight: number;
+  clientHeight: number;
+  scrollHeight: number;
+};
+
 async function toggleBrowserFullscreen(selectors: string) {
   try {
     if (document.fullscreenElement) {
@@ -193,6 +201,7 @@ function PdfSnapshotViewer({
   const onFailedRef = useRef(onFailed);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<PdfPaintStats | null>(null);
   onReadyRef.current = onReady;
   onFailedRef.current = onFailed;
 
@@ -265,21 +274,21 @@ function PdfSnapshotViewer({
 
     void (async () => {
       if (!archiveId) throw new Error("This PDF restore is missing an archive id.");
-      const workerRes = await fetch(PDF_WORKER_SRC, { method: "HEAD", cache: "no-store" });
-      const workerOk = workerRes.ok
-        ? workerRes
-        : await fetch(PDF_WORKER_SRC, { cache: "force-cache" });
-      if (!workerOk.ok) throw new Error(`PDF worker missing (${workerOk.status} ${PDF_WORKER_SRC}).`);
-      const workerType = workerOk.headers.get("content-type") || "";
-      if (workerType.includes("text/html")) throw new Error("PDF worker URL returned HTML instead of JavaScript.");
-      const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
+      const workerRes = await fetch(PDF_WORKER_SRC, { cache: "no-store" });
+      if (!workerRes.ok) throw new Error(`PDF worker missing: HTTP ${workerRes.status} ${PDF_WORKER_SRC}`);
+      if ((workerRes.headers.get("content-type") || "").includes("text/html")) {
+        throw new Error(`PDF worker served HTML, not JavaScript: ${PDF_WORKER_SRC}`);
       }
-      const blob = await response.blob();
-      const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
-      if (head.byteLength < 5 || String.fromCharCode(head[0], head[1], head[2], head[3]) !== "%PDF") {
-        throw new Error("That snapshot is not a readable PDF.");
+      const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
+      const blob = response.ok ? await response.blob() : null;
+      if (!response.ok || !blob) {
+        const detail = (await response.text().catch(() => "")).slice(0, 80);
+        throw new Error(`GET ${fileUrl} returned HTTP ${response.status}. ${detail}`.trim());
+      }
+      const head = new Uint8Array(await blob.slice(0, 80).arrayBuffer());
+      const headText = Array.from(head, (byte) => String.fromCharCode(byte)).join("");
+      if (!headText.startsWith("%PDF")) {
+        throw new Error(`Archive file is not a PDF (HTTP ${response.status}). First bytes: ${headText.slice(0, 80)}`);
       }
       if (cancelled) return;
       const blobUrl = URL.createObjectURL(blob);
@@ -317,14 +326,28 @@ function PdfSnapshotViewer({
       }
       const firstCanvas = scroller.querySelector("canvas");
       const firstHeight = firstCanvas instanceof HTMLCanvasElement
-        ? firstCanvas.getBoundingClientRect().height || firstCanvas.height
+        ? Math.round(firstCanvas.getBoundingClientRect().height) || firstCanvas.height
         : 0;
       if (firstHeight <= 0) throw new Error("PDF pages rendered with no height.");
-      if (!cancelled) {
-        setLoading(false);
-        onReadyRef.current?.();
-        scroller.focus();
-      }
+      if (cancelled) return;
+      setStats({
+        status: response.status,
+        pageCount: doc.numPages,
+        firstCanvasHeight: firstHeight,
+        clientHeight: scroller.clientHeight,
+        scrollHeight: scroller.scrollHeight,
+      });
+      setLoading(false);
+      onReadyRef.current?.();
+      scroller.focus();
+      window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        setStats((current) =>
+          current
+            ? { ...current, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight }
+            : current,
+        );
+      });
     })().catch((caught) => {
       if (cancelled) return;
       const message = caught instanceof Error ? caught.message : "Could not load the PDF snapshot.";
@@ -346,10 +369,21 @@ function PdfSnapshotViewer({
   }, [archiveId, fileUrl]);
 
   return (
-    <div ref={hostRef} className="pdf-host bg-muted">
+    <div
+      ref={hostRef}
+      className="pdf-host bg-muted"
+      data-pdf-pending={loading && !error ? "1" : undefined}
+      data-pdf-failed={error ? "1" : undefined}
+    >
       {error ? <p className="reader-chrome px-3 py-2 text-sm text-destructive">{error}</p> : null}
       {loading && !error ? (
         <p className="reader-chrome px-3 py-2 text-sm text-muted-foreground">Loading PDF snapshot…</p>
+      ) : null}
+      {stats && !error ? (
+        <p className="reader-chrome px-3 py-1 text-[0.7rem] text-muted-foreground">
+          {stats.pageCount} page{stats.pageCount === 1 ? "" : "s"} · HTTP {stats.status} · first canvas{" "}
+          {stats.firstCanvasHeight}px · scroller {stats.clientHeight}/{stats.scrollHeight}
+        </p>
       ) : null}
       <div
         ref={scrollerRef}
