@@ -17,6 +17,7 @@ import {
   downloadChatMessageDocx,
   downloadReplyText,
   isPersistedMessageId,
+  replyCopyText,
   replyHasWordBody,
   wordDownloadToast,
 } from "@/lib/chat-message-docx";
@@ -414,7 +415,7 @@ export function GrokChatMessage({
               size="xs"
               variant="outline"
               onClick={() => {
-                void navigator.clipboard.writeText(content);
+                void navigator.clipboard.writeText(replyCopyText(content));
                 toast.success("Copied full reply");
               }}
             >

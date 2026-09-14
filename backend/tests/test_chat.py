@@ -72,6 +72,8 @@ class ChatGuardTests(unittest.TestCase):
         self.assertNotIn("system instructions", lower)
         self.assertIn("add to notes", lower)
         self.assertIn("word next to copy", lower)
+        self.assertNotIn("if steve wants a reply kept, tell him to use add to notes", lower)
+        self.assertIn("never append a keep/notes footer", lower)
 
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"

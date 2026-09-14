@@ -8,6 +8,7 @@ import {
   filenameFromContentDisposition,
   isPersistedMessageId,
   replyFileStem,
+  replyCopyText,
   replyHasWordBody,
   wordDownloadToast,
 } from "@/lib/chat-message-docx";
@@ -27,6 +28,18 @@ test("Content-Disposition filename is read for the .docx save-as name", () => {
 test("Markdown and text saves use the DAT heading", () => {
   assert.equal(replyFileStem("# Grammar-fixed DAT-200 paper\n\nBody"), "Grammar-fixed DAT-200 paper");
   assert.equal(replyFileStem("Just a line\n\nMore."), "Just a line");
+});
+
+test("Copy and Word drop keep/notes footers", () => {
+  assert.equal(
+    replyCopyText("The slope is two.\n\nUse Add to notes if you want this kept."),
+    "The slope is two.",
+  );
+  assert.equal(
+    replyCopyText("The slope is two. If you want this kept, use Add to notes."),
+    "The slope is two.",
+  );
+  assert.equal(replyCopyText("The slope is two."), "The slope is two.");
 });
 
 test("empty and tool-only replies have no Word body", () => {

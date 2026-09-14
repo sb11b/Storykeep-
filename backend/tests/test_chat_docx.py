@@ -19,6 +19,8 @@ from app.services.chat_docx import (
     docx_filename,
     docx_title,
     has_word_body,
+    strip_keep_notes_cta,
+    visible_reply_text,
 )
 from app.services.demo_lock import reject_locked
 from app.services.grok_conversations import owned_assistant_message
@@ -43,6 +45,16 @@ class ChatDocxTests(unittest.TestCase):
         self.assertEqual(docx_filename("Just a line\n\nMore."), "Just a line.docx")
         self.assertEqual(docx_title("Just a line\n\nMore."), "Just a line")
         self.assertEqual(docx_filename('DAT-200: "quotes"/win*.md'), "DAT-200- -quotes--win-.md.docx")
+
+    def test_strips_keep_notes_footer(self):
+        body = "The slope is two.\n\nUse Add to notes if you want this kept."
+        self.assertEqual(strip_keep_notes_cta(body), "The slope is two.")
+        glued = "The slope is two. If you want this kept, use Add to notes."
+        self.assertEqual(strip_keep_notes_cta(glued), "The slope is two.")
+        xml = document_xml(build_message_docx(body))
+        self.assertIn("The slope is two.", xml)
+        self.assertNotIn("Add to notes", xml)
+        self.assertEqual(visible_reply_text(body), "The slope is two.")
 
     def test_hides_empty_and_tool_only(self):
         self.assertFalse(has_word_body("   "))

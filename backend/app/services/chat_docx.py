@@ -29,8 +29,39 @@ _REF_HEAD = re.compile(r"^(references?|works cited|bibliography)\b", re.I)
 _INLINE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)")
 
 
+_KEEP_NOTES_LINE = re.compile(
+    r"^(?:[-*•]\s+)?(?:please\s+)?"
+    r"(?:"
+    r"use add to notes if you want this kept"
+    r"|if you want this kept,?\s+use add to notes"
+    r"|if you(?:'d| would)? like this kept,?\s+use add to notes"
+    r"|if you want to keep this(?: reply)?,?\s+use add to notes"
+    r"|add to notes if you want this(?: reply)? kept"
+    r"|use add to notes to keep this(?: reply)?"
+    r")\.?$",
+    re.I,
+)
+_KEEP_NOTES_TAIL = re.compile(
+    r"(?:\s+)"
+    r"(?:use add to notes if you want this kept"
+    r"|if you want this kept,?\s+use add to notes"
+    r"|if you(?:'d| would)? like this kept,?\s+use add to notes"
+    r"|add to notes if you want this(?: reply)? kept)\.?\s*$",
+    re.I,
+)
+
+
+def strip_keep_notes_cta(content: str) -> str:
+    """Drop system keep/notes footers so Copy/Word/clipboard stay the answer body."""
+    text = (content or "").replace("\r\n", "\n")
+    lines = [line for line in text.split("\n") if not _KEEP_NOTES_LINE.match(line.strip())]
+    cleaned = "\n".join(lines)
+    cleaned = _KEEP_NOTES_TAIL.sub("", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
 def visible_reply_text(content: str) -> str:
-    text = (content or "").replace("\r\n", "\n").strip()
+    text = strip_keep_notes_cta(content)
     if not text:
         return ""
     text = _IMAGE.sub("", text)

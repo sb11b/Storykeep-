@@ -13,6 +13,22 @@ export function isPersistedMessageId(id: string | null | undefined): boolean {
   return UUID.test((id || "").trim());
 }
 
+const KEEP_NOTES_LINE =
+  /^(?:[-*•]\s+)?(?:please\s+)?(?:use add to notes if you want this kept|if you want this kept,?\s+use add to notes|if you(?:'d| would)? like this kept,?\s+use add to notes|if you want to keep this(?: reply)?,?\s+use add to notes|add to notes if you want this(?: reply)? kept|use add to notes to keep this(?: reply)?)\.?$/i;
+const KEEP_NOTES_TAIL =
+  /(?:\s+)(?:use add to notes if you want this kept|if you want this kept,?\s+use add to notes|if you(?:'d| would)? like this kept,?\s+use add to notes|add to notes if you want this(?: reply)? kept)\.?\s*$/i;
+
+/** Answer body for Copy / clipboard / Markdown / text. Spend chip stays off. */
+export function stripKeepNotesCta(content: string): string {
+  const text = (content || "").replace(/\r\n/g, "\n");
+  const kept = text.split("\n").filter((line) => !KEEP_NOTES_LINE.test(line.trim()));
+  return kept.join("\n").replace(KEEP_NOTES_TAIL, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function replyCopyText(content: string): string {
+  return stripKeepNotesCta(content);
+}
+
 export function filenameFromContentDisposition(header: string | null, fallback = "junior-note.docx"): string {
   const value = header || "";
   const star = value.match(/filename\*=UTF-8''([^;]+)/i);
@@ -37,7 +53,7 @@ export function windowsSafeStem(value: string): string {
 }
 
 export function replyHasWordBody(content: string): boolean {
-  let text = (content || "").replace(/\r\n/g, "\n").trim();
+  let text = stripKeepNotesCta(content || "").replace(/\r\n/g, "\n").trim();
   if (!text) return false;
   text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
   text = text.replace(/```[\s\S]*?```/g, "");
@@ -110,7 +126,7 @@ export async function downloadChatMessageDocx(messageId: string, options?: { cle
 }
 
 export function replyFileStem(content: string): string {
-  const lines = (content || "").replace(/\r\n/g, "\n").split("\n");
+  const lines = stripKeepNotesCta(content || "").replace(/\r\n/g, "\n").split("\n");
   let heading = "";
   let firstLine = "";
   for (const raw of lines) {
@@ -127,7 +143,7 @@ export function replyFileStem(content: string): string {
 }
 
 export function downloadReplyText(content: string, ext: "md" | "txt"): void {
-  const text = (content || "").replace(/\r\n/g, "\n");
+  const text = stripKeepNotesCta(content || "").replace(/\r\n/g, "\n");
   if (!text.trim()) throw new Error("Nothing to save.");
   const blob = new Blob([text], {
     type: ext === "md" ? "text/markdown;charset=utf-8" : "text/plain;charset=utf-8",
