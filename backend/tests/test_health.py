@@ -12,6 +12,15 @@ class HealthAndLoggedOutShellTests(unittest.TestCase):
         self.assertTrue(body["build"])
         self.assertIn("built_at", body)
 
+    def test_health_includes_last_rss_fetch_counts(self):
+        from app.services import rss as rss_service
+
+        rss_service._record_fetch(status=200, nbytes=4096, item_count=18, url="https://www.newsmax.com/rss/US/18/")
+        body = health_payload()
+        self.assertEqual(body["rss_status"], "200")
+        self.assertEqual(body["rss_bytes"], "4096")
+        self.assertEqual(body["rss_item_count"], "18")
+
     def test_about_html_includes_the_build_hash(self):
         html = about_html()
         body = health_payload()

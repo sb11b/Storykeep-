@@ -202,7 +202,11 @@ function FeedSwitchRow({
           •
         </span>
         <span className="min-w-0 truncate">{feed.title || feed.url}</span>
-        {feed.unread_count ? (
+        {feed.last_error ? (
+          <span className="ml-auto min-w-0 max-w-[42%] truncate text-[10px] text-destructive" title={feed.last_error}>
+            {feed.last_error}
+          </span>
+        ) : feed.unread_count ? (
           <span className="ml-auto shrink-0 tabular-nums text-[10px] text-sidebar-foreground/55">{feed.unread_count}</span>
         ) : null}
       </button>

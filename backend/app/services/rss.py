@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from time import mktime
 from typing import Any
 from urllib.parse import urljoin, urlparse
 from uuid import UUID
+from xml.etree import ElementTree as ET
 
 import feedparser
 import httpx
@@ -19,9 +22,42 @@ from app.services import changelog, extractor
 
 logger = logging.getLogger(__name__)
 
+# Browser-like GET. Ingest is HTTP only — no xAI tools.
+FETCH_TIMEOUT_SEC = 20.0
+FETCH_TIMEOUT_RETRIES = 2
+FETCH_BUDGET_SEC = 45.0
+NO_RSS_ITEMS = "Feed returned no RSS items"
+PUBLISHER_BLOCKED = "publisher blocked bot"
 HEADERS = {
-    "User-Agent": "Storykeep/1.0 (+https://localhost; personal archive reader)"
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+    "Accept-Language": "en-US,en;q=0.9",
 }
+BLOCK_STATUSES = {401, 403, 406, 429, 451}
+_LAST_FETCH: dict[str, object] = {}
+
+
+def last_fetch_snapshot() -> dict[str, object]:
+    return dict(_LAST_FETCH)
+
+
+def _record_fetch(*, status: int | str | None, nbytes: int, item_count: int, url: str) -> None:
+    _LAST_FETCH.clear()
+    _LAST_FETCH.update(
+        {
+            "status": status,
+            "bytes": nbytes,
+            "item_count": item_count,
+            "url": url,
+        }
+    )
+    logger.info(
+        "rss_fetch %s",
+        {"status": status, "bytes": nbytes, "item_count": item_count, "url": url},
+    )
 
 
 def _entry_datetime(entry: Any) -> datetime | None:
@@ -109,7 +145,7 @@ def refetch_entry_html(db: Session, article: Article) -> str | None:
     if not feed:
         return None
     try:
-        parsed, _, _ = fetch_feed_document(feed.url, feed.etag, feed.last_modified)
+        parsed = fetch_feed_document(feed.url, feed.etag, feed.last_modified).parsed
     except Exception as exc:
         logger.info("refetch feed failed %s: %s", feed.url, exc)
         return None
@@ -165,14 +201,17 @@ def discover_feeds(site_url: str) -> list[dict[str, str | None]]:
         seen.add(href)
         candidates.append({"url": href, "title": title, "kind": kind})
 
+    if _is_newsmax_host(url) and not _looks_like_feed_path(url):
+        logger.info("rss_fetch skip homepage scrape %s", url)
+        return []
+
     try:
-        with httpx.Client(timeout=18.0, follow_redirects=True, headers=headers) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            body = response.content
-            final_url = str(response.url)
-            content_type = (response.headers.get("content-type") or "").lower()
-            encoding = response.encoding or "utf-8"
+        response = _get_feed_response(url, headers=headers)
+        response.raise_for_status()
+        body = response.content
+        final_url = str(response.url)
+        content_type = (response.headers.get("content-type") or "").lower()
+        encoding = response.encoding or "utf-8"
     except Exception as exc:
         logger.info("discover fetch failed %s: %s", url, exc)
         raise ValueError(f"Could not fetch {url}") from exc
@@ -210,13 +249,12 @@ def discover_feeds(site_url: str) -> list[dict[str, str | None]]:
         if extra in seen:
             continue
         try:
-            with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
-                probe = client.get(extra)
-                if probe.status_code >= 400:
-                    continue
-                probed = feedparser.parse(probe.content)
-                if _looks_like_feed(probed):
-                    add(str(probe.url), probed.feed.get("title"), "feed")
+            probe = _get_feed_response(extra, headers=headers, timeout_sec=8.0, retries=0)
+            if probe.status_code >= 400:
+                continue
+            probed = feedparser.parse(probe.content)
+            if _looks_like_feed(probed):
+                add(str(probe.url), probed.feed.get("title"), "feed")
         except Exception:
             continue
         if len(candidates) >= 8:
@@ -233,24 +271,222 @@ def _attr(tag: str, name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def fetch_feed_document(url: str, etag: str | None = None, last_modified: str | None = None) -> tuple[Any, str | None, str | None]:
+def _is_newsmax_host(url: str) -> bool:
+    host = (urlparse(url).netloc or "").lower().removeprefix("www.")
+    return host == "newsmax.com"
+
+
+def _looks_like_feed_path(url: str) -> bool:
+    path = (urlparse(url).path or "").lower()
+    return any(token in path for token in ("/rss", "/feed", "/atom", ".xml"))
+
+
+def _xml_local(tag: str) -> str:
+    return tag.split("}", 1)[-1].lower()
+
+
+def _body_is_html(content_type: str, body: bytes) -> bool:
+    ct = (content_type or "").lower()
+    if "html" in ct and "xml" not in ct:
+        return True
+    head = body.lstrip()[:240].lower()
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html")
+
+
+def _publisher_blocked(status: int | None, body: bytes) -> bool:
+    if status in BLOCK_STATUSES:
+        return True
+    sample = body[:8000].lower()
+    needles = (
+        b"access denied",
+        b"captcha",
+        b"cf-ray",
+        b"pardon our interruption",
+        b"blocked",
+        b"bot detected",
+        b"enable javascript",
+    )
+    return bool(status and status >= 400 and any(token in sample for token in needles))
+
+
+def count_xml_items(body: bytes) -> int:
+    if not body:
+        return 0
+    try:
+        text = body.decode("utf-8", errors="replace")
+    except Exception:
+        return 0
+    return len(re.findall(r"<(?:item|entry)\b", text, flags=re.I))
+
+
+def entries_from_xml(body: bytes) -> list[dict[str, Any]]:
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return []
+    out: list[dict[str, Any]] = []
+    for node in root.iter():
+        if _xml_local(node.tag) not in {"item", "entry"}:
+            continue
+        rec: dict[str, Any] = {}
+        for child in list(node):
+            name = _xml_local(child.tag)
+            text = (child.text or "").strip()
+            href = (child.get("href") or "").strip()
+            if name == "title" and text:
+                rec["title"] = text
+            elif name == "link":
+                rec["link"] = text or href
+            elif name in {"id", "guid"} and text:
+                rec["id"] = text
+            elif name in {"summary", "description"} and text:
+                rec["summary"] = text
+            elif name in {"published", "updated", "pubdate"} and text:
+                rec["published"] = text
+        if rec.get("link") or rec.get("id") or rec.get("title"):
+            out.append(rec)
+    return out
+
+
+def parse_feed_body(body: bytes) -> Any:
+    parsed = feedparser.parse(body)
+    if parsed.entries:
+        return parsed
+    xml_entries = entries_from_xml(body)
+    if xml_entries:
+        parsed.entries = xml_entries
+        parsed.bozo = 0
+    return parsed
+
+
+def _http11_client(timeout_sec: float, headers: dict[str, str]) -> httpx.Client:
+    return httpx.Client(
+        http2=False,
+        timeout=httpx.Timeout(timeout_sec, connect=min(10.0, timeout_sec), read=timeout_sec, write=10.0, pool=5.0),
+        follow_redirects=True,
+        headers=headers,
+    )
+
+
+def _get_feed_response(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout_sec: float = FETCH_TIMEOUT_SEC,
+    retries: int = FETCH_TIMEOUT_RETRIES,
+) -> httpx.Response:
+    """HTTP/1.1 GET. Retry timeouts only. Never waits past FETCH_BUDGET_SEC (avoid 504)."""
+    hdrs = dict(headers or HEADERS)
+    last_exc: Exception | None = None
+    started = time.monotonic()
+    attempts = 1 + max(0, retries)
+    for attempt in range(attempts):
+        remaining = FETCH_BUDGET_SEC - (time.monotonic() - started)
+        if remaining < 1:
+            break
+        attempt_timeout = min(timeout_sec, remaining)
+        try:
+            with _http11_client(attempt_timeout, hdrs) as client:
+                return client.get(url)
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            logger.info(
+                "rss_fetch retry url=%s attempt=%s err=%s",
+                url,
+                attempt + 1,
+                type(exc).__name__,
+            )
+            continue
+    if last_exc:
+        raise last_exc
+    raise httpx.TimeoutException("Feed fetch timed out")
+
+
+@dataclass
+class FeedDocument:
+    parsed: Any | None
+    etag: str | None = None
+    last_modified: str | None = None
+    status: int | str | None = None
+    nbytes: int = 0
+    item_count: int = 0
+    error: str | None = None
+
+
+def fetch_feed_document(url: str, etag: str | None = None, last_modified: str | None = None) -> FeedDocument:
     headers = dict(HEADERS)
     if etag:
         headers["If-None-Match"] = etag
     if last_modified:
         headers["If-Modified-Since"] = last_modified
-    with httpx.Client(timeout=25.0, follow_redirects=True, headers=headers) as client:
-        response = client.get(url)
-        if response.status_code == 304:
-            return None, etag, last_modified
-        response.raise_for_status()
-        parsed = feedparser.parse(response.content)
-        return parsed, response.headers.get("ETag"), response.headers.get("Last-Modified")
+    try:
+        response = _get_feed_response(url, headers=headers)
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+        _record_fetch(status="timeout", nbytes=0, item_count=0, url=url)
+        raise FeedFetchError(PUBLISHER_BLOCKED, status="timeout", nbytes=0) from exc
+
+    status = response.status_code
+    body = response.content or b""
+    nbytes = len(body)
+
+    if status == 304:
+        _record_fetch(status=304, nbytes=0, item_count=0, url=url)
+        return FeedDocument(parsed=None, etag=etag, last_modified=last_modified, status=304, nbytes=0, item_count=0)
+
+    if _publisher_blocked(status, body):
+        _record_fetch(status=status, nbytes=nbytes, item_count=0, url=url)
+        raise FeedFetchError(PUBLISHER_BLOCKED, status=status, nbytes=nbytes)
+
+    if status >= 400:
+        _record_fetch(status=status, nbytes=nbytes, item_count=0, url=url)
+        raise FeedFetchError(NO_RSS_ITEMS, status=status, nbytes=nbytes)
+
+    content_type = response.headers.get("content-type") or ""
+    if not body.strip() or _body_is_html(content_type, body):
+        _record_fetch(status=status, nbytes=nbytes, item_count=0, url=url)
+        raise FeedFetchError(NO_RSS_ITEMS, status=status, nbytes=nbytes)
+
+    parsed = parse_feed_body(body)
+    items = list(parsed.entries or [])
+    xml_count = count_xml_items(body)
+    item_count = max(len(items), xml_count)
+    _record_fetch(status=status, nbytes=nbytes, item_count=item_count, url=url)
+    if item_count == 0:
+        return FeedDocument(
+            parsed=parsed,
+            etag=response.headers.get("ETag"),
+            last_modified=response.headers.get("Last-Modified"),
+            status=status,
+            nbytes=nbytes,
+            item_count=0,
+            error=NO_RSS_ITEMS,
+        )
+    return FeedDocument(
+        parsed=parsed,
+        etag=response.headers.get("ETag"),
+        last_modified=response.headers.get("Last-Modified"),
+        status=status,
+        nbytes=nbytes,
+        item_count=item_count,
+    )
+
+
+class FeedFetchError(Exception):
+    def __init__(self, message: str, *, status: int | str | None = None, nbytes: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
+        self.nbytes = nbytes
 
 
 def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50) -> int:
     try:
-        parsed, etag, last_modified = fetch_feed_document(feed.url, feed.etag, feed.last_modified)
+        document = fetch_feed_document(feed.url, feed.etag, feed.last_modified)
+    except FeedFetchError as exc:
+        feed.last_error = str(exc)[:500]
+        feed.last_fetched_at = datetime.now(timezone.utc)
+        db.add(feed)
+        db.commit()
+        return 0
     except Exception as exc:
         feed.last_error = str(exc)[:500]
         feed.last_fetched_at = datetime.now(timezone.utc)
@@ -259,15 +495,25 @@ def refresh_feed(db: Session, feed: Feed, extract: bool = True, limit: int = 50)
         logger.info("feed fetch failed %s: %s", feed.url, exc)
         return 0
 
+    parsed = document.parsed
+    etag = document.etag
+    last_modified = document.last_modified
+
+    if document.error:
+        feed.last_error = document.error[:500]
+        feed.last_fetched_at = datetime.now(timezone.utc)
+        db.add(feed)
+        db.commit()
+        return 0
+
     if parsed is None:
         feed.last_fetched_at = datetime.now(timezone.utc)
-        feed.last_error = None
         db.add(feed)
         db.commit()
         return 0
 
     if getattr(parsed, "bozo", False) and not parsed.entries:
-        feed.last_error = str(getattr(parsed, "bozo_exception", "Could not parse feed"))[:500]
+        feed.last_error = NO_RSS_ITEMS
         feed.last_fetched_at = datetime.now(timezone.utc)
         db.add(feed)
         db.commit()

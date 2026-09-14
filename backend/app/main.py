@@ -292,7 +292,14 @@ def _build_info() -> dict[str, str]:
 
 
 def health_payload() -> dict[str, str]:
-    return {"status": "ok", **_build_info()}
+    body = {"status": "ok", **_build_info()}
+    snap = rss.last_fetch_snapshot()
+    if snap:
+        if snap.get("status") is not None:
+            body["rss_status"] = str(snap["status"])
+        body["rss_bytes"] = str(int(snap.get("bytes") or 0))
+        body["rss_item_count"] = str(int(snap.get("item_count") or 0))
+    return body
 
 
 def is_app_shell_alias(full_path: str) -> bool:

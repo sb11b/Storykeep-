@@ -4196,11 +4196,15 @@ function AddFeedDialog({
               event.preventDefault();
               setBusy(true);
               try {
-                await api.addFeed(url, {
+                const feed = await api.addFeed(url, {
                   shelfId: rssShelfId || null,
                   categoryId: categoryId || null,
                 });
-                toast.success("Feed added. Articles are importing.");
+                if (feed.last_error) {
+                  toast.error(feed.last_error);
+                } else {
+                  toast.success("Feed added. Articles are importing.");
+                }
                 setUrl("");
                 setCandidates([]);
                 onOpenChange(false);
