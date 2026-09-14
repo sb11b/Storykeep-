@@ -22,6 +22,14 @@ export type GrokStreamMeta = {
   reasoning_effort?: string;
   stream_status?: string;
   partial?: boolean;
+  include_chip?: string;
+  include_label?: string;
+  include_chars?: number;
+  include_mode?: string;
+  include_offset?: number;
+  include_has_more?: boolean;
+  include_next_offset?: number;
+  include_next_heading?: string;
 };
 
 export type GrokStreamHandlers = {
@@ -45,6 +53,14 @@ type StreamPayload = {
   model_choice?: string;
   reasoning_effort?: string;
   stream_status?: string;
+  include_chip?: string;
+  include_label?: string;
+  include_chars?: number;
+  include_mode?: string;
+  include_offset?: number;
+  include_has_more?: boolean;
+  include_next_offset?: number;
+  include_next_heading?: string;
 };
 
 function parseSsePart(
@@ -82,7 +98,8 @@ function parseSsePart(
     parsed.model_choice ||
     parsed.reasoning_effort ||
     parsed.stream_status ||
-    parsed.partial
+    parsed.partial ||
+    parsed.include_chip
   ) {
     handlers.onMeta?.({
       conversation_id: parsed.conversation_id,
@@ -94,6 +111,14 @@ function parseSsePart(
       reasoning_effort: parsed.reasoning_effort,
       stream_status: parsed.stream_status,
       partial: parsed.partial,
+      include_chip: parsed.include_chip,
+      include_label: parsed.include_label,
+      include_chars: parsed.include_chars,
+      include_mode: parsed.include_mode,
+      include_offset: parsed.include_offset,
+      include_has_more: parsed.include_has_more,
+      include_next_offset: parsed.include_next_offset,
+      include_next_heading: parsed.include_next_heading,
     });
   }
   return "continue" as const;
@@ -232,8 +257,8 @@ export async function readGrokChatStream(
   }
 }
 
-/** Skip attaching huge article bodies client-side; server still caps excerpt. */
-export const GROK_ARTICLE_INCLUDE_HINT_MAX = 24_000;
+/** Huge bodies still include, as a heading/selection/chunk rather than the whole vault. */
+export const GROK_ARTICLE_INCLUDE_HINT_MAX = 12_000;
 
 export function shouldIncludeArticle(
   includeRequested: boolean,
@@ -243,7 +268,7 @@ export function shouldIncludeArticle(
   if (!includeRequested || !articleId) return { include: false, skippedHuge: false };
   const size = (articleBody || "").length;
   if (size > GROK_ARTICLE_INCLUDE_HINT_MAX) {
-    return { include: false, skippedHuge: true };
+    return { include: true, skippedHuge: true };
   }
   return { include: true, skippedHuge: false };
 }

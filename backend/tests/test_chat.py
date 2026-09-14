@@ -28,9 +28,11 @@ class ChatGuardTests(unittest.TestCase):
 
         article = SimpleNamespace(title="Long", content_text="word " * 8000, content_html=None, summary=None)
         excerpt = article_excerpt(article)
-        self.assertLessEqual(len(excerpt), 8_000 + 80)
+        from app.services.include_chunk import INCLUDE_TURN_CHAR_MAX
+
+        self.assertLessEqual(len(excerpt), INCLUDE_TURN_CHAR_MAX + 240)
         self.assertIn("Title: Long", excerpt)
-        self.assertTrue(excerpt.endswith("…"))
+        self.assertIn("§", excerpt)
 
     def test_general_mode_prompt_allows_outside_knowledge(self):
         messages = build_xai_messages([{"role": "user", "content": "Explain GDP"}], None, include_article=False)
@@ -119,6 +121,10 @@ class ChatGuardTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 400)
         self.assertEqual(caught.exception.detail, SEND_CONTEXT_TOO_LARGE)
         reject_oversized_send([{"role": "user", "content": "hello"}], article_body="short")
+        reject_oversized_send(
+            [{"role": "user", "content": "summarize this heading"}],
+            article_body="x" * 10_000,
+        )
 
     def test_drop_trailing_assistants_ends_on_user(self):
         from app.services.chat import drop_trailing_assistants

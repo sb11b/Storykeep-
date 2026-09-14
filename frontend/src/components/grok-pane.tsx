@@ -33,6 +33,13 @@ import {
 } from "@/lib/larry-attach";
 import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
 import { chatContextOverCap, GROK_CONTEXT_TOAST } from "@/lib/grok-context";
+import {
+  articleNeedsIncludeSlice,
+  parseSections,
+  readerIncludeContext,
+  resolveIncludeSlice,
+  type IncludeMode,
+} from "@/lib/include-chunk";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
@@ -50,6 +57,10 @@ export type ChatLine = {
   failed?: boolean;
   waiting?: boolean;
   routeLabel?: string | null;
+  includeChip?: string | null;
+  includeHasMore?: boolean;
+  includeNextOffset?: number | null;
+  includeNextHeading?: string | null;
 };
 
 export type GrokPaneState = {
@@ -63,6 +74,9 @@ export type GrokPaneState = {
   messages: ChatLine[];
   draft: string;
   includeArticle: boolean;
+  includeMode: IncludeMode;
+  includeHeading: string | null;
+  includeOffset: number;
   includeNoteId: string | null;
   includeNoteTitle: string | null;
   noteDest: FilingDestination;
@@ -90,6 +104,9 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     messages: [],
     draft: "",
     includeArticle: false,
+    includeMode: "auto",
+    includeHeading: null,
+    includeOffset: 0,
     includeNoteId: null,
     includeNoteTitle: null,
     noteDest: "notes",
@@ -220,6 +237,13 @@ export function GrokPane({
   const messagesRef = useRef(pane.messages);
   listenTargetRef.current = listenTarget;
   messagesRef.current = pane.messages;
+  const [readerCtx, setReaderCtx] = useState({ selection: "", heading: null as string | null });
+
+  useEffect(() => {
+    const sync = () => setReaderCtx(readerIncludeContext());
+    document.addEventListener("selectionchange", sync);
+    return () => document.removeEventListener("selectionchange", sync);
+  }, []);
 
   const abortInFlight = useCallback(() => {
     abortRef.current?.abort();
@@ -520,6 +544,10 @@ export function GrokPane({
     userLine?: ChatLine;
     assistantId: string;
     mediaIds?: string[];
+    includeMode?: IncludeMode;
+    includeHeading?: string | null;
+    includeSelection?: string | null;
+    includeOffset?: number;
   }) {
     const { message, retry = false, userLine, assistantId } = options;
     const controller = new AbortController();
@@ -540,6 +568,10 @@ export function GrokPane({
           article_id: articleId,
           include_article: Boolean(pane.includeArticle && articleId),
           include_note_id: pane.includeNoteId || undefined,
+          include_mode: options.includeMode || pane.includeMode,
+          include_selection: options.includeSelection || undefined,
+          include_heading: options.includeHeading || pane.includeHeading || undefined,
+          include_offset: options.includeOffset ?? pane.includeOffset ?? 0,
           recap_question: pane.recapQuestion,
           media_ids: retry ? undefined : options.mediaIds,
         },
@@ -607,6 +639,29 @@ export function GrokPane({
             }
             if (meta.reasoning_effort) {
               next = { ...next, lastResolvedReasoning: meta.reasoning_effort };
+            }
+            if (meta.include_chip) {
+              next = {
+                ...next,
+                includeOffset: meta.include_next_offset ?? next.includeOffset,
+                includeHeading: meta.include_next_heading ?? next.includeHeading,
+                includeMode: meta.include_has_more
+                  ? meta.include_next_heading
+                    ? "heading"
+                    : "chunk"
+                  : next.includeMode,
+                messages: next.messages.map((item) =>
+                  item.id === assistantId || item.id === userLine?.id
+                    ? {
+                        ...item,
+                        includeChip: meta.include_chip,
+                        includeHasMore: item.role === "assistant" ? Boolean(meta.include_has_more) : item.includeHasMore,
+                        includeNextOffset: meta.include_next_offset ?? null,
+                        includeNextHeading: meta.include_next_heading ?? null,
+                      }
+                    : item,
+                ),
+              };
             }
             if (meta.media_id) {
               const targetId = meta.assistant_message_id || assistantId;
@@ -762,9 +817,28 @@ export function GrokPane({
     });
   }
 
+  function plannedIncludeSlice() {
+    if (!pane.includeArticle || !articleId) return null;
+    const mode: IncludeMode =
+      (pane.includeMode && pane.includeMode !== "auto"
+        ? pane.includeMode
+        : articleNeedsIncludeSlice(articleBody)
+          ? "chunk"
+          : "auto") as IncludeMode;
+    return resolveIncludeSlice({
+      body: articleBody || "",
+      mode,
+      selection: pane.includeMode === "selection" ? readerCtx.selection : undefined,
+      heading: pane.includeHeading,
+      offset: pane.includeOffset,
+      title: articleTitle,
+    });
+  }
+
   function contextTooLarge(draft: string, extraMessages: ChatLine[] = pane.messages) {
     const noteBody =
       pane.includeNoteId && articleId && pane.includeNoteId === articleId ? articleBody : null;
+    const slice = plannedIncludeSlice();
     return chatContextOverCap({
       messages: extraMessages,
       draft,
@@ -772,12 +846,19 @@ export function GrokPane({
       articleBody,
       includeNote: Boolean(pane.includeNoteId),
       noteBody,
+      includeSliceChars: slice?.chars,
       pendingExtracts: (pane.pendingAttachments ?? []).map((item) => item.extract_text),
     });
   }
 
-  async function send() {
-    const content = pane.draft.trim();
+  async function send(opts?: {
+    message?: string;
+    includeMode?: IncludeMode;
+    includeHeading?: string | null;
+    includeSelection?: string | null;
+    includeOffset?: number;
+  }) {
+    const content = (opts?.message ?? pane.draft).trim();
     const pending = pane.pendingAttachments ?? [];
     if (pending.some((item) => !item.id)) {
       toast.error("Wait for the file to finish uploading.");
@@ -786,6 +867,17 @@ export function GrokPane({
     const files = pending.filter((item) => item.id);
     if ((!content && !files.length) || busy || aborting || abortingRef.current || !enabled || inFlightRef.current) {
       return;
+    }
+    if (pane.includeArticle && articleId) {
+      const mode = opts?.includeMode || pane.includeMode;
+      if (mode === "selection" && !(opts?.includeSelection || readerCtx.selection)) {
+        toast.error("Highlight text in the reader, then Include selection.");
+        return;
+      }
+      if (mode === "heading" && !(opts?.includeHeading || pane.includeHeading)) {
+        toast.error("Pick a heading from this note.");
+        return;
+      }
     }
     if (contextTooLarge(content)) {
       toast.error(GROK_CONTEXT_TOAST);
@@ -797,11 +889,27 @@ export function GrokPane({
     const imageIds = thisTurnImageMediaIds(files);
     const intent = imageToolIntent(content, imageIds.length > 0);
     const wantsImage = intent === "edit" || intent === "generate";
+    const includeMode = opts?.includeMode || pane.includeMode;
+    const includeHeading = opts?.includeHeading ?? pane.includeHeading;
+    const includeSelection = opts?.includeSelection || (includeMode === "selection" ? readerCtx.selection : undefined);
+    const includeOffset = opts?.includeOffset ?? pane.includeOffset ?? 0;
+    const previewSlice =
+      pane.includeArticle && articleId
+        ? resolveIncludeSlice({
+            body: articleBody || "",
+            mode: includeMode === "auto" && articleNeedsIncludeSlice(articleBody) ? "chunk" : includeMode,
+            selection: includeSelection,
+            heading: includeHeading,
+            offset: includeOffset,
+            title: articleTitle,
+          })
+        : null;
     const userLine: ChatLine = {
       id: crypto.randomUUID(),
       role: "user",
       content,
       files: files.map(pendingToMessageFile),
+      includeChip: previewSlice?.chip,
     };
     const assistantId = crypto.randomUUID();
     onUpdate((current) => ({
@@ -839,6 +947,10 @@ export function GrokPane({
       userLine,
       assistantId,
       mediaIds: files.map((item) => item.id),
+      includeMode,
+      includeHeading,
+      includeSelection,
+      includeOffset,
     });
     } finally {
       inFlightRef.current = false;
@@ -1549,6 +1661,20 @@ export function GrokPane({
                   onHistoryChanged?.();
                 }}
                 routeLabel={item.role === "assistant" ? item.routeLabel : null}
+                includeChip={item.includeChip}
+                onNextChunk={
+                  item.role === "assistant" && item.id === lastAssistantId && item.includeHasMore && !busy
+                    ? () =>
+                        void send({
+                          message: item.includeNextHeading
+                            ? `Continue with the next section: ${item.includeNextHeading}`
+                            : "Continue with the next chunk.",
+                          includeMode: item.includeNextHeading ? "heading" : "chunk",
+                          includeHeading: item.includeNextHeading,
+                          includeOffset: item.includeNextOffset ?? pane.includeOffset,
+                        })
+                    : undefined
+                }
                 statusLine={
                   item.role === "assistant" &&
                   visibleStatus &&
@@ -1619,7 +1745,14 @@ export function GrokPane({
                 type="checkbox"
                 checked={pane.includeArticle}
                 disabled={!articleId}
-                onChange={(event) => patch({ includeArticle: event.target.checked })}
+                onChange={(event) => {
+                  const on = event.target.checked;
+                  patch({
+                    includeArticle: on,
+                    includeMode: on && articleNeedsIncludeSlice(articleBody) ? "chunk" : "auto",
+                    includeOffset: 0,
+                  });
+                }}
               />
               Include current article
             </label>
@@ -1655,6 +1788,67 @@ export function GrokPane({
               </span>
             ) : null}
           </div>
+          {pane.includeArticle && articleId && articleNeedsIncludeSlice(articleBody) ? (
+            <div className="rounded-md border bg-muted/20 p-1.5 text-[11px] text-foreground">
+              <p className="text-muted-foreground">This note is too large to send whole. Include a slice:</p>
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={pane.includeMode === "selection" ? "secondary" : "outline"}
+                  disabled={!readerCtx.selection}
+                  onClick={() => patch({ includeMode: "selection", includeOffset: 0 })}
+                >
+                  Include selection
+                </Button>
+                <select
+                  className="h-7 max-w-[14rem] rounded-md border bg-background px-1 text-[11px]"
+                  aria-label="Include this heading"
+                  value={pane.includeMode === "heading" ? pane.includeHeading || "" : ""}
+                  onChange={(event) => {
+                    const heading = event.target.value;
+                    patch({
+                      includeMode: heading ? "heading" : "chunk",
+                      includeHeading: heading || null,
+                      includeOffset: 0,
+                    });
+                  }}
+                >
+                  <option value="">Include this heading…</option>
+                  {(readerCtx.heading
+                    ? [
+                        readerCtx.heading,
+                        ...parseSections(articleBody || "")
+                          .map((item) => item.title)
+                          .filter((title) => title !== "Opening" && title !== readerCtx.heading),
+                      ]
+                    : parseSections(articleBody || "")
+                        .map((item) => item.title)
+                        .filter((title) => title !== "Opening")
+                  )
+                    .filter((title, index, all) => all.indexOf(title) === index)
+                    .map((title) => (
+                      <option key={title} value={title}>
+                        {title}
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={pane.includeMode === "chunk" || pane.includeMode === "auto" ? "secondary" : "outline"}
+                  onClick={() => patch({ includeMode: "chunk", includeOffset: 0, includeHeading: null })}
+                >
+                  First chunk + next
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {pane.includeArticle && plannedIncludeSlice()?.chip ? (
+            <span className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
+              {plannedIncludeSlice()?.chip}
+            </span>
+          ) : null}
           {notePickerOpen ? (
             <div className="rounded-md border bg-background p-1.5">
               <Input

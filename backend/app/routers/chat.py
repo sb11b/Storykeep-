@@ -25,6 +25,9 @@ from app.services import chat_docx
 from app.services import grok_conversations as grok_store
 from app.services import imagine as imagine_service
 from app.services.demo_lock import is_locked, reject_locked
+from app.services.include_chunk import format_excerpt as format_include_excerpt
+from app.services.include_chunk import resolve_include_slice
+from app.services.include_chunk import slice_meta as include_slice_meta
 
 router = APIRouter(tags=["chat"])
 
@@ -37,6 +40,10 @@ class ChatIn(BaseModel):
     article_id: UUID | None = None
     include_article: bool = False
     include_note_id: UUID | None = None
+    include_mode: str | None = None
+    include_selection: str | None = Field(default=None, max_length=12_000)
+    include_heading: str | None = Field(default=None, max_length=400)
+    include_offset: int = 0
     recap_question: bool = False
     retry: bool = False
     media_ids: list[UUID] = Field(default_factory=list, max_length=5)
@@ -615,20 +622,41 @@ async def chat(
     note_body = None
     include_article = bool(payload.include_article)
     include_note = bool(payload.include_note_id)
+    include_meta: dict[str, object] = {}
+
+    def _owned_include_slice(article):
+        try:
+            return resolve_include_slice(
+                chat_service.article_body_text(article),
+                mode=payload.include_mode,
+                selection=payload.include_selection,
+                heading=payload.include_heading,
+                offset=payload.include_offset or 0,
+                title=article.title,
+                html=getattr(article, "content_html", None),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if include_article:
         if not payload.article_id:
             raise HTTPException(status_code=400, detail="Open an article before attaching it to chat.")
         article = _owned_article(db, user, payload.article_id)
-        article_body = chat_service.article_body_text(article)
-        excerpt = chat_service.article_excerpt(article)
+        owned_slice = _owned_include_slice(article)
+        article_body = owned_slice.text
+        excerpt = format_include_excerpt((article.title or "Untitled").strip(), owned_slice)
+        include_meta = include_slice_meta(owned_slice)
     if include_note:
         if include_article and payload.article_id == payload.include_note_id:
             note_excerpt = excerpt
             note_body = article_body
         else:
             note = _owned_article(db, user, payload.include_note_id)
-            note_body = chat_service.article_body_text(note)
-            note_excerpt = chat_service.article_excerpt(note)
+            note_slice = _owned_include_slice(note)
+            note_body = note_slice.text
+            note_excerpt = format_include_excerpt((note.title or "Untitled").strip(), note_slice)
+            if not include_meta:
+                include_meta = include_slice_meta(note_slice)
     chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
     has_attachments = any(item.get("files") for item in history)
 
@@ -730,6 +758,7 @@ async def chat(
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
+                **include_meta,
             }
             if persist and conversation_id and user_message_id:
                 yield chat_service.encode_sse({k: v for k, v in meta.items() if v is not None})
@@ -739,6 +768,7 @@ async def chat(
                         "model": resolved_model,
                         "model_choice": model_choice,
                         "reasoning_effort": resolved_reasoning,
+                        **{k: v for k, v in include_meta.items() if v is not None},
                     }
                 )
             await asyncio.sleep(0)

@@ -113,6 +113,8 @@ export function GrokChatMessage({
   activeWord,
   statusLine,
   routeLabel,
+  includeChip,
+  onNextChunk,
   wordEnabled = true,
   noteDest = "notes",
   noteFolderId = null,
@@ -149,6 +151,8 @@ export function GrokChatMessage({
   statusLine?: string | null;
   /** Auto routing, e.g. "Auto → 4.6 · low". Not inside the Listen body. */
   routeLabel?: string | null;
+  includeChip?: string | null;
+  onNextChunk?: () => void;
   wordEnabled?: boolean;
   noteDest?: FilingDestination;
   noteFolderId?: string | null;
@@ -235,6 +239,11 @@ export function GrokChatMessage({
       {role === "assistant" && routeLabel ? (
         <p className="mb-1 text-[11px] text-muted-foreground" data-junior-route="" data-junior-spend="">
           {routeLabel}
+        </p>
+      ) : null}
+      {includeChip ? (
+        <p className="mb-1 inline-flex max-w-full items-center rounded-full border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+          {includeChip}
         </p>
       ) : null}
       {statusLine || (waiting && !failed && !content) ? (
@@ -366,6 +375,11 @@ export function GrokChatMessage({
             {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
             Word
           </Button>
+          {onNextChunk ? (
+            <Button size="xs" variant="secondary" disabled={busy} onClick={onNextChunk}>
+              Next chunk
+            </Button>
+          ) : null}
           <Button
             size="xs"
             variant="outline"

@@ -1,5 +1,8 @@
+import { INCLUDE_TURN_CHAR_MAX } from "@/lib/include-chunk";
+
 export const GROK_CONTEXT_CHAR_CAP = 24_000;
-export const GROK_CONTEXT_TOAST = "Too large — deselect Include or start a new chat.";
+export const GROK_CONTEXT_TOAST =
+  "This turn is over the cap. Include a heading, a selection, or the next chunk.";
 export const GROK_CONTEXT_THREAD_WINDOW = 12;
 
 export type ContextMessage = {
@@ -16,6 +19,7 @@ export type ChatContextInput = {
   articleBody?: string | null;
   includeNote?: boolean;
   noteBody?: string | null;
+  includeSliceChars?: number;
   pendingExtracts?: Array<string | null | undefined>;
 };
 
@@ -38,10 +42,11 @@ export function estimateChatContextChars(input: ChatContextInput): number {
   for (const extract of input.pendingExtracts || []) {
     total += textLen(extract);
   }
-  const article = input.includeArticle ? textLen(input.articleBody) : 0;
+  const articleCap = input.includeSliceChars ?? INCLUDE_TURN_CHAR_MAX;
+  const article = input.includeArticle ? Math.min(textLen(input.articleBody), articleCap) : 0;
   total += article;
   if (input.includeNote) {
-    const note = textLen(input.noteBody);
+    const note = Math.min(textLen(input.noteBody), articleCap);
     if (note && !(input.includeArticle && input.noteBody === input.articleBody)) {
       total += note;
     }

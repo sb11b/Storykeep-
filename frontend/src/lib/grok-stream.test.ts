@@ -22,10 +22,10 @@ function sseResponse(chunks: string[]): Response {
   return new Response(stream);
 }
 
-test("shouldIncludeArticle skips huge bodies", () => {
+test("shouldIncludeArticle still includes huge bodies as a slice", () => {
   const huge = "x".repeat(GROK_ARTICLE_INCLUDE_HINT_MAX + 1);
   assert.deepEqual(shouldIncludeArticle(true, "art-1", huge), {
-    include: false,
+    include: true,
     skippedHuge: true,
   });
   assert.deepEqual(shouldIncludeArticle(true, "art-1", "hello"), {

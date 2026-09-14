@@ -18,7 +18,7 @@ test("small talk plus a short article stays under the cap", () => {
   assert.equal(chatContextOverCap({ messages: [], draft: "hello" }), false);
 });
 
-test("a stuffed vault article over cap blocks Send", () => {
+test("a stuffed vault article is counted as one capped slice, not the whole book", () => {
   const huge = "x".repeat(GROK_CONTEXT_CHAR_CAP + 1);
   assert.equal(
     chatContextOverCap({
@@ -27,9 +27,9 @@ test("a stuffed vault article over cap blocks Send", () => {
       includeArticle: true,
       articleBody: huge,
     }),
-    true,
+    false,
   );
-  assert.equal(GROK_CONTEXT_TOAST, "Too large — deselect Include or start a new chat.");
+  assert.match(GROK_CONTEXT_TOAST, /heading|selection|chunk/i);
 });
 
 test("thread plus extracts plus include all count", () => {

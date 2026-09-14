@@ -626,6 +626,10 @@ export const api = {
       article_id: string | null;
       include_article: boolean;
       include_note_id?: string | null;
+      include_mode?: string;
+      include_selection?: string;
+      include_heading?: string;
+      include_offset?: number;
       recap_question?: boolean;
       retry?: boolean;
       media_ids?: string[];

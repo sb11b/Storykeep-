@@ -16,6 +16,11 @@ from fastapi import HTTPException, status
 
 from app.config import settings
 from app.models import Article
+from app.services.include_chunk import (
+    INCLUDE_TURN_CHAR_CAP,
+    format_excerpt as format_include_excerpt,
+    resolve_include_slice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +88,7 @@ _SCHOOL_CODE_RE = re.compile(
     r"\b(?:function|class)\s+\w+",
     re.I,
 )
-ARTICLE_CHAR_CAP = 8_000
+ARTICLE_CHAR_CAP = 10_000
 ATTACHMENT_CHAR_CAP = 12_000
 MESSAGE_CHAR_CAP = 8_000
 MERGED_MESSAGE_CHAR_CAP = MESSAGE_CHAR_CAP + ATTACHMENT_CHAR_CAP
@@ -91,7 +96,7 @@ MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
 TOTAL_CHAR_CAP = 48_000
 SEND_CONTEXT_CHAR_CAP = 24_000
-SEND_CONTEXT_TOO_LARGE = "Too large — deselect Include or start a new chat."
+SEND_CONTEXT_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
 MAX_TOKENS_CAP = 2048
 
 SYSTEM_PROMPT = """You are StoryKeep's school coding assistant for Steve — a personal RSS reader and student workspace.
@@ -123,8 +128,9 @@ Steve enabled "Recap my question" for this thread. You may briefly restate his q
 ARTICLE_MODE_APPEND = """
 Steve connected the current article. An excerpt is below.
 - Answer from this article excerpt only. Do not use other StoryKeep notes or the rest of the vault.
+- This excerpt is one slice (a heading, a highlight, or a chunk), not the whole book.
 - Do not invent quotes or facts that are not supported by the excerpt.
-- If Steve asks something outside the excerpt, say the article does not cover it.
+- If Steve asks something outside the excerpt, say this slice does not cover it and he can send the next chunk.
 """
 
 NOTE_MODE_APPEND = """
@@ -747,12 +753,17 @@ def reject_oversized_send(
         raise HTTPException(status_code=400, detail=SEND_CONTEXT_TOO_LARGE)
 
 
-def article_excerpt(article: Article, limit: int = ARTICLE_CHAR_CAP) -> str:
+def article_excerpt(article: Article, limit: int = INCLUDE_TURN_CHAR_CAP) -> str:
+    del limit  # slices are capped by INCLUDE_TURN_CHAR_CAP
     body = article_body_text(article)
-    if len(body) > limit:
-        body = body[: limit - 1].rstrip() + "…"
-    title = (article.title or "Untitled").strip()
-    return f"Title: {title}\n\n{body}"
+    html = getattr(article, "content_html", None)
+    slice = resolve_include_slice(
+        body,
+        mode="chunk",
+        title=article.title,
+        html=html if isinstance(html, str) else None,
+    )
+    return format_include_excerpt((article.title or "Untitled").strip(), slice)
 
 
 def build_xai_messages(
