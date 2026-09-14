@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   Archive,
@@ -184,6 +184,31 @@ async function toggleBrowserFullscreen(selectors: string) {
   }
 }
 
+const PDF_MAX_CANVAS = 4096;
+const PDF_FIRST_PAGES = 2;
+
+class PdfRestoreBoundary extends Component<
+  { children: ReactNode; onError?: (message: string) => void },
+  { message: string | null }
+> {
+  state: { message: string | null } = { message: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { message: error?.message || "PDF restore failed." };
+  }
+
+  componentDidCatch(error: Error) {
+    this.props.onError?.(error?.message || "PDF restore failed.");
+  }
+
+  render() {
+    if (this.state.message) {
+      return <p className="reader-chrome px-0 py-2 text-sm text-destructive">{this.state.message}</p>;
+    }
+    return this.props.children;
+  }
+}
+
 function PdfSnapshotViewer({
   archiveId,
   onReady,
@@ -193,10 +218,11 @@ function PdfSnapshotViewer({
   onReady?: () => void;
   onFailed?: (message: string) => void;
 }) {
-  const fileUrl = `/api/v1/archives/${encodeURIComponent(archiveId)}/file`;
+  const fileUrl = `/api/v1/archives/${encodeURIComponent(String(archiveId || ""))}/file`;
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const pdfRef = useRef<{ destroy?: () => Promise<unknown> } | null>(null);
   const onReadyRef = useRef(onReady);
   const onFailedRef = useRef(onFailed);
   const [error, setError] = useState<string | null>(null);
@@ -205,32 +231,45 @@ function PdfSnapshotViewer({
   onReadyRef.current = onReady;
   onFailedRef.current = onFailed;
 
+  const fail = (message: string) => {
+    setLoading(false);
+    setError(message);
+    try {
+      onFailedRef.current?.(message);
+    } catch {
+      /* never let a callback take down the app */
+    }
+  };
+
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const scrollHost = () => {
-      let node: HTMLElement | null = scroller;
-      while (node) {
-        const style = window.getComputedStyle(node);
-        const scrolls = style.overflowY === "auto" || style.overflowY === "scroll";
-        if (scrolls && node.scrollHeight > node.clientHeight + 1) return node;
-        node = node.parentElement;
-      }
-      return null;
-    };
     const onKey = (event: KeyboardEvent) => {
-      const host = scrollHost();
-      if (!host) return;
-      const line = 48;
-      const page = Math.max(host.clientHeight - 24, 80);
-      if (event.key === "ArrowDown") host.scrollTop += line;
-      else if (event.key === "ArrowUp") host.scrollTop -= line;
-      else if (event.key === "PageDown") host.scrollTop += page;
-      else if (event.key === "PageUp") host.scrollTop -= page;
-      else if (event.key === "Home") host.scrollTop = 0;
-      else if (event.key === "End") host.scrollTop = host.scrollHeight;
-      else return;
-      event.preventDefault();
+      try {
+        let node: HTMLElement | null = scroller;
+        let host: HTMLElement | null = null;
+        while (node) {
+          const style = window.getComputedStyle(node);
+          if ((style.overflowY === "auto" || style.overflowY === "scroll") && node.scrollHeight > node.clientHeight + 1) {
+            host = node;
+            break;
+          }
+          node = node.parentElement;
+        }
+        if (!host) return;
+        const line = 48;
+        const page = Math.max(host.clientHeight - 24, 80);
+        if (event.key === "ArrowDown") host.scrollTop += line;
+        else if (event.key === "ArrowUp") host.scrollTop -= line;
+        else if (event.key === "PageDown") host.scrollTop += page;
+        else if (event.key === "PageUp") host.scrollTop -= page;
+        else if (event.key === "Home") host.scrollTop = 0;
+        else if (event.key === "End") host.scrollTop = host.scrollHeight;
+        else return;
+        event.preventDefault();
+      } catch {
+        /* ignore */
+      }
     };
     scroller.addEventListener("keydown", onKey);
     return () => scroller.removeEventListener("keydown", onKey);
@@ -238,18 +277,30 @@ function PdfSnapshotViewer({
 
   useEffect(() => {
     const scroller = scrollerRef.current;
-    if (!scroller) return;
+    if (!scroller) {
+      fail("PDF pane is missing.");
+      return;
+    }
     let cancelled = false;
     let widthObserver: ResizeObserver | null = null;
     let widthTimer: number | undefined;
     let raf = 0;
-    scroller.replaceChildren();
+    try {
+      scroller.replaceChildren();
+    } catch {
+      fail("Could not prepare the PDF pane.");
+      return;
+    }
     setError(null);
     setLoading(true);
+    setStats(null);
 
     const waitForWidth = () =>
       new Promise<number>((resolve) => {
+        let settled = false;
         const finish = (width: number) => {
+          if (settled) return;
+          settled = true;
           widthObserver?.disconnect();
           widthObserver = null;
           if (widthTimer !== undefined) {
@@ -258,125 +309,154 @@ function PdfSnapshotViewer({
           }
           if (raf) window.cancelAnimationFrame(raf);
           raf = 0;
-          resolve(width);
+          resolve(Math.max(1, width));
         };
+        const read = () =>
+          Math.max(
+            scroller.clientWidth || 0,
+            scroller.parentElement?.clientWidth || 0,
+            hostRef.current?.clientWidth || 0,
+          );
         const tick = () => {
-          const width = scroller.clientWidth;
+          if (cancelled) {
+            finish(0);
+            return;
+          }
+          const width = read();
           if (width > 0) {
             finish(width);
             return;
           }
           raf = window.requestAnimationFrame(tick);
         };
-        widthObserver = new ResizeObserver(() => {
-          if (scroller.clientWidth > 0) finish(scroller.clientWidth);
-        });
-        widthObserver.observe(scroller);
+        try {
+          widthObserver = new ResizeObserver(() => {
+            const width = read();
+            if (width > 0) finish(width);
+          });
+          widthObserver.observe(scroller);
+        } catch {
+          /* ResizeObserver missing */
+        }
         tick();
-        widthTimer = window.setTimeout(() => finish(Math.max(scroller.clientWidth, 1)), 8000);
+        widthTimer = window.setTimeout(() => finish(Math.max(read(), 320)), 8000);
       });
 
+    // pdf.js page objects are typed more strictly than we need here.
+    const paintPage = async (doc: { getPage: (n: number) => Promise<any> }, pageNumber: number, width: number) => {
+      const page = await doc.getPage(pageNumber);
+      const unscaled = page.getViewport({ scale: 1 });
+      const pageWidth = unscaled.width || 1;
+      const pageHeight = unscaled.height || 1;
+      let scale = width / pageWidth;
+      if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+      const maxScale = Math.min(PDF_MAX_CANVAS / pageWidth, PDF_MAX_CANVAS / pageHeight);
+      scale = Math.min(scale, maxScale);
+      const viewport = page.getViewport({ scale });
+      const wrap = document.createElement("div");
+      wrap.className = "pdf-page";
+      wrap.style.display = "block";
+      wrap.style.width = "100%";
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      canvas.style.display = "block";
+      canvas.style.width = "100%";
+      canvas.style.height = "auto";
+      canvas.style.pointerEvents = "none";
+      wrap.appendChild(canvas);
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error("Could not draw the PDF snapshot.");
+      await page.render({ canvasContext: context, viewport }).promise;
+      if (!cancelled) scroller.appendChild(wrap);
+      return canvas;
+    };
+
     void (async () => {
-      if (!archiveId) throw new Error("This PDF restore is missing an archive id.");
-      const workerRes = await fetch(PDF_WORKER_SRC, { cache: "no-store" });
-      if (!workerRes.ok) throw new Error(`PDF worker missing: HTTP ${workerRes.status} ${PDF_WORKER_SRC}`);
-      if ((workerRes.headers.get("content-type") || "").includes("text/html")) {
-        throw new Error(`PDF worker served HTML, not JavaScript: ${PDF_WORKER_SRC}`);
-      }
-      const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
-      const blob = response.ok ? await response.blob() : null;
-      if (!response.ok || !blob) {
-        const detail = (await response.text().catch(() => "")).slice(0, 80);
-        throw new Error(`GET ${fileUrl} returned HTTP ${response.status}. ${detail}`.trim());
-      }
-      const head = new Uint8Array(await blob.slice(0, 80).arrayBuffer());
-      const headText = Array.from(head, (byte) => String.fromCharCode(byte)).join("");
-      if (!headText.startsWith("%PDF")) {
-        throw new Error(`Archive file is not a PDF (HTTP ${response.status}). First bytes: ${headText.slice(0, 80)}`);
-      }
-      if (cancelled) return;
-      const blobUrl = URL.createObjectURL(blob);
-      blobUrlRef.current = blobUrl;
-      const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
-      const doc = await pdfjs.getDocument({ url: blobUrl }).promise;
-      if (doc.numPages < 1) throw new Error("That PDF has no pages.");
-      const width = await waitForWidth();
-      if (cancelled) return;
-      if (width <= 0) throw new Error("The PDF pane has no width yet. Try Fullscreen or reload.");
-      for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
-        if (cancelled) return;
-        const page = await doc.getPage(pageNumber);
-        const unscaled = page.getViewport({ scale: 1 });
-        const scale = width / unscaled.width;
-        const viewport = page.getViewport({ scale });
-        const wrap = document.createElement("div");
-        wrap.className = "pdf-page";
-        wrap.style.display = "block";
-        wrap.style.width = "100%";
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.display = "block";
-        canvas.style.width = "100%";
-        canvas.style.height = "auto";
-        canvas.style.pointerEvents = "none";
-        wrap.appendChild(canvas);
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Could not draw the PDF snapshot.");
-        await page.render({ canvasContext: context, viewport }).promise;
-        if (cancelled) return;
-        scroller.appendChild(wrap);
-      }
-      const firstCanvas = scroller.querySelector("canvas");
-      const firstHeight = firstCanvas instanceof HTMLCanvasElement
-        ? Math.round(firstCanvas.getBoundingClientRect().height) || firstCanvas.height
-        : 0;
-      if (firstHeight <= 0) throw new Error("PDF pages rendered with no height.");
-      if (cancelled) return;
-      const measure = () => {
-        let node: HTMLElement | null = scroller;
-        while (node) {
-          const style = window.getComputedStyle(node);
-          if (
-            (style.overflowY === "auto" || style.overflowY === "scroll") &&
-            node.scrollHeight > node.clientHeight + 1
-          ) {
-            return { clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
-          }
-          node = node.parentElement;
+      try {
+        if (!archiveId) throw new Error("This PDF restore is missing an archive id.");
+        const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
+        let bodyText = "";
+        const buffer = response.ok ? await response.arrayBuffer() : null;
+        if (!response.ok || !buffer) {
+          bodyText = (await response.text().catch(() => "")).slice(0, 80);
+          throw new Error(`GET ${fileUrl} returned HTTP ${response.status}. ${bodyText}`.trim());
         }
-        return { clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight };
-      };
-      setStats({
-        status: response.status,
-        pageCount: doc.numPages,
-        firstCanvasHeight: firstHeight,
-        ...measure(),
-      });
-      setLoading(false);
-      onReadyRef.current?.();
-      window.requestAnimationFrame(() => {
+        const bytes = new Uint8Array(buffer);
+        const headText = Array.from(bytes.slice(0, 80), (byte) => String.fromCharCode(byte)).join("");
+        if (!headText.startsWith("%PDF")) {
+          throw new Error(`Archive file is not a PDF (HTTP ${response.status}). First bytes: ${headText.slice(0, 80)}`);
+        }
         if (cancelled) return;
-        setStats((current) => (current ? { ...current, ...measure() } : current));
-      });
-    })().catch((caught) => {
-      if (cancelled) return;
-      const message = caught instanceof Error ? caught.message : "Could not load the PDF snapshot.";
-      setLoading(false);
-      setError(message);
-      onFailedRef.current?.(message);
-    });
+        const pdfjs = await import("pdfjs-dist");
+        pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
+        const loadingTask = pdfjs.getDocument({ data: bytes.slice() });
+        const doc = await loadingTask.promise;
+        pdfRef.current = doc;
+        const pageCount = Number(doc.numPages) || 0;
+        if (pageCount < 1) throw new Error("That PDF has no pages.");
+        const width = await waitForWidth();
+        if (cancelled) return;
+        if (width <= 0) throw new Error("The PDF pane has no width yet.");
+        const firstLimit = Math.min(PDF_FIRST_PAGES, pageCount);
+        let firstCanvas: HTMLCanvasElement | null = null;
+        for (let pageNumber = 1; pageNumber <= firstLimit; pageNumber += 1) {
+          if (cancelled) return;
+          const canvas = await paintPage(doc, pageNumber, width);
+          if (pageNumber === 1) firstCanvas = canvas;
+        }
+        const firstHeight = firstCanvas
+          ? Math.round(firstCanvas.getBoundingClientRect().height) || firstCanvas.height
+          : 0;
+        if (firstHeight <= 0) throw new Error("PDF pages rendered with no height.");
+        if (cancelled) return;
+        setStats({
+          status: response.status,
+          pageCount,
+          firstCanvasHeight: firstHeight,
+          clientHeight: scroller.clientHeight,
+          scrollHeight: scroller.scrollHeight,
+        });
+        setLoading(false);
+        try {
+          onReadyRef.current?.();
+        } catch {
+          /* keep HTML if parent callback throws */
+        }
+        for (let pageNumber = firstLimit + 1; pageNumber <= pageCount; pageNumber += 1) {
+          if (cancelled) return;
+          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+          if (cancelled) return;
+          await paintPage(doc, pageNumber, width);
+        }
+      } catch (caught) {
+        if (cancelled) return;
+        const message = caught instanceof Error ? caught.message : "Could not load the PDF snapshot.";
+        fail(message);
+      }
+    })();
+
     return () => {
       cancelled = true;
       widthObserver?.disconnect();
       if (widthTimer !== undefined) window.clearTimeout(widthTimer);
       if (raf) window.cancelAnimationFrame(raf);
-      scroller.replaceChildren();
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
+      try {
+        scroller.replaceChildren();
+      } catch {
+        /* ignore */
       }
+      const pdf = pdfRef.current;
+      pdfRef.current = null;
+      void Promise.resolve()
+        .then(() => pdf?.destroy?.())
+        .catch(() => undefined)
+        .finally(() => {
+          if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+            blobUrlRef.current = null;
+          }
+        });
     };
   }, [archiveId, fileUrl]);
 
@@ -394,7 +474,7 @@ function PdfSnapshotViewer({
       {stats && !error ? (
         <p className="reader-chrome px-3 py-1 text-[0.7rem] text-muted-foreground">
           {stats.pageCount} page{stats.pageCount === 1 ? "" : "s"} · HTTP {stats.status} · first canvas{" "}
-          {stats.firstCanvasHeight}px · article scroll {stats.clientHeight}/{stats.scrollHeight}
+          {stats.firstCanvasHeight}px
         </p>
       ) : null}
       <div
@@ -403,7 +483,6 @@ function PdfSnapshotViewer({
         tabIndex={0}
         role="region"
         aria-label="PDF snapshot"
-        onMouseEnter={() => scrollerRef.current?.focus()}
       />
     </div>
   );
@@ -1777,11 +1856,16 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                   try {
                     const next = await api.restore(id, archiveId);
                     if (selectedIdRef.current !== id) return;
-                    if (next.offline_view === "pdf" && !next.offline_archive_id) {
-                      next.offline_archive_id = archiveId;
+                    try {
+                      if (next.offline_view === "pdf" && !next.offline_archive_id) {
+                        next.offline_archive_id = archiveId;
+                      }
+                      setArticle(next);
+                      setReaderScrollToken((current) => current + 1);
+                    } catch (caught) {
+                      toast.error(caught instanceof Error ? caught.message : "Could not open that restore.");
+                      return;
                     }
-                    setArticle(next);
-                    setReaderScrollToken((current) => current + 1);
                     toast.success(
                       next.offline_view === "pdf"
                         ? "Offline view is the PDF snapshot. Article text was kept."
@@ -2589,7 +2673,7 @@ function Reader({
   const [htmlSnapshotError, setHtmlSnapshotError] = useState<string | null>(null);
   const composed = isStoryKeepNote(article);
   const pdfIntent = !composed && article.offline_view === "pdf";
-  const pdfArchiveId = article.offline_archive_id || "";
+  const pdfArchiveId = article.offline_archive_id ? String(article.offline_archive_id) : "";
   const pdfLocked = pdfIntent && pdfReady;
 
   useEffect(() => {
@@ -3310,17 +3394,25 @@ function Reader({
               <p className="reader-chrome px-0 py-2 text-sm text-destructive">{pdfError}</p>
             ) : null}
             {pdfArchiveId ? (
-              <PdfSnapshotViewer
-                archiveId={pdfArchiveId}
-                onReady={() => {
-                  setPdfReady(true);
-                  setPdfError(null);
-                }}
-                onFailed={(message) => {
+              <PdfRestoreBoundary
+                key={pdfArchiveId}
+                onError={(message) => {
                   setPdfReady(false);
                   setPdfError(message);
                 }}
-              />
+              >
+                <PdfSnapshotViewer
+                  archiveId={pdfArchiveId}
+                  onReady={() => {
+                    setPdfReady(true);
+                    setPdfError(null);
+                  }}
+                  onFailed={(message) => {
+                    setPdfReady(false);
+                    setPdfError(message);
+                  }}
+                />
+              </PdfRestoreBoundary>
             ) : null}
           </>
         ) : null}
