@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from time import mktime
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -19,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Article, Feed
 from app.services import changelog, extractor
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,26 +41,41 @@ HEADERS = {
 }
 BLOCK_STATUSES = {401, 403, 406, 429, 451}
 _LAST_FETCH: dict[str, object] = {}
+_LAST_FETCH_FILE = "last-rss-fetch.json"
+
+
+def _fetch_file() -> Path:
+    return settings.data_dir / _LAST_FETCH_FILE
 
 
 def last_fetch_snapshot() -> dict[str, object]:
-    return dict(_LAST_FETCH)
+    if _LAST_FETCH:
+        return dict(_LAST_FETCH)
+    path = _fetch_file()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
 
 
 def _record_fetch(*, status: int | str | None, nbytes: int, item_count: int, url: str) -> None:
+    payload = {
+        "status": status,
+        "bytes": nbytes,
+        "item_count": item_count,
+        "url": url,
+    }
     _LAST_FETCH.clear()
-    _LAST_FETCH.update(
-        {
-            "status": status,
-            "bytes": nbytes,
-            "item_count": item_count,
-            "url": url,
-        }
-    )
-    logger.info(
-        "rss_fetch %s",
-        {"status": status, "bytes": nbytes, "item_count": item_count, "url": url},
-    )
+    _LAST_FETCH.update(payload)
+    logger.info("rss_fetch %s", payload)
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        _fetch_file().write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _entry_datetime(entry: Any) -> datetime | None:
