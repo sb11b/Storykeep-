@@ -25,12 +25,13 @@ export function filenameFromContentDisposition(header: string | null, fallback =
   return fallback;
 }
 
-export async function downloadChatMessageDocx(messageId: string): Promise<void> {
+export async function downloadChatMessageDocx(messageId: string, options?: { clean?: boolean }): Promise<void> {
   const id = (messageId || "").trim();
   if (!isPersistedMessageId(id)) {
     throw new ApiError(400, "Wait for the reply to finish before downloading Word.");
   }
-  const response = await fetch(`/api/v1/chat/messages/${encodeURIComponent(id)}/docx`, {
+  const search = options?.clean ? "?clean=true" : "";
+  const response = await fetch(`/api/v1/chat/messages/${encodeURIComponent(id)}/docx${search}`, {
     method: "POST",
     credentials: "include",
     cache: "no-store",

@@ -5,6 +5,8 @@ import { Copy, Download, FileDown, LoaderCircle, NotebookPen, Paperclip, Volume2
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CorrectionCheck, DestinationSelect, FolderSelect } from "@/components/destination-controls";
+import { SchoolToolsBar } from "@/components/school-tools-bar";
+import type { GrokMessage } from "@/lib/types";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import { downloadChatPicture, resolveChatImageSrc } from "@/lib/chat-media-download";
 import type { CustomNoteShelf, FilingDestination } from "@/lib/custom-note-shelves";
@@ -13,6 +15,7 @@ import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 import { downloadChatMessageDocx, isPersistedMessageId } from "@/lib/chat-message-docx";
 import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
+import { hasGrammarMarks, wordCount } from "@/lib/word-count";
 import type { Folder } from "@/lib/types";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
@@ -111,6 +114,11 @@ export function GrokChatMessage({
   onListen,
   onAddToNotes,
   onRetry,
+  conversationId = null,
+  articleId = null,
+  schoolEnabled = true,
+  onSchoolAssistant,
+  onSchoolSavedNote,
 }: {
   id: string;
   role: "user" | "assistant";
@@ -141,6 +149,11 @@ export function GrokChatMessage({
   onListen?: (messageId: string, trigger: HTMLElement) => void;
   onAddToNotes: (payload: AddToNotesPayload) => void;
   onRetry?: () => void;
+  conversationId?: string | null;
+  articleId?: string | null;
+  schoolEnabled?: boolean;
+  onSchoolAssistant?: (message: GrokMessage) => void;
+  onSchoolSavedNote?: (noteId: string) => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [savingWord, setSavingWord] = useState(false);
@@ -149,6 +162,9 @@ export function GrokChatMessage({
   const [folderId, setFolderId] = useState<string | null>(noteFolderId);
   const [isCorrection, setIsCorrection] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
+  const [savingClean, setSavingClean] = useState(false);
+  const words = role === "assistant" && content ? wordCount(content) : 0;
+  const marked = role === "assistant" && hasGrammarMarks(content);
   const canDownloadWord =
     wordEnabled && role === "assistant" && Boolean(content) && !failed && !waiting && isPersistedMessageId(id);
 
@@ -322,6 +338,26 @@ export function GrokChatMessage({
             {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
             Word
           </Button>
+          {marked ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canDownloadWord || savingClean}
+              onClick={() => {
+                if (!canDownloadWord || savingClean) return;
+                setSavingClean(true);
+                void downloadChatMessageDocx(id, { clean: true })
+                  .then(() => toast.success("Saved clean Word file"))
+                  .catch((error) => {
+                    toast.error(error instanceof Error ? error.message : "Could not download that Word file.");
+                  })
+                  .finally(() => setSavingClean(false));
+              }}
+            >
+              {savingClean ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
+              Clean copy
+            </Button>
+          ) : null}
           <Button
             size="xs"
             variant={filing ? "secondary" : "outline"}
@@ -335,7 +371,22 @@ export function GrokChatMessage({
             <NotebookPen className="size-3" />
             Add to notes
           </Button>
+          {words ? (
+            <span className="ml-1 text-[11px] text-muted-foreground" data-word-count={words}>
+              {words} words
+            </span>
+          ) : null}
         </div>
+      ) : null}
+      {content && role === "assistant" && !failed && !waiting && schoolEnabled ? (
+        <SchoolToolsBar
+          source={{ messageId: id, articleId, conversationId }}
+          dest={noteDest}
+          folderId={noteFolderId}
+          persist={Boolean(conversationId)}
+          onAssistant={onSchoolAssistant}
+          onSavedNote={onSchoolSavedNote}
+        />
       ) : null}
       {content && role === "assistant" && filing ? (
         <div className="mt-2 flex flex-col gap-1.5 rounded-md border bg-background p-2">

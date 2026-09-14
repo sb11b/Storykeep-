@@ -36,6 +36,7 @@ import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect, FolderSelect, RssShelfSelect } from "@/components/destination-controls";
 import { NoteAttachmentChips } from "@/components/note-attachments";
 import { NoteComposer } from "@/components/note-composer";
+import { SchoolToolsBar } from "@/components/school-tools-bar";
 import { ShelfScroller, type ShelfScrollerHandle } from "@/components/shelf-scroller";
 import { ProfilePage } from "@/components/profile-page";
 import { ShelfSwitcher } from "@/components/shelf-switcher";
@@ -3056,6 +3057,15 @@ function Reader({
           getVisibleSpeech={getVisibleSpeech}
           getVisibleSections={() => visibleSpeechSections(bodyRef.current)}
         />
+        {!pdfIntent ? (
+          <SchoolToolsBar
+            source={{ articleId: article.id }}
+            dest={asFilingDestination(article.destination, "schoolwork")}
+            folderId={article.folder_id}
+            persist={false}
+            onSavedNote={(noteId) => onOpenNote(noteId)}
+          />
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           {pdfIntent ? (
             <Button

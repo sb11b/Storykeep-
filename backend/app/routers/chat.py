@@ -7,7 +7,7 @@ from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
@@ -209,16 +209,22 @@ def download_message_docx(
     message_id: UUID,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    clean: bool = Query(default=False),
 ) -> Response:
     reject_locked(user)
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     row = grok_store.owned_assistant_message(db, user, message_id)
+    content = row.content
+    if clean:
+        from app.services.school_tools import strip_marks
+
+        content = strip_marks(content)
     try:
-        payload = chat_docx.build_message_docx(row.content)
+        payload = chat_docx.build_message_docx(content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    filename = chat_docx.docx_filename(row.content).replace('"', "")
+    filename = chat_docx.docx_filename(content).replace('"', "")
     return Response(
         content=payload,
         media_type=chat_docx.DOCX_MEDIA_TYPE,

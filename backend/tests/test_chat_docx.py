@@ -127,6 +127,17 @@ class ChatDocxTests(unittest.TestCase):
         self.assertIn("Grammar-fixed DAT-200 paper", xml)
         self.assertIn("Smith, J.", xml)
 
+    def test_clean_copy_strips_grammar_marks(self):
+        from app.services.school_tools import strip_marks
+
+        marked = "This is a well-==known== method.\n\n## References\n\nSmith, J. (2020). Databases."
+        clean = strip_marks(marked)
+        self.assertNotIn("==", clean)
+        payload = build_message_docx(clean)
+        xml = document_xml(payload)
+        self.assertIn("well-known", xml)
+        self.assertNotIn("==", xml)
+
 
 if __name__ == "__main__":
     unittest.main()

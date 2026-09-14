@@ -1401,6 +1401,23 @@ export function GrokPane({
                 onCreateNoteShelf={onCreateNoteShelf}
                 onCreateFolder={(shelf) => void createNoteFolder(shelf)}
                 onRememberFiling={(dest, folderId) => patch({ noteDest: dest, noteFolderId: folderId })}
+                conversationId={pane.conversationId}
+                articleId={articleId}
+                schoolEnabled={!locked}
+                onSchoolAssistant={(message) => {
+                  onUpdate((current) => {
+                    if (current.messages.some((row) => row.id === message.id)) return current;
+                    return {
+                      ...current,
+                      conversationId: current.conversationId,
+                      messages: [
+                        ...current.messages,
+                        { id: message.id, role: "assistant", content: message.content, files: message.files },
+                      ],
+                    };
+                  });
+                  onHistoryChanged?.();
+                }}
                 routeLabel={item.role === "assistant" ? item.routeLabel : null}
                 statusLine={
                   item.role === "assistant" &&

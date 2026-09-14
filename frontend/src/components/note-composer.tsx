@@ -40,6 +40,7 @@ import {
   type ComposerStyle,
 } from "@/lib/note-style";
 import { cn } from "@/lib/utils";
+import { wordCount } from "@/lib/word-count";
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (!ref) return;
@@ -411,6 +412,7 @@ export function NoteComposer({
           ) : null}
           {toolbarExtra}
           {actions}
+          <span className="text-[11px] text-muted-foreground">{wordCount(value)} words</span>
         </div>
         <input
           ref={imageRef}

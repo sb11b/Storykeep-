@@ -685,4 +685,41 @@ export const api = {
     if (opts?.includeNotes) search.set("include_notes", "true");
     return fetchSpeechChunk(`/api/v1/articles/${id}/tts?${search.toString()}`, { method: "GET" }, "article");
   },
+  schoolQuiz: (body: { message_id?: string | null; article_id?: string | null; conversation_id?: string | null; persist?: boolean }) =>
+    request<{
+      questions: Array<{ n: string; q: string; a: string }>;
+      questions_md: string;
+      key_md: string;
+      markdown: string;
+      word_count: number;
+      assistant_message?: GrokMessage;
+    }>("/api/v1/school/quiz", { method: "POST", body: JSON.stringify(body) }),
+  schoolApa: (body: { message_id?: string | null; article_id?: string | null; conversation_id?: string | null; persist?: boolean }) =>
+    request<{ markdown: string; citations_block: string; word_count: number; assistant_message?: GrokMessage }>(
+      "/api/v1/school/apa",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  schoolTrim: (body: {
+    message_id?: string | null;
+    article_id?: string | null;
+    conversation_id?: string | null;
+    persist?: boolean;
+    target: number;
+  }) =>
+    request<{ markdown: string; word_count: number; target: number; assistant_message?: GrokMessage }>(
+      "/api/v1/school/trim",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  schoolGrammar: (body: { message_id?: string | null; article_id?: string | null; conversation_id?: string | null; persist?: boolean }) =>
+    request<{ markdown: string; clean_markdown: string; word_count: number; assistant_message?: GrokMessage }>(
+      "/api/v1/school/grammar",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  schoolQuizSave: (body: {
+    questions_md: string;
+    key_md: string;
+    article_id?: string | null;
+    destination?: string;
+    folder_id?: string | null;
+  }) => request<Article>("/api/v1/school/quiz/save", { method: "POST", body: JSON.stringify(body) }),
 };
