@@ -683,6 +683,10 @@ def restore_article(
         archive_service.restore_article_from_archive(db, article, row)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Archive not found") from None
+    if getattr(row, "archive_type", None) == "pdf":
+        article.offline_view = "pdf"
+        article.offline_archive_id = row.id
+        db.add(article)
     changelog.record(
         db,
         user.id,

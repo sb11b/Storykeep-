@@ -172,6 +172,7 @@ def restore_article_from_archive(db: Session, article: Article, row: Archive) ->
         article.offline_view = "pdf"
         article.offline_archive_id = row.id
         db.add(article)
+        db.flush()
         return
 
     snapshot_article(db, article, "html")

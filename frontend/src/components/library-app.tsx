@@ -161,13 +161,40 @@ function snapshotStamp(iso: string): string {
   return parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
+const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
+
+async function toggleBrowserFullscreen(selectors: string) {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    const el = document.querySelector<HTMLElement>(selectors);
+    if (el?.requestFullscreen) await el.requestFullscreen();
+  } catch {
+    /* permission or unsupported */
+  }
+}
+
+function PdfSnapshotViewer({
+  archiveId,
+  onReady,
+  onFailed,
+}: {
+  archiveId: string;
+  onReady?: () => void;
+  onFailed?: (message: string) => void;
+}) {
   const fileUrl = `/api/v1/archives/${encodeURIComponent(archiveId)}/file`;
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const onReadyRef = useRef(onReady);
+  const onFailedRef = useRef(onFailed);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  onReadyRef.current = onReady;
+  onFailedRef.current = onFailed;
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -198,59 +225,53 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
 
   useEffect(() => {
     const scroller = scrollerRef.current;
-    const host = hostRef.current;
     if (!scroller) return;
     let cancelled = false;
-    let boxObserver: ResizeObserver | null = null;
-    let boxTimer: number | undefined;
+    let widthObserver: ResizeObserver | null = null;
+    let widthTimer: number | undefined;
+    let raf = 0;
     scroller.replaceChildren();
     setError(null);
     setLoading(true);
 
-    const constrainScroller = () => {
-      const cap = host?.clientHeight ?? 0;
-      if (cap > 0) {
-        scroller.style.maxHeight = `${cap}px`;
-      }
-    };
-
-    const waitForScrollerBox = () =>
-      new Promise<{ width: number; height: number }>((resolve) => {
-        const read = () => {
-          constrainScroller();
-          return {
-            width: scroller.clientWidth,
-            height: scroller.clientHeight || host?.clientHeight || 0,
-          };
-        };
-        const finish = () => {
-          boxObserver?.disconnect();
-          boxObserver = null;
-          if (boxTimer !== undefined) {
-            window.clearTimeout(boxTimer);
-            boxTimer = undefined;
+    const waitForWidth = () =>
+      new Promise<number>((resolve) => {
+        const finish = (width: number) => {
+          widthObserver?.disconnect();
+          widthObserver = null;
+          if (widthTimer !== undefined) {
+            window.clearTimeout(widthTimer);
+            widthTimer = undefined;
           }
-          const box = read();
-          resolve({
-            width: Math.max(box.width, 320),
-            height: box.height,
-          });
+          if (raf) window.cancelAnimationFrame(raf);
+          raf = 0;
+          resolve(width);
         };
-        const box = read();
-        if (box.width > 0 && box.height > 0) {
-          finish();
-          return;
-        }
-        boxObserver = new ResizeObserver(() => {
-          const next = read();
-          if (next.width > 0 && next.height > 0) finish();
+        const tick = () => {
+          const width = scroller.clientWidth;
+          if (width > 0) {
+            finish(width);
+            return;
+          }
+          raf = window.requestAnimationFrame(tick);
+        };
+        widthObserver = new ResizeObserver(() => {
+          if (scroller.clientWidth > 0) finish(scroller.clientWidth);
         });
-        boxObserver.observe(scroller);
-        if (host) boxObserver.observe(host);
-        boxTimer = window.setTimeout(finish, 8000);
+        widthObserver.observe(scroller);
+        tick();
+        widthTimer = window.setTimeout(() => finish(Math.max(scroller.clientWidth, 1)), 8000);
       });
 
     void (async () => {
+      if (!archiveId) throw new Error("This PDF restore is missing an archive id.");
+      const workerRes = await fetch(PDF_WORKER_SRC, { method: "HEAD", cache: "no-store" });
+      const workerOk = workerRes.ok
+        ? workerRes
+        : await fetch(PDF_WORKER_SRC, { cache: "force-cache" });
+      if (!workerOk.ok) throw new Error(`PDF worker missing (${workerOk.status} ${PDF_WORKER_SRC}).`);
+      const workerType = workerOk.headers.get("content-type") || "";
+      if (workerType.includes("text/html")) throw new Error("PDF worker URL returned HTML instead of JavaScript.");
       const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
       if (!response.ok) {
         throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
@@ -264,11 +285,12 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
       const blobUrl = URL.createObjectURL(blob);
       blobUrlRef.current = blobUrl;
       const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
       const doc = await pdfjs.getDocument({ url: blobUrl }).promise;
-      const box = await waitForScrollerBox();
+      if (doc.numPages < 1) throw new Error("That PDF has no pages.");
+      const width = await waitForWidth();
       if (cancelled) return;
-      const width = box.width;
+      if (width <= 0) throw new Error("The PDF pane has no width yet. Try Fullscreen or reload.");
       for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
         if (cancelled) return;
         const page = await doc.getPage(pageNumber);
@@ -279,7 +301,6 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
         wrap.className = "pdf-page";
         wrap.style.display = "block";
         wrap.style.width = "100%";
-        wrap.style.height = `${Math.ceil(unscaled.height * scale)}px`;
         const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
@@ -294,41 +315,35 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
         if (cancelled) return;
         scroller.appendChild(wrap);
       }
-      constrainScroller();
-      if (doc.numPages > 1 && scroller.scrollHeight <= scroller.clientHeight) {
-        const cap = host?.clientHeight || scroller.clientHeight;
-        if (cap > 0) {
-          scroller.style.height = `${cap}px`;
-          scroller.style.maxHeight = `${cap}px`;
-          scroller.style.minHeight = "0";
-          scroller.style.overflowY = "scroll";
-        }
-      }
-      if (doc.numPages > 1 && scroller.scrollHeight <= scroller.clientHeight) {
-        throw new Error("PDF pages did not overflow the reader pane. Reload and try again.");
-      }
+      const firstCanvas = scroller.querySelector("canvas");
+      const firstHeight = firstCanvas instanceof HTMLCanvasElement
+        ? firstCanvas.getBoundingClientRect().height || firstCanvas.height
+        : 0;
+      if (firstHeight <= 0) throw new Error("PDF pages rendered with no height.");
       if (!cancelled) {
         setLoading(false);
+        onReadyRef.current?.();
         scroller.focus();
       }
     })().catch((caught) => {
       if (cancelled) return;
+      const message = caught instanceof Error ? caught.message : "Could not load the PDF snapshot.";
       setLoading(false);
-      setError(caught instanceof Error ? caught.message : "Could not load the PDF snapshot.");
+      setError(message);
+      onFailedRef.current?.(message);
     });
     return () => {
       cancelled = true;
-      boxObserver?.disconnect();
-      if (boxTimer !== undefined) window.clearTimeout(boxTimer);
+      widthObserver?.disconnect();
+      if (widthTimer !== undefined) window.clearTimeout(widthTimer);
+      if (raf) window.cancelAnimationFrame(raf);
       scroller.replaceChildren();
-      scroller.style.height = "";
-      scroller.style.maxHeight = "";
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
     };
-  }, [fileUrl]);
+  }, [archiveId, fileUrl]);
 
   return (
     <div ref={hostRef} className="pdf-host bg-muted">
@@ -912,7 +927,11 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       if (event.key === "f") {
         if (!article) return;
         event.preventDefault();
-        setReaderFull((current) => !current);
+        if (article.offline_view === "pdf") {
+          void toggleBrowserFullscreen(".pdf-host, .reader-shell");
+        } else {
+          setReaderFull((current) => !current);
+        }
         return;
       }
       if (event.shiftKey && event.key.toLowerCase() === "l") {
@@ -1309,7 +1328,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     />
   );
 
-  const pdfRestoreOpen = Boolean(article?.offline_view === "pdf" && article.offline_archive_id);
+  const pdfRestoreOpen = article?.offline_view === "pdf";
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-[var(--storykeep-page-bg)]">
@@ -1443,10 +1462,16 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
               variant={readerFull ? "default" : "outline"}
               disabled={!article}
               title="Read this article full screen with every option still available"
-              onClick={() => setReaderFull((current) => !current)}
+              onClick={() => {
+                if (article?.offline_view === "pdf") {
+                  void toggleBrowserFullscreen(".pdf-host, .reader-shell");
+                  return;
+                }
+                setReaderFull((current) => !current);
+              }}
             >
               {readerFull ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
-              {readerFull ? "Exit" : "Full screen"}
+              {readerFull ? "Exit" : "Fullscreen"}
               <kbd className="text-[10px] text-muted-foreground">f</kbd>
             </Button>
           </div>
@@ -1706,6 +1731,9 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                   try {
                     const next = await api.restore(id, archiveId);
                     if (selectedIdRef.current !== id) return;
+                    if (next.offline_view === "pdf" && !next.offline_archive_id) {
+                      next.offline_archive_id = archiveId;
+                    }
                     setArticle(next);
                     setReaderScrollToken((current) => current + 1);
                     toast.success(
@@ -2509,9 +2537,25 @@ function Reader({
     null,
   );
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [pdfReady, setPdfReady] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [browserFs, setBrowserFs] = useState(false);
   const composed = isStoryKeepNote(article);
-  const pdfOffline =
-    !composed && article.offline_view === "pdf" && Boolean(article.offline_archive_id);
+  const pdfIntent = !composed && article.offline_view === "pdf";
+  const pdfArchiveId = article.offline_archive_id || "";
+  const pdfLocked = pdfIntent && pdfReady;
+
+  useEffect(() => {
+    setPdfReady(false);
+    setPdfError(pdfIntent && !pdfArchiveId ? "This PDF restore is missing an archive id." : null);
+  }, [article.id, pdfArchiveId, pdfIntent]);
+
+  useEffect(() => {
+    const onFs = () => setBrowserFs(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    onFs();
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
   const heroImage = composed ? null : articleHeroImageUrl(article.image_url, article.url);
   const html = composed ? composedNoteHtml(article) : articleReaderSource(article);
   const fallbackBody = composed
@@ -2665,7 +2709,7 @@ function Reader({
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;
-    if (pdfOffline) return;
+    if (pdfLocked) return;
     root.innerHTML = bodyHtml;
     if (bodyHtml) {
       wrapVisibleSpeechNodes(root, { skipTitle: article.title, skipAuthor: article.author });
@@ -2680,7 +2724,7 @@ function Reader({
     if (findMarksRef.current.length) {
       focusFindMark(findMarksRef.current, findIndex);
     }
-  }, [article.author, article.title, bodyHtml, findQuery, article.id, pdfOffline]);
+  }, [article.author, article.title, bodyHtml, findQuery, article.id, pdfLocked]);
 
   useEffect(() => {
     if (!findMarksRef.current.length) return;
@@ -2860,7 +2904,17 @@ function Reader({
           getVisibleSpeech={getVisibleSpeech}
           getVisibleSections={() => visibleSpeechSections(bodyRef.current)}
         />
-        <div className="mt-2 flex flex-wrap items-start gap-x-4 gap-y-1">
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+          {pdfIntent ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void toggleBrowserFullscreen(".pdf-host, .reader-shell")}
+            >
+              {browserFs ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              {browserFs ? "Exit" : "Fullscreen"}
+            </Button>
+          ) : null}
           {!composed && filedNotes.length > 0 ? (
             <label className="flex items-start gap-2 text-xs text-muted-foreground">
               <input
@@ -2914,31 +2968,47 @@ function Reader({
         ref={scrollRef}
         className={cn(
           "min-h-0 flex-1",
-          pdfOffline ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
+          pdfLocked ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
         )}
       >
       <article
         ref={articleRef}
         className={cn(
-          pdfOffline
+          pdfLocked
             ? "flex min-h-0 w-full max-w-none flex-1 flex-col overflow-hidden px-5 pt-4"
             : cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl"),
         )}
       >
-        <div className={pdfOffline ? "reader-chrome" : undefined}>
+        <div className={pdfIntent ? "reader-chrome" : undefined}>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <Button variant="ghost" className="lg:hidden -ml-2" onClick={onBack}>
             Back to list
           </Button>
-          {readerFull ? (
-            <Button variant="outline" size="sm" className="hidden lg:inline-flex" onClick={onToggleFull}>
+          {browserFs || (readerFull && !pdfIntent) ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden lg:inline-flex"
+              onClick={() => {
+                if (pdfIntent) void toggleBrowserFullscreen(".pdf-host, .reader-shell");
+                else onToggleFull();
+              }}
+            >
               <Minimize2 className="size-3.5" />
-              Exit full screen
+              Exit
             </Button>
           ) : (
-            <Button variant="outline" size="sm" className="hidden lg:inline-flex" onClick={onToggleFull}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden lg:inline-flex"
+              onClick={() => {
+                if (pdfIntent) void toggleBrowserFullscreen(".pdf-host, .reader-shell");
+                else onToggleFull();
+              }}
+            >
               <Maximize2 className="size-3.5" />
-              Full screen
+              Fullscreen
             </Button>
           )}
         </div>
@@ -3172,14 +3242,30 @@ function Reader({
         ) : null}
         </div>
         {composed ? <NoteAttachmentChips markdown={composedNoteMarkdown(article)} className="mb-4" /> : null}
-        {pdfOffline && article.offline_archive_id ? (
+        {pdfIntent ? (
           <>
             <p className="reader-chrome border-b bg-muted/30 px-0 py-2 text-xs text-muted-foreground">
               Offline view is this PDF snapshot. The article text was not replaced.
             </p>
-            <PdfSnapshotViewer archiveId={article.offline_archive_id} />
+            {pdfError && !pdfArchiveId ? (
+              <p className="reader-chrome px-0 py-2 text-sm text-destructive">{pdfError}</p>
+            ) : null}
+            {pdfArchiveId ? (
+              <PdfSnapshotViewer
+                archiveId={pdfArchiveId}
+                onReady={() => {
+                  setPdfReady(true);
+                  setPdfError(null);
+                }}
+                onFailed={(message) => {
+                  setPdfReady(false);
+                  setPdfError(message);
+                }}
+              />
+            ) : null}
           </>
-        ) : bodyHtml ? (
+        ) : null}
+        {!pdfLocked && bodyHtml ? (
           <div
             ref={bodyRef}
             className={cn("article-body", composed && "note-md", articleTextSizeClass(articleTextSize))}
@@ -3199,13 +3285,14 @@ function Reader({
               setPicker(next);
             }}
           />
-        ) : (
+        ) : null}
+        {!pdfLocked && !bodyHtml ? (
           <EmptyState
             title="Only the feed snippet is stored"
             body="The original page has not been extracted yet. Use Re-extract to pull the full article, or Snapshot to keep a copy."
           />
-        )}
-        {!pdfOffline ? (
+        ) : null}
+        {!pdfLocked ? (
           <>
         <Separator className="my-8" />
         <section className="space-y-4 pb-10">

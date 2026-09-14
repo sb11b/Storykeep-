@@ -235,6 +235,14 @@
   overflow: hidden;
   pointer-events: auto;
 }
+.pdf-host:fullscreen,
+.pdf-host:-webkit-full-screen,
+.reader-shell:fullscreen,
+.reader-shell:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+  background: var(--storykeep-page-bg, var(--background));
+}
 .pdf-scroller {
   box-sizing: border-box;
   flex: 1 1 auto;
