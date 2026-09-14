@@ -95,6 +95,54 @@ class RestoreSnapshotTests(unittest.TestCase):
         restored = readable_article_html(row.content, None, article.url)
         self.assertIn("Helium ash", restored)
 
+    def test_html_snapshot_strips_chrome_pixels_and_webfonts(self):
+        from app.services.archive import readable_article_html, snapshot_article
+
+        article = _article(
+            url="https://news.example.com/story",
+            content_html=(
+                "<html><head>"
+                "<link rel='stylesheet' href='https://fonts.googleapis.com/css?family=Merriweather'>"
+                "<style>@font-face { font-family: X; src: url(https://fonts.gstatic.com/s/x.woff2); }</style>"
+                "</head><body>"
+                "<nav class='site-nav'>Menu</nav>"
+                "<div class='cookie-banner'>We use cookies</div>"
+                "<div class='share-bar'>Share</div>"
+                "<aside class='related-rail'>More stories</aside>"
+                "<footer class='site-footer'>Company</footer>"
+                "<article>"
+                "<h2>Reactor</h2><p>Helium ash.</p><ul><li>One</li></ul>"
+                "<figure><img data-src='/pix/core.png' srcset='/pix/core.png 1x' alt='core'></figure>"
+                "<img src='//cdn.example.com/hero.jpg' alt='hero'>"
+                "<img src='http://news.example.com/wide.jpg' alt='wide'>"
+                "<img width='1' height='1' src='https://tracker.example/pixel.gif' alt=''>"
+                "</article></body></html>"
+            ),
+            content_text="Reactor Helium ash.",
+        )
+        row = snapshot_article(MagicMock(), article, "html")
+        self.assertIsNotNone(row)
+        assert row is not None
+        body = row.content or ""
+        self.assertIn("Helium ash", body)
+        self.assertIn("<h2>", body)
+        self.assertIn("<figure>", body)
+        self.assertNotIn("site-nav", body)
+        self.assertNotIn("cookie-banner", body)
+        self.assertNotIn("We use cookies", body)
+        self.assertNotIn("share-bar", body)
+        self.assertNotIn("related-rail", body)
+        self.assertNotIn("site-footer", body)
+        self.assertNotIn("fonts.googleapis", body)
+        self.assertNotIn("@font-face", body)
+        self.assertNotIn("pixel.gif", body)
+        self.assertIn("https://news.example.com/pix/core.png", body)
+        self.assertIn("https://cdn.example.com/hero.jpg", body)
+        self.assertIn("https://news.example.com/wide.jpg", body)
+        restored = readable_article_html(body, None, article.url)
+        self.assertIn("Helium ash", restored)
+        self.assertNotIn("cookie-banner", restored)
+
     def test_html_snapshot_empty_body_does_not_store_url(self):
         article = _article(content_html="", content_text="", summary="", url="https://example.com/x")
         self.assertIsNone(snapshot_article(MagicMock(), article, "html"))
@@ -117,6 +165,8 @@ class RestoreSnapshotTests(unittest.TestCase):
             restore_article_from_archive(MagicMock(), article, row)
         self.assertEqual(article.content_html, original)
         self.assertNotEqual(article.offline_view, "html")
+
+    def test_pdf_restore_keeps_html_and_sets_offline_view(self):
         previous = settings.data_dir
         article = _article()
         with TemporaryDirectory() as tmp:

@@ -292,6 +292,7 @@
   font-size: 1.125rem;
   line-height: 1.75;
   color: inherit;
+  overflow: visible;
 }
 .article-body.article-size-sm {
   font-size: 1rem;
@@ -381,6 +382,13 @@
   height: auto;
   border-radius: 0.5rem;
   margin: 1.25rem 0;
+}
+.article-img-fallback {
+  display: block;
+  max-width: 100%;
+  margin: 1.25rem 0;
+  color: var(--muted-foreground);
+  font-size: 0.9em;
 }
 .article-body mark,
 .article-body mark.hl,

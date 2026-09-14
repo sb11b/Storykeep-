@@ -1874,6 +1874,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                     void loadNav();
                   } catch (error) {
                     readerActionError(error, "Could not restore that snapshot");
+                    throw error;
                   }
                 }}
                 onTag={async (name) => {
@@ -2842,7 +2843,26 @@ function Reader({
     const root = bodyRef.current;
     if (!root) return;
     if (pdfLocked) return;
-    root.innerHTML = bodyHtml;
+    try {
+      root.innerHTML = bodyHtml;
+    } catch {
+      root.replaceChildren();
+      const notice = document.createElement("p");
+      notice.className = "text-sm text-destructive";
+      notice.textContent = "Could not render this HTML snapshot. The live article was kept.";
+      root.append(notice);
+      return;
+    }
+    root.querySelectorAll("img").forEach((node) => {
+      const img = node as HTMLImageElement;
+      img.addEventListener("error", () => {
+        const alt = (img.getAttribute("alt") || "Image unavailable").trim();
+        const fallback = document.createElement("span");
+        fallback.className = "article-img-fallback";
+        fallback.textContent = alt;
+        img.replaceWith(fallback);
+      });
+    });
     if (bodyHtml) {
       wrapVisibleSpeechNodes(root, { skipTitle: article.title, skipAuthor: article.author });
     }
@@ -3809,6 +3829,16 @@ function Reader({
                       .then(() => {
                         setRestoreOpen(false);
                         setPendingRestore(null);
+                        setHtmlSnapshotError(null);
+                      })
+                      .catch((error) => {
+                        if (snapshotKind(row) !== "pdf") {
+                          setHtmlSnapshotError(
+                            error instanceof Error
+                              ? error.message
+                              : "Could not restore that HTML snapshot. The live article was kept.",
+                          );
+                        }
                       })
                       .finally(() => setBusy(false));
                   }}

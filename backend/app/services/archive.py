@@ -23,28 +23,135 @@ from app.services.backup import object_store_ready, upload_object_file
 logger = logging.getLogger(__name__)
 _HTTP_URL = re.compile(r"^https?://", re.I)
 _HTML_MARK = re.compile(r"</?(?:p|h[1-6]|ul|ol|li|img|article|blockquote|figure|br|div)\b", re.I)
+_TRACKER_URL = re.compile(
+    r"(?:pixel|1x1|tracking|doubleclick|googletagmanager|google-analytics|"
+    r"facebook\.com/tr|scorecardresearch|quantserve|/beacon|analytics\.)",
+    re.I,
+)
+_WEBFONT_URL = re.compile(
+    r"(?:fonts\.googleapis|fonts\.gstatic|use\.typekit|typekit\.net|fonts\.adobe)",
+    re.I,
+)
+_SNAPSHOT_CHROME = (
+    "onetrust",
+    "cookiebot",
+    "cookie-banner",
+    "cookie_banner",
+    "cookie-notice",
+    "cookie-consent",
+    "consent-banner",
+    "gdpr",
+    "cc-banner",
+    "sp_message",
+    "privacy-banner",
+    "share-bar",
+    "sharebar",
+    "share-buttons",
+    "social-share",
+    "sharing-tools",
+    "related-rail",
+    "related_rail",
+    "related-stories",
+    "recirc",
+    "recommended-stories",
+    "site-nav",
+    "site-header",
+    "masthead",
+    "global-header",
+    "global-nav",
+    "site-footer",
+    "page-footer",
+    "footer-chrome",
+)
+_LAZY_SRC = ("data-src", "data-original", "data-lazy-src", "data-url")
+_LAZY_SRCSET = ("data-srcset", "data-lazy-srcset")
 PDF_SNAPSHOT_TYPES = {"pdf"}
 PDF_RENDERER = "weasyprint"
 
 
-def _absolutize_html_media(html: str, base_url: str) -> str:
-    if not html.strip() or not (base_url or "").strip():
-        return html
-    try:
-        root = lxml_html.fromstring(html)
-    except Exception:
-        return html
+def _https_abs(url: str, base_url: str) -> str:
+    value = (url or "").strip()
+    if not value or value.startswith(("data:", "mailto:", "javascript:", "#")):
+        return value
+    if value.startswith("//"):
+        value = "https:" + value
+    elif not _HTTP_URL.match(value):
+        value = urljoin(base_url or "", value)
+    if value.startswith("http://"):
+        value = "https://" + value[len("http://") :]
+    return value
+
+
+def _is_tracker_or_pixel(el: lxml_html.HtmlElement) -> bool:
+    width = (el.get("width") or "").strip().rstrip("px")
+    height = (el.get("height") or "").strip().rstrip("px")
+    if width == "1" and height == "1":
+        return True
+    src = el.get("src") or ""
+    srcset = el.get("srcset") or ""
+    hay = f"{src} {srcset} {(el.get('class') or '')} {(el.get('id') or '')}"
+    return bool(_TRACKER_URL.search(hay))
+
+
+def _drop_snapshot_chrome(root: lxml_html.HtmlElement) -> None:
+    drop: list[lxml_html.HtmlElement] = []
     for el in root.iter():
         if not isinstance(el.tag, str):
             continue
+        if el.tag in {"link", "style", "meta", "font"}:
+            drop.append(el)
+            continue
+        href = el.get("href") or ""
+        if el.tag == "a" and _WEBFONT_URL.search(href):
+            continue
+        hay = f"{(el.get('class') or '').lower()} {(el.get('id') or '').lower()} {href.lower()}"
+        if any(hint in hay for hint in _SNAPSHOT_CHROME):
+            if extractor._is_protected_article_node(el):
+                continue
+            drop.append(el)
+            continue
+        if el.tag in {"img", "source"} and _is_tracker_or_pixel(el):
+            drop.append(el)
+    for el in drop:
+        parent = el.getparent()
+        if parent is not None:
+            el.drop_tree()
+
+
+def _promote_lazy_media(root: lxml_html.HtmlElement, base_url: str) -> None:
+    for el in list(root.iter()):
+        if not isinstance(el.tag, str):
+            continue
+        if el.tag in {"img", "source", "video"}:
+            src = (el.get("src") or "").strip()
+            if not src:
+                for attr in _LAZY_SRC:
+                    candidate = (el.get(attr) or "").strip()
+                    if candidate:
+                        el.set("src", candidate)
+                        break
+            srcset = (el.get("srcset") or "").strip()
+            if not srcset:
+                for attr in _LAZY_SRCSET:
+                    candidate = (el.get(attr) or "").strip()
+                    if candidate:
+                        el.set("srcset", candidate)
+                        break
+            for attr in (*_LAZY_SRC, *_LAZY_SRCSET):
+                if attr in el.attrib:
+                    el.attrib.pop(attr, None)
         for attr in ("src", "href"):
             value = el.get(attr)
-            if not value or value.startswith(("data:", "mailto:", "javascript:")):
+            if not value or value.startswith(("data:", "mailto:", "javascript:", "#")):
                 continue
-            if value.startswith("//"):
-                el.set(attr, "https:" + value)
-            elif not _HTTP_URL.match(value):
-                el.set(attr, urljoin(base_url, value))
+            if _WEBFONT_URL.search(value):
+                if attr == "href" and el.tag == "link":
+                    parent = el.getparent()
+                    if parent is not None:
+                        el.drop_tree()
+                    break
+                continue
+            el.set(attr, _https_abs(value, base_url))
         srcset = el.get("srcset")
         if not srcset:
             continue
@@ -54,14 +161,42 @@ def _absolutize_html_media(html: str, base_url: str) -> str:
             if not item:
                 continue
             bits = item.split()
-            url = bits[0]
+            url = _https_abs(bits[0], base_url)
+            if url.startswith("data:") or _TRACKER_URL.search(url):
+                continue
             rest = " ".join(bits[1:])
-            if url.startswith("//"):
-                url = "https:" + url
-            elif not _HTTP_URL.match(url) and not url.startswith("data:"):
-                url = urljoin(base_url, url)
             parts.append(f"{url} {rest}".strip())
-        el.set("srcset", ", ".join(parts))
+        if parts:
+            el.set("srcset", ", ".join(parts))
+        elif "srcset" in el.attrib:
+            el.attrib.pop("srcset", None)
+
+
+def _prefer_article_fragment(root: lxml_html.HtmlElement) -> lxml_html.HtmlElement:
+    best: lxml_html.HtmlElement | None = None
+    best_len = 0
+    for query in extractor._MAIN_QUERIES:
+        for node in root.xpath(query):
+            text = (node.text_content() or "").strip()
+            if len(text) > best_len:
+                best_len = len(text)
+                best = node
+    if best is not None and best_len >= 80:
+        return best
+    return root
+
+
+def _polish_html_snapshot(html: str, base_url: str) -> str:
+    if not html.strip():
+        return html
+    try:
+        root = lxml_html.fromstring(html)
+    except Exception:
+        return html
+    _drop_snapshot_chrome(root)
+    root = _prefer_article_fragment(root)
+    _promote_lazy_media(root, base_url)
+    _drop_snapshot_chrome(root)
     return lxml_html.tostring(root, encoding="unicode")
 
 
@@ -78,19 +213,19 @@ def readable_article_html(html: str | None, text: str | None, base_url: str | No
     raw = (html or "").strip()
     base = (base_url or "").strip()
     if raw and _HTML_MARK.search(raw):
-        cleaned = extractor._sanitize_html(raw)
-        cleaned = _absolutize_html_media(cleaned, base)
+        prepared = extractor._prepare_html(raw)
+        cleaned = _polish_html_snapshot(extractor._sanitize_html(prepared), base)
         if _html_has_readable_structure(cleaned):
             return cleaned
-        kept = _absolutize_html_media(raw, base)
-        if _html_has_readable_structure(kept):
-            return kept
+        fallback = _polish_html_snapshot(extractor._sanitize_html(raw), base)
+        if _html_has_readable_structure(fallback):
+            return fallback
     prose = (text or "").strip()
     if prose:
         wrapped = extractor._text_to_html(prose) or extractor._sanitize_html(f"<p>{html_lib.escape(prose)}</p>")
-        return extractor._sanitize_html(wrapped)
+        return _polish_html_snapshot(extractor._sanitize_html(wrapped), base)
     if raw:
-        return extractor._sanitize_html(raw)
+        return _polish_html_snapshot(extractor._sanitize_html(raw), base)
     return ""
 
 _PDF_PAGE_CSS = """
@@ -247,7 +382,10 @@ def restore_article_from_archive(db: Session, article: Article, row: Archive) ->
 
     snapshot_article(db, article, "html")
     raw = row.content or ""
-    html = readable_article_html(raw, None, getattr(article, "url", None))
+    try:
+        html = readable_article_html(raw, None, getattr(article, "url", None))
+    except Exception as exc:
+        raise ValueError("That HTML snapshot could not be restored.") from exc
     if not html.strip():
         raise ValueError("That HTML snapshot has no readable article.")
     text = extractor._clean_text(extractor._strip_tags(html)) if html else ""
