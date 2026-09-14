@@ -68,7 +68,8 @@ class ChatGuardTests(unittest.TestCase):
         self.assertNotIn("denylist", lower)
         self.assertNotIn("according to the system", lower)
         self.assertNotIn("system instructions", lower)
-        self.assertIn("bald", lower)
+        self.assertIn("add to notes", lower)
+        self.assertIn("word next to copy", lower)
 
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"

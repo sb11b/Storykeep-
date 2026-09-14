@@ -1,7 +1,7 @@
 "use client";
 
-import { type MouseEvent, useEffect, useRef } from "react";
-import { Copy, Download, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { Copy, Download, FileDown, LoaderCircle, NotebookPen, Paperclip, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { onCodeCopyClick } from "@/lib/code-copy";
@@ -9,7 +9,7 @@ import { downloadChatPicture, resolveChatImageSrc } from "@/lib/chat-media-downl
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
-import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
+import { downloadChatMessageDocx, isPersistedMessageId } from "@/lib/chat-message-docx";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
@@ -88,6 +88,7 @@ export function GrokChatMessage({
   activeWord,
   statusLine,
   routeLabel,
+  wordEnabled = true,
   onRegisterBody,
   onListen,
   onAddToNotes,
@@ -109,6 +110,7 @@ export function GrokChatMessage({
   statusLine?: string | null;
   /** Auto routing, e.g. "Auto → 4.6 · low". Not inside the Listen body. */
   routeLabel?: string | null;
+  wordEnabled?: boolean;
   onRegisterBody?: (messageId: string, element: HTMLElement | null) => void;
   /** `trigger` is the Listen button, so the reply body is one closest() away. */
   onListen?: (messageId: string, trigger: HTMLElement) => void;
@@ -116,6 +118,9 @@ export function GrokChatMessage({
   onRetry?: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [savingWord, setSavingWord] = useState(false);
+  const canDownloadWord =
+    wordEnabled && role === "assistant" && Boolean(content) && !failed && !waiting && isPersistedMessageId(id);
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -259,6 +264,24 @@ export function GrokChatMessage({
           >
             <Copy className="size-3" />
             Copy
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!canDownloadWord || savingWord}
+            onClick={() => {
+              if (!canDownloadWord || savingWord) return;
+              setSavingWord(true);
+              void downloadChatMessageDocx(id)
+                .then(() => toast.success("Saved Word file"))
+                .catch((error) => {
+                  toast.error(error instanceof Error ? error.message : "Could not download that Word file.");
+                })
+                .finally(() => setSavingWord(false));
+            }}
+          >
+            {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
+            Word
           </Button>
           <Button size="xs" variant="outline" onClick={() => onAddToNotes(content)}>
             <NotebookPen className="size-3" />

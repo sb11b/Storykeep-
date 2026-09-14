@@ -66,6 +66,20 @@ def get_conversation(db: Session, user: User, conversation_id: UUID) -> GrokConv
     return row
 
 
+def owned_assistant_message(db: Session, user: User, message_id: UUID) -> GrokMessage:
+    row = db.scalar(
+        select(GrokMessage)
+        .join(GrokConversation, GrokMessage.conversation_id == GrokConversation.id)
+        .where(
+            GrokMessage.id == message_id,
+            GrokConversation.user_id == user.id,
+        )
+    )
+    if not row or row.role != "assistant":
+        raise HTTPException(status_code=404, detail="Message not found.")
+    return row
+
+
 def create_conversation(
     db: Session,
     user: User,

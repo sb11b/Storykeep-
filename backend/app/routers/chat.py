@@ -8,7 +8,7 @@ from uuid import UUID
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConv
 from app.services import chat as chat_service
 from app.services import chat_attachments
 from app.services import chat_image
+from app.services import chat_docx
 from app.services import grok_conversations as grok_store
 from app.services import imagine as imagine_service
 from app.services.demo_lock import is_locked, reject_locked
@@ -200,6 +201,32 @@ def delete_conversation(
     grok_store.delete_conversation(db, user, conversation_id)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/chat/messages/{message_id}/docx")
+def download_message_docx(
+    message_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    reject_locked(user)
+    if not grok_store.should_persist(user):
+        raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
+    row = grok_store.owned_assistant_message(db, user, message_id)
+    try:
+        payload = chat_docx.build_message_docx(row.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = chat_docx.docx_filename(row.content).replace('"', "")
+    return Response(
+        content=payload,
+        media_type=chat_docx.DOCX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/chat/imagine")

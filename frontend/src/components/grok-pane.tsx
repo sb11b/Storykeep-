@@ -1379,6 +1379,7 @@ export function GrokPane({
                 activeWord={listenTarget?.id === item.id ? activeWord : null}
                 assistantName={label}
                 files={item.files}
+                wordEnabled={!locked}
                 routeLabel={item.role === "assistant" ? item.routeLabel : null}
                 statusLine={
                   item.role === "assistant" &&
