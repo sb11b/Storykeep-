@@ -163,45 +163,73 @@ function snapshotStamp(iso: string): string {
 
 function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
   const fileUrl = `/api/v1/archives/${archiveId}/file`;
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
     let cancelled = false;
-    let created: string | null = null;
+    scroller.replaceChildren();
     setError(null);
-    setBlobUrl(null);
-    void fetch(fileUrl, { credentials: "include", cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
-        }
-        const blob = await response.blob();
-        const next = URL.createObjectURL(blob);
-        if (cancelled) {
-          URL.revokeObjectURL(next);
-          return;
-        }
-        created = next;
-        setBlobUrl(next);
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load the PDF snapshot.");
-      });
+    setLoading(true);
+    void (async () => {
+      const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
+      }
+      const data = new Uint8Array(await response.arrayBuffer());
+      if (data.byteLength < 5 || String.fromCharCode(data[0], data[1], data[2], data[3]) !== "%PDF") {
+        throw new Error("That snapshot is not a readable PDF.");
+      }
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      const doc = await pdfjs.getDocument({ data }).promise;
+      const width = Math.max(scroller.clientWidth || 720, 320);
+      for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+        if (cancelled) return;
+        const page = await doc.getPage(pageNumber);
+        const unscaled = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: width / unscaled.width });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Could not draw the PDF snapshot.");
+        await page.render({ canvasContext: context, viewport }).promise;
+        if (cancelled) return;
+        scroller.appendChild(canvas);
+      }
+      if (!cancelled) {
+        setLoading(false);
+        scroller.focus();
+      }
+    })().catch((caught) => {
+      if (cancelled) return;
+      setLoading(false);
+      setError(caught instanceof Error ? caught.message : "Could not load the PDF snapshot.");
+    });
     return () => {
       cancelled = true;
-      if (created) URL.revokeObjectURL(created);
+      scroller.replaceChildren();
     };
   }, [fileUrl]);
 
   return (
     <div className="pdf-host bg-muted">
       {error ? <p className="reader-chrome px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      {blobUrl ? (
-        <iframe title="PDF snapshot" src={blobUrl} />
-      ) : error ? null : (
+      {loading && !error ? (
         <p className="reader-chrome px-3 py-2 text-sm text-muted-foreground">Loading PDF snapshot…</p>
-      )}
+      ) : null}
+      <div
+        ref={scrollerRef}
+        className="pdf-scroller"
+        tabIndex={0}
+        role="region"
+        aria-label="PDF snapshot"
+        onMouseEnter={() => scrollerRef.current?.focus()}
+      />
     </div>
   );
 }
