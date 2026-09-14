@@ -163,6 +163,26 @@ test("readGrokChatStream parses a leftover event without a blank line", async ()
   assert.deepEqual(parts, ["Hi"]);
 });
 
+test("readGrokChatStream forwards working then writing stream_status", async () => {
+  const meta: Array<{ stream_status?: string; reasoning_effort?: string; model?: string }> = [];
+  const parts: string[] = [];
+  await readGrokChatStream(
+    sseResponse([
+      'data: {"stream_status":"working","model":"grok-4.6","reasoning_effort":"low"}\n\n',
+      'data: {"stream_status":"writing","delta":"Hi"}\n\n',
+      "data: [DONE]\n\n",
+    ]),
+    {
+      onDelta: (text) => parts.push(text),
+      onMeta: (item) => meta.push(item),
+    },
+  );
+  assert.equal(meta[0]?.stream_status, "working");
+  assert.equal(meta[0]?.reasoning_effort, "low");
+  assert.equal(meta[1]?.stream_status, "writing");
+  assert.deepEqual(parts, ["Hi"]);
+});
+
 test("readGrokChatStream forwards generating stream_status", async () => {
   const meta: Array<{ stream_status?: string; reasoning_effort?: string }> = [];
   const parts: string[] = [];

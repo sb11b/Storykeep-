@@ -35,7 +35,7 @@ def _app() -> FastAPI:
 
 
 class ChatSilentGateTests(unittest.TestCase):
-    def test_silent_xai_returns_504_json_not_sse(self):
+    def test_silent_xai_streams_working_then_error(self):
         async def silent(*_args, **_kwargs):
             raise HTTPException(status_code=504, detail=chat_service.XAI_SILENT_DETAIL)
             yield ""  # pragma: no cover
@@ -52,9 +52,11 @@ class ChatSilentGateTests(unittest.TestCase):
                 "/api/v1/chat",
                 json={"message": "hello", "model": "auto", "reasoning_effort": "auto"},
             )
-        self.assertEqual(response.status_code, 504)
-        self.assertEqual(response.json(), {"message": "xAI silent"})
-        self.assertNotIn("text/event-stream", response.headers.get("content-type", ""))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/event-stream", response.headers.get("content-type", ""))
+        self.assertIn('"stream_status": "working"', response.text)
+        self.assertIn('"reasoning_effort": "low"', response.text)
+        self.assertIn("xAI silent", response.text)
 
     def test_hello_auto_sends_grok46_low(self):
         captured: dict = {}
@@ -79,6 +81,8 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertIn("text/event-stream", response.headers.get("content-type", ""))
         self.assertEqual(captured.get("model"), "grok-4.6")
         self.assertEqual(captured.get("reasoning_effort"), "low")
+        self.assertIn('"stream_status": "working"', response.text)
+        self.assertIn('"stream_status": "writing"', response.text)
         self.assertIn("Hi", response.text)
 
     def test_chat_health_includes_xai_status(self):

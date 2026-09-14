@@ -16,8 +16,8 @@ test("autoRouteLabel is the reply badge", () => {
   assert.equal(autoRouteLabel("grok-4.6", "grok-4.6", "low"), null);
 });
 
-test("spendChipLabel always prints model and reasoning", () => {
-  assert.equal(spendChipLabel("grok-4.6", "low"), "this turn · grok-4.6 · low");
-  assert.equal(spendChipLabel("grok-4.6", "xhigh"), "this turn · grok-4.6 · xhigh");
-  assert.equal(spendChipLabel(null, null), "this turn · grok-4.6 · low");
+test("spendChipLabel is the POSTed model · reasoning", () => {
+  assert.equal(spendChipLabel("grok-4.6", "low"), "4.6 · low");
+  assert.equal(spendChipLabel("grok-4.6", "xhigh"), "4.6 · xhigh");
+  assert.equal(spendChipLabel(null, null), "4.6 · low");
 });

@@ -253,6 +253,8 @@ export function GrokPane({
 
   const applyStreamStatus = useCallback(
     (kind: ChatStatusKind | null) => {
+      if (kind === "thinking" && gotDeltaRef.current) return;
+      if (kind === "working" && (gotDeltaRef.current || generatingRef.current)) return;
       if (kind === "writing" || kind === "generating" || kind == null) {
         if (thinkingTimerRef.current != null) {
           window.clearTimeout(thinkingTimerRef.current);
@@ -293,12 +295,12 @@ export function GrokPane({
   }, [clearStreamStatus, dictation, onUpdate]);
 
   const beginStreamStatus = useCallback(() => {
-    if (thinkingTimerRef.current != null) window.clearTimeout(thinkingTimerRef.current);
+    if (thinkingTimerRef.current != null) {
+      window.clearTimeout(thinkingTimerRef.current);
+      thinkingTimerRef.current = null;
+    }
     gotDeltaRef.current = false;
     applyStreamStatus("working");
-    thinkingTimerRef.current = window.setTimeout(() => {
-      if (!gotDeltaRef.current) applyStreamStatus("thinking");
-    }, 250);
   }, [applyStreamStatus]);
 
   const markWriting = useCallback(() => {
@@ -597,10 +599,13 @@ export function GrokPane({
           }));
         },
         (meta) => {
-          if (meta.stream_status === "generating") {
-            applyStreamStatus("generating");
-          } else if (!gotDeltaRef.current) {
-            applyStreamStatus("thinking");
+          if (
+            meta.stream_status === "working" ||
+            meta.stream_status === "thinking" ||
+            meta.stream_status === "writing" ||
+            meta.stream_status === "generating"
+          ) {
+            applyStreamStatus(meta.stream_status);
           }
           onUpdate((current) => {
             let next = current;

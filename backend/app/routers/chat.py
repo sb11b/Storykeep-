@@ -720,91 +720,71 @@ async def chat(
         extra_system=UNREAD_READER_SYSTEM if unread_catalog else None,
         cancelled=cancelled,
     )
-    try:
-        first_piece = await anext(stream)
-    except StopAsyncIteration:
-        raise HTTPException(status_code=504, detail=chat_service.XAI_SILENT_DETAIL)
 
     async def watch_disconnect() -> None:
         try:
-            while True:
+            while not cancelled.is_set():
                 if await request.is_disconnected():
                     cancelled.set()
                     return
                 await asyncio.sleep(0.05)
         except asyncio.CancelledError:
-            raise
+            return
 
     async def events():
         assistant_parts: list[str] = []
         started = time.perf_counter()
         ttft_ms: int | None = None
         flushed = False
+        saw_text = False
         watch = asyncio.create_task(watch_disconnect())
 
-        def _log(reason: str) -> None:
-            logger.info(
-                "larry-chat ttft_ms=%s flushed=%s reason=%s model=%s reasoning_effort=%s user=%s conversation=%s chars=%s",
-                ttft_ms if ttft_ms is not None else -1,
-                flushed,
-                reason,
-                resolved_model,
-                resolved_reasoning,
-                user_id,
-                conversation_id,
-                sum(len(part) for part in assistant_parts),
-            )
-
         async def emit_delta(piece: str) -> None:
-            nonlocal ttft_ms, flushed
+            nonlocal ttft_ms, flushed, saw_text
             if not piece:
                 return
             assistant_parts.append(piece)
             if ttft_ms is None:
                 ttft_ms = int((time.perf_counter() - started) * 1000)
             flushed = True
+            saw_text = True
 
         try:
             yield chat_service.SSE_PADDING
             await asyncio.sleep(0)
-            meta = {
-                "conversation_id": str(conversation_id) if conversation_id else None,
-                "user_message_id": str(user_message_id) if user_message_id else None,
+            open_meta: dict[str, object] = {
+                "stream_status": "working",
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
                 **include_meta,
             }
-            if persist and conversation_id and user_message_id:
-                yield chat_service.encode_sse({k: v for k, v in meta.items() if v is not None})
-            else:
-                yield chat_service.encode_sse(
-                    {
-                        "model": resolved_model,
-                        "model_choice": model_choice,
-                        "reasoning_effort": resolved_reasoning,
-                        **{k: v for k, v in include_meta.items() if v is not None},
-                    }
-                )
+            if persist and conversation_id:
+                open_meta["conversation_id"] = str(conversation_id)
+            if persist and user_message_id:
+                open_meta["user_message_id"] = str(user_message_id)
+            yield chat_service.encode_sse({key: value for key, value in open_meta.items() if value is not None})
             await asyncio.sleep(0)
-            await emit_delta(first_piece)
-            if first_piece:
-                yield chat_service.encode_sse({"delta": first_piece})
-                await asyncio.sleep(0)
             async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():
                     cancelled.set()
                     if piece:
                         assistant_parts.append(piece)
-                    _log("aborted")
                     _persist_assistant("".join(assistant_parts))
                     return
+                if not piece:
+                    if not saw_text:
+                        yield chat_service.encode_sse({"stream_status": "thinking"})
+                        await asyncio.sleep(0)
+                    continue
+                first = not saw_text
                 await emit_delta(piece)
-                if piece:
-                    yield chat_service.encode_sse({"delta": piece})
-                    await asyncio.sleep(0)
+                payload: dict[str, object] = {"delta": piece}
+                if first:
+                    payload["stream_status"] = "writing"
+                yield chat_service.encode_sse(payload)
+                await asyncio.sleep(0)
             if cancelled.is_set() or await request.is_disconnected():
-                _log("aborted")
                 _persist_assistant("".join(assistant_parts))
                 return
             if persist and conversation_id:
@@ -821,12 +801,10 @@ async def chat(
                         }
                     )
             yield chat_service.encode_sse("[DONE]")
-            _log("done")
         except HTTPException as exc:
             status_code, detail = chat_service.http_exception_detail(exc)
             partial_text = "".join(assistant_parts)
             flushed = flushed or bool(partial_text)
-            _log(f"http-{status_code}")
             saved_id = _persist_assistant(partial_text) if persist else None
             if saved_id and conversation_id:
                 yield chat_service.encode_sse(
@@ -844,20 +822,16 @@ async def chat(
             )
         except asyncio.CancelledError:
             partial_text = "".join(assistant_parts)
-            flushed = flushed or bool(partial_text)
-            _log("cancelled")
             _persist_assistant(partial_text)
             raise
         except Exception as exc:
             partial_text = "".join(assistant_parts)
-            flushed = flushed or bool(partial_text)
             logger.exception(
                 "Chat stream unexpected error user=%s conversation=%s partial_chars=%s",
                 user_id,
                 conversation_id,
                 len(partial_text),
             )
-            _log("error")
             saved_id = _persist_assistant(partial_text) if persist else None
             if saved_id and conversation_id:
                 yield chat_service.encode_sse(
@@ -874,8 +848,8 @@ async def chat(
             cancelled.set()
             watch.cancel()
             try:
-                await watch
-            except (asyncio.CancelledError, Exception):
+                await asyncio.wait_for(watch, timeout=0.2)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
 
     return StreamingResponse(

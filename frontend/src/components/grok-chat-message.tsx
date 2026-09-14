@@ -164,7 +164,7 @@ export function GrokChatMessage({
   listening?: boolean;
   activeWord?: number | null;
   statusLine?: string | null;
-  /** Auto routing, e.g. "Auto → 4.6 · low". Not inside the Listen body. */
+  /** Auto routing, e.g. "4.6 · low". Not inside the Listen body. */
   routeLabel?: string | null;
   includeChip?: string | null;
   onNextChunk?: () => void;

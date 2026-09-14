@@ -434,6 +434,13 @@ def _auth_headers(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
+def posted_spend_label(model: str | None, reasoning: str | None) -> str:
+    raw = (model or CURRENT_CHAT_MODEL).strip() or CURRENT_CHAT_MODEL
+    short = raw[5:] if raw.lower().startswith("grok-") else raw
+    effort = (reasoning or DEFAULT_REASONING_EFFORT).strip() or DEFAULT_REASONING_EFFORT
+    return f"{short} · {effort}"
+
+
 def _xai_ttft_log(
     *,
     ok: bool,
@@ -442,13 +449,12 @@ def _xai_ttft_log(
     reasoning: str,
     xai_status: int | str | None,
 ) -> None:
-    """Timing/status only — never pass headers or the API key."""
+    """One line per turn: spend chip text plus timing. Never logs headers or the API key."""
     fields = (
-        "xai %s ttft_ms=%s model=%s reasoning=%s xai_status=%s",
-        "ok" if ok else "silent",
+        "xAI %s ttft_ms=%s flushed=%s xai_status=%s",
+        posted_spend_label(model, reasoning),
         ttft_ms if ttft_ms is not None else -1,
-        model,
-        reasoning,
+        "ok" if ok else "silent",
         xai_status,
     )
     if ok:
@@ -858,15 +864,6 @@ async def stream_completion(
     key = require_key()
     model = rewrite_xai_model(model)
     reasoning_effort = clamp_reasoning_effort(model, reasoning_effort)
-    latest_user = next((_content_text(item.get("content")) for item in reversed(history) if item.get("role") == "user"), "")
-    logger.info(
-        "xAI chat start model=%s reasoning_effort=%s choice=%s user=%s chars=%s",
-        model,
-        reasoning_effort,
-        model_choice,
-        user_id,
-        len(latest_user or ""),
-    )
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
     payload = attach_reasoning_effort(
         {

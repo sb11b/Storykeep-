@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api";
 import { formatChatError } from "@/lib/grok-chat-error";
+import { spendChipLabel } from "@/lib/grok-model";
 
 /** Client slack over the server's 8s first-byte cut so "xAI silent" can arrive. */
 export const GROK_STREAM_FIRST_BYTE_MS = 12_000;
@@ -152,6 +153,16 @@ export async function readGrokChatStream(
   const startedAt = Date.now();
   let lastActivityAt = Date.now();
   let firstDeltaAt: number | null = null;
+  let postedModel: string | undefined;
+  let postedReasoning: string | undefined;
+  const wrapped: GrokStreamHandlers = {
+    onDelta: handlers.onDelta,
+    onMeta: (meta) => {
+      if (meta.model) postedModel = meta.model;
+      if (meta.reasoning_effort) postedReasoning = meta.reasoning_effort;
+      handlers.onMeta?.(meta);
+    },
+  };
 
   const throwIfAborted = () => {
     if (signal?.aborted) throw new DOMException("Chat aborted", "AbortError");
@@ -219,7 +230,7 @@ export async function readGrokChatStream(
       for (const part of parts) {
         if (!part.trim()) continue;
         try {
-          const outcome = parseSsePart(part, handlers, receivedDelta, idle);
+          const outcome = parseSsePart(part, wrapped, receivedDelta, idle);
           if (receivedDelta.value) {
             lastActivityAt = Date.now();
             if (firstDeltaAt == null) firstDeltaAt = lastActivityAt;
@@ -237,7 +248,7 @@ export async function readGrokChatStream(
     }
     if (buffer.trim()) {
       try {
-        parseSsePart(buffer, handlers, receivedDelta, idle);
+        parseSsePart(buffer, wrapped, receivedDelta, idle);
         if (receivedDelta.value && firstDeltaAt == null) firstDeltaAt = Date.now();
       } catch (error) {
         if (error instanceof ApiError) throw error;
@@ -248,7 +259,7 @@ export async function readGrokChatStream(
     }
   } finally {
     const ttftMs = firstDeltaAt != null ? firstDeltaAt - startedAt : -1;
-    console.info("larry-chat", { ttft_ms: ttftMs, flushed: receivedDelta.value });
+    console.info("xAI", spendChipLabel(postedModel, postedReasoning), { ttft_ms: ttftMs, flushed: receivedDelta.value });
     try {
       await reader.cancel();
     } catch {
