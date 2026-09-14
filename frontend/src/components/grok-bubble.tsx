@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { JuniorJobsPanel } from "@/components/junior-jobs-panel";
@@ -30,6 +30,7 @@ import {
   type ResizeEdge,
 } from "@/lib/grok-panel-resize";
 import { cn } from "@/lib/utils";
+import { loadJuniorRailHidden, saveJuniorRailHidden } from "@/lib/junior-rail";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
 const PANEL_KEY = "storykeep-grok-panel";
@@ -132,6 +133,9 @@ export function GrokBubble({
   const paneLabelsLoadedRef = useRef(false);
   const [customShelves, setCustomShelves] = useState<CustomNoteShelf[]>([]);
   const [listening, setListening] = useState(false);
+  const [railHidden, setRailHidden] = useState(() => loadJuniorRailHidden());
+  const historyListRef = useRef<HTMLDivElement>(null);
+  const jobsRailRef = useRef<HTMLElement | null>(null);
   const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
   const movedRef = useRef(false);
@@ -246,8 +250,8 @@ export function GrokBubble({
 
   useEffect(() => {
     if (!mounted) return;
-    window.localStorage.setItem(PANEL_KEY, JSON.stringify(size));
-  }, [mounted, size]);
+    saveJuniorRailHidden(railHidden);
+  }, [mounted, railHidden]);
 
   useEffect(() => {
     function onWindowResize() {
@@ -506,15 +510,92 @@ export function GrokBubble({
     };
   }
 
+  function showHistoryList() {
+    setRailHidden(false);
+    window.setTimeout(() => historyListRef.current?.scrollIntoView({ block: "nearest" }), 50);
+  }
+
+  function showJobsList() {
+    setRailHidden(false);
+    window.setTimeout(() => jobsRailRef.current?.scrollIntoView({ block: "nearest" }), 50);
+  }
+
+  const showJobsRail = Boolean(fullscreen && persist && !locked);
+
+  const collapsedIconBtn =
+    "h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground";
+
   const historySidebar = persist ? (
+    railHidden ? (
+      <aside className="flex w-11 shrink-0 flex-col items-center gap-1 border-r bg-muted/15 py-1">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={collapsedIconBtn}
+          aria-label="Show panels"
+          title="Show panels"
+          onClick={() => setRailHidden(false)}
+        >
+          <ChevronRight className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={collapsedIconBtn}
+          aria-label="New chat"
+          title="New chat"
+          onClick={startNewChat}
+        >
+          <MessageSquarePlus className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={collapsedIconBtn}
+          aria-label="History"
+          title="History"
+          onClick={showHistoryList}
+        >
+          <History className="size-3.5" />
+        </Button>
+        {showJobsRail ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className={collapsedIconBtn}
+            aria-label="Jobs"
+            title="Jobs"
+            onClick={showJobsList}
+          >
+            <CalendarClock className="size-3.5" />
+          </Button>
+        ) : null}
+      </aside>
+    ) : (
     <aside className="flex w-44 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
-      <div className="shrink-0 border-b p-2">
-        <Button size="sm" variant="secondary" className="h-7 w-full gap-1 text-xs" onClick={startNewChat}>
+      <div className="flex shrink-0 items-center gap-1 border-b p-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 shrink-0 gap-0.5 px-1.5 text-[11px]"
+          aria-label="Hide panels"
+          title="Hide panels"
+          onClick={() => setRailHidden(true)}
+        >
+          <ChevronLeft className="size-3.5" />
+          Hide
+        </Button>
+        <Button size="sm" variant="secondary" className="h-7 min-w-0 flex-1 gap-1 px-1.5 text-xs" onClick={startNewChat}>
           <MessageSquarePlus className="size-3.5" />
           New chat
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
+      <div ref={historyListRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
         {historyLoading ? (
           <p className="flex items-center gap-1 px-2 py-2 text-[11px] text-muted-foreground">
             <LoaderCircle className="size-3 animate-spin" />
@@ -594,6 +675,7 @@ export function GrokBubble({
         )}
       </div>
     </aside>
+    )
   ) : null;
 
   const onPointerMove = useCallback(
@@ -793,11 +875,12 @@ export function GrokBubble({
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {historySidebar}
-        {fullscreen && persist && !locked ? (
+        {!railHidden && fullscreen && persist && !locked ? (
           <JuniorJobsPanel
             conversationId={focusedPane.conversationId}
             articleId={articleId}
             customShelves={customShelves}
+            railRef={jobsRailRef}
             onRanConversation={(id) => {
               void loadConversation(id);
               void refreshHistory();
@@ -805,11 +888,11 @@ export function GrokBubble({
           />
         ) : null}
         {fullscreen ? (
-          <div className="grid min-h-0 flex-1 gap-px bg-border" style={paneGridStyle(panes.length)}>
+          <div className="grid min-h-0 min-w-0 flex-1 gap-px overflow-hidden bg-border" style={paneGridStyle(panes.length)}>
             {panes.map((pane, index) => (
               <div
                 key={pane.id}
-                className="min-h-0 overflow-hidden bg-popover"
+                className="min-h-0 min-w-0 overflow-hidden bg-popover"
                 style={paneCellStyle(panes.length, index)}
               >
                 <GrokPane
@@ -846,6 +929,7 @@ export function GrokBubble({
             ))}
           </div>
         ) : (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <GrokPane
             key={focusedPane.id}
             pane={focusedPane}
@@ -873,6 +957,7 @@ export function GrokBubble({
             customShelves={customShelves}
             onCreateNoteShelf={createNoteShelf}
           />
+          </div>
         )}
       </div>
 

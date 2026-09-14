@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type Ref } from "react";
 import { LoaderCircle, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -30,11 +30,13 @@ export function JuniorJobsPanel({
   articleId,
   customShelves,
   onRanConversation,
+  railRef,
 }: {
   conversationId: string | null;
   articleId: string | null;
   customShelves: CustomNoteShelf[];
   onRanConversation: (conversationId: string) => void;
+  railRef?: Ref<HTMLElement | null>;
 }) {
   const [jobs, setJobs] = useState<JuniorJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,7 +149,7 @@ export function JuniorJobsPanel({
   }
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
+    <aside ref={railRef} className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
       <div className="flex shrink-0 items-center justify-between gap-1 border-b p-2">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Jobs</p>
         <Button size="xs" variant="outline" onClick={() => setCreating((open) => !open)}>
