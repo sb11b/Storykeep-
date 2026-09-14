@@ -101,24 +101,23 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertEqual(kwargs["reasoning_effort"], "low")
 
     @patch("app.services.junior_jobs.chat_service.complete_once")
-    def test_job_with_search_sends_web_search(self, complete):
-        complete.return_value = {"text": "Reuters homepage: …", "model": "grok-4.6", "reasoning": "low"}
+    @patch("app.services.junior_jobs.chat_service.complete_with_web_search")
+    def test_job_with_search_uses_responses_web_search(self, search, complete):
+        search.return_value = {"text": "Reuters homepage: markets", "model": "grok-4.6", "reasoning": "low"}
         _complete_job_turn(
             [{"role": "user", "content": "what's on Reuters homepage"}],
             model="grok-4.6",
             reasoning="low",
             tools=tools_for_job(SimpleNamespace(web_search=True)),
         )
-        kwargs = complete.call_args.kwargs
-        self.assertEqual(kwargs["tools"], [{"type": "web_search"}])
-        self.assertNotEqual(kwargs["tools"], [{"type": "code_interpreter"}])
+        complete.assert_not_called()
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["model"], "grok-4.6")
+        self.assertEqual(kwargs["reasoning_effort"], "low")
 
-    @patch("app.services.junior_jobs.chat_service.complete_once")
-    def test_search_422_retries_then_search_failed(self, complete):
-        complete.side_effect = [
-            HTTPException(status_code=502, detail="xAI HTTP 422: invalid tool"),
-            HTTPException(status_code=502, detail="xAI HTTP 422: invalid tool"),
-        ]
+    @patch("app.services.junior_jobs.chat_service.complete_with_web_search")
+    def test_search_failure_is_search_failed(self, search):
+        search.side_effect = HTTPException(status_code=502, detail="xAI HTTP 422: unknown variant `web_search`")
         with self.assertRaises(HTTPException) as raised:
             _complete_job_turn(
                 [],
@@ -127,8 +126,23 @@ class JuniorJobsTests(unittest.TestCase):
                 tools=[{"type": "web_search"}],
             )
         self.assertEqual(raised.exception.detail, SEARCH_FAILED)
-        types = [call.kwargs["tools"][0]["type"] for call in complete.call_args_list]
-        self.assertEqual(types, ["web_search", "live_search"])
+
+    def test_parse_responses_text_from_reuters_shape(self):
+        from app.services.chat import parse_responses_text, responses_used_search
+
+        body = {
+            "output": [
+                {"type": "reasoning", "summary": [{"text": "q", "type": "summary_text"}]},
+                {"type": "web_search_call", "status": "completed", "action": {"type": "open_page", "url": "https://www.reuters.com/"}},
+                {
+                    "content": [
+                        {"type": "output_text", "text": "The Reuters homepage leads with markets."},
+                    ]
+                },
+            ]
+        }
+        self.assertEqual(parse_responses_text(body), "The Reuters homepage leads with markets.")
+        self.assertTrue(responses_used_search(body))
 
 
 if __name__ == "__main__":

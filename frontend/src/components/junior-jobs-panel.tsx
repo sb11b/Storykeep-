@@ -112,6 +112,18 @@ export function JuniorJobsPanel({
     }
   }
 
+  async function toggleSearch(job: JuniorJob) {
+    setBusy(true);
+    try {
+      const saved = await api.patchJuniorJob(job.id, { web_search: !job.web_search });
+      setJobs((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update that job.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleJob(job: JuniorJob) {
     setBusy(true);
     try {
@@ -249,6 +261,15 @@ export function JuniorJobsPanel({
                 {job.web_search ? " · search" : ""}
                 {job.last_status ? ` · ${job.last_status}` : ""}
               </p>
+              <label className="mt-1 flex items-center gap-1.5 text-[11px]">
+                <input
+                  type="checkbox"
+                  checked={Boolean(job.web_search)}
+                  disabled={busy}
+                  onChange={() => void toggleSearch(job)}
+                />
+                Allow web search
+              </label>
               <div className="mt-1 flex flex-wrap gap-1">
                 <Button size="xs" variant="outline" disabled={busy} onClick={() => void runNow(job)}>
                   <Play className="size-3" />

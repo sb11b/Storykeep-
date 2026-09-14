@@ -29,10 +29,11 @@ DEFAULT_CRON = "0 8 * * *"
 DEFAULT_TZ = "America/New_York"
 MY_NEWS_RE = re.compile(r"\bmy news\b", re.I)
 SEARCH_FAILED = "search failed"
-JOB_SEARCH_APPEND = """
-Steve enabled web search for this Junior job. Use the web_search (or live_search) tool when the question needs a live page.
+JOB_SEARCH_SYSTEM = """You are Junior running a scheduled job with web search enabled.
+Use web_search for live pages. Quote what you found.
 If search does not work, reply with exactly: search failed
 Never say you cannot search, cannot browse, or do not have web access.
+Prefer StoryKeep Unread titles when they are included for my news.
 """
 UNREAD_TITLE_CAP = 40
 
@@ -269,23 +270,18 @@ def _complete_job_turn(
             reasoning_effort=reasoning,
             max_tokens=900,
         )
-    last_error: HTTPException | None = None
-    for tool_type in ("web_search", "live_search"):
-        try:
-            return chat_service.complete_once(
-                messages,
-                model=model,
-                reasoning_effort=reasoning,
-                max_tokens=900,
-                timeout_sec=90.0,
-                tools=[{"type": tool_type}],
-            )
-        except HTTPException as exc:
-            last_error = exc
-            if not _search_tool_rejected(exc):
-                raise
-            continue
-    raise HTTPException(status_code=502, detail=SEARCH_FAILED) from last_error
+    try:
+        return chat_service.complete_with_web_search(
+            messages,
+            model=model,
+            reasoning_effort=reasoning,
+            max_tokens=900,
+            timeout_sec=90.0,
+        )
+    except HTTPException as exc:
+        if str(exc.detail) == SEARCH_FAILED or _search_tool_rejected(exc):
+            raise HTTPException(status_code=502, detail=SEARCH_FAILED) from exc
+        raise
 
 
 def _include_excerpt(db: Session, user: User, article_id: UUID | None) -> str | None:
@@ -332,15 +328,19 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
         job.conversation_id = conversation.id
         db.add(job)
         db.flush()
-    messages = chat_service.build_xai_messages(
-        [*history, {"role": "user", "content": user_line}],
-        excerpt,
-        include_article=bool(excerpt),
-    )
     tools = tools_for_job(job)
-    if tools and messages and messages[0].get("role") == "system":
-        system = messages[0].get("content") or ""
-        messages[0] = {**messages[0], "content": f"{system.rstrip()}\n{JOB_SEARCH_APPEND}"}
+    if tools:
+        windowed = chat_service.thread_window([*history, {"role": "user", "content": user_line}])
+        system = JOB_SEARCH_SYSTEM
+        if excerpt:
+            system = f"{system}\n\nIncluded article excerpt:\n{excerpt}"
+        messages = [{"role": "system", "content": system}, *windowed]
+    else:
+        messages = chat_service.build_xai_messages(
+            [*history, {"role": "user", "content": user_line}],
+            excerpt,
+            include_article=bool(excerpt),
+        )
     status = "ok"
     output = ""
     error = None

@@ -166,6 +166,13 @@ def chat_url() -> str:
     return url or "https://api.x.ai/v1/chat/completions"
 
 
+def responses_url() -> str:
+    url = chat_url().rstrip("/")
+    if url.endswith("chat/completions"):
+        return url[: -len("chat/completions")] + "responses"
+    return "https://api.x.ai/v1/responses"
+
+
 def key_format_ok() -> bool:
     key = (settings.xai_api_key or "").strip()
     return bool(key) and key.startswith("xai-")
@@ -1096,3 +1103,103 @@ def complete_once(
     if not text:
         raise HTTPException(status_code=502, detail="Grok returned an empty reply.")
     return {"text": text, "model": resolved_model, "reasoning": effort}
+
+
+def parse_responses_text(body: dict) -> str:
+    direct = body.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    parts: list[str] = []
+    for item in body.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if isinstance(content, list):
+            for chunk in content:
+                if not isinstance(chunk, dict):
+                    continue
+                if chunk.get("type") in {"output_text", "text"}:
+                    text = chunk.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+        elif item.get("type") in {"output_text", "text"}:
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+def responses_used_search(body: dict) -> bool:
+    for item in body.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "")
+        if "web_search" in kind or "live_search" in kind or kind.endswith("_search_call"):
+            return True
+    return False
+
+
+_CANT_SEARCH = re.compile(
+    r"i can['’]?t (search|browse)|cannot search|can not search|don't have (web |internet )?access|do not have web",
+    re.I,
+)
+
+
+def complete_with_web_search(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    max_tokens: int = 1200,
+    timeout_sec: float = 90.0,
+) -> dict[str, str]:
+    """Junior job search via Responses web_search. Chat completions rejects that tool type (422)."""
+    key = require_key()
+    resolved_model = rewrite_xai_model(model or default_full_model())
+    effort = clamp_reasoning_effort(resolved_model, reasoning_effort or DEFAULT_REASONING_EFFORT)
+    payload: dict[str, object] = {
+        "model": resolved_model,
+        "input": messages,
+        "tools": [{"type": "web_search"}],
+        "store": False,
+        "max_output_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
+    }
+    if model_uses_reasoning(resolved_model):
+        payload["reasoning"] = {"effort": effort}
+    last_status = 0
+    last_detail = "search failed"
+    for tool_type in ("web_search", "live_search"):
+        payload["tools"] = [{"type": tool_type}]
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(
+                    timeout_sec,
+                    connect=CHAT_CONNECT_TIMEOUT_SEC,
+                    read=timeout_sec,
+                    write=15.0,
+                    pool=10.0,
+                )
+            ) as client:
+                response = client.post(responses_url(), json=payload, headers=_auth_headers(key))
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=_transport_error_detail(exc)) from exc
+        last_status = response.status_code
+        if response.status_code >= 400:
+            last_detail = parse_xai_error_body(response.text, response.status_code)
+            if response.status_code in {400, 410, 422}:
+                continue
+            raise map_xai_http_error(response.status_code, last_detail, resolved_model)
+        try:
+            body = response.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=502, detail="xAI returned a non-JSON reply.") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=502, detail="search failed")
+        text = parse_responses_text(body)
+        if not text:
+            raise HTTPException(status_code=502, detail="search failed")
+        if _CANT_SEARCH.search(text) and not responses_used_search(body):
+            raise HTTPException(status_code=502, detail="search failed")
+        return {"text": text, "model": resolved_model, "reasoning": effort}
+    del last_status
+    raise HTTPException(status_code=502, detail="search failed")
