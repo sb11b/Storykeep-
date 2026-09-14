@@ -166,16 +166,6 @@ export function GrokBubble({
   }, [open, persist, refreshHistory]);
 
   useEffect(() => {
-    if (!persist) return;
-    for (const pane of panes) {
-      const id = pane.conversationId;
-      if (!id || pane.messages.length || restoredConversationsRef.current.has(id)) continue;
-      restoredConversationsRef.current.add(id);
-      void loadConversationInto(pane.id, id);
-    }
-  }, [loadConversationInto, panes, persist]);
-
-  useEffect(() => {
     if (paneLabelsLoadedRef.current) return;
     paneLabelsLoadedRef.current = true;
     void api
@@ -426,6 +416,16 @@ export function GrokBubble({
       );
     }
   }, []);
+
+  useEffect(() => {
+    if (!persist) return;
+    for (const pane of panes) {
+      const id = pane.conversationId;
+      if (!id || pane.messages.length || restoredConversationsRef.current.has(id)) continue;
+      restoredConversationsRef.current.add(id);
+      void loadConversationInto(pane.id, id);
+    }
+  }, [loadConversationInto, panes, persist]);
 
   function startNewChat() {
     updatePane(focusedPaneId, (pane) => ({
