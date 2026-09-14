@@ -222,14 +222,17 @@ app = FastAPI(title="Storykeep", version="0.1.0", lifespan=lifespan)
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_with_message(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    """TTS routes expose {message} for readable client toasts."""
+    """TTS routes and chat 504 expose {message} for readable client toasts."""
     detail = exc.detail
     if isinstance(detail, list):
         message = "; ".join(str(item) for item in detail)
     else:
         message = str(detail)
-    if "/tts" in request.url.path:
+    path = request.url.path.rstrip("/")
+    if "/tts" in path:
         return JSONResponse(status_code=exc.status_code, content={"message": message, "detail": detail})
+    if request.method == "POST" and path == "/api/v1/chat" and exc.status_code == 504:
+        return JSONResponse(status_code=504, content={"message": message})
     return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 
 

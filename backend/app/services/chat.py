@@ -420,6 +420,29 @@ def _auth_headers(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
+def _xai_ttft_log(
+    *,
+    ok: bool,
+    ttft_ms: int | None,
+    model: str,
+    reasoning: str,
+    xai_status: int | str | None,
+) -> None:
+    """Timing/status only — never pass headers or the API key."""
+    fields = (
+        "xai %s ttft_ms=%s model=%s reasoning=%s xai_status=%s",
+        "ok" if ok else "silent",
+        ttft_ms if ttft_ms is not None else -1,
+        model,
+        reasoning,
+        xai_status,
+    )
+    if ok:
+        logger.info(*fields)
+    else:
+        logger.warning(*fields)
+
+
 def _transport_error_detail(exc: httpx.HTTPError) -> str:
     if isinstance(exc, httpx.ConnectTimeout):
         return f"xAI unreachable: connection timed out after {int(CHAT_CONNECT_TIMEOUT_SEC)}s"
@@ -509,8 +532,15 @@ def ping_xai() -> dict[str, object]:
         reasoning,
     )
     started = time.perf_counter()
+    ping_timeout = httpx.Timeout(
+        timeout=CHAT_FIRST_BYTE_TIMEOUT_SEC,
+        connect=CHAT_CONNECT_TIMEOUT_SEC,
+        read=CHAT_FIRST_BYTE_TIMEOUT_SEC,
+        write=8.0,
+        pool=5.0,
+    )
     try:
-        with httpx.Client(timeout=_chat_timeout(streaming=False)) as client:
+        with httpx.Client(timeout=ping_timeout) as client:
             with client.stream(
                 "POST",
                 chat_url(),
@@ -524,13 +554,12 @@ def ping_xai() -> dict[str, object]:
                     detail = parse_xai_error_body(body, xai_status)
                     if xai_status == 401:
                         detail = "xAI auth failed"
-                    logger.warning(
-                        "xAI health ping HTTP %s model=%s reasoning=%s ttft_ms=%s detail=%s",
-                        xai_status,
-                        model,
-                        reasoning,
-                        ttft_ms,
-                        detail,
+                    _xai_ttft_log(
+                        ok=False,
+                        ttft_ms=ttft_ms,
+                        model=model,
+                        reasoning=reasoning,
+                        xai_status=xai_status,
                     )
                     return {
                         "ok": False,
@@ -541,20 +570,22 @@ def ping_xai() -> dict[str, object]:
                         "message": detail,
                     }
                 for line in response.iter_lines():
+                    if time.perf_counter() - started >= CHAT_FIRST_BYTE_TIMEOUT_SEC:
+                        break
                     if not line:
                         continue
                     data = line[5:].strip() if line.startswith("data:") else line.strip()
                     if data == "[DONE]":
                         break
-                    text, _active = _parse_sse_chunk(data)
-                    if text:
+                    text, active = _parse_sse_chunk(data)
+                    if text or active:
                         ttft_ms = int((time.perf_counter() - started) * 1000)
-                        logger.info(
-                            "xAI health ping ok model=%s reasoning=%s xai_status=%s ttft_ms=%s",
-                            model,
-                            reasoning,
-                            xai_status,
-                            ttft_ms,
+                        _xai_ttft_log(
+                            ok=True,
+                            ttft_ms=ttft_ms,
+                            model=model,
+                            reasoning=reasoning,
+                            xai_status=xai_status,
                         )
                         return {
                             "ok": True,
@@ -564,6 +595,13 @@ def ping_xai() -> dict[str, object]:
                             "xai_status": xai_status,
                         }
                 ttft_ms = int((time.perf_counter() - started) * 1000)
+                _xai_ttft_log(
+                    ok=False,
+                    ttft_ms=ttft_ms,
+                    model=model,
+                    reasoning=reasoning,
+                    xai_status=xai_status,
+                )
                 return {
                     "ok": False,
                     "model": model,
@@ -574,21 +612,23 @@ def ping_xai() -> dict[str, object]:
                 }
     except httpx.HTTPError as exc:
         ttft_ms = int((time.perf_counter() - started) * 1000)
-        detail = _transport_error_detail(exc)
-        logger.warning(
-            "xAI health ping failed model=%s reasoning=%s ttft_ms=%s detail=%s",
-            model,
-            reasoning,
-            ttft_ms,
-            detail,
+        xai_status: int | str | None = "timeout" if isinstance(
+            exc, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.TimeoutException)
+        ) else None
+        _xai_ttft_log(
+            ok=False,
+            ttft_ms=ttft_ms,
+            model=model,
+            reasoning=reasoning,
+            xai_status=xai_status,
         )
         return {
             "ok": False,
             "model": model,
             "reasoning": reasoning,
             "ttft_ms": ttft_ms,
-            "xai_status": None,
-            "message": detail,
+            "xai_status": xai_status,
+            "message": XAI_SILENT_DETAIL if xai_status == "timeout" else _transport_error_detail(exc),
         }
 
 
@@ -825,8 +865,8 @@ async def stream_completion(
         reasoning_effort,
     )
     started = time.perf_counter()
-    first_visible_at: float | None = None
-    yielded_any = False
+    first_token_at: float | None = None
+    xai_status: int | str | None = None
     try:
         async with httpx.AsyncClient(timeout=_chat_timeout(streaming=True)) as client:
             async with client.stream(
@@ -835,26 +875,33 @@ async def stream_completion(
                 json=payload,
                 headers={**_auth_headers(key), "Accept": "text/event-stream"},
             ) as response:
-                status_code = response.status_code
-                if status_code >= 400:
+                xai_status = response.status_code
+                if xai_status >= 400:
                     body = (await response.aread()).decode("utf-8", errors="replace")
-                    detail = parse_xai_error_body(body, status_code)
-                    logger.warning(
-                        "xAI chat HTTP %s model=%s ttfb=%.2fs detail=%s",
-                        status_code,
-                        model,
-                        time.perf_counter() - started,
-                        detail,
+                    detail = parse_xai_error_body(body, xai_status)
+                    _xai_ttft_log(
+                        ok=False,
+                        ttft_ms=int((time.perf_counter() - started) * 1000),
+                        model=model,
+                        reasoning=reasoning_effort,
+                        xai_status=xai_status,
                     )
-                    raise map_xai_http_error(status_code, detail, model)
+                    raise map_xai_http_error(xai_status, detail, model)
                 lines = response.aiter_lines()
                 while True:
                     if cancelled is not None and cancelled.is_set():
                         return
                     elapsed = time.perf_counter() - started
-                    if first_visible_at is None:
+                    if first_token_at is None:
                         wait = CHAT_FIRST_BYTE_TIMEOUT_SEC - elapsed
                         if wait <= 0:
+                            _xai_ttft_log(
+                                ok=False,
+                                ttft_ms=int(elapsed * 1000),
+                                model=model,
+                                reasoning=reasoning_effort,
+                                xai_status=xai_status,
+                            )
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
                     else:
                         wait = CHAT_IDLE_AFTER_TOKEN_SEC
@@ -875,7 +922,14 @@ async def stream_completion(
                         else:
                             raise asyncio.TimeoutError()
                     except asyncio.TimeoutError as exc:
-                        if first_visible_at is None or not yielded_any:
+                        if first_token_at is None:
+                            _xai_ttft_log(
+                                ok=False,
+                                ttft_ms=int((time.perf_counter() - started) * 1000),
+                                model=model,
+                                reasoning=reasoning_effort,
+                                xai_status=xai_status,
+                            )
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
                         raise HTTPException(
                             status_code=504,
@@ -894,47 +948,48 @@ async def stream_completion(
                     if data == "[DONE]":
                         break
                     text, active = _parse_sse_chunk(data)
-                    if not active:
+                    if not active and not text:
                         continue
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
+                        _xai_ttft_log(
+                            ok=True,
+                            ttft_ms=int((first_token_at - started) * 1000),
+                            model=model,
+                            reasoning=reasoning_effort,
+                            xai_status=xai_status,
+                        )
+                        if not text:
+                            # Reasoning/keepalive counts as first token so SSE can start.
+                            yield ""
+                            continue
                     if text:
-                        if first_visible_at is None:
-                            first_visible_at = time.perf_counter()
-                            logger.info(
-                                "larry-chat ttft_ms=%s flushed=%s model=%s user=%s",
-                                int((first_visible_at - started) * 1000),
-                                True,
-                                model,
-                                user_id,
-                            )
-                        yielded_any = True
                         yield text
-                if not yielded_any:
+                if first_token_at is None:
+                    _xai_ttft_log(
+                        ok=False,
+                        ttft_ms=int((time.perf_counter() - started) * 1000),
+                        model=model,
+                        reasoning=reasoning_effort,
+                        xai_status=xai_status,
+                    )
                     raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
     except HTTPException:
         raise
     except asyncio.CancelledError:
         raise
     except httpx.HTTPError as exc:
-        elapsed = time.perf_counter() - started
-        if not yielded_any:
-            detail = XAI_SILENT_DETAIL
-            status_code = (
-                504
-                if isinstance(exc, (httpx.ReadTimeout, httpx.TimeoutException))
-                or elapsed >= CHAT_FIRST_BYTE_TIMEOUT_SEC
-                else 502
+        if first_token_at is None:
+            if isinstance(exc, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.TimeoutException)):
+                xai_status = "timeout"
+            _xai_ttft_log(
+                ok=False,
+                ttft_ms=int((time.perf_counter() - started) * 1000),
+                model=model,
+                reasoning=reasoning_effort,
+                xai_status=xai_status,
             )
-            if status_code == 502:
-                detail = _transport_error_detail(exc)
-            logger.warning(
-                "larry-chat ttft_ms=%s flushed=%s model=%s user=%s detail=%s",
-                -1,
-                False,
-                model,
-                user_id,
-                detail,
-            )
-            raise HTTPException(status_code=status_code, detail=detail) from exc
+            raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
         raise HTTPException(
             status_code=504,
             detail=CHAT_IDLE_TIMEOUT_DETAIL,
@@ -942,15 +997,13 @@ async def stream_completion(
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
-        elapsed = time.perf_counter() - started
-        if not yielded_any:
-            logger.warning(
-                "larry-chat ttft_ms=%s flushed=%s model=%s user=%s detail=%s",
-                -1,
-                False,
-                model,
-                user_id,
-                exc,
+        if first_token_at is None:
+            _xai_ttft_log(
+                ok=False,
+                ttft_ms=int((time.perf_counter() - started) * 1000),
+                model=model,
+                reasoning=reasoning_effort,
+                xai_status=xai_status,
             )
             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
         raise HTTPException(
@@ -977,8 +1030,6 @@ def _parse_sse_chunk(raw: str) -> tuple[str, bool]:
         if isinstance(fallback, str) and fallback:
             visible = fallback
     reasoning = delta.get("reasoning_content")
-    if not visible and isinstance(reasoning, str) and reasoning:
-        visible = reasoning
     active = bool(visible) or (isinstance(reasoning, str) and bool(reasoning))
     return visible, active
 

@@ -129,6 +129,7 @@ def chat_health(user: User = Depends(get_current_user)) -> dict:
             "model": chat_service.default_full_model(),
             "reasoning": chat_service.DEFAULT_REASONING_EFFORT,
             "ttft_ms": None,
+            "xai_status": None,
             "message": "XAI_API_KEY is not set or must start with xai-.",
         }
     return chat_service.ping_xai()
@@ -661,6 +662,48 @@ async def chat(
             )
             return None
 
+    cancelled = asyncio.Event()
+
+    async def watch_disconnect() -> None:
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancelled.set()
+                    return
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+
+    watch = asyncio.create_task(watch_disconnect())
+    stream = chat_service.stream_completion(
+        history_for_xai,
+        excerpt,
+        include_article=include_article,
+        recap_question=recap_question,
+        model=resolved_model,
+        model_choice=model_choice,
+        reasoning_effort=resolved_reasoning,
+        user_id=user_id,
+        has_attachments=has_attachments,
+        include_note=include_note,
+        note_excerpt=note_excerpt,
+        cancelled=cancelled,
+    )
+    try:
+        first_piece = await anext(stream)
+    except StopAsyncIteration:
+        cancelled.set()
+        watch.cancel()
+        raise HTTPException(status_code=504, detail=chat_service.XAI_SILENT_DETAIL)
+    except Exception:
+        cancelled.set()
+        watch.cancel()
+        try:
+            await watch
+        except (asyncio.CancelledError, Exception):
+            pass
+        raise
+
     async def events():
         assistant_parts: list[str] = []
         started = time.perf_counter()
@@ -680,21 +723,16 @@ async def chat(
                 sum(len(part) for part in assistant_parts),
             )
 
-        cancelled = asyncio.Event()
+        async def emit_delta(piece: str) -> None:
+            nonlocal ttft_ms, flushed
+            if not piece:
+                return
+            assistant_parts.append(piece)
+            if ttft_ms is None:
+                ttft_ms = int((time.perf_counter() - started) * 1000)
+            flushed = True
 
-        async def watch_disconnect() -> None:
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        cancelled.set()
-                        return
-                    await asyncio.sleep(0.05)
-            except asyncio.CancelledError:
-                raise
-
-        watch = asyncio.create_task(watch_disconnect())
         try:
-            # Flush padding first so proxies start the SSE body before xAI tokens.
             yield chat_service.SSE_PADDING
             await asyncio.sleep(0)
             meta = {
@@ -715,32 +753,22 @@ async def chat(
                     }
                 )
             await asyncio.sleep(0)
-            async for piece in chat_service.stream_completion(
-                history_for_xai,
-                excerpt,
-                include_article=include_article,
-                recap_question=recap_question,
-                model=resolved_model,
-                model_choice=model_choice,
-                reasoning_effort=resolved_reasoning,
-                user_id=user_id,
-                has_attachments=has_attachments,
-                include_note=include_note,
-                note_excerpt=note_excerpt,
-                cancelled=cancelled,
-            ):
+            await emit_delta(first_piece)
+            if first_piece:
+                yield chat_service.encode_sse({"delta": first_piece})
+                await asyncio.sleep(0)
+            async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():
                     cancelled.set()
-                    assistant_parts.append(piece)
+                    if piece:
+                        assistant_parts.append(piece)
                     _log("aborted")
                     _persist_assistant("".join(assistant_parts))
                     return
-                assistant_parts.append(piece)
-                if ttft_ms is None:
-                    ttft_ms = int((time.perf_counter() - started) * 1000)
-                flushed = True
-                yield chat_service.encode_sse({"delta": piece})
-                await asyncio.sleep(0)
+                await emit_delta(piece)
+                if piece:
+                    yield chat_service.encode_sse({"delta": piece})
+                    await asyncio.sleep(0)
             if cancelled.is_set() or await request.is_disconnected():
                 _log("aborted")
                 _persist_assistant("".join(assistant_parts))

@@ -589,7 +589,14 @@ export const api = {
   },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
   chatHealth: () =>
-    request<{ ok: boolean; model: string; reasoning: string; ttft_ms: number | null }>("/api/v1/chat/health"),
+    request<{
+      ok: boolean;
+      model: string;
+      reasoning: string;
+      ttft_ms: number | null;
+      xai_status: number | string | null;
+      message?: string;
+    }>("/api/v1/chat/health"),
   chatImagine: (
     body: { prompt: string; conversation_id?: string | null; media_ids?: string[] },
     signal?: AbortSignal,
@@ -637,11 +644,12 @@ export const api = {
       signal,
     });
     const contentType = response.headers.get("content-type") || "";
-    if (!response.ok && !contentType.includes("text/event-stream")) {
+    if (!response.ok || !contentType.includes("text/event-stream")) {
       let detail = response.statusText;
       try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
+        const data = (await response.json()) as { detail?: string; message?: string };
+        if (typeof data.message === "string" && data.message.trim()) detail = data.message;
+        else if (typeof data.detail === "string") detail = data.detail;
       } catch {
         /* ignore */
       }

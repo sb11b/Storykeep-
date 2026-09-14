@@ -174,10 +174,10 @@ class GrokConversationTests(unittest.TestCase):
         cleaned = validate_payload(windowed)
         self.assertEqual(cleaned[-1]["role"], "user")
 
-    def test_parse_sse_chunk_streams_reasoning_when_no_content(self):
+    def test_parse_sse_chunk_reasoning_is_activity_not_visible(self):
         raw = '{"choices":[{"delta":{"reasoning_content":"thinking"}}]}'
         text, active = _parse_sse_chunk(raw)
-        self.assertEqual(text, "thinking")
+        self.assertEqual(text, "")
         self.assertTrue(active)
 
     def test_parse_sse_chunk_returns_visible_content(self):

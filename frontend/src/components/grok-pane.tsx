@@ -529,7 +529,6 @@ export function GrokPane({
     setInFlightSpend(null);
 
     setBusy(true);
-    beginStreamStatus();
     try {
       await api.streamChat(
         {
@@ -652,7 +651,7 @@ export function GrokPane({
         },
         controller.signal,
         () => {
-          if (!gotDeltaRef.current) applyStreamStatus("thinking");
+          beginStreamStatus();
         },
       );
     } catch (error) {
