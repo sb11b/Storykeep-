@@ -8,7 +8,7 @@ export function isPersistedMessageId(id: string | null | undefined): boolean {
   return UUID.test((id || "").trim());
 }
 
-export function filenameFromContentDisposition(header: string | null, fallback = "Junior-reply.docx"): string {
+export function filenameFromContentDisposition(header: string | null, fallback = "junior-note.docx"): string {
   const value = header || "";
   const star = value.match(/filename\*=UTF-8''([^;]+)/i);
   if (star?.[1]) {

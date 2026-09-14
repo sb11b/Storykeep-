@@ -38,6 +38,7 @@ class ChatDocxTests(unittest.TestCase):
     def test_title_from_first_heading(self):
         self.assertEqual(docx_title(DAT_PAPER), "Grammar-fixed DAT-200 paper")
         self.assertEqual(docx_filename(DAT_PAPER), "Grammar-fixed DAT-200 paper.docx")
+        self.assertEqual(docx_filename("Just a line\n\nMore."), "junior-note.docx")
         self.assertEqual(docx_title("Just a line\n\nMore."), "Just a line")
 
     def test_docx_is_tnr_with_hanging_references(self):
@@ -50,6 +51,15 @@ class ChatDocxTests(unittest.TestCase):
         self.assertIn("Smith, J.", xml)
         self.assertIn('w:hanging="720"', xml)
         self.assertIn("1440", xml)
+        from io import BytesIO
+
+        from docx import Document
+
+        opened = Document(BytesIO(payload))
+        texts = [para.text for para in opened.paragraphs]
+        self.assertTrue(any("Grammar-fixed DAT-200 paper" in text for text in texts))
+        self.assertTrue(any("relational schema" in text for text in texts))
+        self.assertTrue(any("Smith, J." in text for text in texts))
 
     def test_empty_reply_raises(self):
         with self.assertRaises(ValueError):

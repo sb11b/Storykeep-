@@ -11,6 +11,7 @@ from docx.shared import Inches, Pt
 from app.services.vault_paths import windows_safe_component
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DEFAULT_FILENAME = "junior-note.docx"
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _UL = re.compile(r"^[-*+]\s+(.*)$")
 _OL = re.compile(r"^\d+[.)]\s+(.*)$")
@@ -33,14 +34,26 @@ def visible_reply_text(content: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+def first_heading(content: str) -> str | None:
+    for raw in visible_reply_text(content).split("\n"):
+        heading = _HEADING.match(raw.strip())
+        if not heading:
+            continue
+        line = _CODE.sub(r"\1", _BOLD.sub(r"\1", _ITALIC.sub(r"\1", heading.group(2).strip())))
+        line = " ".join(line.split())
+        if line:
+            return line[:120]
+    return None
+
+
 def docx_title(content: str) -> str:
+    heading = first_heading(content)
+    if heading:
+        return heading
     for raw in visible_reply_text(content).split("\n"):
         line = raw.strip()
         if not line or _FENCE.match(line):
             continue
-        heading = _HEADING.match(line)
-        if heading:
-            line = heading.group(2).strip()
         line = _CODE.sub(r"\1", _BOLD.sub(r"\1", _ITALIC.sub(r"\1", line)))
         line = " ".join(line.split())
         if line:
@@ -49,7 +62,10 @@ def docx_title(content: str) -> str:
 
 
 def docx_filename(content: str) -> str:
-    stem = windows_safe_component(docx_title(content)) or "Junior-reply"
+    heading = first_heading(content)
+    if not heading:
+        return DEFAULT_FILENAME
+    stem = windows_safe_component(heading) or "junior-note"
     if stem.lower().endswith(".docx"):
         return stem
     return f"{stem}.docx"
