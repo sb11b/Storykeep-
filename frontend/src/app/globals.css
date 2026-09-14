@@ -199,7 +199,9 @@
   html,
   body {
     margin: 0;
+    height: 100%;
     min-height: 100%;
+    overflow: visible;
   }
   body {
     @apply bg-background text-foreground;
@@ -215,36 +217,41 @@
   }
 }
 
-:root {
-  --reader-chrome: 12.5rem;
-}
-
 .reader-shell {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+.reader-chrome {
+  flex: none;
+}
+.pdf-host {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-}
-.reader-chrome {
-  flex: 0 0 auto;
-}
-.pdf-host {
-  flex: 1 1 auto;
-  height: calc(100dvh - var(--reader-chrome));
-  min-height: calc(100dvh - var(--reader-chrome));
   overflow: hidden;
   pointer-events: auto;
 }
 .pdf-scroller {
   box-sizing: border-box;
   height: 100%;
-  min-height: calc(100dvh - var(--reader-chrome));
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   pointer-events: auto;
   outline: none;
 }
-.pdf-scroller canvas {
+.pdf-page {
+  display: block;
+  width: 100%;
+}
+.pdf-page canvas {
   display: block;
   width: 100%;
   height: auto;

@@ -162,8 +162,9 @@ function snapshotStamp(iso: string): string {
 }
 
 function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
-  const fileUrl = `/api/v1/archives/${archiveId}/file`;
+  const fileUrl = `/api/v1/archives/${encodeURIComponent(archiveId)}/file`;
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const blobUrlRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -171,35 +172,70 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
     const scroller = scrollerRef.current;
     if (!scroller) return;
     let cancelled = false;
+    let widthObserver: ResizeObserver | null = null;
+    let widthTimer: number | undefined;
     scroller.replaceChildren();
     setError(null);
     setLoading(true);
+
+    const waitForScrollerWidth = () =>
+      new Promise<number>((resolve) => {
+        const read = () => scroller.clientWidth;
+        const finish = (width: number) => {
+          widthObserver?.disconnect();
+          widthObserver = null;
+          if (widthTimer !== undefined) {
+            window.clearTimeout(widthTimer);
+            widthTimer = undefined;
+          }
+          resolve(width);
+        };
+        if (read() > 0) {
+          finish(read());
+          return;
+        }
+        widthObserver = new ResizeObserver(() => {
+          const width = read();
+          if (width > 0) finish(width);
+        });
+        widthObserver.observe(scroller);
+        widthTimer = window.setTimeout(() => finish(Math.max(read(), 320)), 8000);
+      });
+
     void (async () => {
       const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
       if (!response.ok) {
         throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
       }
-      const data = new Uint8Array(await response.arrayBuffer());
-      if (data.byteLength < 5 || String.fromCharCode(data[0], data[1], data[2], data[3]) !== "%PDF") {
+      const blob = await response.blob();
+      const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+      if (head.byteLength < 5 || String.fromCharCode(head[0], head[1], head[2], head[3]) !== "%PDF") {
         throw new Error("That snapshot is not a readable PDF.");
       }
+      if (cancelled) return;
+      const blobUrl = URL.createObjectURL(blob);
+      blobUrlRef.current = blobUrl;
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-      const doc = await pdfjs.getDocument({ data }).promise;
-      const width = Math.max(scroller.clientWidth || 720, 320);
+      const doc = await pdfjs.getDocument({ url: blobUrl }).promise;
+      const width = await waitForScrollerWidth();
+      if (cancelled) return;
       for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
         if (cancelled) return;
         const page = await doc.getPage(pageNumber);
         const unscaled = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: width / unscaled.width });
+        const viewport = page.getViewport({ scale: Math.max(0.25, width / unscaled.width) });
+        const wrap = document.createElement("div");
+        wrap.className = "pdf-page";
         const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+        wrap.appendChild(canvas);
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Could not draw the PDF snapshot.");
         await page.render({ canvasContext: context, viewport }).promise;
         if (cancelled) return;
-        scroller.appendChild(canvas);
+        scroller.appendChild(wrap);
       }
       if (!cancelled) {
         setLoading(false);
@@ -212,7 +248,13 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
     });
     return () => {
       cancelled = true;
+      widthObserver?.disconnect();
+      if (widthTimer !== undefined) window.clearTimeout(widthTimer);
       scroller.replaceChildren();
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
     };
   }, [fileUrl]);
 
@@ -1198,13 +1240,15 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const pdfRestoreOpen = Boolean(article?.offline_view === "pdf" && article.offline_archive_id);
 
   return (
-    <div
-      className={cn(
-        "flex min-h-full bg-[var(--storykeep-page-bg)]",
-        pdfRestoreOpen ? "min-h-0 flex-col lg:flex-row" : "h-full min-h-0 overflow-hidden",
-      )}
-    >
-      <aside className={cn("hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex", readerFull && "!hidden")}>{nav}</aside>
+    <div className="flex h-full min-h-0 overflow-hidden bg-[var(--storykeep-page-bg)]">
+      <aside
+        className={cn(
+          "hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground md:flex",
+          readerFull && !pdfRestoreOpen && "!hidden",
+        )}
+      >
+        {nav}
+      </aside>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetContent side="left" className="w-80 overflow-hidden bg-sidebar p-0 text-sidebar-foreground">
           <SheetHeader className="sr-only">
@@ -1214,12 +1258,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         </SheetContent>
       </Sheet>
 
-      <div
-        className={cn(
-          "flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--storykeep-page-bg)]",
-          !pdfRestoreOpen && "overflow-hidden",
-        )}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
         <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
@@ -1341,8 +1380,8 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           </div>
         </header>
 
-        <div className={cn("grid min-h-0 flex-1 grid-cols-1 grid-rows-1 [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && "lg:grid-cols-1", !pdfRestoreOpen && "overflow-hidden")}>
-          <section className={cn("sk-page-surface flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && "!hidden")}>
+        <div className={cn("grid min-h-0 flex-1 overflow-hidden grid-cols-1 grid-rows-1 [grid-template-rows:minmax(0,1fr)] lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", readerFull && !pdfRestoreOpen && "lg:grid-cols-1")}>
+          <section className={cn("sk-page-surface flex min-h-0 flex-col overflow-hidden border-r", selectedId && "hidden lg:flex", readerFull && !pdfRestoreOpen && "!hidden")}>
             <div className="shrink-0 px-4 py-3 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -1497,7 +1536,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </ShelfScroller>
           </section>
 
-          <section className={cn("sk-page-surface flex min-h-0 flex-col", !pdfRestoreOpen && "overflow-hidden", !selectedId && "hidden lg:flex", readerFull && "flex")}>
+          <section className={cn("sk-page-surface flex min-h-0 flex-col overflow-hidden", !selectedId && "hidden lg:flex", readerFull && "flex")}>
             {selectedId && article ? (
               <Reader
                 article={article}
@@ -2728,7 +2767,7 @@ function Reader({
   }, [article.author, article.title, includeNotesInListen]);
 
   return (
-    <div className={cn("reader-shell", pdfOffline && "min-h-0")}>
+    <div className="reader-shell">
       <div className="reader-chrome sticky top-0 z-30 border-b border-border bg-[var(--storykeep-top-bar)] px-5 py-2">
         <ListenControls
           ref={listenRef}
@@ -2803,14 +2842,14 @@ function Reader({
         ref={scrollRef}
         className={cn(
           "min-h-0 flex-1",
-          pdfOffline ? "flex min-h-0 flex-1 flex-col" : "overflow-y-auto overscroll-contain",
+          pdfOffline ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
         )}
       >
       <article
         ref={articleRef}
         className={cn(
           pdfOffline
-            ? "flex min-h-0 w-full max-w-none flex-1 flex-col px-5 pt-4"
+            ? "flex min-h-0 w-full max-w-none flex-1 flex-col overflow-hidden px-5 pt-4"
             : cn("mx-auto px-5 py-6", readerFull ? "max-w-4xl" : "max-w-3xl"),
         )}
       >
