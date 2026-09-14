@@ -3,6 +3,11 @@ import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const ILLEGAL_WIN = /[<>:"/\\|?*\x00-\x1f]+/g;
+
+export const EMPTY_WORD_BODY = "That reply has no text to put in Word.";
+export const BUILD_WORD_FAIL = "Couldn't build Word";
+export const FORBIDDEN_WORD = "Couldn't save Word (not allowed).";
 
 export function isPersistedMessageId(id: string | null | undefined): boolean {
   return UUID.test((id || "").trim());
@@ -23,6 +28,43 @@ export function filenameFromContentDisposition(header: string | null, fallback =
   const plain = value.match(/filename=([^;]+)/i);
   if (plain?.[1]) return plain[1].trim().replace(/^["']|["']$/g, "");
   return fallback;
+}
+
+export function windowsSafeStem(value: string): string {
+  const cleaned = (value || "").replace(ILLEGAL_WIN, "-").trim().replace(/^[. ]+|[. ]+$/g, "");
+  if (!cleaned || cleaned === "." || cleaned === "..") return "junior-note";
+  return cleaned.slice(0, 120);
+}
+
+export function replyHasWordBody(content: string): boolean {
+  let text = (content || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return false;
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
+  text = text.replace(/```[\s\S]*?```/g, "");
+  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  if ((compact.startsWith("{") && compact.endsWith("}")) || (compact.startsWith("[") && compact.endsWith("]"))) {
+    try {
+      JSON.parse(compact);
+      return false;
+    } catch {
+      /* prose that happens to be wrapped */
+    }
+  }
+  return true;
+}
+
+export function wordDownloadToast(error: unknown): string {
+  const status = error instanceof ApiError ? error.status : 0;
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (status === 403) return message || FORBIDDEN_WORD;
+  if (status === 401) return message || FORBIDDEN_WORD;
+  if (message === EMPTY_WORD_BODY || /no text to put in Word/i.test(message)) return EMPTY_WORD_BODY;
+  if (message === BUILD_WORD_FAIL || /couldn['’]?t build word/i.test(message)) return BUILD_WORD_FAIL;
+  if (status === 400 && /no text|empty/i.test(message)) return EMPTY_WORD_BODY;
+  if (status === 400 || status === 502 || status >= 500) return BUILD_WORD_FAIL;
+  return message || BUILD_WORD_FAIL;
 }
 
 export async function downloadChatMessageDocx(messageId: string, options?: { clean?: boolean }): Promise<void> {
@@ -48,10 +90,10 @@ export async function downloadChatMessageDocx(messageId: string, options?: { cle
   const buffer = new Uint8Array(await response.arrayBuffer());
   const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
   if (!buffer.length || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
-    throw new ApiError(502, "Could not download that Word file.");
+    throw new ApiError(502, BUILD_WORD_FAIL);
   }
   if (type && !type.includes("wordprocessingml") && type !== "application/octet-stream") {
-    throw new ApiError(502, "Could not download that Word file.");
+    throw new ApiError(502, BUILD_WORD_FAIL);
   }
   const blob = new Blob([buffer], { type: DOCX_TYPE });
   const objectUrl = URL.createObjectURL(blob);
@@ -68,14 +110,20 @@ export async function downloadChatMessageDocx(messageId: string, options?: { cle
 }
 
 export function replyFileStem(content: string): string {
-  const heading = (content || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.startsWith("# "))
-    ?.replace(/^#+\s+/, "")
-    .replace(/[<>:"/\\|?*]+/g, "-")
-    .slice(0, 80);
-  return heading || "junior-note";
+  const lines = (content || "").replace(/\r\n/g, "\n").split("\n");
+  let heading = "";
+  let firstLine = "";
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith("```")) continue;
+    const marked = line.match(/^#{1,6}\s+(.*)$/);
+    const candidate = windowsSafeStem((marked ? marked[1] : line).replace(/[*`]+/g, " "));
+    if (!candidate || candidate === "junior-note") continue;
+    if (marked && !heading) heading = candidate;
+    if (!firstLine) firstLine = candidate;
+    if (heading) break;
+  }
+  return heading || firstLine || "junior-note";
 }
 
 export function downloadReplyText(content: string, ext: "md" | "txt"): void {

@@ -232,10 +232,15 @@ def download_message_docx(
         from app.services.school_tools import strip_marks
 
         content = strip_marks(content)
+    if not chat_docx.has_word_body(content):
+        raise HTTPException(status_code=400, detail=chat_docx.EMPTY_WORD_BODY)
     try:
         payload = chat_docx.build_message_docx(content)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        detail = str(exc).strip() or chat_docx.BUILD_WORD_FAIL
+        if detail == chat_docx.EMPTY_WORD_BODY:
+            raise HTTPException(status_code=400, detail=chat_docx.EMPTY_WORD_BODY) from exc
+        raise HTTPException(status_code=400, detail=chat_docx.BUILD_WORD_FAIL) from exc
     filename = chat_docx.docx_filename(content).replace('"', "")
     return Response(
         content=payload,

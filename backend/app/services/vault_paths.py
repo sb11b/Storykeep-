@@ -119,7 +119,7 @@ def parse_hashtags(markdown: str) -> list[str]:
     return tags
 
 
-ILLEGAL_WIN = re.compile(r'[<>:"|?*\x00-\x1f]')
+ILLEGAL_WIN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def windows_safe_component(value: str) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 from zipfile import ZipFile
 
@@ -12,16 +13,19 @@ from app.services.vault_paths import windows_safe_component
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DEFAULT_FILENAME = "junior-note.docx"
+EMPTY_WORD_BODY = "That reply has no text to put in Word."
+BUILD_WORD_FAIL = "Couldn't build Word"
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _UL = re.compile(r"^[-*+]\s+(.*)$")
 _OL = re.compile(r"^\d+[.)]\s+(.*)$")
 _FENCE = re.compile(r"^```")
+_FENCE_BLOCK = re.compile(r"```[\s\S]*?```")
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 _CODE = re.compile(r"`([^`]+)`")
-_REF_HEAD = re.compile(r"^references?\b", re.I)
+_REF_HEAD = re.compile(r"^(references?|works cited|bibliography)\b", re.I)
 _INLINE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)")
 
 
@@ -32,6 +36,31 @@ def visible_reply_text(content: str) -> str:
     text = _IMAGE.sub("", text)
     text = _LINK.sub(r"\1", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def prose_for_word(content: str) -> str:
+    """Visible reply with fenced tool/code blocks removed."""
+    text = visible_reply_text(content)
+    if not text:
+        return ""
+    text = _FENCE_BLOCK.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def has_word_body(content: str) -> bool:
+    text = prose_for_word(content)
+    if not text:
+        return False
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return False
+    if compact[0] in "{[" and compact[-1] in "}]":
+        try:
+            json.loads(compact)
+            return False
+        except (ValueError, TypeError):
+            pass
+    return True
 
 
 def first_heading(content: str) -> str | None:
@@ -72,10 +101,9 @@ def text_filename(content: str, ext: str) -> str:
 
 
 def docx_filename(content: str) -> str:
-    heading = first_heading(content)
-    if not heading:
-        return DEFAULT_FILENAME
-    stem = windows_safe_component(heading) or "junior-note"
+    stem = windows_safe_component(docx_title(content))
+    if not stem or stem == "_":
+        stem = "junior-note"
     if stem.lower().endswith(".docx"):
         return stem
     return f"{stem}.docx"
@@ -140,12 +168,19 @@ def _apply_page(document: Document) -> None:
 def _hanging_indent(paragraph) -> None:
     paragraph.paragraph_format.left_indent = Inches(0.5)
     paragraph.paragraph_format.first_line_indent = Inches(-0.5)
+    p_pr = paragraph._p.get_or_add_pPr()
+    ind = p_pr.find(qn("w:ind"))
+    if ind is None:
+        ind = paragraph._p.makeelement(qn("w:ind"), {})
+        p_pr.append(ind)
+    ind.set(qn("w:left"), "720")
+    ind.set(qn("w:hanging"), "720")
 
 
 def build_message_docx(content: str) -> bytes:
     text = visible_reply_text(content)
-    if not text:
-        raise ValueError("That reply has no text to put in Word.")
+    if not text or not has_word_body(content):
+        raise ValueError(EMPTY_WORD_BODY)
     document = Document()
     _apply_page(document)
     in_references = False
@@ -206,10 +241,10 @@ def build_message_docx(content: str) -> bytes:
     document.save(payload)
     data = payload.getvalue()
     if not data.startswith(b"PK"):
-        raise ValueError("Could not build that Word file.")
+        raise ValueError(BUILD_WORD_FAIL)
     with ZipFile(io.BytesIO(data)) as archive:
         if "word/document.xml" not in archive.namelist():
-            raise ValueError("Could not build that Word file.")
+            raise ValueError(BUILD_WORD_FAIL)
     return data
 
 

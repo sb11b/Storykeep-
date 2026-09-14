@@ -13,7 +13,13 @@ import type { CustomNoteShelf, FilingDestination } from "@/lib/custom-note-shelv
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
-import { downloadChatMessageDocx, downloadReplyText, isPersistedMessageId } from "@/lib/chat-message-docx";
+import {
+  downloadChatMessageDocx,
+  downloadReplyText,
+  isPersistedMessageId,
+  replyHasWordBody,
+  wordDownloadToast,
+} from "@/lib/chat-message-docx";
 import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { hasGrammarMarks, wordCount } from "@/lib/word-count";
 import type { Folder } from "@/lib/types";
@@ -185,8 +191,28 @@ export function GrokChatMessage({
   const [savingClean, setSavingClean] = useState(false);
   const words = role === "assistant" && content ? wordCount(content) : 0;
   const marked = role === "assistant" && hasGrammarMarks(content);
-  const canDownloadWord =
-    wordEnabled && role === "assistant" && Boolean(content) && !failed && !waiting && isPersistedMessageId(id);
+  const hasWordBody = replyHasWordBody(content);
+  const showWord =
+    wordEnabled &&
+    role === "assistant" &&
+    hasWordBody &&
+    !failed &&
+    !waiting &&
+    isPersistedMessageId(id);
+
+  async function saveWord(clean = false) {
+    if (!showWord) return;
+    const setBusy = clean ? setSavingClean : setSavingWord;
+    setBusy(true);
+    try {
+      await downloadChatMessageDocx(id, clean ? { clean: true } : undefined);
+      toast.success(clean ? "Saved clean Word file" : "Saved Word file");
+    } catch (error) {
+      toast.error(wordDownloadToast(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (filing) return;
@@ -336,124 +362,123 @@ export function GrokChatMessage({
         </Button>
       ) : null}
       {content && role === "assistant" ? (
-        <div className="mt-2 flex flex-wrap items-center gap-1">
-          <Button
-            size="xs"
-            variant={listening ? "secondary" : "outline"}
-            disabled={!ttsAvailable}
-            onClick={(event) => onListen?.(id, event.currentTarget)}
-          >
-            <Volume2 className="size-3" />
-            {listening ? "Playing…" : "Listen"}
-          </Button>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => {
-              void navigator.clipboard.writeText(content);
-              toast.success("Copied full reply");
-            }}
-          >
-            <Copy className="size-3" />
-            Copy
-          </Button>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!canDownloadWord || savingWord}
-            onClick={() => {
-              if (!canDownloadWord || savingWord) return;
-              setSavingWord(true);
-              void downloadChatMessageDocx(id)
-                .then(() => toast.success("Saved Word file"))
-                .catch((error) => {
-                  toast.error(error instanceof Error ? error.message : "Could not download that Word file.");
-                })
-                .finally(() => setSavingWord(false));
-            }}
-          >
-            {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
-            Word
-          </Button>
-          {onNextChunk ? (
-            <Button size="xs" variant="secondary" disabled={busy} onClick={onNextChunk}>
-              Next chunk
-            </Button>
-          ) : null}
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!content || savingText !== null}
-            onClick={() => {
-              try {
-                setSavingText("md");
-                downloadReplyText(content, "md");
-                toast.success("Saved Markdown");
-              } catch (error) {
-                toast.error(error instanceof Error ? error.message : "Could not save that file.");
-              } finally {
-                setSavingText(null);
-              }
-            }}
-          >
-            .md
-          </Button>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!content || savingText !== null}
-            onClick={() => {
-              try {
-                setSavingText("txt");
-                downloadReplyText(content, "txt");
-                toast.success("Saved text file");
-              } catch (error) {
-                toast.error(error instanceof Error ? error.message : "Could not save that file.");
-              } finally {
-                setSavingText(null);
-              }
-            }}
-          >
-            .txt
-          </Button>
-          {marked ? (
+        <div className="mt-2 flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Button
+              type="button"
+              size="xs"
+              variant={listening ? "secondary" : "outline"}
+              disabled={!ttsAvailable}
+              onClick={(event) => onListen?.(id, event.currentTarget)}
+            >
+              <Volume2 className="size-3" />
+              {listening ? "Playing…" : "Listen"}
+            </Button>
+            {onNextChunk ? (
+              <Button type="button" size="xs" variant="secondary" disabled={busy} onClick={onNextChunk}>
+                Next chunk
+              </Button>
+            ) : null}
+          </div>
+          <div className="reply-actions flex flex-wrap items-center gap-1">
+            {showWord ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                aria-busy={savingWord}
+                disabled={savingWord}
+                onClick={() => void saveWord(false)}
+              >
+                {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
+                Word
+              </Button>
+            ) : null}
+            <Button
+              type="button"
               size="xs"
               variant="outline"
-              disabled={!canDownloadWord || savingClean}
               onClick={() => {
-                if (!canDownloadWord || savingClean) return;
-                setSavingClean(true);
-                void downloadChatMessageDocx(id, { clean: true })
-                  .then(() => toast.success("Saved clean Word file"))
-                  .catch((error) => {
-                    toast.error(error instanceof Error ? error.message : "Could not download that Word file.");
-                  })
-                  .finally(() => setSavingClean(false));
+                void navigator.clipboard.writeText(content);
+                toast.success("Copied full reply");
               }}
             >
-              {savingClean ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
-              Clean copy
+              <Copy className="size-3" />
+              Copy
             </Button>
-          ) : null}
-          <Button
-            size="xs"
-            variant={filing ? "secondary" : "outline"}
-            onClick={() => {
-              setDest(noteDest);
-              setFolderId(noteFolderId);
-              setIsCorrection(false);
-              setFiling((open) => !open);
-            }}
-          >
-            <NotebookPen className="size-3" />
-            Add to notes
-          </Button>
-          {words ? (
-            <span className="ml-1 text-[11px] text-muted-foreground" data-word-count={words}>
-              {words} words
-            </span>
-          ) : null}
+            <Button
+              type="button"
+              size="xs"
+              variant={filing ? "secondary" : "outline"}
+              onClick={() => {
+                setDest(noteDest);
+                setFolderId(noteFolderId);
+                setIsCorrection(false);
+                setFiling((open) => !open);
+              }}
+            >
+              <NotebookPen className="size-3" />
+              Add to notes
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={!content || savingText !== null}
+              onClick={() => {
+                try {
+                  setSavingText("md");
+                  downloadReplyText(content, "md");
+                  toast.success("Saved Markdown");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not save that file.");
+                } finally {
+                  setSavingText(null);
+                }
+              }}
+            >
+              .md
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={!content || savingText !== null}
+              onClick={() => {
+                try {
+                  setSavingText("txt");
+                  downloadReplyText(content, "txt");
+                  toast.success("Saved text file");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not save that file.");
+                } finally {
+                  setSavingText(null);
+                }
+              }}
+            >
+              .txt
+            </Button>
+            {marked && showWord ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                aria-busy={savingClean}
+                disabled={savingClean}
+                onClick={() => void saveWord(true)}
+              >
+                {savingClean ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
+                Clean copy
+              </Button>
+            ) : null}
+            {words ? (
+              <span className="ml-1 text-[11px] text-muted-foreground" data-word-count={words}>
+                {words} words
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
       {content && role === "assistant" && !failed && !waiting && schoolEnabled ? (
