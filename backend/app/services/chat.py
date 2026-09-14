@@ -49,8 +49,8 @@ _DEAD_MODEL_ALIASES = {
 }
 XAI_MODELS_CACHE_SEC = 900.0
 AUTO_LOW_MAX_CHARS = 400
-# Auto stays on low for ordinary conversation, including school coding. Only an
-# explicit ask for deeper reasoning moves the current turn to xhigh.
+# Auto: short talk → low. Long prompts, school, or code → xhigh. Explicit
+# "think harder" / "deep dive" also lifts the current turn.
 _AUTO_XHIGH_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
@@ -65,13 +65,23 @@ _AUTO_XHIGH_PATTERNS = tuple(
         r"\bwork through (?:this|it) carefully\b",
     )
 )
-# Kept for older tests that imported CODE_KEYWORDS; Auto routing no longer uses this list.
 CODE_KEYWORDS = (
     "code",
-    "analyze",
-    "plan",
-    "rewrite paper",
     "debug",
+    "rewrite paper",
+    "homework",
+    "assignment",
+    "algorithm",
+    "python",
+    "javascript",
+    "typescript",
+)
+_SCHOOL_CODE_RE = re.compile(
+    r"```|"
+    r"\b(?:python|javascript|typescript|homework|assignment|algorithm|"
+    r"debug|schoolwork|rewrite paper|linked list|dat[- ]?\d+|code)\b|"
+    r"\b(?:function|class)\s+\w+",
+    re.I,
 )
 ARTICLE_CHAR_CAP = 8_000
 ATTACHMENT_CHAR_CAP = 12_000
@@ -266,13 +276,19 @@ def normalize_model_choice(choice: str | None) -> str:
 
 
 def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
-    """True only when the current turn asks for deeper reasoning. Default is low."""
+    """True for long, school, or code turns (and explicit deep-think asks). History is ignored."""
     del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
     if not text:
         return False
     lower = text.lower()
-    return any(pattern.search(lower) for pattern in _AUTO_XHIGH_PATTERNS)
+    if any(pattern.search(lower) for pattern in _AUTO_XHIGH_PATTERNS):
+        return True
+    if len(text) >= AUTO_LOW_MAX_CHARS:
+        return True
+    if _SCHOOL_CODE_RE.search(text):
+        return True
+    return False
 
 
 def pick_fast_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:

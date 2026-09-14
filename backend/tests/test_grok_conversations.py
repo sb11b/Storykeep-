@@ -109,15 +109,16 @@ class GrokConversationTests(unittest.TestCase):
             "low",
         )
         prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"
-        self.assertTrue(pick_fast_for_auto(prompt))
+        self.assertFalse(pick_fast_for_auto(prompt))
         self.assertEqual(resolve_model_for_request(MODEL_AUTO, prompt, []), CURRENT_CHAT_MODEL)
-        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "low")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "xhigh")
         dat_plan = "DAT plan\n" + ("Week 1 analyze the dataset and rewrite paper notes.\n" * 20)
         self.assertGreaterEqual(len(dat_plan), AUTO_LOW_MAX_CHARS)
-        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "low")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "xhigh")
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "please analyze this", []), "low")
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "what is photo metadata", []), "low")
 
-    def test_auto_uses_xhigh_only_when_asked(self):
+    def test_auto_uses_xhigh_for_school_code_and_explicit_asks(self):
         self.assertEqual(
             resolve_reasoning_for_request(MODEL_AUTO, "auto", "think harder about this proof", []),
             "xhigh",
@@ -127,6 +128,10 @@ class GrokConversationTests(unittest.TestCase):
             "xhigh",
         )
         self.assertFalse(pick_fast_for_auto("think harder about this proof"))
+        self.assertEqual(
+            resolve_reasoning_for_request(MODEL_AUTO, "auto", "help with this python homework", []),
+            "xhigh",
+        )
 
     def test_locked_model_skips_auto_routing(self):
         resolved = resolve_model_for_request("grok-4.6", "hi", [])

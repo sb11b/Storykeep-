@@ -43,7 +43,10 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIsNone(image_tool_intent("describe this selfie", True))
         self.assertIsNone(image_tool_intent("what do you see", True))
 
-    def test_generate_without_image_is_generate(self):
+    def test_photo_talk_is_not_imagine(self):
+        self.assertIsNone(image_tool_intent("what is photo metadata", False))
+        self.assertIsNone(image_tool_intent("Tell me about photo metadata", False))
+        self.assertIsNone(image_tool_intent("what is a picture element in HTML", False))
         self.assertEqual(image_tool_intent("generate an image of a red notebook", False), "generate")
         self.assertEqual(image_tool_intent("Generate a red notebook", False), "generate")
 

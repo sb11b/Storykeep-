@@ -23,6 +23,7 @@ test("edit phrases without this-turn photo stay text", () => {
 
 test("photo talk stays chat", () => {
   assert.equal(imageToolIntent("Tell me about photo metadata", false), null);
+  assert.equal(imageToolIntent("what is photo metadata", false), null);
   assert.equal(imageToolIntent("what is a picture element in HTML", false), null);
   assert.equal(imageToolIntent("older python versions", false), null);
 });
