@@ -2586,6 +2586,7 @@ function Reader({
   const [pdfReady, setPdfReady] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [browserFs, setBrowserFs] = useState(false);
+  const [htmlSnapshotError, setHtmlSnapshotError] = useState<string | null>(null);
   const composed = isStoryKeepNote(article);
   const pdfIntent = !composed && article.offline_view === "pdf";
   const pdfArchiveId = article.offline_archive_id || "";
@@ -2594,6 +2595,7 @@ function Reader({
   useEffect(() => {
     setPdfReady(false);
     setPdfError(pdfIntent && !pdfArchiveId ? "This PDF restore is missing an archive id." : null);
+    setHtmlSnapshotError(null);
   }, [article.id, pdfArchiveId, pdfIntent]);
 
   useEffect(() => {
@@ -3012,7 +3014,10 @@ function Reader({
       </div>
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          !pdfIntent && "article-scrollport",
+        )}
       >
       <article
         ref={articleRef}
@@ -3107,7 +3112,14 @@ function Reader({
             disabled={busy}
             onClick={() => {
               setBusy(true);
-              void onArchive().finally(() => setBusy(false));
+              setHtmlSnapshotError(null);
+              void onArchive()
+                .catch((error) => {
+                  setHtmlSnapshotError(
+                    error instanceof Error ? error.message : "Could not store a snapshot. The live article was kept.",
+                  );
+                })
+                .finally(() => setBusy(false));
             }}
           >
             Snapshot
@@ -3281,6 +3293,14 @@ function Reader({
         ) : null}
         </div>
         {composed ? <NoteAttachmentChips markdown={composedNoteMarkdown(article)} className="mb-4" /> : null}
+        {htmlSnapshotError && !pdfIntent ? (
+          <p className="border-b bg-destructive/10 px-0 py-2 text-sm text-destructive">{htmlSnapshotError}</p>
+        ) : null}
+        {article.offline_view === "html" && !pdfIntent ? (
+          <p className="border-b bg-muted/30 px-0 py-2 text-xs text-muted-foreground">
+            Offline view is this HTML snapshot.
+          </p>
+        ) : null}
         {pdfIntent ? (
           <>
             <p className="reader-chrome border-b bg-muted/30 px-0 py-2 text-xs text-muted-foreground">

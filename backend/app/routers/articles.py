@@ -683,6 +683,8 @@ def restore_article(
         archive_service.restore_article_from_archive(db, article, row)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Archive not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc) or "Could not restore that snapshot.") from None
     if getattr(row, "archive_type", None) == "pdf":
         article.offline_view = "pdf"
         article.offline_archive_id = row.id

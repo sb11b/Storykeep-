@@ -8,8 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from urllib.parse import urljoin
+
 from sqlalchemy.orm import Session
 from weasyprint import HTML as WeasyHTML
+
+from lxml import html as lxml_html
 
 from app.config import settings
 from app.models import Archive, Article
@@ -18,8 +22,76 @@ from app.services.backup import object_store_ready, upload_object_file
 
 logger = logging.getLogger(__name__)
 _HTTP_URL = re.compile(r"^https?://", re.I)
+_HTML_MARK = re.compile(r"</?(?:p|h[1-6]|ul|ol|li|img|article|blockquote|figure|br|div)\b", re.I)
 PDF_SNAPSHOT_TYPES = {"pdf"}
 PDF_RENDERER = "weasyprint"
+
+
+def _absolutize_html_media(html: str, base_url: str) -> str:
+    if not html.strip() or not (base_url or "").strip():
+        return html
+    try:
+        root = lxml_html.fromstring(html)
+    except Exception:
+        return html
+    for el in root.iter():
+        if not isinstance(el.tag, str):
+            continue
+        for attr in ("src", "href"):
+            value = el.get(attr)
+            if not value or value.startswith(("data:", "mailto:", "javascript:")):
+                continue
+            if value.startswith("//"):
+                el.set(attr, "https:" + value)
+            elif not _HTTP_URL.match(value):
+                el.set(attr, urljoin(base_url, value))
+        srcset = el.get("srcset")
+        if not srcset:
+            continue
+        parts: list[str] = []
+        for item in srcset.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            bits = item.split()
+            url = bits[0]
+            rest = " ".join(bits[1:])
+            if url.startswith("//"):
+                url = "https:" + url
+            elif not _HTTP_URL.match(url) and not url.startswith("data:"):
+                url = urljoin(base_url, url)
+            parts.append(f"{url} {rest}".strip())
+        el.set("srcset", ", ".join(parts))
+    return lxml_html.tostring(root, encoding="unicode")
+
+
+def _html_has_readable_structure(html: str) -> bool:
+    if not html.strip():
+        return False
+    if _HTML_MARK.search(html):
+        return True
+    return len(extractor._strip_tags(html).strip()) >= 40
+
+
+def readable_article_html(html: str | None, text: str | None, base_url: str | None = None) -> str:
+    """Main-content HTML for an HTML snapshot/restore. Does not flatten structure."""
+    raw = (html or "").strip()
+    base = (base_url or "").strip()
+    if raw and _HTML_MARK.search(raw):
+        cleaned = extractor._sanitize_html(raw)
+        cleaned = _absolutize_html_media(cleaned, base)
+        if _html_has_readable_structure(cleaned):
+            return cleaned
+        kept = _absolutize_html_media(raw, base)
+        if _html_has_readable_structure(kept):
+            return kept
+    prose = (text or "").strip()
+    if prose:
+        wrapped = extractor._text_to_html(prose) or extractor._sanitize_html(f"<p>{html_lib.escape(prose)}</p>")
+        return extractor._sanitize_html(wrapped)
+    if raw:
+        return extractor._sanitize_html(raw)
+    return ""
 
 _PDF_PAGE_CSS = """
 @page { size: letter; margin: 0.85in; }
@@ -84,18 +156,16 @@ def snapshot_article(db: Session, article: Article, archive_type: str = "html") 
 
 
 def _snapshot_html(db: Session, article: Article, archive_type: str) -> Archive | None:
-    html = article.content_html
-    text = article.content_text
-    if (not html or not text) and _HTTP_URL.match((article.url or "").strip()):
-        extractor.fill_article(db, article, force=True)[0]
-        html = article.content_html
-        text = article.content_text
-    payload = html or text or article.summary or article.url or ""
+    previous_html = article.content_html
+    previous_text = article.content_text
+    payload = readable_article_html(previous_html, previous_text, article.url)
     if not payload.strip():
         logger.info("skip snapshot for article %s: no storable body", article.id)
         return None
+    article.content_html = previous_html
+    article.content_text = previous_text
     digest = hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
-    existing = next((row for row in article.archives if row.checksum == digest), None)
+    existing = next((row for row in (article.archives or []) if row.checksum == digest), None)
     if existing:
         return existing
     row = Archive(
@@ -177,7 +247,9 @@ def restore_article_from_archive(db: Session, article: Article, row: Archive) ->
 
     snapshot_article(db, article, "html")
     raw = row.content or ""
-    html = extractor._sanitize_html(raw) if raw.strip() else raw
+    html = readable_article_html(raw, None, getattr(article, "url", None))
+    if not html.strip():
+        raise ValueError("That HTML snapshot has no readable article.")
     text = extractor._clean_text(extractor._strip_tags(html)) if html else ""
     article.content_html = html
     article.content_text = text or None

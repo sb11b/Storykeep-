@@ -275,6 +275,18 @@
   pointer-events: none;
 }
 
+.article-scrollport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.article-scrollport img {
+  max-width: 100%;
+  height: auto;
+}
+
 .article-body {
   font-family: var(--storykeep-body-font, var(--font-serif), ui-serif, Georgia, serif);
   font-size: 1.125rem;

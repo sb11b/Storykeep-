@@ -68,7 +68,55 @@ class RestoreSnapshotTests(unittest.TestCase):
         self.assertIn("Older snapshot", article.content_html or "")
         self.assertNotIn("Current body", article.content_html or "")
 
-    def test_pdf_restore_keeps_html_and_sets_offline_view(self):
+    def test_html_snapshot_keeps_structure_and_absolute_images(self):
+        from app.services.archive import readable_article_html, snapshot_article
+
+        article = _article(
+            url="https://news.example.com/story",
+            content_html=(
+                "<nav class='site-nav'>Menu</nav>"
+                "<article><h2>Reactor</h2><p>Helium ash.</p>"
+                "<ul><li>One</li></ul>"
+                "<img src='/pix/core.png' alt='core'></article>"
+            ),
+            content_text="Reactor Helium ash.",
+        )
+        original = article.content_html
+        db = MagicMock()
+        row = snapshot_article(db, article, "html")
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertIs(article.content_html, original)
+        self.assertIn("<h2>", row.content)
+        self.assertIn("<p>", row.content)
+        self.assertIn("<li>", row.content)
+        self.assertIn("https://news.example.com/pix/core.png", row.content)
+        self.assertNotIn("site-nav", row.content)
+        restored = readable_article_html(row.content, None, article.url)
+        self.assertIn("Helium ash", restored)
+
+    def test_html_snapshot_empty_body_does_not_store_url(self):
+        article = _article(content_html="", content_text="", summary="", url="https://example.com/x")
+        self.assertIsNone(snapshot_article(MagicMock(), article, "html"))
+        self.assertEqual(article.content_html, "")
+
+    def test_html_restore_rejects_empty_snapshot_without_blanking(self):
+        article = _article()
+        original = article.content_html
+        row = Archive(
+            id=uuid.uuid4(),
+            article_id=article.id,
+            archive_type="readability",
+            content="   ",
+            storage_backend="db",
+            checksum="z",
+            byte_size=0,
+            created_at=datetime.now(timezone.utc),
+        )
+        with self.assertRaises(ValueError):
+            restore_article_from_archive(MagicMock(), article, row)
+        self.assertEqual(article.content_html, original)
+        self.assertNotEqual(article.offline_view, "html")
         previous = settings.data_dir
         article = _article()
         with TemporaryDirectory() as tmp:
