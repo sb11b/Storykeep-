@@ -122,7 +122,7 @@ class Feed(Base):
     user: Mapped[User] = relationship(back_populates="feeds")
     rss_shelf: Mapped[RssShelf | None] = relationship(back_populates="feeds")
     category: Mapped[Category | None] = relationship(back_populates="feeds")
-    articles: Mapped[list[Article]] = relationship(back_populates="feed", cascade="all, delete-orphan")
+    articles: Mapped[list[Article]] = relationship(back_populates="feed")
 
 
 class Article(Base):
@@ -133,7 +133,9 @@ class Article(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    feed_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("feeds.id", ondelete="CASCADE"))
+    feed_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("feeds.id", ondelete="SET NULL"), nullable=True
+    )
     guid: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -179,7 +181,7 @@ class Article(Base):
         ),
     )
 
-    feed: Mapped[Feed] = relationship(back_populates="articles")
+    feed: Mapped["Feed | None"] = relationship(back_populates="articles")
     folder: Mapped["Folder | None"] = relationship(back_populates="articles")
     tags: Mapped[list[Tag]] = relationship(secondary="article_tags", back_populates="articles")
     annotations: Mapped[list[Annotation]] = relationship(back_populates="article", cascade="all, delete-orphan")

@@ -426,7 +426,10 @@ export const api = {
     request<Feed>(`/api/v1/feeds/${id}/refresh`, { method: "POST" }),
   refreshAll: () => request<{ created: number }>("/api/v1/feeds/refresh", { method: "POST" }),
   deleteFeed: (id: string, force = false) =>
-    request<{ ok: boolean }>(`/api/v1/feeds/${id}?force=${force}`, { method: "DELETE" }),
+    request<{ ok: boolean }>(`/api/v1/feeds/${encodeURIComponent(id)}?force=${force ? "true" : "false"}`, {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    }),
   categories: (shelfId?: string) => {
     const qs = shelfId ? `?shelf_id=${encodeURIComponent(shelfId)}` : "";
     return request<Category[]>(`/api/v1/categories${qs}`);

@@ -1346,14 +1346,13 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     await api.deleteFeed(feed.id, force);
     toast.success(feed.title ? `Removed ${feed.title}` : "Feed removed");
     setFeedToRemove(null);
+    setFeeds((current) => current.filter((row) => row.id !== feed.id));
     if (article?.feed_id === feed.id) {
       setSelectedId(null);
       setArticle(null);
     }
     if (shelf.kind === "feed" && shelf.id === feed.id) {
       setShelf({ kind: "unread" });
-      await loadNav();
-      return;
     }
     await Promise.all([loadNav(), loadList()]);
   }
@@ -1441,6 +1440,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       onRenameCategory={(category) => void onRenameCategory(category)}
       onDeleteCategory={(category) => void onDeleteCategory(category)}
       onChangeFeedCategory={(feed) => void onChangeFeedCategory(feed)}
+      onRemoveFeed={(feed) => setFeedToRemove(feed)}
       onManageTags={() => setTagsOpen(true)}
       onBackup={() => setBackupOpen(true)}
       onRefresh={() => void onRefresh()}
@@ -2235,6 +2235,7 @@ function Sidebar({
   onRenameCategory,
   onDeleteCategory,
   onChangeFeedCategory,
+  onRemoveFeed,
   onManageTags,
   onBackup,
   onRefresh,
@@ -2264,6 +2265,7 @@ function Sidebar({
   onRenameCategory: (category: Category) => void;
   onDeleteCategory: (category: Category) => void;
   onChangeFeedCategory: (feed: Feed) => void;
+  onRemoveFeed: (feed: Feed) => void;
   onManageTags: () => void;
   onBackup: () => void;
   onRefresh: () => void;
@@ -2345,6 +2347,7 @@ function Sidebar({
           onRenameCategory={onRenameCategory}
           onDeleteCategory={onDeleteCategory}
           onChangeFeedCategory={onChangeFeedCategory}
+          onRemoveFeed={onRemoveFeed}
         />
         {tags.length > 0 ? (
           <>
@@ -3976,30 +3979,21 @@ function RemoveFeedDialog({
 }) {
   const [busy, setBusy] = useState(false);
   const [force, setForce] = useState(false);
+  const [needsForce, setNeedsForce] = useState(false);
 
   useEffect(() => {
     setForce(false);
-  }, [feed?.id]);
-
-  const saved = feed?.saved_count ?? 0;
+    setNeedsForce(Boolean(feed && (feed.saved_count ?? 0) > 0));
+  }, [feed?.id, feed?.saved_count]);
 
   return (
     <Dialog open={Boolean(feed)} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Remove this feed?</DialogTitle>
-          <DialogDescription>
-            {feed
-              ? `Storykeep will stop importing ${feed.title || feed.url}. Unread copies of its articles will be deleted.`
-              : "Storykeep will stop importing this feed."}
-          </DialogDescription>
+          <DialogDescription>Unread items go away. Saved/shelved items stay.</DialogDescription>
         </DialogHeader>
-        {saved > 0 ? (
-          <p className="text-sm text-muted-foreground">
-            This feed has {saved} saved {saved === 1 ? "article" : "articles"}. Removing it can delete those kept copies too.
-          </p>
-        ) : null}
-        {force || saved > 0 ? (
+        {needsForce ? (
           <label className="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
@@ -4007,7 +4001,7 @@ function RemoveFeedDialog({
               checked={force}
               onChange={(event) => setForce(event.target.checked)}
             />
-            <span>Also delete saved articles from this feed</span>
+            <span>Force: keep saved/shelved items and remove the feed</span>
           </label>
         ) : null}
         <DialogFooter>
@@ -4016,16 +4010,17 @@ function RemoveFeedDialog({
           </Button>
           <Button
             variant="destructive"
-            disabled={busy || (saved > 0 && !force)}
+            disabled={busy || (needsForce && !force)}
             onClick={async () => {
               if (!feed) return;
               setBusy(true);
               try {
-                await onConfirm(feed, force || saved > 0);
+                await onConfirm(feed, force);
               } catch (error) {
                 if (error instanceof ApiError && error.status === 409) {
-                  setForce(true);
-                  toast.error("This feed has saved articles. Confirm deletion of those copies to continue.");
+                  setNeedsForce(true);
+                  setForce(false);
+                  toast.error("This feed has saved articles. Check Force to keep them and remove the feed.");
                 } else {
                   toast.error(error instanceof ApiError ? error.message : "Could not remove feed");
                 }

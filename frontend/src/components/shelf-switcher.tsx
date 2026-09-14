@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronDown, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Category, Feed, RssShelf, Shelf } from "@/lib/types";
@@ -19,6 +19,7 @@ export function ShelfSwitcher({
   onRenameCategory,
   onDeleteCategory,
   onChangeFeedCategory,
+  onRemoveFeed,
 }: {
   shelf: Shelf;
   rssShelves: RssShelf[];
@@ -32,6 +33,7 @@ export function ShelfSwitcher({
   onRenameCategory: (category: Category) => void;
   onDeleteCategory: (category: Category) => void;
   onChangeFeedCategory: (feed: Feed) => void;
+  onRemoveFeed: (feed: Feed) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -148,6 +150,7 @@ export function ShelfSwitcher({
                       active={shelf.kind === "feed" && shelf.id === feed.id}
                       onSelect={() => onShelf({ kind: "feed", id: feed.id })}
                       onChangeCategory={() => onChangeFeedCategory(feed)}
+                      onRemove={() => onRemoveFeed(feed)}
                     />
                   </li>
                 ))}
@@ -182,14 +185,16 @@ function FeedSwitchRow({
   active,
   onSelect,
   onChangeCategory,
+  onRemove,
 }: {
   feed: Feed;
   active?: boolean;
   onSelect: () => void;
   onChangeCategory: () => void;
+  onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="group flex items-center gap-0.5">
       <button
         type="button"
         onClick={onSelect}
@@ -210,6 +215,19 @@ function FeedSwitchRow({
           <span className="ml-auto shrink-0 tabular-nums text-[10px] text-sidebar-foreground/55">{feed.unread_count}</span>
         ) : null}
       </button>
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        className="shrink-0 text-sidebar-foreground/45 hover:text-destructive"
+        aria-label={`Remove ${feed.title || "feed"}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onRemove();
+        }}
+      >
+        <Trash2 className="size-3" />
+      </Button>
       <Button
         size="icon-xs"
         variant="ghost"

@@ -88,6 +88,12 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS folder_id UUID")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS offline_view VARCHAR(16)")
     _try_sql("ALTER TABLE articles ADD COLUMN IF NOT EXISTS offline_archive_id UUID")
+    _try_sql("ALTER TABLE articles ALTER COLUMN feed_id DROP NOT NULL")
+    _try_sql("ALTER TABLE articles DROP CONSTRAINT IF EXISTS articles_feed_id_fkey")
+    _try_sql(
+        "ALTER TABLE articles ADD CONSTRAINT articles_feed_id_fkey "
+        "FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE SET NULL"
+    )
     _try_sql("ALTER TABLE folders DROP CONSTRAINT IF EXISTS folders_user_id_name_key")
     _try_sql("DROP INDEX IF EXISTS folders_user_id_name_key")
     _try_sql(

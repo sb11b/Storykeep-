@@ -205,6 +205,10 @@ class FeedUpdate(BaseModel):
     fetch_interval_minutes: int | None = Field(default=None, ge=5, le=24 * 60)
 
 
+class FeedDeleteIn(BaseModel):
+    force: bool = False
+
+
 class FeedOut(BaseModel):
     id: uuid.UUID
     url: str

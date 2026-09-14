@@ -12,8 +12,9 @@ from app.deps import get_current_user
 from app.models import Article, Category, Feed, User
 from app.services import rss_shelves as rss_shelf_service
 from app.presenters import feed_out
-from app.schemas import DiscoverOut, FeedCandidate, FeedCreate, FeedOut, FeedUpdate, OpmlImportOut
+from app.schemas import DiscoverOut, FeedCandidate, FeedCreate, FeedDeleteIn, FeedOut, FeedUpdate, OpmlImportOut
 from app.services import changelog, rss
+from app.services import feed_delete
 from app.services import opml as opml_service
 
 router = APIRouter(tags=["feeds"])
@@ -236,22 +237,19 @@ def delete_feed(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, bool]:
-    feed = db.get(Feed, feed_id)
-    if not feed or feed.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Feed not found")
-    saved = (
-        db.scalar(select(func.count()).select_from(Article).where(Article.feed_id == feed.id, Article.is_saved.is_(True)))
-        or 0
-    )
-    if saved and not force:
-        raise HTTPException(
-            status_code=409,
-            detail=f"This feed has {saved} saved articles. Retry with force=true to delete them.",
-        )
-    changelog.record(db, user.id, "feed", feed.id, "delete", {"url": feed.url})
-    db.delete(feed)
-    db.commit()
-    return {"ok": True}
+    return feed_delete.remove_feed(db, user, feed_id, force=force)
+
+
+@router.post("/feeds/{feed_id}")
+def delete_feed_post(
+    feed_id: UUID,
+    payload: FeedDeleteIn | None = None,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, bool]:
+    body_force = bool(payload.force) if payload else False
+    return feed_delete.remove_feed(db, user, feed_id, force=force or body_force)
 
 
 @router.post("/feeds/{feed_id}/mark-read")
