@@ -88,7 +88,42 @@ class ChatAttachmentTests(unittest.TestCase):
     def test_build_xai_messages_mentions_attachments(self):
         history = [{"role": "user", "content": "summarize this\n\nAttached file lab.txt:\nHello"}]
         messages = build_xai_messages(history, None, include_article=False, has_attachments=True)
-        self.assertIn("attached files", messages[0]["content"].lower())
+        system = messages[0]["content"].lower()
+        self.assertIn("attached files", system)
+        self.assertIn("copyrighted", system)
+        self.assertIn("transcribe", system)
+
+    def test_owner_page_followup_reuses_thread_file(self):
+        history = [
+            {
+                "role": "user",
+                "content": "see this",
+                "files": [
+                    {
+                        "filename": "ch5.pdf",
+                        "kind": "file",
+                        "extract_text": "Figure 5.1 Network layers with labels A and B.",
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "I own this. Pull the text and figure."},
+        ]
+        prepared = messages_for_xai(history, model="grok-3")
+        self.assertIn("Figure 5.1 Network layers with labels A and B.", prepared[-1]["content"])
+        self.assertIn("I own this", prepared[-1]["content"])
+
+    def test_chapter_without_attach_stays_own_words(self):
+        messages = build_xai_messages(
+            [{"role": "user", "content": "Explain chapter 5.1"}],
+            None,
+            include_article=False,
+            has_attachments=False,
+        )
+        system = messages[0]["content"].lower()
+        self.assertIn("own words", system)
+        self.assertIn("page dump", system)
+        self.assertNotIn("steve attached files", system)
 
     def test_vision_data_url_compresses_a_large_png(self):
         from PIL import Image

@@ -55,6 +55,9 @@ test("pasted ticket about Imagine is text even with a prior photo flag", () => {
 test("what's in this photo is vision only", () => {
   assert.equal(imageToolIntent("what's in this picture?", true), null);
   assert.equal(imageToolIntent("describe this selfie", true), null);
+  assert.equal(imageToolIntent("pull the text and figure", true), null);
+  assert.equal(imageToolIntent("transcribe this page", true), null);
+  assert.equal(imageToolIntent("describe the figure", true), null);
 });
 
 test("generate without a photo is generate", () => {

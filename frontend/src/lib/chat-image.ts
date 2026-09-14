@@ -6,6 +6,10 @@ const VISION_ONLY = [
   /\bwhat (?:do you |can you )?see\b/i,
   /\bdescribe (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
   /\blook at (?:this|the|my) (?:photo|picture|image|pic|selfie)\b/i,
+  /\bpull (?:the |this )?(?:text|figure|diagram|caption)s?\b/i,
+  /\btranscribe\b/i,
+  /\bocr\b/i,
+  /\bdescribe (?:the |this |that )?(?:figure|diagram|chart|graph|table)\b/i,
   /\bhow old\b/i,
   /^please look at /i,
 ];

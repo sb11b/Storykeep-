@@ -30,6 +30,10 @@ _VISION_ONLY = tuple(
         r"\bdescribe (?:this|the|my) (?:photo|picture|image|pic|selfie)\b",
         r"\blook at (?:this|the|my) (?:photo|picture|image|pic|selfie)\b",
         r"\bwhat(?:'s| is) in (?:this|the) (?:one|shot|frame)\b",
+        r"\bpull (?:the |this )?(?:text|figure|diagram|caption)s?\b",
+        r"\btranscribe\b",
+        r"\bocr\b",
+        r"\bdescribe (?:the |this |that )?(?:figure|diagram|chart|graph|table)\b",
         r"\bhow old\b",
         r"^please look at ",
     )

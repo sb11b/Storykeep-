@@ -42,6 +42,9 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIsNone(image_tool_intent("What is in this photo", True))
         self.assertIsNone(image_tool_intent("describe this selfie", True))
         self.assertIsNone(image_tool_intent("what do you see", True))
+        self.assertIsNone(image_tool_intent("pull the text and figure", True))
+        self.assertIsNone(image_tool_intent("transcribe this page", True))
+        self.assertIsNone(image_tool_intent("describe the figure", True))
 
     def test_photo_talk_is_not_imagine(self):
         self.assertIsNone(image_tool_intent("what is photo metadata", False))
