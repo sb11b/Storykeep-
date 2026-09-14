@@ -376,6 +376,32 @@
 .wikilink-missing:hover {
   color: var(--foreground);
 }
+.sk-article-link {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.sk-open-reader {
+  appearance: none;
+  margin-left: 0.35rem;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.75em;
+  line-height: 1.2;
+  border-radius: 999px;
+  padding: 0.1em 0.55em;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.sk-open-reader:hover {
+  color: var(--foreground);
+}
+.note-md .sk-article-title {
+  font-weight: 600;
+}
 .article-body img,
 .article-hero {
   max-width: 100%;

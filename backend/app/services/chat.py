@@ -131,6 +131,7 @@ Steve connected the current article. An excerpt is below.
 - This excerpt is one slice (a heading, a highlight, or a chunk), not the whole book.
 - Do not invent quotes or facts that are not supported by the excerpt.
 - If Steve asks something outside the excerpt, say this slice does not cover it and he can send the next chunk.
+- If you name this article, link the exact title as [title](#article/{article_id}) using article_id from the excerpt. Never use a publisher URL as href.
 """
 
 NOTE_MODE_APPEND = """
@@ -782,6 +783,7 @@ def build_xai_messages(
     has_attachments: bool = False,
     include_note: bool = False,
     note_excerpt: str | None = None,
+    extra_system: str | None = None,
 ) -> list[dict]:
     system = SYSTEM_PROMPT
     grounded = False
@@ -791,6 +793,8 @@ def build_xai_messages(
     if include_note and note_excerpt:
         system += NOTE_MODE_APPEND + "\n\nIncluded note excerpt (truncated):\n" + note_excerpt
         grounded = True
+    if extra_system:
+        system += "\n\n" + extra_system
     if not grounded:
         system += GENERAL_MODE_APPEND
     if recap_question:
@@ -848,6 +852,7 @@ async def stream_completion(
     has_attachments: bool = False,
     include_note: bool = False,
     note_excerpt: str | None = None,
+    extra_system: str | None = None,
     cancelled: asyncio.Event | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
@@ -874,6 +879,7 @@ async def stream_completion(
                 has_attachments=has_attachments,
                 include_note=include_note,
                 note_excerpt=note_excerpt,
+                extra_system=extra_system,
             ),
             "stream": True,
             "max_tokens": max_tokens,

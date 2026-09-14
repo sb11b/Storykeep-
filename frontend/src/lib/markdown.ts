@@ -52,6 +52,54 @@ function mediaImageHtml(alt: string, url: string): string {
   );
 }
 
+const ARTICLE_UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const ARTICLE_MD_LINK_SRC = String.raw`\[([^\]]+)\]\((?:(?:\./)?(?:/#article/|#article/|/article/|\?article=))(${ARTICLE_UUID})\)`;
+const PUBLISHER_MD_LINK_SRC =
+  String.raw`\[([^\]]+)\]\((https?:\/\/(?:www\.)?(?:foxnews\.com|newsmax\.com)[^)\s]*)\)`;
+
+export function articleIdFromHref(href: string | null | undefined): string | null {
+  const value = href || "";
+  const match = value.match(new RegExp(`(?:#article/|[?&]article=)(${ARTICLE_UUID})`, "i"));
+  return match?.[1] || null;
+}
+
+export function parseArticleHash(hash: string | null | undefined): string | null {
+  const match = (hash || "").match(new RegExp(`^#article/(${ARTICLE_UUID})$`, "i"));
+  return match?.[1] || null;
+}
+
+export type ChatArticleClick = { kind: "article"; id: string } | { kind: "stay" } | null;
+
+export function chatArticleClick(target: EventTarget | null): ChatArticleClick {
+  const el = target as { closest?: (selector: string) => { getAttribute: (name: string) => string | null } | null } | null;
+  const node = el?.closest?.("[data-article-id], a[href], button.sk-open-reader");
+  if (!node) return null;
+  const fromData = node.getAttribute("data-article-id");
+  if (fromData && new RegExp(`^${ARTICLE_UUID}$`, "i").test(fromData)) {
+    return { kind: "article", id: fromData };
+  }
+  const href = node.getAttribute("href");
+  const fromHref = articleIdFromHref(href);
+  if (fromHref) return { kind: "article", id: fromHref };
+  if (href) {
+    try {
+      const url = new URL(href, "https://storykeep.local");
+      if (/(^|\.)(foxnews\.com|newsmax\.com)$/i.test(url.hostname)) return { kind: "stay" };
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+function articleLinkHtml(title: string, id: string): string {
+  const safeId = escapeHtml(id);
+  return (
+    `<a href="#article/${safeId}" class="sk-article-link" data-article-id="${safeId}">${title}</a>` +
+    ` <button type="button" class="sk-open-reader" data-article-id="${safeId}">Open in reader</button>`
+  );
+}
+
 function inline(value: string, resolver?: WikilinkResolver): string {
   const escaped = inlineWithWikilinks(value, resolver)
     .replace(MEDIA_IMAGE, (_all, alt: string, url: string) => mediaImageHtml(alt, url))
@@ -75,6 +123,8 @@ function inline(value: string, resolver?: WikilinkResolver): string {
     .replace(/__([^_]+)__/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
     .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<em>$1</em>")
+    .replace(new RegExp(ARTICLE_MD_LINK_SRC, "gi"), (_all, title: string, id: string) => articleLinkHtml(title, id))
+    .replace(new RegExp(PUBLISHER_MD_LINK_SRC, "gi"), (_all, title: string) => `<span class="sk-article-title">${title}</span>`)
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
 }
 

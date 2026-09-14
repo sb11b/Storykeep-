@@ -28,6 +28,7 @@ from app.services.demo_lock import is_locked, reject_locked
 from app.services.include_chunk import format_excerpt as format_include_excerpt
 from app.services.include_chunk import resolve_include_slice
 from app.services.include_chunk import slice_meta as include_slice_meta
+from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
 
 router = APIRouter(tags=["chat"])
 
@@ -650,6 +651,11 @@ async def chat(
         owned_slice = _owned_include_slice(article)
         article_body = owned_slice.text
         excerpt = format_include_excerpt((article.title or "Untitled").strip(), owned_slice)
+        excerpt = (
+            f"article_id: {article.id}\n"
+            f"Open in reader: [{(article.title or 'Untitled').strip()}](#article/{article.id})\n"
+            f"{excerpt}"
+        )
         include_meta = include_slice_meta(owned_slice)
     if include_note:
         if include_article and payload.article_id == payload.include_note_id:
@@ -664,6 +670,9 @@ async def chat(
                 include_meta = include_slice_meta(note_slice)
     chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
     has_attachments = any(item.get("files") for item in history)
+    unread_catalog = unread_news_block(db, user.id, user_text)
+    if unread_catalog:
+        history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
 
     def _persist_assistant(text: str) -> str | None:
         cleaned = (text or "").strip()
@@ -708,6 +717,7 @@ async def chat(
         has_attachments=has_attachments,
         include_note=include_note,
         note_excerpt=note_excerpt,
+        extra_system=UNREAD_READER_SYSTEM if unread_catalog else None,
         cancelled=cancelled,
     )
     try:

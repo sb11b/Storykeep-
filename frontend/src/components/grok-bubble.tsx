@@ -98,6 +98,7 @@ export function GrokBubble({
   articleBody,
   onSavedNote,
   onStopArticleListen,
+  onOpenArticle,
 }: {
   articleId: string | null;
   articleTitle: string | null;
@@ -106,6 +107,7 @@ export function GrokBubble({
   articleBody?: string | null;
   onSavedNote: (noteId?: string, destination?: FilingDestination, folderId?: string | null) => Promise<void>;
   onStopArticleListen?: () => void;
+  onOpenArticle?: (id: string) => void;
 }) {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
@@ -950,6 +952,7 @@ export function GrokBubble({
                   ttsVoices={ttsVoices}
                   customShelves={customShelves}
                   onCreateNoteShelf={createNoteShelf}
+                  onOpenArticle={onOpenArticle}
                 />
               </div>
             ))}
@@ -982,6 +985,7 @@ export function GrokBubble({
             ttsVoices={ttsVoices}
             customShelves={customShelves}
             onCreateNoteShelf={createNoteShelf}
+            onOpenArticle={onOpenArticle}
           />
           </div>
         )}

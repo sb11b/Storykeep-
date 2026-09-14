@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  chatArticleClick,
   noteMarkdownHtml,
+  parseArticleHash,
   prefixSelectedLines,
   renderMarkdown,
   wrapCodeFence,
@@ -157,4 +159,38 @@ test("Junior Imagine HTML img in the assistant body still renders pixels", () =>
   assert.match(html, new RegExp(`<img src="/api/v1/media/${id}" alt="aged portrait" />`));
   assert.match(html, /Download picture/);
   assert.doesNotMatch(html, /implemented and passing/);
+});
+
+test("article hash links open in the reader without a publisher href", () => {
+  const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const html = renderMarkdown(`- [Five newest](#article/${id})`);
+  assert.match(html, new RegExp(`href="#article/${id}"`));
+  assert.match(html, /class="sk-article-link"/);
+  assert.match(html, new RegExp(`data-article-id="${id}"`));
+  assert.match(html, /Open in reader/);
+  assert.doesNotMatch(html, /target="_blank"/);
+  assert.doesNotMatch(html, /foxnews\.com|newsmax\.com/i);
+  assert.equal(parseArticleHash(`#article/${id}`), id);
+});
+
+test("publisher headline markdown is not an outbound href", () => {
+  const html = renderMarkdown("[A Fox headline](https://www.foxnews.com/politics/example)");
+  assert.doesNotMatch(html, /href="https:\/\/www\.foxnews\.com/);
+  assert.doesNotMatch(html, /target="_blank"/);
+  assert.match(html, /class="sk-article-title"/);
+  assert.match(html, /A Fox headline/);
+});
+
+test("chatArticleClick reads in-app article ids and blocks publisher hosts", () => {
+  const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const link = { getAttribute: (name: string) => (name === "data-article-id" ? id : name === "href" ? `#article/${id}` : null) };
+  const closest = () => link;
+  assert.deepEqual(chatArticleClick({ closest } as unknown as EventTarget), { kind: "article", id });
+  const publisher = {
+    getAttribute: (name: string) => (name === "href" ? "https://www.foxnews.com/story" : null),
+    closest: function closest() {
+      return this;
+    },
+  };
+  assert.deepEqual(chatArticleClick(publisher as unknown as EventTarget), { kind: "stay" });
 });

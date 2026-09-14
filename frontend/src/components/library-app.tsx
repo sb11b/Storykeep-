@@ -82,7 +82,7 @@ import {
   shelfSupportsUnreadFilter,
 } from "@/lib/list-navigation";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
-import { noteMarkdownHtml } from "@/lib/markdown";
+import { noteMarkdownHtml, parseArticleHash } from "@/lib/markdown";
 import {
   ARTICLE_TEXT_SIZE_OPTIONS,
   articleTextSizeClass,
@@ -889,14 +889,21 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   }, []);
 
   useEffect(() => {
-    const articleId = new URLSearchParams(window.location.search).get("article");
-    if (articleId) {
-      window.history.replaceState({}, "", window.location.pathname);
-      selectedIdRef.current = articleId;
-      setSelectedId(articleId);
-      void loadArticleById(articleId);
-    }
-  }, [loadArticleById]);
+    const openFromLocation = () => {
+      const fromHash = parseArticleHash(window.location.hash);
+      const fromQuery = new URLSearchParams(window.location.search).get("article");
+      const articleId = fromHash || fromQuery;
+      if (!articleId) return;
+      if (fromQuery) {
+        const hash = fromHash ? `#article/${fromHash}` : "";
+        window.history.replaceState({}, "", `${window.location.pathname}${hash}`);
+      }
+      openArticle(articleId);
+    };
+    openFromLocation();
+    window.addEventListener("hashchange", openFromLocation);
+    return () => window.removeEventListener("hashchange", openFromLocation);
+  }, [openArticle]);
 
   useEffect(() => {
     const save = new URLSearchParams(window.location.search).get("save");
@@ -2115,6 +2122,10 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         sourceRef={article?.source_ref ?? null}
         articleBody={article?.content_text ?? null}
         onStopArticleListen={() => listenRef.current?.stop()}
+        onOpenArticle={(id) => {
+          window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#article/${id}`);
+          openArticle(id);
+        }}
         onSavedNote={async (noteId, destination, folderId) => {
           await loadNav();
           const currentId = selectedIdRef.current;

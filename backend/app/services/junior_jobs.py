@@ -8,7 +8,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -28,12 +28,21 @@ CRON_RE = re.compile(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$")
 DEFAULT_CRON = "0 8 * * *"
 DEFAULT_TZ = "America/New_York"
 MY_NEWS_RE = re.compile(r"\bmy news\b", re.I)
+UNREAD_RE = re.compile(r"\bunread\b", re.I)
+FOX_FEED_RE = re.compile(r"\bfox(?:\s+news)?\b", re.I)
+NEWSMAX_FEED_RE = re.compile(r"\bnewsmax\b", re.I)
+FIVE_NEWEST_RE = re.compile(r"\b(?:five|5)\s+newest\b|\blast\s+(?:five|5)\b", re.I)
 SEARCH_FAILED = "search failed"
 JOB_SEARCH_SYSTEM = """You are Junior running a scheduled job with web search enabled.
 Use web_search for live pages. Quote what you found.
 If search does not work, reply with exactly: search failed
 Never say you cannot search, cannot browse, or do not have web access.
 Prefer StoryKeep Unread titles when they are included for my news.
+When Unread items are listed, link each exact title as [title](#article/{article_id}) only. Never use a publisher URL as href.
+"""
+UNREAD_READER_SYSTEM = """StoryKeep Unread items are attached with article_id, title, and feed.
+List the exact titles. Each title must be a markdown link [title](#article/{article_id}).
+Never use a publisher URL as the href. Never invent ids. Stay in StoryKeep; do not send the reader to another site.
 """
 UNREAD_TITLE_CAP = 40
 
@@ -200,12 +209,56 @@ def tools_for_job(job: object) -> list[dict] | None:
 
 
 def prompt_wants_my_news(prompt: str) -> bool:
-    return bool(MY_NEWS_RE.search(prompt or ""))
+    return prompt_wants_unread_catalog(prompt)
 
 
-def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) -> list[str]:
-    rows = db.scalars(
-        select(Article.title)
+def prompt_wants_unread_catalog(prompt: str) -> bool:
+    text = prompt or ""
+    return bool(
+        MY_NEWS_RE.search(text)
+        or UNREAD_RE.search(text)
+        or FOX_FEED_RE.search(text)
+        or NEWSMAX_FEED_RE.search(text)
+    )
+
+
+def unread_limit_from_prompt(prompt: str) -> int:
+    if FIVE_NEWEST_RE.search(prompt or ""):
+        return 5
+    return UNREAD_TITLE_CAP
+
+
+def unread_feed_scope(prompt: str) -> str:
+    text = prompt or ""
+    fox = bool(FOX_FEED_RE.search(text))
+    newsmax = bool(NEWSMAX_FEED_RE.search(text))
+    if fox and not newsmax:
+        return "fox"
+    if newsmax and not fox:
+        return "newsmax"
+    return "all"
+
+
+def _feed_scope_filter(scope: str):
+    if scope == "fox":
+        return or_(
+            Feed.title.ilike("%fox%"),
+            Feed.url.ilike("%foxnews%"),
+            Feed.site_url.ilike("%foxnews%"),
+        )
+    if scope == "newsmax":
+        return or_(
+            Feed.title.ilike("%newsmax%"),
+            Feed.url.ilike("%newsmax%"),
+            Feed.site_url.ilike("%newsmax%"),
+        )
+    return None
+
+
+def unread_items(db: Session, user_id: UUID, prompt: str) -> list[dict[str, str]]:
+    limit = unread_limit_from_prompt(prompt)
+    stmt = (
+        select(Article.id, Article.title, Feed.title)
         .join(Feed, Article.feed_id == Feed.id)
         .where(
             Feed.user_id == user_id,
@@ -214,27 +267,79 @@ def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) -> 
         )
         .order_by(Article.published_at.desc().nulls_last(), Article.created_at.desc())
         .limit(limit)
-    ).all()
-    titles: list[str] = []
-    for title in rows:
+    )
+    scope_filter = _feed_scope_filter(unread_feed_scope(prompt))
+    if scope_filter is not None:
+        stmt = stmt.where(scope_filter)
+    rows = db.execute(stmt).all()
+    items: list[dict[str, str]] = []
+    for article_id, title, feed_title in rows:
         cleaned = " ".join((title or "").split())
-        if cleaned:
-            titles.append(cleaned[:200])
-    return titles
+        if not cleaned:
+            continue
+        items.append(
+            {
+                "article_id": str(article_id),
+                "title": cleaned[:200],
+                "feed": " ".join((feed_title or "RSS").split())[:80] or "RSS",
+            }
+        )
+    return items
+
+
+def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) -> list[str]:
+    items = unread_items(db, user_id, "")
+    return [item["title"] for item in items[:limit]]
+
+
+def format_unread_news_block(items: list[dict[str, str]]) -> str:
+    if not items:
+        return "StoryKeep Unread has no titles right now."
+    lines = "\n".join(
+        f"- article_id: {item['article_id']} · feed: {item['feed']} · "
+        f"[{item['title']}](#article/{item['article_id']})"
+        for item in items
+    )
+    return (
+        "StoryKeep Unread catalog (open in the StoryKeep reader, never a publisher URL):\n"
+        "Each item has article_id, title, and feed. Print exact titles as "
+        "[title](#article/{article_id}) only.\n"
+        f"{lines}"
+    )
 
 
 def unread_news_block(db: Session, user_id: UUID, prompt: str) -> str | None:
-    if not prompt_wants_my_news(prompt):
+    if not prompt_wants_unread_catalog(prompt):
         return None
-    titles = unread_titles(db, user_id)
-    if not titles:
-        return "StoryKeep Unread has no titles right now."
-    lines = "\n".join(f"- {title}" for title in titles)
-    return (
-        "Prefer these StoryKeep Unread titles for my news. "
-        "Use them before other headlines.\n"
-        f"{lines}"
-    )
+    return format_unread_news_block(unread_items(db, user_id, prompt))
+
+
+def attach_unread_catalog(history: list[dict], catalog: str | None) -> list[dict]:
+    if not catalog:
+        return history
+    prepared = list(history)
+    for index in range(len(prepared) - 1, -1, -1):
+        item = prepared[index]
+        if item.get("role") != "user":
+            continue
+        next_item = dict(item)
+        content = next_item.get("content")
+        if isinstance(content, str):
+            next_item["content"] = f"{content}\n\n{catalog}"
+        elif isinstance(content, list):
+            parts = list(content)
+            for part_i, part in enumerate(parts):
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts[part_i] = {**part, "text": f"{part.get('text') or ''}\n\n{catalog}"}
+                    break
+            else:
+                parts.append({"type": "text", "text": catalog})
+            next_item["content"] = parts
+        else:
+            next_item["content"] = catalog
+        prepared[index] = next_item
+        break
+    return prepared
 
 
 def _search_tool_rejected(exc: HTTPException) -> bool:
@@ -294,7 +399,12 @@ def _include_excerpt(db: Session, user: User, article_id: UUID | None) -> str | 
     ).first()
     if not article:
         return None
-    return chat_service.article_excerpt(article)
+    excerpt = chat_service.article_excerpt(article)
+    return (
+        f"article_id: {article.id}\n"
+        f"Open in reader: [{article.title or 'Untitled'}](#article/{article.id})\n"
+        f"{excerpt}"
+    )
 
 
 def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
@@ -332,6 +442,8 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
     if tools:
         windowed = chat_service.thread_window([*history, {"role": "user", "content": user_line}])
         system = JOB_SEARCH_SYSTEM
+        if news:
+            system = f"{system}\n\n{UNREAD_READER_SYSTEM}"
         if excerpt:
             system = f"{system}\n\nIncluded article excerpt:\n{excerpt}"
         messages = [{"role": "system", "content": system}, *windowed]
@@ -341,6 +453,8 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
             excerpt,
             include_article=bool(excerpt),
         )
+        if news:
+            messages[0]["content"] = f"{messages[0]['content']}\n\n{UNREAD_READER_SYSTEM}"
     status = "ok"
     output = ""
     error = None

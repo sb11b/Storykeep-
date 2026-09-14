@@ -11,7 +11,7 @@ import { onCodeCopyClick } from "@/lib/code-copy";
 import { downloadChatPicture, resolveChatImageSrc } from "@/lib/chat-media-download";
 import type { CustomNoteShelf, FilingDestination } from "@/lib/custom-note-shelves";
 import { sanitizeHtml } from "@/lib/format";
-import { renderMarkdown } from "@/lib/markdown";
+import { renderMarkdown, chatArticleClick } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 import {
   downloadChatMessageDocx,
@@ -35,7 +35,15 @@ function onReplyBodyClick(
   event: MouseEvent<HTMLElement>,
   onTtsWordPick?: (index: number) => void,
   onRun?: (code: string) => void,
+  onOpenArticle?: (id: string) => void,
 ) {
+  const articleClick = chatArticleClick(event.target);
+  if (articleClick) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (articleClick.kind === "article") onOpenArticle?.(articleClick.id);
+    return;
+  }
   const trigger = (event.target as HTMLElement).closest<HTMLElement>(".sk-chat-image-download");
   if (trigger) {
     event.preventDefault();
@@ -140,6 +148,7 @@ export function GrokChatMessage({
   onSchoolAssistant,
   onSchoolSavedNote,
   onRunSnippet,
+  onOpenArticle,
 }: {
   id: string;
   role: "user" | "assistant";
@@ -179,6 +188,7 @@ export function GrokChatMessage({
   onSchoolAssistant?: (message: GrokMessage) => void;
   onSchoolSavedNote?: (noteId: string) => void;
   onRunSnippet?: (messageId: string, code: string) => void;
+  onOpenArticle?: (id: string) => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [savingWord, setSavingWord] = useState(false);
@@ -285,7 +295,12 @@ export function GrokChatMessage({
             className="note-md markdown"
             data-larry-reply-body={id}
             onClick={(event) =>
-              onReplyBodyClick(event, (index) => onTtsWordPick?.(id, index), (code) => onRunSnippet?.(id, code))
+              onReplyBodyClick(
+                event,
+                (index) => onTtsWordPick?.(id, index),
+                (code) => onRunSnippet?.(id, code),
+                onOpenArticle,
+              )
             }
             onMouseUp={(event) => {
               const index = wordIndexFromSelection(event.currentTarget);

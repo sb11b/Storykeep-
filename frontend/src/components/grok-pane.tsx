@@ -166,6 +166,7 @@ export function GrokPane({
   onCancelRename,
   customShelves = [],
   onCreateNoteShelf,
+  onOpenArticle,
 }: {
   pane: GrokPaneState;
   label: string;
@@ -178,6 +179,7 @@ export function GrokPane({
   onCancelRename?: () => void;
   customShelves?: CustomNoteShelf[];
   onCreateNoteShelf?: () => void | Promise<void>;
+  onOpenArticle?: (id: string) => void;
   focused?: boolean;
   canRemove?: boolean;
   articleId: string | null;
@@ -1690,6 +1692,7 @@ export function GrokPane({
                 onAddToNotes={(payload) => void addToNotes(payload, item.id)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
                 onRunSnippet={(messageId, code) => void runSnippet(messageId, code)}
+                onOpenArticle={onOpenArticle}
               />
             ))
           )}

@@ -13,13 +13,17 @@ from app.services.junior_jobs import (
     JOB_RUN_CAP,
     SEARCH_FAILED,
     _complete_job_turn,
+    attach_unread_catalog,
     cron_matches,
     due_this_minute,
     enforce_daily_cap,
+    format_unread_news_block,
     parse_cron,
     prompt_wants_my_news,
     require_cron_secret,
     tools_for_job,
+    unread_feed_scope,
+    unread_limit_from_prompt,
     unread_news_block,
 )
 
@@ -79,13 +83,33 @@ class JuniorJobsTests(unittest.TestCase):
 
     def test_my_news_prefers_unread_titles(self):
         self.assertTrue(prompt_wants_my_news("Summarize my news"))
+        self.assertTrue(prompt_wants_my_news("Use only my StoryKeep Unread from Fox News. Five newest by published time."))
         self.assertFalse(prompt_wants_my_news("what's on Reuters homepage"))
+        self.assertEqual(unread_feed_scope("Unread from Fox News. Five newest."), "fox")
+        self.assertEqual(unread_limit_from_prompt("Five newest by published time. Exact titles."), 5)
+        article_id = uuid4()
         db = MagicMock()
-        db.scalars.return_value.all.return_value = ["DAT-200 quiz", "Reuters: markets"]
+        db.execute.return_value.all.return_value = [(article_id, "DAT-200 quiz", "Fox News")]
         block = unread_news_block(db, uuid4(), "What is my news today?")
         self.assertIn("StoryKeep Unread", block)
         self.assertIn("DAT-200 quiz", block)
+        self.assertIn(f"article_id: {article_id}", block)
+        self.assertIn("Fox News", block)
+        self.assertIn(f"[DAT-200 quiz](#article/{article_id})", block)
+        self.assertNotIn("http://", block or "")
         self.assertIsNone(unread_news_block(db, uuid4(), "what's on Reuters homepage"))
+
+    def test_unread_catalog_is_reader_links(self):
+        article_id = uuid4()
+        block = format_unread_news_block(
+            [{"article_id": str(article_id), "title": "Exact Fox title", "feed": "Fox News"}]
+        )
+        self.assertIn(f"[Exact Fox title](#article/{article_id})", block)
+        self.assertIn("article_id:", block)
+        self.assertNotIn("foxnews.com", block)
+        attached = attach_unread_catalog([{"role": "user", "content": "Five newest Unread Fox"}], block)
+        self.assertIn("#article/", attached[0]["content"])
+        self.assertIn("Exact Fox title", attached[0]["content"])
 
     @patch("app.services.junior_jobs.chat_service.complete_once")
     def test_job_without_search_omits_tools(self, complete):
