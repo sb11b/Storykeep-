@@ -191,10 +191,20 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
 
   const src = objectUrl || fileUrl;
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-muted">
-      {error ? <p className="px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      <object data={src} type="application/pdf" className="min-h-0 h-full w-full flex-1">
-        <iframe title="PDF snapshot" src={src} className="h-full min-h-0 w-full flex-1 border-0" />
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-contain bg-muted">
+      {error ? <p className="shrink-0 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+      <object
+        data={src}
+        type="application/pdf"
+        className="block h-full min-h-[70vh] w-full flex-1"
+        style={{ width: "100%", height: "100%", minHeight: "70vh" }}
+      >
+        <iframe
+          title="PDF snapshot"
+          src={src}
+          className="block h-full min-h-[70vh] w-full flex-1 border-0"
+          style={{ width: "100%", height: "100%", minHeight: "70vh" }}
+        />
       </object>
     </div>
   );
@@ -2757,7 +2767,7 @@ function Reader({
         ref={scrollRef}
         className={cn(
           "min-h-0 flex-1",
-          pdfOffline ? "flex flex-col overflow-hidden" : "overflow-y-auto overscroll-contain",
+          pdfOffline ? "flex min-h-0 flex-1 flex-col" : "overflow-y-auto overscroll-contain",
         )}
       >
       <article
@@ -2765,10 +2775,11 @@ function Reader({
         className={cn(
           "px-5 py-6",
           pdfOffline
-            ? "flex h-full min-h-0 w-full max-w-none flex-1 flex-col"
+            ? "flex min-h-0 w-full max-w-none flex-1 flex-col"
             : cn("mx-auto", readerFull ? "max-w-4xl" : "max-w-3xl"),
         )}
       >
+        <div className={pdfOffline ? "shrink-0" : undefined}>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <Button variant="ghost" className="lg:hidden -ml-2" onClick={onBack}>
             Back to list
@@ -3013,9 +3024,10 @@ function Reader({
             </label>
           </div>
         ) : null}
+        </div>
         {composed ? <NoteAttachmentChips markdown={composedNoteMarkdown(article)} className="mb-4" /> : null}
         {pdfOffline && article.offline_archive_id ? (
-          <div className="mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border">
+          <div className="mt-2 flex min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-contain rounded-lg border">
             <p className="shrink-0 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               Offline view is this PDF snapshot. The article text was not replaced.
             </p>
