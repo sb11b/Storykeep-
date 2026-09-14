@@ -27,6 +27,14 @@ SNIPPET_CHAR_CAP = 4_000
 CRON_RE = re.compile(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$")
 DEFAULT_CRON = "0 8 * * *"
 DEFAULT_TZ = "America/New_York"
+MY_NEWS_RE = re.compile(r"\bmy news\b", re.I)
+SEARCH_FAILED = "search failed"
+JOB_SEARCH_APPEND = """
+Steve enabled web search for this Junior job. Use the web_search (or live_search) tool when the question needs a live page.
+If search does not work, reply with exactly: search failed
+Never say you cannot search, cannot browse, or do not have web access.
+"""
+UNREAD_TITLE_CAP = 40
 
 
 def parse_cron(expr: str) -> tuple[str, str, str, str, str]:
@@ -179,6 +187,107 @@ def job_reasoning(job: JuniorJob) -> str:
     return cleaned if cleaned in chat_service.REASONING_EFFORTS else "low"
 
 
+def job_allows_web_search(job: object) -> bool:
+    return bool(getattr(job, "web_search", False))
+
+
+def tools_for_job(job: object) -> list[dict] | None:
+    """xAI search tools only when the job checkbox is on. Never code_interpreter."""
+    if not job_allows_web_search(job):
+        return None
+    return [{"type": "web_search"}]
+
+
+def prompt_wants_my_news(prompt: str) -> bool:
+    return bool(MY_NEWS_RE.search(prompt or ""))
+
+
+def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) -> list[str]:
+    rows = db.scalars(
+        select(Article.title)
+        .join(Feed, Article.feed_id == Feed.id)
+        .where(
+            Feed.user_id == user_id,
+            Article.is_read.is_(False),
+            Article.source_kind == "rss",
+        )
+        .order_by(Article.published_at.desc().nulls_last(), Article.created_at.desc())
+        .limit(limit)
+    ).all()
+    titles: list[str] = []
+    for title in rows:
+        cleaned = " ".join((title or "").split())
+        if cleaned:
+            titles.append(cleaned[:200])
+    return titles
+
+
+def unread_news_block(db: Session, user_id: UUID, prompt: str) -> str | None:
+    if not prompt_wants_my_news(prompt):
+        return None
+    titles = unread_titles(db, user_id)
+    if not titles:
+        return "StoryKeep Unread has no titles right now."
+    lines = "\n".join(f"- {title}" for title in titles)
+    return (
+        "Prefer these StoryKeep Unread titles for my news. "
+        "Use them before other headlines.\n"
+        f"{lines}"
+    )
+
+
+def _search_tool_rejected(exc: HTTPException) -> bool:
+    blob = f"{exc.status_code} {exc.detail}".lower()
+    if exc.status_code not in {400, 410, 422, 502}:
+        return False
+    return any(
+        token in blob
+        for token in (
+            "web_search",
+            "live_search",
+            "search_parameters",
+            "invalid tool",
+            "unknown tool",
+            "422",
+            "410",
+            "gone",
+        )
+    )
+
+
+def _complete_job_turn(
+    messages: list[dict],
+    *,
+    model: str,
+    reasoning: str,
+    tools: list[dict] | None,
+) -> dict[str, str]:
+    if not tools:
+        return chat_service.complete_once(
+            messages,
+            model=model,
+            reasoning_effort=reasoning,
+            max_tokens=900,
+        )
+    last_error: HTTPException | None = None
+    for tool_type in ("web_search", "live_search"):
+        try:
+            return chat_service.complete_once(
+                messages,
+                model=model,
+                reasoning_effort=reasoning,
+                max_tokens=900,
+                timeout_sec=90.0,
+                tools=[{"type": tool_type}],
+            )
+        except HTTPException as exc:
+            last_error = exc
+            if not _search_tool_rejected(exc):
+                raise
+            continue
+    raise HTTPException(status_code=502, detail=SEARCH_FAILED) from last_error
+
+
 def _include_excerpt(db: Session, user: User, article_id: UUID | None) -> str | None:
     if not article_id:
         return None
@@ -205,6 +314,9 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
     reasoning = job_reasoning(job)
     excerpt = _include_excerpt(db, user, job.include_article_id)
     user_line = f"[Junior job: {job.title}]\n\n{job.prompt.strip()}"
+    news = unread_news_block(db, user.id, job.prompt)
+    if news:
+        user_line = f"{user_line}\n\n{news}"
     history: list[dict] = []
     conversation = None
     if job.conversation_id:
@@ -225,23 +337,31 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
         excerpt,
         include_article=bool(excerpt),
     )
+    tools = tools_for_job(job)
+    if tools and messages and messages[0].get("role") == "system":
+        system = messages[0].get("content") or ""
+        messages[0] = {**messages[0], "content": f"{system.rstrip()}\n{JOB_SEARCH_APPEND}"}
     status = "ok"
     output = ""
     error = None
     try:
-        result = chat_service.complete_once(
+        result = _complete_job_turn(
             messages,
             model=model,
-            reasoning_effort=reasoning,
-            max_tokens=900,
+            reasoning=reasoning,
+            tools=tools,
         )
         output = result["text"]
         model = result["model"]
         reasoning = result["reasoning"]
     except HTTPException as exc:
         status = "error"
-        error = str(exc.detail)
-        output = error or "Job failed."
+        if str(exc.detail) == SEARCH_FAILED or (tools and _search_tool_rejected(exc)):
+            error = SEARCH_FAILED
+            output = SEARCH_FAILED
+        else:
+            error = str(exc.detail)
+            output = error or "Job failed."
     except Exception as exc:
         status = "error"
         error = str(exc)

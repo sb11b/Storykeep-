@@ -436,6 +436,7 @@ class JuniorJob(Base):
     model: Mapped[str] = mapped_column(String(64), nullable=False, default="grok-4.6", server_default="grok-4.6")
     reasoning: Mapped[str] = mapped_column(String(16), nullable=False, default="low", server_default="low")
     xhigh: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    web_search: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_status: Mapped[str | None] = mapped_column(String(32))

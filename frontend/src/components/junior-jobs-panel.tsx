@@ -46,6 +46,7 @@ export function JuniorJobsPanel({
   const [prompt, setPrompt] = useState("");
   const [cron, setCron] = useState("0 8 * * *");
   const [xhigh, setXhigh] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);
   const [saveNote, setSaveNote] = useState(false);
   const [shelf, setShelf] = useState<FilingDestination>("notes");
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -95,12 +96,14 @@ export function JuniorJobsPanel({
         model: "grok-4.6",
         reasoning: "low",
         xhigh,
+        web_search: webSearch,
         enabled: true,
       });
       setJobs((current) => [saved, ...current]);
       setCreating(false);
       setTitle("");
       setPrompt("");
+      setWebSearch(false);
       toast.success("Job saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save that job.");
@@ -186,6 +189,10 @@ export function JuniorJobsPanel({
             xhigh (default is grok-4.6 · low)
           </label>
           <label className="flex items-center gap-1.5 text-[11px]">
+            <input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} />
+            Allow web search
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px]">
             <input
               type="checkbox"
               checked={includeArticle}
@@ -239,6 +246,7 @@ export function JuniorJobsPanel({
               <p className="text-[11px] font-medium leading-snug">{job.title}</p>
               <p className="text-[10px] text-muted-foreground">
                 {job.enabled ? "On" : "Paused"} · {job.cron} · {formatWhen(job.last_run_at)}
+                {job.web_search ? " · search" : ""}
                 {job.last_status ? ` · ${job.last_status}` : ""}
               </p>
               <div className="mt-1 flex flex-wrap gap-1">

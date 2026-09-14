@@ -765,6 +765,7 @@ export type JuniorJob = {
   model: string;
   reasoning: string;
   xhigh: boolean;
+  web_search: boolean;
   enabled: boolean;
   last_run_at: string | null;
   last_status: string | null;

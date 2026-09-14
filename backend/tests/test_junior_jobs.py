@@ -11,11 +11,16 @@ from fastapi import HTTPException
 from app.services.chat_docx import text_filename
 from app.services.junior_jobs import (
     JOB_RUN_CAP,
+    SEARCH_FAILED,
+    _complete_job_turn,
     cron_matches,
     due_this_minute,
     enforce_daily_cap,
     parse_cron,
+    prompt_wants_my_news,
     require_cron_secret,
+    tools_for_job,
+    unread_news_block,
 )
 
 
@@ -64,6 +69,66 @@ class JuniorJobsTests(unittest.TestCase):
         paper = "# Grammar-fixed DAT-200 paper\n\nBody."
         self.assertEqual(text_filename(paper, "md"), "Grammar-fixed DAT-200 paper.md")
         self.assertEqual(text_filename("Just a line\n\nMore.", "txt"), "junior-note.txt")
+
+    def test_job_tools_default_off_no_code_interpreter(self):
+        self.assertIsNone(tools_for_job(SimpleNamespace(web_search=False)))
+        self.assertIsNone(tools_for_job(SimpleNamespace()))
+        tools = tools_for_job(SimpleNamespace(web_search=True))
+        self.assertEqual(tools, [{"type": "web_search"}])
+        self.assertFalse(any(item.get("type") == "code_interpreter" for item in tools))
+
+    def test_my_news_prefers_unread_titles(self):
+        self.assertTrue(prompt_wants_my_news("Summarize my news"))
+        self.assertFalse(prompt_wants_my_news("what's on Reuters homepage"))
+        db = MagicMock()
+        db.scalars.return_value.all.return_value = ["DAT-200 quiz", "Reuters: markets"]
+        block = unread_news_block(db, uuid4(), "What is my news today?")
+        self.assertIn("StoryKeep Unread", block)
+        self.assertIn("DAT-200 quiz", block)
+        self.assertIsNone(unread_news_block(db, uuid4(), "what's on Reuters homepage"))
+
+    @patch("app.services.junior_jobs.chat_service.complete_once")
+    def test_job_without_search_omits_tools(self, complete):
+        complete.return_value = {"text": "ok", "model": "grok-4.6", "reasoning": "low"}
+        _complete_job_turn(
+            [{"role": "user", "content": "hello"}],
+            model="grok-4.6",
+            reasoning="low",
+            tools=None,
+        )
+        kwargs = complete.call_args.kwargs
+        self.assertNotIn("tools", kwargs)
+        self.assertEqual(kwargs["reasoning_effort"], "low")
+
+    @patch("app.services.junior_jobs.chat_service.complete_once")
+    def test_job_with_search_sends_web_search(self, complete):
+        complete.return_value = {"text": "Reuters homepage: …", "model": "grok-4.6", "reasoning": "low"}
+        _complete_job_turn(
+            [{"role": "user", "content": "what's on Reuters homepage"}],
+            model="grok-4.6",
+            reasoning="low",
+            tools=tools_for_job(SimpleNamespace(web_search=True)),
+        )
+        kwargs = complete.call_args.kwargs
+        self.assertEqual(kwargs["tools"], [{"type": "web_search"}])
+        self.assertNotEqual(kwargs["tools"], [{"type": "code_interpreter"}])
+
+    @patch("app.services.junior_jobs.chat_service.complete_once")
+    def test_search_422_retries_then_search_failed(self, complete):
+        complete.side_effect = [
+            HTTPException(status_code=502, detail="xAI HTTP 422: invalid tool"),
+            HTTPException(status_code=502, detail="xAI HTTP 422: invalid tool"),
+        ]
+        with self.assertRaises(HTTPException) as raised:
+            _complete_job_turn(
+                [],
+                model="grok-4.6",
+                reasoning="low",
+                tools=[{"type": "web_search"}],
+            )
+        self.assertEqual(raised.exception.detail, SEARCH_FAILED)
+        types = [call.kwargs["tools"][0]["type"] for call in complete.call_args_list]
+        self.assertEqual(types, ["web_search", "live_search"])
 
 
 if __name__ == "__main__":

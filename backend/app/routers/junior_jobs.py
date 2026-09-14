@@ -34,6 +34,7 @@ class JobIn(BaseModel):
     model: str = "grok-4.6"
     reasoning: str = "low"
     xhigh: bool = False
+    web_search: bool = False
     enabled: bool = True
 
 
@@ -49,6 +50,7 @@ class JobPatch(BaseModel):
     model: str | None = None
     reasoning: str | None = None
     xhigh: bool | None = None
+    web_search: bool | None = None
     enabled: bool | None = None
 
 
@@ -66,6 +68,7 @@ def _job_out(row: JuniorJob) -> dict:
         "model": row.model,
         "reasoning": row.reasoning,
         "xhigh": bool(row.xhigh),
+        "web_search": bool(getattr(row, "web_search", False)),
         "enabled": bool(row.enabled),
         "last_run_at": row.last_run_at.isoformat() if row.last_run_at else None,
         "last_status": row.last_status,
@@ -136,6 +139,7 @@ def create_job(payload: JobIn, db: Session = Depends(get_db), user: User = Depen
         model=payload.model.strip() or "grok-4.6",
         reasoning=(payload.reasoning or "low").strip() or "low",
         xhigh=payload.xhigh,
+        web_search=payload.web_search,
         enabled=payload.enabled,
     )
     _bind_optional(db, user, row)
