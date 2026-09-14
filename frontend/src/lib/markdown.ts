@@ -210,7 +210,7 @@ type ParsedBlock = { kind: "code"; lang: string; body: string } | { kind: "text"
 function renderCodeBlock(lang: string, body: string): string {
   const label = escapeHtml((lang || "text").trim() || "text");
   const escaped = escapeHtml(body);
-  return `<pre class="sk-code"><div class="sk-code-bar"><span class="sk-code-lang">${label}</span><button type="button" data-copy>Copy</button></div><code>${escaped}</code></pre>`;
+  return `<pre class="sk-code"><div class="sk-code-bar"><span class="sk-code-lang">${label}</span><button type="button" data-copy>Copy</button><button type="button" data-run>Run</button></div><code>${escaped}</code></pre>`;
 }
 
 function parseBlocks(source: string): ParsedBlock[] {

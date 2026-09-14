@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { GrokRowMenu } from "@/components/grok-row-menu";
+import { JuniorJobsPanel } from "@/components/junior-jobs-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
@@ -792,6 +793,17 @@ export function GrokBubble({
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {historySidebar}
+        {fullscreen && persist && !locked ? (
+          <JuniorJobsPanel
+            conversationId={focusedPane.conversationId}
+            articleId={articleId}
+            customShelves={customShelves}
+            onRanConversation={(id) => {
+              void loadConversation(id);
+              void refreshHistory();
+            }}
+          />
+        ) : null}
         {fullscreen ? (
           <div className="grid min-h-0 flex-1 gap-px bg-border" style={paneGridStyle(panes.length)}>
             {panes.map((pane, index) => (

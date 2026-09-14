@@ -28,7 +28,6 @@ import {
   StarOff,
   Trash2,
   Volume2,
-  WandSparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
@@ -1451,7 +1450,6 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         router.replace("/login");
       }}
       onProfile={openProfile}
-      onStudio={() => router.push("/studio")}
       deployBuild={deployBuild}
     />
   );
@@ -2243,7 +2241,6 @@ function Sidebar({
   refreshing,
   onLogout,
   onProfile,
-  onStudio,
   deployBuild,
 }: {
   user: User;
@@ -2273,7 +2270,6 @@ function Sidebar({
   refreshing: boolean;
   onLogout: () => void;
   onProfile: () => void;
-  onStudio: () => void;
   deployBuild: string | null;
 }) {
   return (
@@ -2375,10 +2371,6 @@ function Sidebar({
       <div className="shrink-0 space-y-1 border-t border-sidebar-border p-3">
         <Button type="button" variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onProfile}>
           Profile
-        </Button>
-        <Button type="button" variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onStudio}>
-          <WandSparkles className="size-3.5" />
-          Grok Studio
         </Button>
         <Button variant="ghost" className="w-full justify-start text-sidebar-foreground" onClick={onBackup}>
           Backup & export

@@ -987,22 +987,22 @@ def complete_once(
     reasoning_effort: str | None = None,
     max_tokens: int = 1200,
     timeout_sec: float = 45.0,
+    tools: list[dict] | None = None,
 ) -> dict[str, str]:
-    """One-shot chat for automations and the Build IDE. Not the Junior SSE path."""
+    """One-shot chat for Junior jobs and in-thread snippet runs. Not the Junior SSE path."""
     key = require_key()
     resolved_model = rewrite_xai_model(model or default_full_model())
     effort = clamp_reasoning_effort(resolved_model, reasoning_effort or DEFAULT_REASONING_EFFORT)
-    payload = attach_reasoning_effort(
-        {
-            "model": resolved_model,
-            "messages": messages,
-            "stream": False,
-            "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
-            "temperature": 0.4,
-        },
-        resolved_model,
-        effort,
-    )
+    payload: dict[str, object] = {
+        "model": resolved_model,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
+        "temperature": 0.4,
+    }
+    if tools:
+        payload["tools"] = tools
+    payload = attach_reasoning_effort(payload, resolved_model, effort)
     try:
         with httpx.Client(
             timeout=httpx.Timeout(
@@ -1025,8 +1025,7 @@ def complete_once(
         raise HTTPException(status_code=502, detail="xAI returned a non-JSON reply.") from exc
     choices = body.get("choices") or []
     message = (choices[0].get("message") or {}) if choices else {}
-    content = message.get("content") if isinstance(message, dict) else ""
-    text = content if isinstance(content, str) else ""
-    if not text.strip():
+    text = _content_text(message.get("content") if isinstance(message, dict) else "").strip()
+    if not text:
         raise HTTPException(status_code=502, detail="Grok returned an empty reply.")
     return {"text": text, "model": resolved_model, "reasoning": effort}

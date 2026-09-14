@@ -204,6 +204,10 @@ def delete_conversation(
     return {"ok": True}
 
 
+class SnippetIn(BaseModel):
+    code: str = Field(min_length=1, max_length=4000)
+
+
 @router.post("/chat/messages/{message_id}/docx")
 def download_message_docx(
     message_id: UUID,
@@ -234,6 +238,24 @@ def download_message_docx(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.post("/chat/messages/{message_id}/run-snippet")
+def run_message_snippet(
+    message_id: UUID,
+    payload: SnippetIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    reject_locked(user)
+    from app.services import junior_jobs as jobs
+
+    result = jobs.run_snippet(db, user, message_id, payload.code)
+    return {
+        "conversation_id": str(result["conversation_id"]),
+        "user_message": GrokMessageOut.model_validate(result["user_message"]).model_dump(mode="json"),
+        "assistant_message": GrokMessageOut.model_validate(result["assistant_message"]).model_dump(mode="json"),
+    }
 
 
 @router.post("/chat/imagine")

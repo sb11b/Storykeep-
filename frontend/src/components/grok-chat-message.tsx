@@ -13,7 +13,7 @@ import type { CustomNoteShelf, FilingDestination } from "@/lib/custom-note-shelv
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
-import { downloadChatMessageDocx, isPersistedMessageId } from "@/lib/chat-message-docx";
+import { downloadChatMessageDocx, downloadReplyText, isPersistedMessageId } from "@/lib/chat-message-docx";
 import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { hasGrammarMarks, wordCount } from "@/lib/word-count";
 import type { Folder } from "@/lib/types";
@@ -25,7 +25,11 @@ function toastDownloadError(error: unknown) {
   toast.error(error instanceof Error ? error.message : "Could not download that picture.");
 }
 
-function onReplyBodyClick(event: MouseEvent<HTMLElement>, onTtsWordPick?: (index: number) => void) {
+function onReplyBodyClick(
+  event: MouseEvent<HTMLElement>,
+  onTtsWordPick?: (index: number) => void,
+  onRun?: (code: string) => void,
+) {
   const trigger = (event.target as HTMLElement).closest<HTMLElement>(".sk-chat-image-download");
   if (trigger) {
     event.preventDefault();
@@ -40,7 +44,7 @@ function onReplyBodyClick(event: MouseEvent<HTMLElement>, onTtsWordPick?: (index
     }).catch(toastDownloadError);
     return;
   }
-  onCodeCopyClick(event);
+  onCodeCopyClick(event, onRun);
   if (event.defaultPrevented) return;
   const wordEl = (event.target as HTMLElement).closest("[data-tts-word]");
   if (wordEl instanceof HTMLElement) {
@@ -127,6 +131,7 @@ export function GrokChatMessage({
   schoolEnabled = true,
   onSchoolAssistant,
   onSchoolSavedNote,
+  onRunSnippet,
 }: {
   id: string;
   role: "user" | "assistant";
@@ -163,9 +168,11 @@ export function GrokChatMessage({
   schoolEnabled?: boolean;
   onSchoolAssistant?: (message: GrokMessage) => void;
   onSchoolSavedNote?: (noteId: string) => void;
+  onRunSnippet?: (messageId: string, code: string) => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [savingWord, setSavingWord] = useState(false);
+  const [savingText, setSavingText] = useState<"md" | "txt" | null>(null);
   const [filing, setFiling] = useState(false);
   const [dest, setDest] = useState<FilingDestination>(noteDest);
   const [folderId, setFolderId] = useState<string | null>(noteFolderId);
@@ -242,7 +249,9 @@ export function GrokChatMessage({
             ref={bodyRef}
             className="note-md markdown"
             data-larry-reply-body={id}
-            onClick={(event) => onReplyBodyClick(event, (index) => onTtsWordPick?.(id, index))}
+            onClick={(event) =>
+              onReplyBodyClick(event, (index) => onTtsWordPick?.(id, index), (code) => onRunSnippet?.(id, code))
+            }
             onMouseUp={(event) => {
               const index = wordIndexFromSelection(event.currentTarget);
               if (index != null) onTtsWordPick?.(id, index);
@@ -356,6 +365,42 @@ export function GrokChatMessage({
           >
             {savingWord ? <LoaderCircle className="size-3 animate-spin" /> : <FileDown className="size-3" />}
             Word
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!content || savingText !== null}
+            onClick={() => {
+              try {
+                setSavingText("md");
+                downloadReplyText(content, "md");
+                toast.success("Saved Markdown");
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Could not save that file.");
+              } finally {
+                setSavingText(null);
+              }
+            }}
+          >
+            .md
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!content || savingText !== null}
+            onClick={() => {
+              try {
+                setSavingText("txt");
+                downloadReplyText(content, "txt");
+                toast.success("Saved text file");
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Could not save that file.");
+              } finally {
+                setSavingText(null);
+              }
+            }}
+          >
+            .txt
           </Button>
           {marked ? (
             <Button

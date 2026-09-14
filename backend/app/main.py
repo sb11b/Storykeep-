@@ -15,7 +15,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, chat, feeds, library, overlay, school, stt, studio, sync, tts
+from app.routers import articles, auth, backups, chat, feeds, junior_jobs, library, overlay, school, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -202,13 +202,13 @@ async def lifespan(_: FastAPI):
         coalesce=True,
         max_instances=1,
     )
-    from app.services.studio import run_due_automations
+    from app.services.junior_jobs import run_due_jobs
 
     scheduler.add_job(
-        run_due_automations,
+        run_due_jobs,
         "interval",
         minutes=1,
-        id="grok-automations",
+        id="junior-jobs",
         coalesce=True,
         max_instances=1,
     )
@@ -260,7 +260,7 @@ app.include_router(backups.router, prefix=API)
 app.include_router(tts.router, prefix=API)
 app.include_router(chat.router, prefix=API)
 app.include_router(school.router, prefix=API)
-app.include_router(studio.router, prefix=API)
+app.include_router(junior_jobs.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 
 

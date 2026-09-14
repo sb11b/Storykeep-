@@ -66,3 +66,33 @@ export async function downloadChatMessageDocx(messageId: string, options?: { cle
     link.remove();
   }, 60_000);
 }
+
+export function replyFileStem(content: string): string {
+  const heading = (content || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("# "))
+    ?.replace(/^#+\s+/, "")
+    .replace(/[<>:"/\\|?*]+/g, "-")
+    .slice(0, 80);
+  return heading || "junior-note";
+}
+
+export function downloadReplyText(content: string, ext: "md" | "txt"): void {
+  const text = (content || "").replace(/\r\n/g, "\n");
+  if (!text.trim()) throw new Error("Nothing to save.");
+  const blob = new Blob([text], {
+    type: ext === "md" ? "text/markdown;charset=utf-8" : "text/plain;charset=utf-8",
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = `${replyFileStem(text)}.${ext}`;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl);
+    link.remove();
+  }, 60_000);
+}

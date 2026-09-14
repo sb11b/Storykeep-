@@ -1060,6 +1060,39 @@ export function GrokPane({
     }
   }
 
+  async function runSnippet(messageId: string, code: string) {
+    const snippet = code.trim();
+    if (!snippet) {
+      toast.error("That code fence is empty.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api.runChatSnippet(messageId, snippet);
+      onUpdate((current) => {
+        const extra: ChatLine[] = [
+          { id: result.user_message.id, role: "user", content: result.user_message.content },
+          {
+            id: result.assistant_message.id,
+            role: "assistant",
+            content: result.assistant_message.content,
+            routeLabel: spendChipLabel(current.lastResolvedModel, "low"),
+          },
+        ];
+        const merged = [...current.messages];
+        for (const line of extra) {
+          if (!merged.some((row) => row.id === line.id)) merged.push(line);
+        }
+        return { ...current, conversationId: result.conversation_id || current.conversationId, messages: merged };
+      });
+      onHistoryChanged?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not run that snippet.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addToNotes(payload: AddToNotesPayload, assistantId?: string) {
     const body = payload.content.trim();
     if (!body) return;
@@ -1531,6 +1564,7 @@ export function GrokPane({
                 }}
                 onAddToNotes={(payload) => void addToNotes(payload, item.id)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
+                onRunSnippet={(messageId, code) => void runSnippet(messageId, code)}
               />
             ))
           )}

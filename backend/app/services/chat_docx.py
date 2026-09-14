@@ -61,6 +61,16 @@ def docx_title(content: str) -> str:
     return "Junior reply"
 
 
+def text_filename(content: str, ext: str) -> str:
+    suffix = (ext or "txt").lstrip(".").lower()
+    if suffix not in {"md", "txt"}:
+        suffix = "txt"
+    heading = first_heading(content)
+    stem = windows_safe_component(heading or "") if heading else "junior-note"
+    stem = stem or "junior-note"
+    return f"{stem}.{suffix}"
+
+
 def docx_filename(content: str) -> str:
     heading = first_heading(content)
     if not heading:

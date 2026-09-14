@@ -16,7 +16,8 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - Snapshot HTML so a dead original URL still has a copy; **PDF snapshot** keeps a printable copy on the `/app/var` volume
 - Full-text search across titles, authors, summaries, and stored bodies
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
-- **Grok Studio** (`/studio`): scheduled Automations (Run now, history, templates) and a Build IDE (file tree, Plan/Build, apply patches). Uses the server `XAI_API_KEY`. Email trigger is a sample paste, not a live inbox.
+- **Junior jobs** (full screen Junior): scheduled prompts into a Junior thread (`cron` + timezone). Optional note on a shelf. Cap 20 runs/user/day. Railway can hit `POST /api/v1/junior/jobs/run` with `JUNIOR_CRON_SECRET`.
+- **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy; optional in-thread Run via xAI `code_interpreter`.
 
 ## Stack
 
@@ -75,6 +76,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `API_ORIGIN` | Next.js rewrite target for the API |
 | `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen, dictation, and the Junior chat bubble. Server only — never in git or the browser. |
 | `XAI_CHAT_MODEL` | Chat model, default `grok-4.6`. Auto uses grok-4.6 with reasoning `low` (short) or `xhigh` (school/code). |
+| `JUNIOR_CRON_SECRET` | Shared secret for `POST /api/v1/junior/jobs/run` (Railway cron). StoryKeep also ticks due jobs every minute. |
 
 The Junior bubble is a movable panel. Replies stay in the session until **Add to notes**, which creates or updates a StoryKeep addition (`guid storykeep-note:` / `StoryKeep/Additions/`). It never overwrites `Steve's Surface Vault/**`. Chat is capped at 120 requests per hour per user (`CHAT_REQUESTS_PER_HOUR`). **Image** (next to the paperclip) generates a picture from the typed prompt via the xAI image API (`XAI_API_KEY` on the server only), stores it as owner-only media, and keeps it in the thread. Image gen is 10 per hour (`IMAGINE_REQUESTS_PER_HOUR`). Demo accounts cannot use chat or Imagine. Dictation uses streaming STT at `$0.20/hr` via the server.
 
