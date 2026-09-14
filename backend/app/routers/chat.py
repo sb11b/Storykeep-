@@ -663,18 +663,6 @@ async def chat(
             return None
 
     cancelled = asyncio.Event()
-
-    async def watch_disconnect() -> None:
-        try:
-            while True:
-                if await request.is_disconnected():
-                    cancelled.set()
-                    return
-                await asyncio.sleep(0.05)
-        except asyncio.CancelledError:
-            raise
-
-    watch = asyncio.create_task(watch_disconnect())
     stream = chat_service.stream_completion(
         history_for_xai,
         excerpt,
@@ -692,23 +680,24 @@ async def chat(
     try:
         first_piece = await anext(stream)
     except StopAsyncIteration:
-        cancelled.set()
-        watch.cancel()
         raise HTTPException(status_code=504, detail=chat_service.XAI_SILENT_DETAIL)
-    except Exception:
-        cancelled.set()
-        watch.cancel()
+
+    async def watch_disconnect() -> None:
         try:
-            await watch
-        except (asyncio.CancelledError, Exception):
-            pass
-        raise
+            while True:
+                if await request.is_disconnected():
+                    cancelled.set()
+                    return
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
 
     async def events():
         assistant_parts: list[str] = []
         started = time.perf_counter()
         ttft_ms: int | None = None
         flushed = False
+        watch = asyncio.create_task(watch_disconnect())
 
         def _log(reason: str) -> None:
             logger.info(
