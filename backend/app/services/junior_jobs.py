@@ -460,13 +460,12 @@ def run_snippet(db: Session, user: User, message_id: UUID, code: str) -> dict:
         },
         *chat_service.thread_window([*history, {"role": "user", "content": user_line}]),
     ]
-    result = chat_service.complete_once(
+    result = chat_service.complete_with_code_interpreter(
         messages,
         model=chat_service.CURRENT_CHAT_MODEL,
         reasoning_effort="low",
         max_tokens=700,
         timeout_sec=60.0,
-        tools=[{"type": "code_interpreter"}],
     )
     user_row = grok_store.append_message(db, conversation, role="user", content=user_line)
     assistant_row = grok_store.append_message(db, conversation, role="assistant", content=result["text"])

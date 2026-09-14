@@ -198,7 +198,44 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertEqual(row.title, "Top Five")
         self.assertTrue(all(call.args[0] is row for call in db.add.call_args_list))
 
-    def test_patch_job_other_owner_404(self):
+    @patch("app.services.junior_jobs.chat_service.complete_once")
+    @patch("app.services.junior_jobs.chat_service.complete_with_code_interpreter")
+    def test_run_snippet_uses_responses_not_completions(self, code_run, complete):
+        from app.services.junior_jobs import run_snippet
+
+        user = SimpleNamespace(id=uuid4(), email="reader@example.com", is_demo_locked=False)
+        conversation = SimpleNamespace(id=uuid4(), last_model=None, last_reasoning=None)
+        assistant = SimpleNamespace(id=uuid4(), conversation_id=conversation.id)
+        db = MagicMock()
+        code_run.return_value = {"text": "2", "model": "grok-4.6", "reasoning": "low"}
+        with (
+            patch("app.services.junior_jobs.reject_locked"),
+            patch("app.services.junior_jobs.grok_store.owned_assistant_message", return_value=assistant),
+            patch("app.services.junior_jobs.grok_store.owned_conversation", return_value=conversation),
+            patch("app.services.junior_jobs.chat_service.enforce_rate_limit"),
+            patch("app.services.junior_jobs.grok_store.conversation_history", return_value=[]),
+            patch("app.services.junior_jobs.grok_store.append_message", side_effect=[SimpleNamespace(), SimpleNamespace()]),
+        ):
+            run_snippet(db, user, assistant.id, "print(1+1)")
+        complete.assert_not_called()
+        code_run.assert_called_once()
+        kwargs = code_run.call_args.kwargs
+        self.assertEqual(kwargs["reasoning_effort"], "low")
+        self.assertNotIn("tools", kwargs)
+
+    @patch("app.services.chat.complete_with_server_tools")
+    def test_complete_once_does_not_send_code_interpreter_to_completions(self, server):
+        from app.services.chat import complete_once
+
+        server.return_value = {"text": "2", "model": "grok-4.6", "reasoning": "low"}
+        result = complete_once(
+            [{"role": "user", "content": "print(1)"}],
+            tools=[{"type": "code_interpreter"}],
+        )
+        server.assert_called_once()
+        self.assertEqual(server.call_args.kwargs["tool_types"], ("code_interpreter",))
+        self.assertFalse(server.call_args.kwargs["require_search"])
+        self.assertEqual(result["text"], "2")
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 

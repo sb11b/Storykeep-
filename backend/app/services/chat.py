@@ -1054,6 +1054,18 @@ def _strip_tags(html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+_COMPLETIONS_SERVER_TOOLS = frozenset({"code_interpreter", "code_execution", "web_search", "live_search"})
+
+
+def _server_tool_types(tools: list[dict] | None) -> tuple[str, ...]:
+    seen: list[str] = []
+    for item in tools or []:
+        kind = str(item.get("type") or "").strip()
+        if kind in _COMPLETIONS_SERVER_TOOLS and kind not in seen:
+            seen.append(kind)
+    return tuple(seen)
+
+
 def complete_once(
     messages: list[dict],
     *,
@@ -1063,7 +1075,20 @@ def complete_once(
     timeout_sec: float = 45.0,
     tools: list[dict] | None = None,
 ) -> dict[str, str]:
-    """One-shot chat for Junior jobs and in-thread snippet runs. Not the Junior SSE path."""
+    """One-shot chat for Junior jobs. Server tools go to Responses — completions 422s them."""
+    server_types = _server_tool_types(tools)
+    if server_types:
+        search = any(kind in {"web_search", "live_search"} for kind in server_types)
+        return complete_with_server_tools(
+            messages,
+            tool_types=server_types,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            max_tokens=max_tokens,
+            timeout_sec=timeout_sec,
+            fail_detail="search failed" if search else "Could not run that snippet.",
+            require_search=search,
+        )
     key = require_key()
     resolved_model = rewrite_xai_model(model or default_full_model())
     effort = clamp_reasoning_effort(resolved_model, reasoning_effort or DEFAULT_REASONING_EFFORT)
@@ -1074,8 +1099,9 @@ def complete_once(
         "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
         "temperature": 0.4,
     }
-    if tools:
-        payload["tools"] = tools
+    function_tools = [item for item in (tools or []) if str(item.get("type") or "") == "function"]
+    if function_tools:
+        payload["tools"] = function_tools
     payload = attach_reasoning_effort(payload, resolved_model, effort)
     try:
         with httpx.Client(
@@ -1145,30 +1171,34 @@ _CANT_SEARCH = re.compile(
 )
 
 
-def complete_with_web_search(
+def complete_with_server_tools(
     messages: list[dict],
     *,
+    tool_types: tuple[str, ...],
     model: str | None = None,
     reasoning_effort: str | None = None,
     max_tokens: int = 1200,
     timeout_sec: float = 90.0,
+    fail_detail: str = "search failed",
+    require_search: bool = False,
 ) -> dict[str, str]:
-    """Junior job search via Responses web_search. Chat completions rejects that tool type (422)."""
+    """POST /v1/responses with a server tool. Chat completions 422s web_search and code_interpreter."""
+    kinds = tuple(kind for kind in tool_types if kind)
+    if not kinds:
+        raise HTTPException(status_code=502, detail=fail_detail)
     key = require_key()
     resolved_model = rewrite_xai_model(model or default_full_model())
     effort = clamp_reasoning_effort(resolved_model, reasoning_effort or DEFAULT_REASONING_EFFORT)
     payload: dict[str, object] = {
         "model": resolved_model,
         "input": messages,
-        "tools": [{"type": "web_search"}],
         "store": False,
         "max_output_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
     }
     if model_uses_reasoning(resolved_model):
         payload["reasoning"] = {"effort": effort}
-    last_status = 0
-    last_detail = "search failed"
-    for tool_type in ("web_search", "live_search"):
+    last_detail = fail_detail
+    for tool_type in kinds:
         payload["tools"] = [{"type": tool_type}]
         try:
             with httpx.Client(
@@ -1183,7 +1213,6 @@ def complete_with_web_search(
                 response = client.post(responses_url(), json=payload, headers=_auth_headers(key))
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=_transport_error_detail(exc)) from exc
-        last_status = response.status_code
         if response.status_code >= 400:
             last_detail = parse_xai_error_body(response.text, response.status_code)
             if response.status_code in {400, 410, 422}:
@@ -1194,12 +1223,53 @@ def complete_with_web_search(
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=502, detail="xAI returned a non-JSON reply.") from exc
         if not isinstance(body, dict):
-            raise HTTPException(status_code=502, detail="search failed")
+            raise HTTPException(status_code=502, detail=fail_detail)
         text = parse_responses_text(body)
         if not text:
-            raise HTTPException(status_code=502, detail="search failed")
-        if _CANT_SEARCH.search(text) and not responses_used_search(body):
-            raise HTTPException(status_code=502, detail="search failed")
+            raise HTTPException(status_code=502, detail=fail_detail)
+        if require_search and _CANT_SEARCH.search(text) and not responses_used_search(body):
+            raise HTTPException(status_code=502, detail=fail_detail)
         return {"text": text, "model": resolved_model, "reasoning": effort}
-    del last_status
-    raise HTTPException(status_code=502, detail="search failed")
+    raise HTTPException(status_code=502, detail=fail_detail)
+
+
+def complete_with_web_search(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    max_tokens: int = 1200,
+    timeout_sec: float = 90.0,
+) -> dict[str, str]:
+    """Junior job search via Responses web_search. Chat completions rejects that tool type (422)."""
+    return complete_with_server_tools(
+        messages,
+        tool_types=("web_search", "live_search"),
+        model=model,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        timeout_sec=timeout_sec,
+        fail_detail="search failed",
+        require_search=True,
+    )
+
+
+def complete_with_code_interpreter(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    max_tokens: int = 700,
+    timeout_sec: float = 60.0,
+) -> dict[str, str]:
+    """In-thread Run uses Responses code_interpreter. Completions 422s that tool type."""
+    return complete_with_server_tools(
+        messages,
+        tool_types=("code_interpreter", "code_execution"),
+        model=model,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        timeout_sec=timeout_sec,
+        fail_detail="Could not run that snippet.",
+        require_search=False,
+    )

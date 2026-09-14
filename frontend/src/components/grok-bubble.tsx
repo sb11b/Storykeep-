@@ -166,6 +166,16 @@ export function GrokBubble({
   }, [open, persist, refreshHistory]);
 
   useEffect(() => {
+    if (!persist) return;
+    for (const pane of panes) {
+      const id = pane.conversationId;
+      if (!id || pane.messages.length || restoredConversationsRef.current.has(id)) continue;
+      restoredConversationsRef.current.add(id);
+      void loadConversationInto(pane.id, id);
+    }
+  }, [loadConversationInto, panes, persist]);
+
+  useEffect(() => {
     if (paneLabelsLoadedRef.current) return;
     paneLabelsLoadedRef.current = true;
     void api
@@ -370,6 +380,53 @@ export function GrokBubble({
     setPanes((current) => current.map((pane) => (pane.id === id ? updater(pane) : pane)));
   }
 
+  const restoredConversationsRef = useRef<Set<string>>(new Set());
+
+  const loadConversationInto = useCallback(async (paneId: string, conversationId: string) => {
+    try {
+      const detail = await api.chatConversation(conversationId);
+      setPanes((current) =>
+        current.map((pane) =>
+          pane.id !== paneId
+            ? pane
+            : {
+                ...pane,
+                conversationId: detail.id,
+                modelChoice: detail.model || "auto",
+                lastResolvedModel: detail.last_model ?? null,
+                reasoningEffort: isGrokReasoningEffort(detail.reasoning) ? detail.reasoning : "low",
+                lastResolvedReasoning: detail.last_reasoning ?? null,
+                savedNoteId: detail.saved_note_id ?? null,
+                conversationTitle: detail.title || null,
+                messages: detail.messages.map((item) => ({
+                  id: item.id,
+                  role: item.role,
+                  content: item.content,
+                  files: item.files?.map((file) => ({
+                    media_id: file.media_id,
+                    filename: file.filename,
+                    content_type: file.content_type,
+                    kind: file.kind,
+                    url: file.url,
+                    byte_size: file.byte_size,
+                    extract_text: file.extract_text,
+                  })),
+                  routeLabel:
+                    item.role === "assistant" ? spendChipLabel(detail.last_model, detail.last_reasoning) : null,
+                })),
+                recapQuestion: Boolean(detail.recap_question),
+              },
+        ),
+      );
+    } catch {
+      setPanes((current) =>
+        current.map((pane) =>
+          pane.id === paneId && pane.conversationId === conversationId ? { ...pane, conversationId: null } : pane,
+        ),
+      );
+    }
+  }, []);
+
   function startNewChat() {
     updatePane(focusedPaneId, (pane) => ({
       ...pane,
@@ -383,40 +440,9 @@ export function GrokBubble({
   }
 
   async function loadConversation(conversationId: string) {
-    try {
-      const detail = await api.chatConversation(conversationId);
-      updatePane(focusedPaneId, (pane) => ({
-        ...pane,
-        conversationId: detail.id,
-        modelChoice: detail.model || "auto",
-        lastResolvedModel: detail.last_model ?? null,
-        reasoningEffort: isGrokReasoningEffort(detail.reasoning) ? detail.reasoning : "low",
-        lastResolvedReasoning: detail.last_reasoning ?? null,
-        savedNoteId: detail.saved_note_id ?? null,
-        conversationTitle: detail.title || null,
-        messages: detail.messages.map((item) => ({
-          id: item.id,
-          role: item.role,
-          content: item.content,
-          files: item.files?.map((file) => ({
-            media_id: file.media_id,
-            filename: file.filename,
-            content_type: file.content_type,
-            kind: file.kind,
-            url: file.url,
-            byte_size: file.byte_size,
-            extract_text: file.extract_text,
-          })),
-          routeLabel:
-            item.role === "assistant" ? spendChipLabel(detail.last_model, detail.last_reasoning) : null,
-        })),
-        draft: "",
-        recapQuestion: Boolean(detail.recap_question),
-        pendingAttachments: [],
-      }));
-    } catch {
-      /* ignore */
-    }
+    restoredConversationsRef.current.add(conversationId);
+    await loadConversationInto(focusedPaneId, conversationId);
+    updatePane(focusedPaneId, (pane) => ({ ...pane, draft: "", pendingAttachments: [] }));
   }
 
   async function deleteConversation(row: GrokConversation) {
