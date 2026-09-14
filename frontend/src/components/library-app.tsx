@@ -163,22 +163,27 @@ function snapshotStamp(iso: string): string {
 
 function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
   const fileUrl = `/api/v1/archives/${archiveId}/file`;
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let created: string | null = null;
     setError(null);
-    setObjectUrl(null);
+    setBlobUrl(null);
     void fetch(fileUrl, { credentials: "include", cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(response.status === 401 ? "Sign in to view this PDF." : "Could not load the PDF snapshot.");
         }
         const blob = await response.blob();
-        created = URL.createObjectURL(blob);
-        if (!cancelled) setObjectUrl(created);
+        const next = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(next);
+          return;
+        }
+        created = next;
+        setBlobUrl(next);
       })
       .catch((caught) => {
         if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load the PDF snapshot.");
@@ -189,13 +194,14 @@ function PdfSnapshotViewer({ archiveId }: { archiveId: string }) {
     };
   }, [fileUrl]);
 
-  const src = objectUrl || fileUrl;
   return (
     <div className="pdf-host bg-muted">
-      {error ? <p className="px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      <object data={src} type="application/pdf">
-        <iframe title="PDF snapshot" src={src} />
-      </object>
+      {error ? <p className="reader-chrome px-3 py-2 text-sm text-destructive">{error}</p> : null}
+      {blobUrl ? (
+        <iframe title="PDF snapshot" src={blobUrl} />
+      ) : error ? null : (
+        <p className="reader-chrome px-3 py-2 text-sm text-muted-foreground">Loading PDF snapshot…</p>
+      )}
     </div>
   );
 }
