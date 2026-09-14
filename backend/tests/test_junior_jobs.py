@@ -144,6 +144,87 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertEqual(parse_responses_text(body), "The Reuters homepage leads with markets.")
         self.assertTrue(responses_used_search(body))
 
+    def test_patch_job_updates_prompt_same_id(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.database import get_db
+        from app.deps import get_current_user
+        from app.routers import junior_jobs as jobs_router
+
+        job_id = uuid4()
+        user = SimpleNamespace(id=uuid4(), email="reader@example.com", is_demo_locked=False)
+        now = datetime.now(timezone.utc)
+        row = SimpleNamespace(
+            id=job_id,
+            user_id=user.id,
+            title="Top Five",
+            prompt="Top five news",
+            cron="0 8 * * *",
+            timezone="America/New_York",
+            conversation_id=uuid4(),
+            shelf=None,
+            folder_id=None,
+            include_article_id=None,
+            model="grok-4.6",
+            reasoning="low",
+            xhigh=False,
+            web_search=False,
+            enabled=True,
+            last_run_at=None,
+            last_status="ok",
+            created_at=now,
+            updated_at=now,
+        )
+        db = MagicMock()
+
+        def fake_db():
+            yield db
+
+        app = FastAPI()
+        app.include_router(jobs_router.router, prefix="/api/v1")
+        app.dependency_overrides[get_db] = fake_db
+        app.dependency_overrides[get_current_user] = lambda: user
+        with patch("app.services.junior_jobs.owned_job", return_value=row):
+            client = TestClient(app)
+            response = client.patch(
+                f"/api/v1/junior/jobs/{job_id}",
+                json={"prompt": "Unread Fox only"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], str(job_id))
+        self.assertEqual(response.json()["prompt"], "Unread Fox only")
+        self.assertEqual(row.prompt, "Unread Fox only")
+        self.assertEqual(row.title, "Top Five")
+        self.assertTrue(all(call.args[0] is row for call in db.add.call_args_list))
+
+    def test_patch_job_other_owner_404(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.database import get_db
+        from app.deps import get_current_user
+        from app.routers import junior_jobs as jobs_router
+
+        user = SimpleNamespace(id=uuid4(), email="reader@example.com", is_demo_locked=False)
+        db = MagicMock()
+
+        def fake_db():
+            yield db
+
+        app = FastAPI()
+        app.include_router(jobs_router.router, prefix="/api/v1")
+        app.dependency_overrides[get_db] = fake_db
+        app.dependency_overrides[get_current_user] = lambda: user
+        with patch(
+            "app.services.junior_jobs.owned_job",
+            side_effect=HTTPException(status_code=404, detail="Job not found."),
+        ):
+            client = TestClient(app)
+            response = client.patch(f"/api/v1/junior/jobs/{uuid4()}", json={"prompt": "Unread Fox only"})
+        self.assertEqual(response.status_code, 404)
+        db.add.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
