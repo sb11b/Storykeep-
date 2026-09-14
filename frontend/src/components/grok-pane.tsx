@@ -10,6 +10,7 @@ import { DestinationSelect, FolderSelect } from "@/components/destination-contro
 import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
+import { wordIndexFromSelection } from "@/lib/tts-words";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, type ChatStatusKind } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -209,6 +210,8 @@ export function GrokPane({
   const gotDeltaRef = useRef(false);
   const generatingRef = useRef(false);
   const pendingListenRef = useRef(false);
+  const pendingFromHereRef = useRef<number | null>(null);
+  const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
   const listenTargetRef = useRef<ListenTarget | null>(null);
   const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const messagesRef = useRef(pane.messages);
@@ -334,8 +337,13 @@ export function GrokPane({
   }, [abortInFlight]);
 
   useEffect(() => {
-    if (!panelOpen) dictation?.stop();
-  }, [panelOpen, dictation]);
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      dictation?.abort();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [dictation]);
 
   useEffect(() => {
     const el = draftRef.current;
@@ -385,7 +393,10 @@ export function GrokPane({
   useEffect(() => {
     if (pendingListenRef.current && listenTarget) {
       pendingListenRef.current = false;
-      listenApiRef.current.listen();
+      const fromHere = pendingFromHereRef.current;
+      pendingFromHereRef.current = null;
+      if (fromHere != null) void listenApiRef.current.listenFromWord(fromHere);
+      else listenApiRef.current.listen();
     }
   }, [listenTarget]);
 
@@ -438,6 +449,49 @@ export function GrokPane({
     }
     pendingListenRef.current = true;
     setListenTarget({ id: messageId, trigger, script: resolved.text });
+  }
+
+  function readableAssistant(messageId?: string | null) {
+    if (messageId) {
+      const match = pane.messages.find((item) => item.id === messageId && item.role === "assistant" && item.content);
+      if (match) return match;
+    }
+    if (listenTarget) {
+      const match = pane.messages.find((item) => item.id === listenTarget.id && item.role === "assistant" && item.content);
+      if (match) return match;
+    }
+    return [...pane.messages].reverse().find((item) => item.role === "assistant" && item.content) ?? null;
+  }
+
+  function listenFromHere() {
+    const target = readableAssistant(clickedWordRef.current?.messageId);
+    if (!target) {
+      toast.error("Send a message first — there is no reply to read yet.");
+      return;
+    }
+    const body = bodyElementsRef.current.get(target.id) ?? null;
+    const word = wordIndexFromSelection(body) ?? (clickedWordRef.current?.messageId === target.id ? clickedWordRef.current.index : null);
+    if (word == null || word < 0) {
+      toast.error("Click or highlight a word in the reply first.");
+      return;
+    }
+    const resolved = readReplyText({
+      trigger: listenTarget?.id === target.id ? listenTarget.trigger : null,
+      body,
+      markdown: target.content,
+    });
+    logReplyText("from-here", resolved);
+    if (!resolved.chars) {
+      toast.error("That reply is still empty — nothing to read yet.");
+      return;
+    }
+    if (listenTarget?.id === target.id && listen.isActive) {
+      void listen.listenFromWord(word);
+      return;
+    }
+    pendingFromHereRef.current = word;
+    pendingListenRef.current = true;
+    setListenTarget({ id: target.id, trigger: null, script: resolved.text });
   }
 
   async function runStream(options: {
@@ -703,6 +757,7 @@ export function GrokPane({
     }
     const files = pending.filter((item) => item.id);
     if ((!content && !files.length) || busy || !enabled || inFlightRef.current) return;
+    dictation?.abort();
     inFlightRef.current = true;
     abortInFlight();
     try {
@@ -1364,6 +1419,7 @@ export function GrokPane({
             voiceId={voiceId}
             voices={voiceOptions}
             onListen={listenLatestReply}
+            onFromHere={listenFromHere}
             onPause={listen.pause}
             onStop={listen.stop}
             onSpeedChange={handleSpeedChange}
@@ -1428,6 +1484,9 @@ export function GrokPane({
                 }
                 onRegisterBody={registerBody}
                 onListen={requestListen}
+                onTtsWordPick={(messageId, index) => {
+                  clickedWordRef.current = { messageId, index };
+                }}
                 onAddToNotes={(payload) => void addToNotes(payload, item.id)}
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
               />
@@ -1727,6 +1786,7 @@ export function GrokPane({
               aria-label="Stop"
               title="Stop generating"
               onClick={() => {
+                dictation?.abort();
                 abortInFlight();
                 clearStreamStatus();
               }}
@@ -1748,8 +1808,12 @@ export function GrokPane({
         {dictation?.listening && sttEnabled && !locked ? (
           <p className="text-[10px] text-muted-foreground">
             {dictation.continuous || dictation.sessionContinuous
-              ? "Listening — continuous; pauses restart until Stop."
+              ? "Listening — continuous on this box until Stop."
               : "Listening — one utterance…"}
+          </p>
+        ) : dictation?.idleHint && sttEnabled && !locked ? (
+          <p className="text-[10px] text-muted-foreground" role="status">
+            {dictation.idleHint}
           </p>
         ) : null}
         {dragOver ? (

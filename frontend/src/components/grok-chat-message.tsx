@@ -18,13 +18,14 @@ import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { hasGrammarMarks, wordCount } from "@/lib/word-count";
 import type { Folder } from "@/lib/types";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
+import { wordIndexFromSelection } from "@/lib/tts-words";
 import { cn } from "@/lib/utils";
 
 function toastDownloadError(error: unknown) {
   toast.error(error instanceof Error ? error.message : "Could not download that picture.");
 }
 
-function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
+function onReplyBodyClick(event: MouseEvent<HTMLElement>, onTtsWordPick?: (index: number) => void) {
   const trigger = (event.target as HTMLElement).closest<HTMLElement>(".sk-chat-image-download");
   if (trigger) {
     event.preventDefault();
@@ -40,6 +41,12 @@ function onReplyBodyClick(event: MouseEvent<HTMLElement>) {
     return;
   }
   onCodeCopyClick(event);
+  if (event.defaultPrevented) return;
+  const wordEl = (event.target as HTMLElement).closest("[data-tts-word]");
+  if (wordEl instanceof HTMLElement) {
+    const index = Number(wordEl.getAttribute("data-tts-word"));
+    if (Number.isFinite(index)) onTtsWordPick?.(index);
+  }
 }
 
 function ChatPicture({
@@ -112,6 +119,7 @@ export function GrokChatMessage({
   onRememberFiling,
   onRegisterBody,
   onListen,
+  onTtsWordPick,
   onAddToNotes,
   onRetry,
   conversationId = null,
@@ -147,6 +155,7 @@ export function GrokChatMessage({
   onRegisterBody?: (messageId: string, element: HTMLElement | null) => void;
   /** `trigger` is the Listen button, so the reply body is one closest() away. */
   onListen?: (messageId: string, trigger: HTMLElement) => void;
+  onTtsWordPick?: (messageId: string, wordIndex: number) => void;
   onAddToNotes: (payload: AddToNotesPayload) => void;
   onRetry?: () => void;
   conversationId?: string | null;
@@ -207,6 +216,7 @@ export function GrokChatMessage({
   return (
     <div
       data-role={role}
+      data-message-id={id}
       className={cn(
         "chat-message rounded-lg px-2.5 py-2 text-sm",
         role === "user" ? "ml-6 bg-primary/10" : "larry-reply mr-4 bg-muted/60",
@@ -228,7 +238,16 @@ export function GrokChatMessage({
       ) : null}
       {content ? (
         role === "assistant" ? (
-          <div ref={bodyRef} className="note-md markdown" data-larry-reply-body={id} onClick={onReplyBodyClick} />
+          <div
+            ref={bodyRef}
+            className="note-md markdown"
+            data-larry-reply-body={id}
+            onClick={(event) => onReplyBodyClick(event, (index) => onTtsWordPick?.(id, index))}
+            onMouseUp={(event) => {
+              const index = wordIndexFromSelection(event.currentTarget);
+              if (index != null) onTtsWordPick?.(id, index);
+            }}
+          />
         ) : (
           <div ref={bodyRef} className="whitespace-pre-wrap">
             {content}

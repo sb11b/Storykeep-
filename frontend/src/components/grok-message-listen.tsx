@@ -5,7 +5,7 @@ import { LoaderCircle, Pause, Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, ApiError } from "@/lib/api";
 import { showTtsErrorToast } from "@/lib/tts-error-toast";
-import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
+import { chunkForWord, cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "@/lib/tts-cue";
 import {
   readStoredTtsSpeed,
   TTS_SPEEDS,
@@ -61,7 +61,9 @@ export function useGrokMessageListen({
   const voiceRef = useRef(voiceId);
   const speedRef = useRef(readStoredTtsSpeed());
   const stopRef = useRef<() => void>(() => {});
-  const playChunkRef = useRef<(index: number, voice: string) => Promise<void>>(async () => {});
+  const playChunkRef = useRef<(index: number, voice: string, seekLocal?: number | null) => Promise<void>>(
+    async () => {},
+  );
   const inflightRef = useRef<AbortController | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
@@ -165,6 +167,10 @@ export function useGrokMessageListen({
     scriptRef.current = "";
     chunkCacheRef.current.clear();
   }, []);
+
+  useEffect(() => {
+    resetLoaded();
+  }, [messageId, resetLoaded]);
 
   const stop = useCallback(() => {
     generationRef.current += 1;
@@ -291,7 +297,7 @@ export function useGrokMessageListen({
   );
 
   const playChunk = useCallback(
-    async (index: number, voice: string) => {
+    async (index: number, voice: string, seekLocal: number | null = null) => {
       claimTtsPlayback(stopRef.current);
       const generation = generationRef.current + 1;
       generationRef.current = generation;
@@ -302,7 +308,7 @@ export function useGrokMessageListen({
         audio.onended = () => {
           if (generation !== generationRef.current) return;
           if (index + 1 < total) {
-            void playChunkRef.current(index + 1, voice);
+            void playChunkRef.current(index + 1, voice, null);
           } else {
             stop();
           }
@@ -318,8 +324,19 @@ export function useGrokMessageListen({
         const counts = data.chunkWordCounts.length ? data.chunkWordCounts : countsRef.current;
         applyTimestampValidation(data.words, chunkIndex, counts);
         applyPlaybackRate(audio, speedRef.current);
-        audio.currentTime = 0;
+        const applySeek = () => {
+          if (seekLocal != null && seekLocal > 0) {
+            if (timestampsValidRef.current && data.words[seekLocal]) {
+              audio.currentTime = data.words[seekLocal].start;
+            }
+          } else if (seekLocal == null || seekLocal === 0) {
+            audio.currentTime = 0;
+          }
+        };
+        audio.onloadedmetadata = applySeek;
+        applySeek();
         await audio.play();
+        applySeek();
         applyPlaybackRate(audio, speedRef.current);
         clearWatchdog();
         if (generation !== generationRef.current) return;
@@ -380,6 +397,46 @@ export function useGrokMessageListen({
 
   playChunkRef.current = playChunk;
 
+  const listenFromWord = useCallback(
+    async (wordIndex: number) => {
+      if (disabled) return;
+      const script = resolveScript().trim();
+      if (!script) {
+        showTtsErrorToast(new Error("That reply is still empty — nothing to read yet."));
+        return;
+      }
+      const voice = voiceRef.current || readStoredTtsVoice();
+      const rate = readStoredTtsSpeed();
+      setSpeed(rate);
+      speedRef.current = rate;
+      if (scriptRef.current !== script) {
+        resetLoaded();
+        scriptRef.current = script;
+      } else {
+        scriptRef.current = script;
+      }
+      let counts = countsRef.current;
+      if (!counts.length) {
+        setPhase("loading");
+        armWatchdog();
+        try {
+          const first = await loadChunk(0, voice);
+          counts = first.chunkWordCounts.length ? first.chunkWordCounts : [first.words.length || 1];
+          countsRef.current = counts;
+        } catch (error) {
+          clearWatchdog();
+          setPhase((current) => (current === "loading" ? "idle" : current));
+          stop();
+          showTtsErrorToast(error);
+          return;
+        }
+      }
+      const { chunk, local } = chunkForWord(counts, Math.max(0, wordIndex));
+      await playChunk(chunk, voice, local);
+    },
+    [armWatchdog, clearWatchdog, disabled, loadChunk, playChunk, resetLoaded, resolveScript, stop],
+  );
+
   const beginPlayback = useCallback(async () => {
     const script = resolveScript().trim();
     console.log("larry-tts", { stage: "begin", chars: script.length, sample: script.slice(0, 80) });
@@ -434,6 +491,7 @@ export function useGrokMessageListen({
     phase,
     speed,
     listen,
+    listenFromWord,
     pause,
     stop,
     changeSpeed,
@@ -448,6 +506,7 @@ export function GrokListenBar({
   voiceId,
   voices,
   onListen,
+  onFromHere,
   onPause,
   onStop,
   onSpeedChange,
@@ -460,6 +519,7 @@ export function GrokListenBar({
   voiceId?: string;
   voices?: { voice_id: string; name: string }[];
   onListen: () => void;
+  onFromHere?: () => void;
   onPause: () => void;
   onStop: () => void;
   onSpeedChange: (rate: number) => void;
@@ -486,6 +546,17 @@ export function GrokListenBar({
         {phase === "loading" ? <LoaderCircle className="size-3 animate-spin" /> : <Volume2 className="size-3" />}
         {phase === "loading" ? "Preparing…" : listenLabel}
       </Button>
+      {onFromHere ? (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={disabled || phase === "loading"}
+          title="Read from the selected word through the rest of this reply"
+          onClick={onFromHere}
+        >
+          From here
+        </Button>
+      ) : null}
       <Button size="xs" variant="outline" disabled={pauseDisabled} onClick={onPause}>
         <Pause className="size-3" />
         Pause

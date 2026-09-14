@@ -27,9 +27,11 @@ type DictationApi = {
   listening: boolean;
   sessionContinuous: boolean;
   continuous: boolean;
+  idleHint: string | null;
   setContinuous: (value: boolean) => void;
   startFor: (field: Field, options?: StartOptions) => void;
   stop: () => void;
+  abort: () => void;
   attach: (field: Field | null) => void;
 };
 
@@ -102,6 +104,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const [continuous, setContinuous] = useState(false);
   const [sessionContinuousMode, setSessionContinuousMode] = useState(false);
   const [interim, setInterim] = useState("");
+  const [idleHint, setIdleHint] = useState<string | null>(null);
   const fieldRef = useRef<Field | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioRef = useRef<{
@@ -116,6 +119,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const continuousRef = useRef(false);
   const sessionContinuousRef = useRef(false);
   const stoppingRef = useRef(false);
+  const abortedRef = useRef(false);
   const stopTimerRef = useRef<number | null>(null);
   const startingRef = useRef(false);
   const closedCleanlyRef = useRef(false);
@@ -183,29 +187,8 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     committedRef.current = "";
   }, [disconnectEngine]);
 
-  const scheduleRestart = useCallback(() => {
-    if (stoppingRef.current || !sessionContinuousRef.current || !continuousRef.current) return;
-    const field = fieldRef.current;
-    if (!field) return;
-    clearRestartTimer();
-    restartingRef.current = true;
-    disconnectEngine({ keepUi: true });
-    restartTimerRef.current = window.setTimeout(() => {
-      restartTimerRef.current = null;
-      if (stoppingRef.current || !sessionContinuousRef.current || !continuousRef.current) {
-        restartingRef.current = false;
-        return;
-      }
-      const next = fieldRef.current;
-      if (!next) {
-        restartingRef.current = false;
-        return;
-      }
-      startForRef.current(next, { resume: true });
-    }, 250);
-  }, [disconnectEngine]);
-
   const commitFinal = useCallback((raw: string) => {
+    if (abortedRef.current) return;
     const el = fieldRef.current;
     const piece = newFinalSegment(raw, committedRef.current, el?.value ?? "");
     interimRef.current = "";
@@ -215,33 +198,15 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     committedRef.current = normalizeSpoken(`${committedRef.current} ${piece}`);
   }, []);
 
-  const requestStop = useCallback(() => {
-    if (stoppingRef.current) return;
+  /** Drop the mic immediately. Must never delay /chat (no wait for STT done). */
+  const abort = useCallback(() => {
+    abortedRef.current = true;
     stoppingRef.current = true;
+    setIdleHint(null);
     clearRestartTimer();
     restartingRef.current = false;
-    if (!listeningRef.current && !startingRef.current) {
-      teardown();
-      return;
-    }
-    const socket = socketRef.current;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      try {
-        socket.send(JSON.stringify({ type: "stop" }));
-      } catch {
-        teardown();
-        return;
-      }
-      clearStopTimer();
-      stopTimerRef.current = window.setTimeout(() => {
-        const pending = lastRawFinalRef.current || interimRef.current;
-        if (pending) commitFinal(pending);
-        teardown();
-      }, 4000);
-      return;
-    }
     teardown();
-  }, [commitFinal, teardown]);
+  }, [teardown]);
 
   const startFor = useCallback(
     (field: Field, options?: StartOptions) => {
@@ -251,14 +216,14 @@ export function DictationProvider({ children }: { children: ReactNode }) {
         listeningRef.current || startingRef.current || restartingRef.current || (live != null && live.readyState <= WebSocket.OPEN);
       if (!resuming && busy) {
         if (fieldRef.current === field) {
-          requestStop();
+          abort();
           return;
         }
-        fieldRef.current = field;
-        field.focus();
-        return;
+        abort();
       }
       restartingRef.current = false;
+      abortedRef.current = false;
+      setIdleHint(null);
       fieldRef.current = field;
       field.focus();
       startingRef.current = true;
@@ -312,8 +277,10 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "done") {
-                if (msg.text) {
+                if (msg.text && !normalizeSpoken(committedRef.current)) {
                   lastRawFinalRef.current = msg.text;
+                  commitFinal(msg.text);
+                } else if (msg.text) {
                   commitFinal(msg.text);
                 }
                 lastRawFinalRef.current = "";
@@ -323,19 +290,12 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "error" || msg.type === "timeout" || msg.type === "idle") {
-                if (msg.type !== "idle" || !sessionContinuousRef.current) {
-                  const label =
-                    msg.type === "timeout"
-                      ? msg.message || "STT timeout"
-                      : msg.type === "idle"
-                        ? msg.message || "Stopped after silence."
-                        : msg.message || "STT failed";
-                  sttToast(label);
-                }
-                if (sessionContinuousRef.current && !stoppingRef.current && (msg.type === "idle" || msg.type === "timeout")) {
-                  scheduleRestart();
+                if (msg.type === "idle" || (msg.type === "timeout" && sessionContinuousRef.current)) {
+                  setIdleHint(msg.message || "Mic idle, tap to resume");
+                  teardown();
                   return;
                 }
+                sttToast(msg.message || (msg.type === "timeout" ? "STT timeout" : "STT failed"));
                 teardown();
               }
             } catch {
@@ -343,11 +303,12 @@ export function DictationProvider({ children }: { children: ReactNode }) {
             }
           };
           socket.onerror = () => {
-            if (sessionContinuousRef.current && !stoppingRef.current) {
-              scheduleRestart();
+            if (!stoppingRef.current && sessionContinuousRef.current) {
+              setIdleHint("Mic idle, tap to resume");
+              teardown();
               return;
             }
-            sttToast("STT connection failed");
+            if (!stoppingRef.current) sttToast("STT connection failed");
             teardown();
           };
           socket.onclose = (event) => {
@@ -367,7 +328,8 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               return;
             }
             if (sessionContinuousRef.current && !stoppingRef.current) {
-              scheduleRestart();
+              setIdleHint("Mic idle, tap to resume");
+              teardown();
               return;
             }
             if (!listeningRef.current && !startingRef.current && !restartingRef.current) return;
@@ -397,7 +359,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
         }
       })();
     },
-    [commitFinal, requestStop, scheduleRestart, teardown],
+    [abort, commitFinal, teardown],
   );
   startForRef.current = startFor;
 
@@ -412,40 +374,27 @@ export function DictationProvider({ children }: { children: ReactNode }) {
 
   const attach = useCallback((field: Field | null) => {
     if (!field) return;
-    if (continuousRef.current && listeningRef.current) {
-      fieldRef.current = field;
+    const current = fieldRef.current;
+    if ((listeningRef.current || startingRef.current) && current && current !== field && document.contains(current)) {
       return;
     }
     fieldRef.current = field;
   }, []);
 
   useEffect(() => {
-    function onFocusIn(event: FocusEvent) {
-      if (!continuousRef.current || !listeningRef.current) return;
-      const target = event.target;
-      if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
-        if (target.type === "password" || target.type === "file") return;
-        fieldRef.current = target;
-      }
-    }
-    window.addEventListener("focusin", onFocusIn);
-    return () => window.removeEventListener("focusin", onFocusIn);
-  }, []);
-
-  useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || (!listeningRef.current && !startingRef.current)) return;
+      if (event.key !== "Escape" || (!listeningRef.current && !startingRef.current && !restartingRef.current)) return;
       event.preventDefault();
       event.stopPropagation();
-      requestStop();
+      abort();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [requestStop]);
+  }, [abort]);
 
   useEffect(() => {
     function onGone() {
-      if (listeningRef.current || startingRef.current) requestStop();
+      if (listeningRef.current || startingRef.current) abort();
     }
     window.addEventListener("pagehide", onGone);
     window.addEventListener("popstate", onGone);
@@ -454,15 +403,17 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("popstate", onGone);
       teardown();
     };
-  }, [requestStop, teardown]);
+  }, [abort, teardown]);
 
   const api: DictationApi = {
     listening,
     sessionContinuous: sessionContinuousMode,
     continuous,
+    idleHint,
     setContinuous: setContinuousMode,
     startFor,
-    stop: requestStop,
+    stop: abort,
+    abort,
     attach,
   };
 
@@ -490,10 +441,21 @@ export function DictationProvider({ children }: { children: ReactNode }) {
             />
             Continuous
           </label>
-          <button type="button" className="pointer-events-auto shrink-0 rounded-md border px-2 py-0.5" onClick={requestStop}>
+          <button type="button" className="pointer-events-auto shrink-0 rounded-md border px-2 py-0.5" onClick={abort}>
             Stop
           </button>
         </div>
+      ) : idleHint ? (
+        <button
+          type="button"
+          className="pointer-events-auto fixed bottom-4 left-4 z-[80] max-w-[min(36rem,calc(100vw-2rem))] rounded-full border bg-background px-3 py-1.5 text-xs shadow-md"
+          onClick={() => {
+            const el = fieldRef.current;
+            if (el) startFor(el);
+          }}
+        >
+          {idleHint}
+        </button>
       ) : null}
     </DictationContext.Provider>
   );

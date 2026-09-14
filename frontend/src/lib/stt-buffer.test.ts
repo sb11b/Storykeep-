@@ -105,3 +105,9 @@ Data Protection Directive: A directive that regulates the processing of personal
   assert.doesNotMatch(out, /Organization for\n/i);
   assert.match(out, /noticed|notice/i);
 });
+
+test("newFinalSegment skips a done-event replay of already committed finals", () => {
+  const have = "Hello there. How are you today.";
+  assert.equal(newFinalSegment(have, have, have), "");
+  assert.equal(newFinalSegment("Hello there. How are you today", have, have), "");
+});

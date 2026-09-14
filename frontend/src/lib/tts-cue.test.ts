@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "./tts-cue";
+import { chunkForWord, cueAheadOfVoice, timestampsMatchChunk, wordIndexAtTime } from "./tts-cue";
 import type { TtsWord } from "./types";
 
 const sampleWords: TtsWord[] = [
@@ -36,6 +36,13 @@ test("timestampsMatchChunk requires exact word count", () => {
   assert.equal(timestampsMatchChunk(sampleWords, 0, [3]), true);
   assert.equal(timestampsMatchChunk(sampleWords, 0, [2]), false);
   assert.equal(timestampsMatchChunk([], 0, [0]), false);
+});
+
+test("chunkForWord keeps From here on the same full-reply synth", () => {
+  assert.deepEqual(chunkForWord([12], 0), { chunk: 0, local: 0 });
+  assert.deepEqual(chunkForWord([12], 7), { chunk: 0, local: 7 });
+  assert.deepEqual(chunkForWord([10, 8], 10), { chunk: 1, local: 0 });
+  assert.deepEqual(chunkForWord([10, 8], 14), { chunk: 1, local: 4 });
 });
 
 test("cueAheadOfVoice detects highlight running ahead of audio", () => {

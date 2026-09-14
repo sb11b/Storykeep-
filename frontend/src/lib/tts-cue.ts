@@ -24,6 +24,19 @@ export function timestampsMatchChunk(words: TtsWord[], chunkIndex: number, chunk
   return words.length === expected;
 }
 
+/** Map a global visible-word index onto a synth chunk, then seek with audio.currentTime. */
+export function chunkForWord(counts: number[], wordIndex: number): { chunk: number; local: number } {
+  const target = Math.max(0, wordIndex);
+  let remaining = target;
+  for (let i = 0; i < counts.length; i += 1) {
+    const n = counts[i] ?? 0;
+    if (remaining < n) return { chunk: i, local: remaining };
+    remaining -= n;
+  }
+  const last = Math.max(0, counts.length - 1);
+  return { chunk: last, local: Math.max(0, (counts[last] ?? 1) - 1) };
+}
+
 /** True when the chosen word's start is materially after playback time (highlight ahead of voice). */
 export function cueAheadOfVoice(words: TtsWord[], localIndex: number, currentTime: number, epsilon = 0.02): boolean {
   const w = words[localIndex];
