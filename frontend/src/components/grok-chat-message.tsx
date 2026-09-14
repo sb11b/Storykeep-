@@ -10,6 +10,7 @@ import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import { DEFAULT_PANE_NAME } from "@/lib/grok-pane-name";
 import { downloadChatMessageDocx, isPersistedMessageId } from "@/lib/chat-message-docx";
+import { formatFileSize, type LarryAttachment } from "@/lib/larry-attach";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { cn } from "@/lib/utils";
 
