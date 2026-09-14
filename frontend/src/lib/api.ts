@@ -722,4 +722,97 @@ export const api = {
     destination?: string;
     folder_id?: string | null;
   }) => request<Article>("/api/v1/school/quiz/save", { method: "POST", body: JSON.stringify(body) }),
+  studioTemplates: () => request<{ items: StudioTemplate[] }>("/api/v1/studio/templates"),
+  studioAutomations: () => request<{ items: StudioAutomation[] }>("/api/v1/studio/automations"),
+  studioCreateAutomation: (body: Partial<StudioAutomation> & { title: string; instruction: string }) =>
+    request<StudioAutomation>("/api/v1/studio/automations", { method: "POST", body: JSON.stringify(body) }),
+  studioPatchAutomation: (id: string, body: Partial<StudioAutomation>) =>
+    request<StudioAutomation>(`/api/v1/studio/automations/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  studioDeleteAutomation: (id: string) =>
+    request<{ ok: boolean }>(`/api/v1/studio/automations/${id}`, { method: "DELETE" }),
+  studioRuns: (id: string) => request<{ items: StudioRun[] }>(`/api/v1/studio/automations/${id}/runs`),
+  studioRunNow: (id: string) =>
+    request<{ automation: StudioAutomation; run: StudioRun }>(`/api/v1/studio/automations/${id}/run`, {
+      method: "POST",
+    }),
+  studioFireEmail: (id: string, body: { from_addr?: string; subject?: string; body: string }) =>
+    request<{ automation: StudioAutomation; run: StudioRun }>(`/api/v1/studio/automations/${id}/email`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  studioWorkspace: () => request<{ items: StudioFile[] }>("/api/v1/studio/workspace"),
+  studioPutFile: (body: { path: string; content: string }) =>
+    request<StudioFile>("/api/v1/studio/workspace", { method: "PUT", body: JSON.stringify(body) }),
+  studioDeleteFile: (path: string) =>
+    request<{ ok: boolean }>(`/api/v1/studio/workspace?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
+  studioApplyPatches: (patches: Array<{ path: string; content: string }>) =>
+    request<{ items: StudioFile[] }>("/api/v1/studio/workspace/apply", {
+      method: "POST",
+      body: JSON.stringify({ patches }),
+    }),
+  studioAgent: (body: { message: string; mode: "plan" | "build" }) =>
+    request<StudioAgentReply>("/api/v1/studio/agent", { method: "POST", body: JSON.stringify(body) }),
+};
+
+export type StudioTemplate = {
+  id: string;
+  title: string;
+  instruction: string;
+  trigger: string;
+  schedule: string;
+  hour?: number;
+  minute?: number;
+  weekday?: number;
+  include_unread?: boolean;
+  notify?: string;
+  email_subject?: string;
+};
+
+export type StudioAutomation = {
+  id: string;
+  title: string;
+  instruction: string;
+  trigger: string;
+  schedule: string;
+  hour: number;
+  minute: number;
+  weekday: number;
+  monthday: number;
+  timezone: string;
+  notify: string;
+  email_from: string | null;
+  email_to: string | null;
+  email_subject: string | null;
+  enabled: boolean;
+  include_unread: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+};
+
+export type StudioRun = {
+  id: string;
+  status: string;
+  trigger: string;
+  output: string;
+  error: string | null;
+  model: string | null;
+  reasoning: string | null;
+  created_at: string | null;
+  email_context?: string | null;
+};
+
+export type StudioFile = {
+  id: string;
+  path: string;
+  content: string;
+  updated_at: string | null;
+};
+
+export type StudioAgentReply = {
+  text: string;
+  model: string;
+  reasoning: string;
+  mode: string;
+  plan: Array<{ id: string; title: string; detail: string }>;
+  patches: Array<{ path: string; content: string }>;
 };

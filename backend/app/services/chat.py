@@ -978,3 +978,55 @@ def _strip_tags(html: str) -> str:
     text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", html or "")
     text = re.sub(r"(?s)<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def complete_once(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    max_tokens: int = 1200,
+    timeout_sec: float = 45.0,
+) -> dict[str, str]:
+    """One-shot chat for automations and the Build IDE. Not the Junior SSE path."""
+    key = require_key()
+    resolved_model = rewrite_xai_model(model or default_full_model())
+    effort = clamp_reasoning_effort(resolved_model, reasoning_effort or DEFAULT_REASONING_EFFORT)
+    payload = attach_reasoning_effort(
+        {
+            "model": resolved_model,
+            "messages": messages,
+            "stream": False,
+            "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
+            "temperature": 0.4,
+        },
+        resolved_model,
+        effort,
+    )
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(
+                timeout_sec,
+                connect=CHAT_CONNECT_TIMEOUT_SEC,
+                read=timeout_sec,
+                write=15.0,
+                pool=10.0,
+            )
+        ) as client:
+            response = client.post(chat_url(), json=payload, headers=_auth_headers(key))
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=_transport_error_detail(exc)) from exc
+    if response.status_code >= 400:
+        detail = parse_xai_error_body(response.text, response.status_code)
+        raise map_xai_http_error(response.status_code, detail, resolved_model)
+    try:
+        body = response.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="xAI returned a non-JSON reply.") from exc
+    choices = body.get("choices") or []
+    message = (choices[0].get("message") or {}) if choices else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    text = content if isinstance(content, str) else ""
+    if not text.strip():
+        raise HTTPException(status_code=502, detail="Grok returned an empty reply.")
+    return {"text": text, "model": resolved_model, "reasoning": effort}

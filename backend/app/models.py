@@ -415,6 +415,70 @@ class GrokMessage(Base):
     )
 
 
+class GrokAutomation(Base):
+    __tablename__ = "grok_automations"
+    __table_args__ = (Index("grok_automations_user_next_run_idx", "user_id", "next_run_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="schedule", server_default="schedule")
+    schedule: Mapped[str] = mapped_column(String(16), nullable=False, default="daily", server_default="daily")
+    hour: Mapped[int] = mapped_column(Integer, nullable=False, default=8, server_default="8")
+    minute: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    monthday: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="America/New_York", server_default="America/New_York")
+    notify: Mapped[str] = mapped_column(String(16), nullable=False, default="none", server_default="none")
+    email_from: Mapped[str | None] = mapped_column(Text)
+    email_to: Mapped[str | None] = mapped_column(Text)
+    email_subject: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    include_unread: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    runs: Mapped[list["GrokAutomationRun"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+        order_by="GrokAutomationRun.created_at.desc()",
+    )
+
+
+class GrokAutomationRun(Base):
+    __tablename__ = "grok_automation_runs"
+    __table_args__ = (Index("grok_automation_runs_auto_created_idx", "automation_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    automation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grok_automations.id", ondelete="CASCADE")
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", server_default="ok")
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="manual", server_default="manual")
+    email_context: Mapped[str | None] = mapped_column(Text)
+    output: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    error: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(64))
+    reasoning: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    automation: Mapped[GrokAutomation] = relationship(back_populates="runs")
+
+
+class GrokWorkspaceFile(Base):
+    __tablename__ = "grok_workspace_files"
+    __table_args__ = (UniqueConstraint("user_id", "path"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class GrokMessageFile(Base):
     __tablename__ = "grok_message_files"
     __table_args__ = (UniqueConstraint("message_id", "media_id"),)

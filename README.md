@@ -16,6 +16,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - Snapshot HTML so a dead original URL still has a copy; **PDF snapshot** keeps a printable copy on the `/app/var` volume
 - Full-text search across titles, authors, summaries, and stored bodies
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
+- **Grok Studio** (`/studio`): scheduled Automations (Run now, history, templates) and a Build IDE (file tree, Plan/Build, apply patches). Uses the server `XAI_API_KEY`. Email trigger is a sample paste, not a live inbox.
 
 ## Stack
 
