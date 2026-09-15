@@ -57,9 +57,6 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     login_2fa_challenge_minutes: int = 10
     login_email_otp_max_attempts: int = 5
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    google_oauth_redirect: str = ""
     fastmail_caldav_url: str = ""
 
     @field_validator("database_url", mode="before")
@@ -127,10 +124,6 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host.strip() and self.smtp_from.strip())
-
-    @property
-    def google_calendar_configured(self) -> bool:
-        return bool(self.google_client_id.strip() and self.google_client_secret.strip())
 
     @property
     def fastmail_calendar_configured(self) -> bool:

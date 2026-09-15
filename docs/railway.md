@@ -50,9 +50,6 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `BACKUP_INTERVAL_HOURS` | No | Phase 3 scheduled S3/B2 `pg_dump`. Default 24. Set `0` to disable. |
 | `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth client id. Calendar scope only — never Gmail. |
-| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret (server only). |
-| `GOOGLE_OAUTH_REDIRECT` | No | Public origin for Calendar OAuth, e.g. `https://storykeep-production.up.railway.app` |
 | `FASTMAIL_CALDAV_URL` | No | Optional CalDAV origin. Defaults to `https://caldav.fastmail.com`. Missing `FASTMAIL_*` still shows Connect — tokens are per user. |
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.

@@ -67,6 +67,8 @@ class FastmailCalDavTests(unittest.TestCase):
         self.assertNotIn("jmap", joined)
         self.assertNotIn("imap", joined)
         self.assertNotIn("inbox", joined)
+        self.assertNotIn("google", joined)
+        self.assertNotIn("/callback", joined)
 
     def test_status_configured_without_fastmail_env(self):
         from app.config import settings

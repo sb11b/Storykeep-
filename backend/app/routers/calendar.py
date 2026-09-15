@@ -2,25 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.services import calendar_access as calendars
 from app.services import fastmail_calendar as fmcal
-from app.services import google_calendar as gcal
-from app.services import google_oauth
 from app.services.calendar_tool import normalize_add_event
 from app.services.demo_lock import is_locked, reject_locked
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
-
-STATE_COOKIE = "sk_gcal_state"
 
 
 class CalendarEventIn(BaseModel):
@@ -35,13 +29,9 @@ class CalendarEventPatchIn(BaseModel):
     end: str | None = None
 
 
-def _origin(request: Request) -> str:
-    return google_oauth.public_origin(
-        str(request.base_url),
-        request.headers.get("x-forwarded-proto"),
-        request.headers.get("x-forwarded-host"),
-        request.headers.get("host"),
-    )
+class FastmailConnectIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    token: str = Field(min_length=8, max_length=400)
 
 
 def _tz(value: str | None) -> str:
@@ -49,79 +39,9 @@ def _tz(value: str | None) -> str:
     return name[:80]
 
 
-class FastmailConnectIn(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    token: str = Field(min_length=8, max_length=400)
-
-
 @router.get("/status")
 def calendar_status(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     return calendars.status_payload(db, user.id, demo_locked=is_locked(user))
-
-
-@router.get("/connect")
-def calendar_connect(
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    del db
-    reject_locked(user)
-    origin = _origin(request)
-    state = google_oauth.encode_oauth_state(user.id)
-    url = google_oauth.authorize_url(origin=origin, state=state)
-    redirect = RedirectResponse(url, status_code=302)
-    redirect.set_cookie(
-        STATE_COOKIE,
-        state,
-        httponly=True,
-        samesite="lax",
-        secure=settings.cookie_secure,
-        max_age=600,
-        path="/",
-    )
-    return redirect
-
-
-@router.get("/callback")
-def calendar_callback(
-    request: Request,
-    code: str | None = None,
-    state: str | None = None,
-    error: str | None = None,
-    db: Session = Depends(get_db),
-):
-    origin = _origin(request)
-    home = f"{origin}/#calendar"
-    if error:
-        return RedirectResponse(f"{home}?calendar_error=denied", status_code=302)
-    cookie_state = request.cookies.get(STATE_COOKIE)
-    if not code or not state or not cookie_state or cookie_state != state:
-        return RedirectResponse(f"{home}?calendar_error=state", status_code=302)
-    user_id = google_oauth.decode_oauth_state(state)
-    user = db.get(User, user_id)
-    if not user or is_locked(user):
-        return RedirectResponse(f"{home}?calendar_error=demo", status_code=302)
-    try:
-        tokens = google_oauth.exchange_code(code, origin)
-        gcal.store_tokens(
-            db,
-            user.id,
-            access_token=str(tokens["access_token"]),
-            refresh_token=tokens.get("refresh_token") if isinstance(tokens.get("refresh_token"), str) else None,
-            expiry=tokens["expiry"],  # type: ignore[arg-type]
-            scope=str(tokens.get("scope") or google_oauth.CALENDAR_EVENTS_SCOPE),
-            google_sub=None,
-            google_email=None,
-        )
-        gcal.remember_profile(db, user.id, str(tokens["access_token"]))
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        return RedirectResponse(f"{home}?calendar_error=token", status_code=302)
-    redirect = RedirectResponse(home, status_code=302)
-    redirect.delete_cookie(STATE_COOKIE, path="/")
-    return redirect
 
 
 @router.post("/fastmail/connect")

@@ -855,7 +855,7 @@ async def _chat(
                 return
             proposal = assemble_tool_calls(tool_calls_out) or extract_calendar_proposal("".join(assistant_parts))
             if proposal and not "".join(assistant_parts).strip():
-                note = "I can add this to your Google Calendar after you confirm."
+                note = "I can add this to Fastmail Calendar after you confirm."
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if persist and conversation_id:

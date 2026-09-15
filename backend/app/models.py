@@ -54,7 +54,6 @@ class User(Base):
     feeds: Mapped[list[Feed]] = relationship(back_populates="user")
     tags: Mapped[list[Tag]] = relationship(back_populates="user")
     folders: Mapped[list["Folder"]] = relationship(back_populates="user")
-    google_calendar: Mapped["GoogleCalendarAccount | None"] = relationship(back_populates="user", uselist=False)
     fastmail_calendar: Mapped["FastmailCalendarAccount | None"] = relationship(back_populates="user", uselist=False)
 
 
@@ -522,26 +521,6 @@ class AuthChallenge(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class GoogleCalendarAccount(Base):
-    """Google Calendar OAuth tokens. Ciphertext only — never send to the browser."""
-
-    __tablename__ = "google_calendar_accounts"
-
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    google_sub: Mapped[str | None] = mapped_column(Text)
-    google_email: Mapped[str | None] = mapped_column(Text)
-    access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
-    token_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    scope: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    user: Mapped[User] = relationship(back_populates="google_calendar")
 
 
 class FastmailCalendarAccount(Base):

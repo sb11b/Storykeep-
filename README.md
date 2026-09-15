@@ -18,7 +18,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
 - **Junior jobs** (full screen Junior): scheduled prompts into a Junior thread (`cron` + timezone). Optional note on a shelf. Cap 20 runs/user/day. Railway can hit `POST /api/v1/junior/jobs/run` with `JUNIOR_CRON_SECRET`. Unread / Fox titles in a job or Include reply open in the StoryKeep reader (`#article/{id}`), not a publisher tab.
 - **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy.
-- **Calendar:** Fastmail CalDAV first (per-user app password or API token, encrypted on the server). Library **Calendar** is week/month. Junior proposes an event; Confirm writes it. Google Calendar OAuth remains optional. No Gmail, IMAP, or Fastmail mail/JMAP in this deploy.
+- **Calendar:** Fastmail CalDAV (per-user app password or API token, encrypted on the server). Library **Calendar** is week/month. Junior proposes an event; Confirm writes it. No Google Calendar, Gmail, IMAP, or Fastmail mail/JMAP.
 
 ## Stack
 

@@ -24,7 +24,7 @@ ADD_EVENT_TOOL = {
 }
 
 CALENDAR_ON_APPEND = """
-Steve connected a calendar. When he asks to schedule or add an event, call the add_event tool with title, start, and end as ISO 8601 datetimes (include the timezone offset). Do not say the event is already on the calendar. StoryKeep will show Confirm before writing. Never request the Fastmail account password, Gmail, IMAP, or JMAP mail.
+Steve connected Fastmail Calendar. When he asks to schedule or add an event, call the add_event tool with title, start, and end as ISO 8601 datetimes (include the timezone offset). Do not say the event is already on the calendar. StoryKeep will show Confirm before writing. Never request the Fastmail account password, Gmail, IMAP, Google Calendar, or JMAP mail.
 If you cannot call tools, reply with only this fence:
 ```storykeep-event
 {"title":"...","start":"...","end":"..."}

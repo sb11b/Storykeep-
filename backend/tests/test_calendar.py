@@ -3,7 +3,6 @@ from __future__ import annotations
 import unittest
 
 from app.services.calendar_tool import extract_calendar_proposal, normalize_add_event
-from app.services.google_oauth import CALENDAR_EVENTS_SCOPE, assert_calendar_scope_only, authorize_url
 
 
 class CalendarToolTests(unittest.TestCase):
@@ -30,35 +29,21 @@ class CalendarToolTests(unittest.TestCase):
         found = extract_calendar_proposal(text)
         self.assertEqual(found["title"], "Lab")
 
-    def test_oauth_url_is_calendar_scope_only(self):
-        from app.config import settings
+    def test_calendar_has_no_google_oauth_routes(self):
+        from app.routers import calendar as calendar_router
 
-        prev_id = settings.google_client_id
-        prev_secret = settings.google_client_secret
-        settings.google_client_id = "client.apps.googleusercontent.com"
-        settings.google_client_secret = "secret"
-        try:
-            url = authorize_url(origin="https://storykeep.example", state="abc")
-        finally:
-            settings.google_client_id = prev_id
-            settings.google_client_secret = prev_secret
-        self.assertIn("calendar.events", url)
-        self.assertNotIn("gmail", url.lower())
-        self.assertNotIn("imap", url.lower())
-        self.assertEqual(CALENDAR_EVENTS_SCOPE, "https://www.googleapis.com/auth/calendar.events")
-
-    def test_rejects_gmail_scope(self):
-        from fastapi import HTTPException
-
-        with self.assertRaises(HTTPException):
-            assert_calendar_scope_only("https://www.googleapis.com/auth/gmail.readonly")
+        paths = [getattr(route, "path", "") for route in calendar_router.router.routes]
+        joined = " ".join(paths).lower()
+        self.assertIn("/fastmail/connect", joined)
+        self.assertNotIn("/callback", joined)
+        self.assertNotIn("google", joined)
 
     def test_tokens_round_trip_encrypted(self):
         from app.services.crypto_box import decrypt_secret, encrypt_secret
 
-        token = "ya29.secret-calendar-token"
+        token = "fastmail-app-password-example"
         blob = encrypt_secret(token)
-        self.assertNotIn("ya29.", blob)
+        self.assertNotIn("fastmail-app-password", blob)
         self.assertEqual(decrypt_secret(blob), token)
 
     def test_demo_cannot_connect(self):

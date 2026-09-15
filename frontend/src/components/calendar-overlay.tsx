@@ -70,9 +70,7 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
           configured: true,
           connected: false,
           provider: null,
-          google_configured: false,
           fastmail_configured: true,
-          google_email: null,
           fastmail_email: null,
           demo_locked: false,
         },
@@ -187,9 +185,7 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
           {status?.connected ? (
             <>
               <span className="text-[11px] text-muted-foreground">
-                {status.provider === "fastmail"
-                  ? status.fastmail_email || status.calendar_name || "Fastmail Calendar"
-                  : status.google_email || "Google Calendar"}
+                {status.fastmail_email || status.calendar_name || "Fastmail Calendar"}
               </span>
               <Button size="xs" variant="outline" onClick={() => setEditor(emptyDraft(new Date()))}>
                 New event
@@ -247,14 +243,6 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
                 Connect Fastmail
               </Button>
             </div>
-            {status?.google_configured ? (
-              <div className="border-t pt-3">
-                <p className="mb-2 text-xs text-muted-foreground">Or connect Google Calendar (calendar scope only — not Gmail).</p>
-                <Button variant="outline" onClick={() => { window.location.href = "/api/v1/calendar/connect"; }}>
-                  Connect Google
-                </Button>
-              </div>
-            ) : null}
           </div>
         ) : loading ? (
           <p className="text-sm text-muted-foreground">Loading events…</p>
