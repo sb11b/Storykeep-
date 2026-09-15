@@ -57,27 +57,34 @@ def _local_name(tag: str) -> str:
     return tag
 
 
-def _child_text(parent: ET.Element, names: set[str]) -> str | None:
-    for child in list(parent):
-        if _local_name(child.tag) in names:
-            if child.text and child.text.strip():
-                return child.text.strip()
-            for nested in list(child):
-                if _local_name(nested.tag) == "href" and nested.text:
-                    return nested.text.strip()
-    return None
+NO_CALENDARS = "No calendars — create one on Fastmail.com"
+SKIP_RESOURCE_TYPES = {"addressbook", "schedule-inbox", "schedule-outbox", "dropbox", "notification"}
 
 
-def _find_hrefs(xml_text: str) -> list[str]:
+def _parse_root(xml_text: str) -> ET.Element | None:
+    blob = xml_text or ""
+    if not blob.strip():
+        return None
     try:
-        root = ET.fromstring(xml_text.encode("utf-8") if isinstance(xml_text, str) else xml_text)
+        return ET.fromstring(blob.encode("utf-8") if isinstance(blob, str) else blob)
     except ET.ParseError:
-        return []
-    found: list[str] = []
+        return None
+
+
+def parse_prop_href(xml_text: str, prop_name: str) -> str | None:
+    """Href nested in a DAV/CalDAV property — not the response href of the request URL."""
+    root = _parse_root(xml_text)
+    if root is None:
+        return None
     for el in root.iter():
-        if _local_name(el.tag) == "href" and el.text and el.text.strip():
-            found.append(el.text.strip())
-    return found
+        if _local_name(el.tag) != prop_name:
+            continue
+        if el.text and el.text.strip() and _local_name(el.tag) == "href":
+            return el.text.strip()
+        for nested in el.iter():
+            if _local_name(nested.tag) == "href" and nested.text and nested.text.strip():
+                return nested.text.strip()
+    return None
 
 
 def _raise_fastmail(response: httpx.Response, *, connect: bool = False) -> None:
@@ -89,6 +96,8 @@ def _raise_fastmail(response: httpx.Response, *, connect: bool = False) -> None:
         )
         raise HTTPException(status_code=401 if not connect else 400, detail=detail)
     if response.status_code == 404:
+        if connect:
+            raise HTTPException(status_code=404, detail="That CalDAV path was not found.")
         raise HTTPException(status_code=404, detail="That Fastmail event is gone.")
     if response.status_code >= 500:
         raise HTTPException(status_code=502, detail="Fastmail Calendar is unavailable right now.")
@@ -105,12 +114,15 @@ def _request(
     headers: dict[str, str] | None = None,
     content: str | bytes | None = None,
     connect: bool = False,
-) -> httpx.Response:
+    allow_missing: bool = False,
+) -> httpx.Response | None:
     try:
         with httpx.Client(timeout=25.0, follow_redirects=True, auth=_auth(email, token)) as client:
             response = client.request(method, url, headers=_headers(headers), content=content)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Could not reach Fastmail Calendar.") from exc
+    if allow_missing and response.status_code in {404, 405}:
+        return None
     if response.status_code >= 400:
         _raise_fastmail(response, connect=connect)
     return response
@@ -261,9 +273,8 @@ def _propfind_xml(*props: str) -> str:
 
 
 def _responses(xml_text: str) -> list[ET.Element]:
-    try:
-        root = ET.fromstring(xml_text.encode("utf-8"))
-    except ET.ParseError:
+    root = _parse_root(xml_text)
+    if root is None:
         return []
     return [el for el in root.iter() if _local_name(el.tag) == "response"]
 
@@ -275,11 +286,35 @@ def _href_of(response: ET.Element) -> str | None:
     return None
 
 
-def _has_calendar_type(response: ET.Element) -> bool:
+def _resource_types(response: ET.Element) -> set[str]:
+    names: set[str] = set()
     for el in response.iter():
-        if _local_name(el.tag) == "calendar":
-            return True
-    return False
+        if _local_name(el.tag) != "resourcetype":
+            continue
+        for child in list(el):
+            names.add(_local_name(child.tag).lower())
+    return names
+
+
+def _has_calendar_type(response: ET.Element) -> bool:
+    types = _resource_types(response)
+    if types & SKIP_RESOURCE_TYPES:
+        return False
+    if "calendar" in types:
+        return True
+    comps = _component_names(response)
+    return "VEVENT" in comps
+
+
+def _component_names(response: ET.Element) -> set[str]:
+    found: set[str] = set()
+    for el in response.iter():
+        local = _local_name(el.tag)
+        if local in {"comp", "calendar-component"}:
+            name = (el.get("name") or el.text or "").strip().upper()
+            if name:
+                found.add(name)
+    return found
 
 
 def _displayname(response: ET.Element) -> str:
@@ -289,78 +324,209 @@ def _displayname(response: ET.Element) -> str:
     return ""
 
 
-def discover_calendar(email: str, token: str) -> dict[str, str]:
-    """Find a writable VEVENT collection. Missing FASTMAIL_* env uses the public CalDAV host."""
-    origin = caldav_origin()
-    user = email.strip()
-    principal = None
-    try:
-        well_known = _request(
-            "PROPFIND",
-            f"{origin}/.well-known/caldav",
-            email=user,
-            token=token,
-            headers={"Depth": "0", "Content-Type": "application/xml; charset=utf-8"},
-            content=_propfind_xml("<D:current-user-principal/>"),
-            connect=True,
-        )
-        hrefs = _find_hrefs(well_known.text or "")
-        if hrefs:
-            principal = _abs(str(well_known.url), hrefs[0])
-    except HTTPException as exc:
-        if exc.status_code in {400, 401}:
-            raise
-        principal = None
-    if not principal:
-        principal = f"{origin}/dav/principals/user/{user}/"
-        _request(
-            "PROPFIND",
-            principal,
-            email=user,
-            token=token,
-            headers={"Depth": "0", "Content-Type": "application/xml; charset=utf-8"},
-            content=_propfind_xml("<D:current-user-principal/><C:calendar-home-set/>"),
-            connect=True,
-        )
-    home = None
-    home_resp = _request(
-        "PROPFIND",
-        principal,
-        email=user,
-        token=token,
-        headers={"Depth": "0", "Content-Type": "application/xml; charset=utf-8"},
-        content=_propfind_xml("<C:calendar-home-set/>"),
-        connect=True,
-    )
-    hrefs = _find_hrefs(home_resp.text or "")
-    if hrefs:
-        home = _abs(principal, hrefs[0])
-    if not home:
-        home = f"{origin}/dav/calendars/user/{user}/"
-    listing = _request(
-        "PROPFIND",
-        home if home.endswith("/") else home + "/",
-        email=user,
-        token=token,
-        headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"},
-        content=_propfind_xml("<D:displayname/>", "<D:resourcetype/>", "<C:supported-calendar-component-set/>"),
-        connect=True,
-    )
+def _same_href(left: str, right: str) -> bool:
+    return left.rstrip("/") == right.rstrip("/")
+
+
+def calendars_from_listing(xml_text: str, home: str) -> list[tuple[str, str]]:
     calendars: list[tuple[str, str]] = []
-    for response in _responses(listing.text or ""):
-        if not _has_calendar_type(response):
-            continue
+    for response in _responses(xml_text):
         href = _href_of(response)
         if not href:
             continue
+        absolute = _abs(home, href)
+        if _same_href(absolute, home):
+            continue
+        types = _resource_types(response)
+        if types & SKIP_RESOURCE_TYPES:
+            continue
+        comps = _component_names(response)
+        if not ("calendar" in types or "VEVENT" in comps):
+            continue
+        if comps and "VEVENT" not in comps:
+            continue
         name = _displayname(response) or "Calendar"
-        supports_event = "VEVENT" in (listing.text or "").upper() or True
-        if supports_event:
-            calendars.append((_abs(home, href), name))
+        calendars.append((absolute if absolute.endswith("/") else absolute + "/", name))
+    return calendars
+
+
+def pick_calendar(calendars: list[tuple[str, str]]) -> tuple[str, str] | None:
     if not calendars:
-        raise HTTPException(status_code=400, detail="No Fastmail calendar was found on that account.")
-    preferred = next((item for item in calendars if item[1].lower() == "calendar"), calendars[0])
-    return {"calendar_href": preferred[0], "calendar_name": preferred[1], "email": user}
+        return None
+    for item in calendars:
+        if item[1].strip().lower() in {"calendar", "personal", "home"}:
+            return item
+    return calendars[0]
+
+
+def normalize_calendar_url(raw: str | None, *, email: str) -> str | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    origin = caldav_origin()
+    user = email.strip()
+    if value.startswith("/"):
+        return _abs(origin + "/", value if value.endswith("/") else value + "/")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Paste a CalDAV URL from Fastmail Settings, or leave it blank.")
+    allowed = urlparse(origin + "/").netloc.lower()
+    if parsed.netloc.lower() != allowed:
+        raise HTTPException(status_code=400, detail="Paste a CalDAV URL on caldav.fastmail.com from Fastmail Settings.")
+    path = parsed.path or "/"
+    if path in {"/", ""}:
+        return None
+    if "{email}" in path:
+        path = path.replace("{email}", user)
+    return _abs(f"{parsed.scheme}://{parsed.netloc}", path if path.endswith("/") else path + "/")
+
+
+def _propfind(
+    url: str,
+    *,
+    email: str,
+    token: str,
+    depth: str,
+    props: tuple[str, ...],
+    connect: bool = True,
+    allow_missing: bool = False,
+) -> httpx.Response | None:
+    return _request(
+        "PROPFIND",
+        url,
+        email=email,
+        token=token,
+        headers={"Depth": depth, "Content-Type": "application/xml; charset=utf-8"},
+        content=_propfind_xml(*props),
+        connect=connect,
+        allow_missing=allow_missing,
+    )
+
+
+def _list_at_home(email: str, token: str, home: str) -> list[tuple[str, str]]:
+    listing = _propfind(
+        home if home.endswith("/") else home + "/",
+        email=email,
+        token=token,
+        depth="1",
+        props=("<D:displayname/>", "<D:resourcetype/>", "<C:supported-calendar-component-set/>"),
+        connect=True,
+        allow_missing=True,
+    )
+    if listing is None:
+        return []
+    home_url = str(listing.url) if listing.url else home
+    found = calendars_from_listing(listing.text or "", home_url)
+    if found:
+        return found
+    loose: list[tuple[str, str]] = []
+    for response in _responses(listing.text or ""):
+        href = _href_of(response)
+        if not href:
+            continue
+        absolute = _abs(home_url, href)
+        if _same_href(absolute, home_url):
+            continue
+        types = _resource_types(response)
+        if types & SKIP_RESOURCE_TYPES or "principal" in types:
+            continue
+        if "collection" not in types:
+            continue
+        name = _displayname(response) or "Calendar"
+        loose.append((absolute if absolute.endswith("/") else absolute + "/", name))
+    return loose
+
+
+def discover_calendar(email: str, token: str, calendar_url: str | None = None) -> dict[str, str]:
+    """Well-known / principal discovery. Username is the full Fastmail email."""
+    origin = caldav_origin()
+    user = email.strip()
+    pasted = normalize_calendar_url(calendar_url, email=user)
+    if pasted:
+        depth0 = _propfind(
+            pasted,
+            email=user,
+            token=token,
+            depth="0",
+            props=("<D:displayname/>", "<D:resourcetype/>", "<C:supported-calendar-component-set/>", "<C:calendar-home-set/>"),
+            connect=True,
+        )
+        assert depth0 is not None
+        listed = calendars_from_listing(depth0.text or "", pasted)
+        if listed:
+            chosen = pick_calendar(listed)
+        else:
+            types = set()
+            name = "Calendar"
+            for response in _responses(depth0.text or ""):
+                types = _resource_types(response)
+                name = _displayname(response) or name
+                break
+            if "calendar" in types:
+                chosen = (pasted if pasted.endswith("/") else pasted + "/", name)
+            else:
+                home_href = parse_prop_href(depth0.text or "", "calendar-home-set")
+                home = _abs(pasted, home_href) if home_href else pasted
+                found = _list_at_home(user, token, home)
+                chosen = pick_calendar(found)
+        if not chosen:
+            raise HTTPException(status_code=409, detail=NO_CALENDARS)
+        return {"calendar_href": chosen[0], "calendar_name": chosen[1], "email": user}
+
+    principal = None
+    well_known = _propfind(
+        f"{origin}/.well-known/caldav",
+        email=user,
+        token=token,
+        depth="0",
+        props=("<D:current-user-principal/>", "<C:calendar-home-set/>"),
+        connect=True,
+        allow_missing=True,
+    )
+    if well_known is not None:
+        href = parse_prop_href(well_known.text or "", "current-user-principal")
+        if href:
+            principal = _abs(str(well_known.url), href)
+        home_href = parse_prop_href(well_known.text or "", "calendar-home-set")
+        if home_href and not principal:
+            principal = _abs(str(well_known.url), home_href)
+    if not principal:
+        principal = f"{origin}/dav/principals/user/{user}/"
+        probe = _propfind(
+            principal,
+            email=user,
+            token=token,
+            depth="0",
+            props=("<D:current-user-principal/>", "<C:calendar-home-set/>"),
+            connect=True,
+        )
+        assert probe is not None
+        href = parse_prop_href(probe.text or "", "current-user-principal")
+        if href:
+            principal = _abs(str(probe.url), href)
+
+    home = None
+    home_resp = _propfind(
+        principal if principal.endswith("/") else principal + "/",
+        email=user,
+        token=token,
+        depth="0",
+        props=("<C:calendar-home-set/>",),
+        connect=True,
+        allow_missing=True,
+    )
+    if home_resp is not None:
+        home_href = parse_prop_href(home_resp.text or "", "calendar-home-set")
+        if home_href:
+            home = _abs(str(home_resp.url), home_href)
+    if not home:
+        home = f"{origin}/dav/calendars/user/{user}/"
+
+    calendars = _list_at_home(user, token, home)
+    chosen = pick_calendar(calendars)
+    if not chosen:
+        raise HTTPException(status_code=409, detail=NO_CALENDARS)
+    return {"calendar_href": chosen[0], "calendar_name": chosen[1], "email": user}
 
 
 def list_events(email: str, token: str, calendar_href: str, *, time_min: str, time_max: str) -> list[dict[str, object]]:
@@ -372,6 +538,7 @@ def list_events(email: str, token: str, calendar_href: str, *, time_min: str, ti
         headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"},
         content=calendar_query_xml(time_min, time_max),
     )
+    assert response is not None
     items: list[dict[str, object]] = []
     for node in _responses(response.text or ""):
         href = _href_of(node)
@@ -432,6 +599,7 @@ def create_event(
 
 def _get_ics(email: str, token: str, href: str) -> str:
     response = _request("GET", href, email=email, token=token, headers={"Accept": "text/calendar"})
+    assert response is not None
     return response.text or ""
 
 

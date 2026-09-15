@@ -4,12 +4,17 @@ import unittest
 
 from app.services.fastmail_caldav import (
     DEFAULT_CALDAV,
+    NO_CALENDARS,
     build_vevent,
     calendar_query_xml,
+    calendars_from_listing,
     caldav_origin,
     decode_event_id,
     encode_event_id,
+    normalize_calendar_url,
+    parse_prop_href,
     parse_vevents,
+    pick_calendar,
     time_range_ics,
 )
 
@@ -81,6 +86,104 @@ class FastmailCalDavTests(unittest.TestCase):
             self.assertEqual(caldav_origin(), DEFAULT_CALDAV)
         finally:
             settings.fastmail_caldav_url = previous
+
+    def test_principal_href_is_not_the_request_url(self):
+        xml = """<?xml version="1.0"?>
+        <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+          <D:response>
+            <D:href>/.well-known/caldav</D:href>
+            <D:propstat>
+              <D:prop>
+                <D:current-user-principal>
+                  <D:href>/dav/principals/user/steve@fastmail.com/</D:href>
+                </D:current-user-principal>
+              </D:prop>
+            </D:propstat>
+          </D:response>
+        </D:multistatus>
+        """
+        self.assertEqual(
+            parse_prop_href(xml, "current-user-principal"),
+            "/dav/principals/user/steve@fastmail.com/",
+        )
+
+    def test_calendar_home_href_is_not_the_principal(self):
+        xml = """<?xml version="1.0"?>
+        <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+          <D:response>
+            <D:href>/dav/principals/user/steve@fastmail.com/</D:href>
+            <D:propstat>
+              <D:prop>
+                <C:calendar-home-set>
+                  <D:href>/dav/calendars/user/steve@fastmail.com/</D:href>
+                </C:calendar-home-set>
+              </D:prop>
+            </D:propstat>
+          </D:response>
+        </D:multistatus>
+        """
+        self.assertEqual(
+            parse_prop_href(xml, "calendar-home-set"),
+            "/dav/calendars/user/steve@fastmail.com/",
+        )
+
+    def test_lists_one_calendar_under_home(self):
+        home = "https://caldav.fastmail.com/dav/calendars/user/steve@fastmail.com/"
+        xml = f"""<?xml version="1.0"?>
+        <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+          <D:response>
+            <D:href>/dav/calendars/user/steve@fastmail.com/</D:href>
+            <D:propstat><D:prop>
+              <D:displayname>Calendars</D:displayname>
+              <D:resourcetype><D:collection/></D:resourcetype>
+            </D:prop></D:propstat>
+          </D:response>
+          <D:response>
+            <D:href>/dav/calendars/user/steve@fastmail.com/aabbccdd/</D:href>
+            <D:propstat><D:prop>
+              <D:displayname>Calendar</D:displayname>
+              <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+              <C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+            </D:prop></D:propstat>
+          </D:response>
+        </D:multistatus>
+        """
+        found = calendars_from_listing(xml, home)
+        self.assertEqual(len(found), 1)
+        chosen = pick_calendar(found)
+        self.assertIsNotNone(chosen)
+        assert chosen is not None
+        self.assertTrue(chosen[0].endswith("/aabbccdd/"))
+        self.assertEqual(chosen[1], "Calendar")
+
+    def test_empty_listing_uses_create_on_fastmail_copy(self):
+        from fastapi import HTTPException
+
+        self.assertEqual(NO_CALENDARS, "No calendars — create one on Fastmail.com")
+        self.assertNotIn("invalid", NO_CALENDARS.lower())
+        self.assertNotIn("account", NO_CALENDARS.lower())
+        found = calendars_from_listing(
+            """<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"></D:multistatus>""",
+            "https://caldav.fastmail.com/dav/calendars/user/steve@fastmail.com/",
+        )
+        self.assertEqual(found, [])
+        with self.assertRaises(HTTPException) as caught:
+            raise HTTPException(status_code=409, detail=NO_CALENDARS)
+        self.assertEqual(caught.exception.status_code, 409)
+
+    def test_pasted_calendar_url_stays_on_fastmail_host(self):
+        url = normalize_calendar_url(
+            "https://caldav.fastmail.com/dav/calendars/user/steve@fastmail.com/aabbccdd/",
+            email="steve@fastmail.com",
+        )
+        self.assertEqual(
+            url,
+            "https://caldav.fastmail.com/dav/calendars/user/steve@fastmail.com/aabbccdd/",
+        )
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException):
+            normalize_calendar_url("https://evil.example/dav/", email="steve@fastmail.com")
 
 
 if __name__ == "__main__":

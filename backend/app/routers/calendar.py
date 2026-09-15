@@ -32,6 +32,7 @@ class CalendarEventPatchIn(BaseModel):
 class FastmailConnectIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     token: str = Field(min_length=8, max_length=400)
+    calendar_url: str | None = Field(default=None, max_length=800)
 
 
 def _tz(value: str | None) -> str:
@@ -51,7 +52,7 @@ def calendar_fastmail_connect(
     user: User = Depends(get_current_user),
 ) -> dict:
     reject_locked(user)
-    row = fmcal.connect(db, user.id, email=payload.email, token=payload.token)
+    row = fmcal.connect(db, user.id, email=payload.email, token=payload.token, calendar_url=payload.calendar_url)
     db.commit()
     return {
         "ok": True,

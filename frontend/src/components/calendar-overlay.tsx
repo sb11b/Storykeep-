@@ -43,7 +43,9 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
   const [saving, setSaving] = useState(false);
   const [fmEmail, setFmEmail] = useState("");
   const [fmToken, setFmToken] = useState("");
+  const [fmCalendarUrl, setFmCalendarUrl] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [emptyCalendars, setEmptyCalendars] = useState(false);
 
   const range = useMemo(() => (view === "week" ? weekRange(anchor) : monthGridRange(anchor)), [anchor, view]);
 
@@ -94,20 +96,32 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
     return () => window.removeEventListener(WROTE_EVENT, onWrote);
   }, [load, open]);
 
-  async function connectFastmail() {
+  async function connectFastmail(retry = false) {
     if (!fmEmail.trim() || fmToken.trim().length < 8) {
       toast.error("Use your Fastmail email and an app password or API token.");
       return;
     }
     setConnecting(true);
-    const token = fmToken;
-    setFmToken("");
+    if (!retry) setEmptyCalendars(false);
     try {
-      await api.connectFastmailCalendar({ email: fmEmail.trim(), token });
+      const calendarUrl = fmCalendarUrl.trim();
+      await api.connectFastmailCalendar({
+        email: fmEmail.trim(),
+        token: fmToken,
+        ...(calendarUrl ? { calendar_url: calendarUrl } : {}),
+      });
+      setFmToken("");
+      setEmptyCalendars(false);
       toast.success("Fastmail Calendar connected.");
       await load();
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not connect Fastmail.");
+      const message = error instanceof ApiError ? error.message : "Could not connect Fastmail.";
+      if (message.includes("No calendars")) {
+        setEmptyCalendars(true);
+        toast.error("No calendars — create one on Fastmail.com");
+      } else {
+        toast.error(message);
+      }
     } finally {
       setConnecting(false);
     }
@@ -239,9 +253,29 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
                 value={fmToken}
                 onChange={(event) => setFmToken(event.target.value)}
               />
-              <Button disabled={connecting} onClick={() => void connectFastmail()}>
+              <Label htmlFor="fm-cal-url">Calendar URL (optional)</Label>
+              <Input
+                id="fm-cal-url"
+                type="url"
+                autoComplete="off"
+                placeholder="https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/…"
+                value={fmCalendarUrl}
+                onChange={(event) => setFmCalendarUrl(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave blank to discover calendars. Or paste the CalDAV URL from Fastmail Settings → Calendars.
+              </p>
+              <Button disabled={connecting} onClick={() => void connectFastmail(false)}>
                 Connect Fastmail
               </Button>
+              {emptyCalendars ? (
+                <div className="flex flex-col gap-2 rounded-md border p-2">
+                  <p className="text-sm">No calendars — create one on Fastmail.com</p>
+                  <Button variant="outline" disabled={connecting} onClick={() => void connectFastmail(true)}>
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : loading ? (

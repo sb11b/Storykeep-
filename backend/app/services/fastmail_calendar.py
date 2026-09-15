@@ -40,14 +40,14 @@ def _creds(db: Session, user_id: UUID) -> tuple[FastmailCalendarAccount, str]:
     return row, token
 
 
-def connect(db: Session, user_id: UUID, *, email: str, token: str) -> FastmailCalendarAccount:
+def connect(db: Session, user_id: UUID, *, email: str, token: str, calendar_url: str | None = None) -> FastmailCalendarAccount:
     address = (email or "").strip()
     secret = (token or "").strip()
     if "@" not in address or len(address) > 320:
         raise HTTPException(status_code=400, detail="Use your Fastmail email address.")
     if len(secret) < 8 or len(secret) > 400:
         raise HTTPException(status_code=400, detail="Use a Fastmail app password or API token, never the account password.")
-    discovered = caldav.discover_calendar(address, secret)
+    discovered = caldav.discover_calendar(address, secret, calendar_url=calendar_url)
     row = db.get(FastmailCalendarAccount, user_id)
     if row is None:
         row = FastmailCalendarAccount(user_id=user_id, token_encrypted="", fastmail_email=address)
