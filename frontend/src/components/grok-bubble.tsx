@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { CalendarClock, ChevronLeft, ChevronRight, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronLeft, ChevronRight, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { JuniorJobsPanel } from "@/components/junior-jobs-panel";
+import { JuniorMemoryPanel } from "@/components/junior-memory-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
@@ -140,6 +141,7 @@ export function GrokBubble({
   const [railHidden, setRailHidden] = useState(() => loadJuniorRailHidden());
   const historyListRef = useRef<HTMLDivElement>(null);
   const jobsRailRef = useRef<HTMLElement | null>(null);
+  const memoryRailRef = useRef<HTMLElement | null>(null);
   const activeListenStopRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
   const movedRef = useRef(false);
@@ -602,6 +604,11 @@ export function GrokBubble({
     window.setTimeout(() => jobsRailRef.current?.scrollIntoView({ block: "nearest" }), 50);
   }
 
+  function showMemoryList() {
+    setRailHidden(false);
+    window.setTimeout(() => memoryRailRef.current?.scrollIntoView({ block: "nearest" }), 50);
+  }
+
   const showJobsRail = Boolean(fullscreen && persist && !locked);
 
   const collapsedIconBtn =
@@ -654,6 +661,19 @@ export function GrokBubble({
             onClick={showJobsList}
           >
             <CalendarClock className="size-3.5" />
+          </Button>
+        ) : null}
+        {showJobsRail ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className={collapsedIconBtn}
+            aria-label="Memory"
+            title="Memory"
+            onClick={showMemoryList}
+          >
+            <Brain className="size-3.5" />
           </Button>
         ) : null}
       </aside>
@@ -970,6 +990,9 @@ export function GrokBubble({
               void refreshHistory();
             }}
           />
+        ) : null}
+        {!railHidden && fullscreen && persist && !locked ? (
+          <JuniorMemoryPanel railRef={memoryRailRef} />
         ) : null}
         {fullscreen ? (
           <div className="grid min-h-0 min-w-0 flex-1 gap-px overflow-hidden bg-border" style={paneGridStyle(panes.length)}>

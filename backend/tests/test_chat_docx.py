@@ -57,6 +57,9 @@ class ChatDocxTests(unittest.TestCase):
         self.assertEqual(visible_reply_text(body), "The slope is two.")
         italic = "The slope is two.\n\n*Use Add to notes if you want this kept.*"
         self.assertEqual(strip_keep_notes_cta(italic), "The slope is two.")
+        lone = "The slope is two.\n\nUse Add to notes."
+        self.assertEqual(strip_keep_notes_cta(lone), "The slope is two.")
+        self.assertEqual(strip_keep_notes_cta("Use Add to notes."), "")
 
     def test_hides_empty_and_tool_only(self):
         self.assertFalse(has_word_body("   "))

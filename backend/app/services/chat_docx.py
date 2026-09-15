@@ -38,6 +38,7 @@ _KEEP_NOTES_LINE = re.compile(
     r"|if you want to keep this(?: reply)?,?\s+use add to notes"
     r"|add to notes if you want this(?: reply)? kept"
     r"|use add to notes to keep this(?: reply)?"
+    r"|use add to notes"
     r")\.?$",
     re.I,
 )
@@ -46,7 +47,9 @@ _KEEP_NOTES_TAIL = re.compile(
     r"(?:use add to notes if you want this kept"
     r"|if you want this kept,?\s+use add to notes"
     r"|if you(?:'d| would)? like this kept,?\s+use add to notes"
-    r"|add to notes if you want this(?: reply)? kept)\.?\s*$",
+    r"|add to notes if you want this(?: reply)? kept"
+    r"|use add to notes to keep this(?: reply)?"
+    r"|use add to notes)\.?\s*$",
     re.I,
 )
 

@@ -44,6 +44,8 @@ test("Copy and Word drop keep/notes footers", () => {
     replyCopyText("The slope is two.\n\n*Use Add to notes if you want this kept.*"),
     "The slope is two.",
   );
+  assert.equal(replyCopyText("The slope is two.\n\nUse Add to notes."), "The slope is two.");
+  assert.equal(replyCopyText("Use Add to notes."), "");
 });
 
 test("empty and tool-only replies have no Word body", () => {

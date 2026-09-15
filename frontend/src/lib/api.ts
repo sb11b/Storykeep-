@@ -840,6 +840,14 @@ export const api = {
       "/api/v1/calendar/fastmail/connect",
       { method: "POST", body: JSON.stringify(body) },
     ),
+  juniorMemory: () => request<JuniorMemory>("/api/v1/junior/memory"),
+  putJuniorMemory: (markdown: string) =>
+    request<JuniorMemory>("/api/v1/junior/memory", { method: "PUT", body: JSON.stringify({ markdown }) }),
+};
+
+export type JuniorMemory = {
+  markdown: string;
+  updated_at: string | null;
 };
 
 export type JuniorJob = {

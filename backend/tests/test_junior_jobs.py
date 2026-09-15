@@ -317,6 +317,7 @@ class JuniorJobsTests(unittest.TestCase):
             patch("app.services.junior_jobs.grok_store.owned_conversation", return_value=conversation),
             patch("app.services.junior_jobs.grok_store.conversation_history", return_value=[]),
             patch("app.services.junior_jobs.grok_store.append_message", side_effect=append),
+            patch("app.services.junior_jobs.junior_memory.system_section", return_value=None),
             patch(
                 "app.services.junior_jobs.chat_service.build_xai_messages",
                 return_value=[{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],

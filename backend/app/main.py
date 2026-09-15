@@ -17,7 +17,7 @@ from app.config import settings
 from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, calendar, chat, feeds, junior_jobs, library, overlay, school, stt, sync, tts
+from app.routers import articles, auth, backups, calendar, chat, feeds, junior_jobs, junior_memory, library, overlay, school, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -149,6 +149,12 @@ def _create_schema() -> None:
     )
     _try_sql("ALTER TABLE fastmail_calendar_accounts ADD COLUMN IF NOT EXISTS calendars_json JSONB DEFAULT '[]'::jsonb")
     _try_sql(
+        "CREATE TABLE IF NOT EXISTS junior_memory ("
+        "user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
+        "markdown TEXT NOT NULL DEFAULT '', "
+        "updated_at TIMESTAMPTZ DEFAULT now())"
+    )
+    _try_sql(
         "CREATE TABLE IF NOT EXISTS auth_challenges ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
         "user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
@@ -198,13 +204,17 @@ def _create_schema() -> None:
 
 
 def _seed_in_background() -> None:
-    if not settings.seed_demo:
-        return
     db = SessionLocal()
     try:
-        seed_demo(db)
+        if settings.seed_demo:
+            seed_demo(db)
+        from app.services.junior_memory import seed_steve_memory
+
+        seed_steve_memory(db)
+        db.commit()
     except Exception:
-        logger.exception("Demo seed failed")
+        logger.exception("Seed failed")
+        db.rollback()
     finally:
         db.close()
 
@@ -327,6 +337,7 @@ app.include_router(tts.router, prefix=API)
 app.include_router(chat.router, prefix=API)
 app.include_router(school.router, prefix=API)
 app.include_router(junior_jobs.router, prefix=API)
+app.include_router(junior_memory.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 app.include_router(calendar.router, prefix=API)
 

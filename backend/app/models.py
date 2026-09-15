@@ -55,6 +55,7 @@ class User(Base):
     tags: Mapped[list[Tag]] = relationship(back_populates="user")
     folders: Mapped[list["Folder"]] = relationship(back_populates="user")
     fastmail_calendar: Mapped["FastmailCalendarAccount | None"] = relationship(back_populates="user", uselist=False)
+    junior_memory: Mapped["JuniorMemory | None"] = relationship(back_populates="user", uselist=False)
 
 
 class RssShelf(Base):
@@ -540,6 +541,20 @@ class FastmailCalendarAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="fastmail_calendar")
+
+
+class JuniorMemory(Base):
+    """One Junior owner note per user. Never send to the demo account."""
+
+    __tablename__ = "junior_memory"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship(back_populates="junior_memory")
 
 
 def ensure_search_index(connection) -> None:

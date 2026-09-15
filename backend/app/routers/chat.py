@@ -33,6 +33,7 @@ from app.services.calendar_tool import (
 )
 from app.services import grok_conversations as grok_store
 from app.services import imagine as imagine_service
+from app.services import junior_memory
 from app.services.demo_lock import is_locked, reject_locked
 from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
 from app.services.include_chunk import format_excerpt as format_include_excerpt
@@ -737,12 +738,15 @@ async def _chat(
     if unread_catalog:
         extras.append(UNREAD_READER_SYSTEM)
     extras.append(CALENDAR_ON_APPEND if calendar_connected else CALENDAR_OFF_APPEND)
+    memory_block = junior_memory.system_section(db, user)
+    if memory_block:
+        extras.append(memory_block)
     extra_system = "\n".join(extras)
     calendar_tools = [ADD_EVENT_TOOL] if calendar_connected else None
     tool_calls_out: list[dict] = []
 
     def _persist_assistant(text: str) -> str | None:
-        cleaned = (text or "").strip()
+        cleaned = chat_docx.strip_keep_notes_cta((text or "").strip())
         if not persist or not conversation_id or not cleaned:
             return None
         try:

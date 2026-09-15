@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Article, Feed, JuniorJob, JuniorJobRun, User
 from app.services import chat as chat_service
+from app.services import chat_docx
 from app.services import grok_conversations as grok_store
+from app.services import junior_memory
 from app.services.demo_lock import is_locked, reject_locked
 from app.services.destination import normalize_destination
 from app.services.folders import resolve_folder_id
@@ -511,11 +513,18 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
         db.add(job)
         db.flush()
     tools = tools_for_job(job)
+    memory_block = junior_memory.system_section(db, user)
+    extra_parts = []
+    if news:
+        extra_parts.append(UNREAD_READER_SYSTEM)
+    if memory_block:
+        extra_parts.append(memory_block)
+    extra_system = "\n\n".join(extra_parts) if extra_parts else None
     if tools:
         windowed = chat_service.thread_window([*history, {"role": "user", "content": user_line}])
         system = JOB_SEARCH_SYSTEM
-        if news:
-            system = f"{system}\n\n{UNREAD_READER_SYSTEM}"
+        if extra_system:
+            system = f"{system}\n\n{extra_system}"
         if excerpt:
             system = f"{system}\n\nIncluded article excerpt:\n{excerpt}"
         messages = [{"role": "system", "content": system}, *windowed]
@@ -524,9 +533,8 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
             [*history, {"role": "user", "content": user_line}],
             excerpt,
             include_article=bool(excerpt),
+            extra_system=extra_system,
         )
-        if news:
-            messages[0]["content"] = f"{messages[0]['content']}\n\n{UNREAD_READER_SYSTEM}"
     status = "ok"
     output = ""
     error = None
@@ -553,7 +561,7 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
         error = str(exc)
         output = error
         logger.exception("Junior job failed id=%s", job.id)
-    output = ensure_reader_links(output, unread)
+    output = chat_docx.strip_keep_notes_cta(ensure_reader_links(output, unread)) or output
     grok_store.append_message(db, conversation, role="user", content=user_line, set_title_from_user=False)
     assistant = grok_store.append_message(db, conversation, role="assistant", content=output)
     conversation.last_model = model

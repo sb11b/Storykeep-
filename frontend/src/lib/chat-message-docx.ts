@@ -14,9 +14,9 @@ export function isPersistedMessageId(id: string | null | undefined): boolean {
 }
 
 const KEEP_NOTES_LINE =
-  /^(?:[-*•]\s+)?(?:please\s+)?(?:use add to notes if you want this kept|if you want this kept,?\s+use add to notes|if you(?:'d| would)? like this kept,?\s+use add to notes|if you want to keep this(?: reply)?,?\s+use add to notes|add to notes if you want this(?: reply)? kept|use add to notes to keep this(?: reply)?)\.?$/i;
+  /^(?:[-*•]\s+)?(?:please\s+)?(?:use add to notes if you want this kept|if you want this kept,?\s+use add to notes|if you(?:'d| would)? like this kept,?\s+use add to notes|if you want to keep this(?: reply)?,?\s+use add to notes|add to notes if you want this(?: reply)? kept|use add to notes to keep this(?: reply)?|use add to notes)\.?$/i;
 const KEEP_NOTES_TAIL =
-  /(?:\s+)(?:use add to notes if you want this kept|if you want this kept,?\s+use add to notes|if you(?:'d| would)? like this kept,?\s+use add to notes|add to notes if you want this(?: reply)? kept)\.?\s*$/i;
+  /(?:\s+)(?:use add to notes if you want this kept|if you want this kept,?\s+use add to notes|if you(?:'d| would)? like this kept,?\s+use add to notes|add to notes if you want this(?: reply)? kept|use add to notes to keep this(?: reply)?|use add to notes)\.?\s*$/i;
 
 /** Answer body for Copy / clipboard / Markdown / text. Spend chip stays off. */
 export function stripKeepNotesCta(content: string): string {
