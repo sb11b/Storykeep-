@@ -11,7 +11,13 @@ import {
 } from "react";
 import { Mic } from "lucide-react";
 import { toast } from "sonner";
-import { newFinalSegment, normalizeSpoken } from "@/lib/stt-buffer";
+import { appendSpoken, newFinalSegment, normalizeSpoken } from "@/lib/stt-buffer";
+import {
+  MIC_DENIED_TOAST,
+  MIC_DROPPED_TOAST,
+  MIC_IDLE,
+  MIC_LIVE,
+} from "@/lib/stt-ui";
 import { cn } from "@/lib/utils";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
@@ -19,8 +25,13 @@ type Field = HTMLInputElement | HTMLTextAreaElement;
 type StartOptions = {
   /** When true, keep the session open across utterances until Stop. */
   continuous?: boolean;
-  /** Internal: reconnect after Chrome/xAI idle without wiping committed text. */
+  /** Reconnect after idle/drop without wiping committed finals. */
   resume?: boolean;
+};
+
+export type DictationSink = {
+  getValue: () => string;
+  append: (piece: string) => void;
 };
 
 type DictationApi = {
@@ -33,6 +44,7 @@ type DictationApi = {
   stop: () => void;
   abort: () => void;
   attach: (field: Field | null) => void;
+  setSink: (sink: DictationSink | null) => void;
 };
 
 function sttToast(message: string) {
@@ -43,7 +55,7 @@ function sttToast(message: string) {
 function micDeniedMessage(error: unknown) {
   if (error instanceof DOMException) {
     if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-      return "Mic denied — allow microphone access in your browser.";
+      return MIC_DENIED_TOAST;
     }
     if (error.name === "NotFoundError") {
       return "No microphone found.";
@@ -62,16 +74,10 @@ function nativeSetValue(el: Field, value: string) {
 }
 
 function insertFinal(el: Field, spoken: string) {
-  const text = spoken.trim();
-  if (!text) return;
-  const start = el.selectionStart ?? el.value.length;
-  const end = el.selectionEnd ?? start;
-  const before = el.value.slice(0, start);
-  const after = el.value.slice(end);
-  const padLeft = before && !/\s$/.test(before) ? " " : "";
-  const next = `${before}${padLeft}${text}${after}`;
+  const next = appendSpoken(el.value, spoken);
+  if (next === el.value) return;
   nativeSetValue(el, next);
-  const at = (before + padLeft + text).length;
+  const at = next.length;
   requestAnimationFrame(() => {
     el.focus();
     el.setSelectionRange(at, at);
@@ -106,6 +112,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const [interim, setInterim] = useState("");
   const [idleHint, setIdleHint] = useState<string | null>(null);
   const fieldRef = useRef<Field | null>(null);
+  const sinkRef = useRef<DictationSink | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioRef = useRef<{
     stream: MediaStream;
@@ -120,81 +127,90 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const sessionContinuousRef = useRef(false);
   const stoppingRef = useRef(false);
   const abortedRef = useRef(false);
-  const stopTimerRef = useRef<number | null>(null);
   const startingRef = useRef(false);
   const closedCleanlyRef = useRef(false);
-  const restartingRef = useRef(false);
-  const restartTimerRef = useRef<number | null>(null);
+  const deniedToastRef = useRef(false);
   const startForRef = useRef<(field: Field, options?: StartOptions) => void>(() => {});
   useEffect(() => {
     continuousRef.current = continuous;
     listeningRef.current = listening;
   }, [continuous, listening]);
 
-  const clearStopTimer = () => {
-    if (stopTimerRef.current != null) {
-      window.clearTimeout(stopTimerRef.current);
-      stopTimerRef.current = null;
-    }
-  };
-
-  const clearRestartTimer = () => {
-    if (restartTimerRef.current != null) {
-      window.clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
-    }
-  };
-
   const disconnectEngine = useCallback((opts?: { keepUi?: boolean }) => {
     closedCleanlyRef.current = true;
-    clearStopTimer();
     startingRef.current = false;
     if (!opts?.keepUi) {
       listeningRef.current = false;
       setListening(false);
     }
     interimRef.current = "";
-    lastRawFinalRef.current = "";
     setInterim("");
     const audio = audioRef.current;
     audioRef.current = null;
     if (audio) {
-      audio.processor.disconnect();
+      try {
+        audio.processor.disconnect();
+      } catch {
+        /* ignore */
+      }
       audio.stream.getTracks().forEach((track) => track.stop());
       void audio.context.close();
     }
     const socket = socketRef.current;
     socketRef.current = null;
-    if (socket && socket.readyState === WebSocket.OPEN) {
+    if (socket) {
       try {
-        socket.send(JSON.stringify({ type: "stop" }));
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "stop" }));
+        }
       } catch {
         /* ignore */
       }
-      socket.close();
-    } else {
-      socket?.close();
+      try {
+        socket.close();
+      } catch {
+        /* ignore */
+      }
     }
   }, []);
 
   const teardown = useCallback(() => {
-    clearRestartTimer();
-    restartingRef.current = false;
     stoppingRef.current = false;
     disconnectEngine();
     setSessionContinuousMode(false);
     sessionContinuousRef.current = false;
     committedRef.current = "";
+    lastRawFinalRef.current = "";
   }, [disconnectEngine]);
+
+  const sleepMic = useCallback(
+    (hint: string, toastDropped = false) => {
+      stoppingRef.current = false;
+      abortedRef.current = false;
+      disconnectEngine();
+      setIdleHint(hint);
+      if (toastDropped) sttToast(hint);
+    },
+    [disconnectEngine],
+  );
 
   const commitFinal = useCallback((raw: string) => {
     if (abortedRef.current) return;
+    const spoken = normalizeSpoken(raw);
+    if (!spoken) return;
+    if (spoken === lastRawFinalRef.current) return;
     const el = fieldRef.current;
-    const piece = newFinalSegment(raw, committedRef.current, el?.value ?? "");
+    const fieldValue = sinkRef.current?.getValue() ?? el?.value ?? "";
+    const piece = newFinalSegment(raw, committedRef.current, fieldValue);
     interimRef.current = "";
     setInterim("");
-    if (!piece) return;
-    if (el) insertFinal(el, piece);
+    if (!piece) {
+      lastRawFinalRef.current = spoken;
+      return;
+    }
+    lastRawFinalRef.current = spoken;
+    if (sinkRef.current) sinkRef.current.append(piece);
+    else if (el) insertFinal(el, piece);
     committedRef.current = normalizeSpoken(`${committedRef.current} ${piece}`);
   }, []);
 
@@ -203,8 +219,6 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     abortedRef.current = true;
     stoppingRef.current = true;
     setIdleHint(null);
-    clearRestartTimer();
-    restartingRef.current = false;
     teardown();
   }, [teardown]);
 
@@ -213,15 +227,16 @@ export function DictationProvider({ children }: { children: ReactNode }) {
       const live = socketRef.current;
       const resuming = Boolean(options?.resume);
       const busy =
-        listeningRef.current || startingRef.current || restartingRef.current || (live != null && live.readyState <= WebSocket.OPEN);
+        listeningRef.current ||
+        startingRef.current ||
+        (live != null && live.readyState <= WebSocket.OPEN);
       if (!resuming && busy) {
-        if (fieldRef.current === field) {
-          abort();
-          return;
-        }
         abort();
+        if (fieldRef.current === field && !resuming) return;
       }
-      restartingRef.current = false;
+      if (resuming) {
+        disconnectEngine({ keepUi: true });
+      }
       abortedRef.current = false;
       setIdleHint(null);
       fieldRef.current = field;
@@ -238,10 +253,19 @@ export function DictationProvider({ children }: { children: ReactNode }) {
         setInterim("");
       }
       void (async () => {
+        let context: AudioContext | null = null;
         try {
+          const AudioCtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (!AudioCtx) throw new Error("Microphone is not available");
+          context = new AudioCtx();
+          if (context.state === "suspended") await context.resume();
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          if (!startingRef.current) {
+          deniedToastRef.current = false;
+          if (!startingRef.current || abortedRef.current) {
             stream.getTracks().forEach((track) => track.stop());
+            void context.close();
             return;
           }
           const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -250,6 +274,12 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           const socket = new WebSocket(`${protocol}://${window.location.host}/api/v1/stt?${params.toString()}`);
           socket.binaryType = "arraybuffer";
           socketRef.current = socket;
+          const pending: ArrayBuffer[] = [];
+          const flushPending = () => {
+            while (pending.length && socket.readyState === WebSocket.OPEN) {
+              socket.send(pending.shift()!);
+            }
+          };
           socket.onmessage = (event) => {
             try {
               const msg = JSON.parse(String(event.data)) as {
@@ -263,12 +293,12 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 listeningRef.current = true;
                 startingRef.current = false;
                 setListening(true);
+                flushPending();
                 return;
               }
               if (msg.type === "partial") {
                 const text = msg.text || "";
                 if (msg.is_final || msg.speech_final) {
-                  lastRawFinalRef.current = text;
                   commitFinal(text);
                   return;
                 }
@@ -277,39 +307,36 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "done") {
-                if (msg.text && !normalizeSpoken(committedRef.current)) {
-                  lastRawFinalRef.current = msg.text;
-                  commitFinal(msg.text);
-                } else if (msg.text) {
-                  commitFinal(msg.text);
-                }
+                if (msg.text) commitFinal(msg.text);
                 lastRawFinalRef.current = "";
                 if (!sessionContinuousRef.current) {
                   teardown();
                 }
                 return;
               }
-              if (msg.type === "error" || msg.type === "timeout" || msg.type === "idle") {
-                if (msg.type === "idle" || (msg.type === "timeout" && sessionContinuousRef.current)) {
-                  setIdleHint(msg.message || "Mic idle, tap to resume");
-                  teardown();
+              if (msg.type === "error") {
+                sttToast(msg.message || "STT failed");
+                teardown();
+                return;
+              }
+              if (msg.type === "timeout") {
+                if (sessionContinuousRef.current) {
+                  sleepMic(msg.message || MIC_IDLE);
                   return;
                 }
-                sttToast(msg.message || (msg.type === "timeout" ? "STT timeout" : "STT failed"));
+                sttToast(msg.message || "STT timeout");
                 teardown();
+                return;
+              }
+              if (msg.type === "idle") {
+                sleepMic(msg.message || MIC_IDLE);
               }
             } catch {
               /* ignore */
             }
           };
           socket.onerror = () => {
-            if (!stoppingRef.current && sessionContinuousRef.current) {
-              setIdleHint("Mic idle, tap to resume");
-              teardown();
-              return;
-            }
-            if (!stoppingRef.current) sttToast("STT connection failed");
-            teardown();
+            /* onclose sets idle / dropped; avoid a second toast */
           };
           socket.onclose = (event) => {
             if (closedCleanlyRef.current) {
@@ -327,24 +354,34 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               teardown();
               return;
             }
-            if (sessionContinuousRef.current && !stoppingRef.current) {
-              setIdleHint("Mic idle, tap to resume");
-              teardown();
+            if (stoppingRef.current || abortedRef.current) return;
+            if (sessionContinuousRef.current) {
+              sleepMic(MIC_DROPPED_TOAST, true);
               return;
             }
-            if (!listeningRef.current && !startingRef.current && !restartingRef.current) return;
+            if (!listeningRef.current && !startingRef.current) return;
             teardown();
           };
           await new Promise<void>((resolve, reject) => {
             socket.onopen = () => resolve();
             socket.addEventListener("error", () => reject(new Error("socket")), { once: true });
           });
-          const context = new AudioContext();
+          if (!startingRef.current && !listeningRef.current) {
+            stream.getTracks().forEach((track) => track.stop());
+            void context.close();
+            return;
+          }
+          if (context.state === "suspended") await context.resume();
           const source = context.createMediaStreamSource(stream);
           const processor = context.createScriptProcessor(4096, 1, 1);
           processor.onaudioprocess = (event) => {
-            if (socket.readyState !== WebSocket.OPEN || !listeningRef.current || stoppingRef.current) return;
-            const pcm = floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context.sampleRate, 16000));
+            if (socket.readyState !== WebSocket.OPEN || stoppingRef.current || abortedRef.current) return;
+            const pcm = floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context!.sampleRate, 16000));
+            if (!listeningRef.current) {
+              pending.push(pcm);
+              if (pending.length > 24) pending.shift();
+              return;
+            }
             socket.send(pcm);
           };
           const mute = context.createGain();
@@ -353,13 +390,25 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           processor.connect(mute);
           mute.connect(context.destination);
           audioRef.current = { stream, context, processor };
+          context = null;
         } catch (error) {
-          sttToast(micDeniedMessage(error));
+          const denied =
+            error instanceof DOMException &&
+            (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
+          if (denied) {
+            if (!deniedToastRef.current) {
+              deniedToastRef.current = true;
+              sttToast(MIC_DENIED_TOAST);
+            }
+          } else {
+            sttToast(micDeniedMessage(error));
+          }
+          if (context) void context.close();
           teardown();
         }
       })();
     },
-    [abort, commitFinal, teardown],
+    [abort, commitFinal, disconnectEngine, sleepMic, teardown],
   );
   startForRef.current = startFor;
 
@@ -369,6 +418,10 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     if (listeningRef.current || startingRef.current) {
       sessionContinuousRef.current = value;
       setSessionContinuousMode(value);
+      const el = fieldRef.current;
+      if (el && value) {
+        startForRef.current(el, { continuous: true, resume: true });
+      }
     }
   }, []);
 
@@ -381,16 +434,21 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     fieldRef.current = field;
   }, []);
 
+  const setSink = useCallback((sink: DictationSink | null) => {
+    sinkRef.current = sink;
+  }, []);
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || (!listeningRef.current && !startingRef.current && !restartingRef.current)) return;
+      if (event.key !== "Escape" || (!listeningRef.current && !startingRef.current && !idleHint)) return;
+      if (!listeningRef.current && !startingRef.current) return;
       event.preventDefault();
       event.stopPropagation();
       abort();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [abort]);
+  }, [abort, idleHint]);
 
   useEffect(() => {
     function onGone() {
@@ -415,15 +473,17 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     stop: abort,
     abort,
     attach,
+    setSink,
   };
 
+  const live = listening;
   return (
     <DictationContext.Provider value={api}>
       {children}
-      {listening ? (
+      {live ? (
         <div className="pointer-events-auto fixed bottom-4 left-4 z-[80] flex max-w-[min(36rem,calc(100vw-2rem))] items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs shadow-md">
           <span className="size-2 shrink-0 rounded-full bg-red-600" />
-          <span className="font-medium shrink-0">Listening</span>
+          <span className="font-medium shrink-0">{MIC_LIVE}</span>
           {interim ? (
             <span className="min-w-0 truncate text-muted-foreground" aria-live="polite">
               {interim}
@@ -451,10 +511,15 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           className="pointer-events-auto fixed bottom-4 left-4 z-[80] max-w-[min(36rem,calc(100vw-2rem))] rounded-full border bg-background px-3 py-1.5 text-xs shadow-md"
           onClick={() => {
             const el = fieldRef.current;
-            if (el) startFor(el);
+            if (el) {
+              startFor(el, {
+                resume: true,
+                continuous: continuousRef.current || sessionContinuousRef.current,
+              });
+            }
           }}
         >
-          {idleHint}
+          {idleHint.startsWith("Mic dropped") ? idleHint : `${MIC_IDLE} — tap to resume.`}
         </button>
       ) : null}
     </DictationContext.Provider>
@@ -480,7 +545,7 @@ export function DictationMic({ target, className }: { target: () => Field | null
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => {
         const el = target();
-        if (el) dictation.startFor(el);
+        if (el) dictation.startFor(el, { continuous: dictation.continuous });
       }}
     >
       <Mic className="size-3.5" />

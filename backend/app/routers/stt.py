@@ -208,10 +208,7 @@ async def stt_stream(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
             return_when=asyncio.FIRST_COMPLETED,
         )
         if browser_task in done and not xai_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(xai_task), timeout=6)
-            except (asyncio.TimeoutError, Exception):
-                xai_task.cancel()
+            xai_task.cancel()
         for task in (browser_task, xai_task, watchdog_task):
             if not task.done():
                 task.cancel()

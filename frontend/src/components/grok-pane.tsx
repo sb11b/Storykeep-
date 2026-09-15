@@ -57,6 +57,8 @@ import {
   WORKING_NOTE_CHAR_CAP,
   type IncludeMode,
 } from "@/lib/include-chunk";
+import { appendSpoken } from "@/lib/stt-buffer";
+import { MIC_IDLE, MIC_LIVE } from "@/lib/stt-ui";
 import { isNoteShrinkMessage } from "@/lib/api-errors";
 import { headingFromInstruction } from "@/lib/work-in-junior";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
@@ -241,6 +243,10 @@ export function GrokPane({
   const abortingRef = useRef(false);
   const inFlightRef = useRef(false);
   const dictation = useDictation();
+  const draftValueRef = useRef(pane.draft);
+  draftValueRef.current = pane.draft;
+  const onUpdateRef = useRef(onUpdate);
+  onUpdateRef.current = onUpdate;
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
@@ -425,12 +431,22 @@ export function GrokPane({
 
   useEffect(() => {
     const el = draftRef.current;
-    if (!el) return;
-    dictation?.attach(el);
+    if (!el || !dictation) return;
+    dictation.attach(el);
+    dictation.setSink({
+      getValue: () => draftValueRef.current,
+      append: (piece) => {
+        const next = appendSpoken(draftValueRef.current, piece);
+        draftValueRef.current = next;
+        onUpdateRef.current((current) => (current.draft === next ? current : { ...current, draft: next }));
+      },
+    });
     el.style.height = "auto";
     const cap = Math.round(window.innerHeight * 0.6);
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
   }, [dictation, pane.draft]);
+
+  useEffect(() => () => dictation?.setSink(null), [dictation]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
@@ -1026,6 +1042,7 @@ export function GrokPane({
     includeSelection?: string | null;
     includeOffset?: number;
   }) {
+    dictation?.abort();
     const content = (opts?.message ?? pane.draft).trim();
     const pending = pane.pendingAttachments ?? [];
     if (pending.some((item) => !item.id)) {
@@ -1056,7 +1073,6 @@ export function GrokPane({
       toast.error(GROK_CONTEXT_TOAST);
       return;
     }
-    dictation?.abort();
     inFlightRef.current = true;
     try {
     const imageIds = thisTurnImageMediaIds(files);
@@ -2298,17 +2314,20 @@ export function GrokPane({
                 size="icon"
                 variant={dictation?.listening ? "destructive" : "outline"}
                 className="size-9"
-                aria-label={dictation?.listening ? "Stop dictation" : "Tap to talk"}
+                aria-label={dictation?.listening ? MIC_LIVE : MIC_IDLE}
+                data-mic-state={dictation?.listening ? "live" : "idle"}
                 title={
-                  dictation?.continuous
-                    ? "Tap to talk (continuous until Stop)"
-                    : "Tap to talk (one utterance)"
+                  dictation?.listening
+                    ? `${MIC_LIVE} — tap to stop`
+                    : dictation?.continuous
+                      ? `${MIC_IDLE} — tap to talk (continuous until Stop)`
+                      : `${MIC_IDLE} — tap to talk (one utterance)`
                 }
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   const el = draftRef.current;
                   if (!el) return;
-                  dictation?.startFor(el);
+                  dictation?.startFor(el, { continuous: dictation.continuous });
                 }}
               >
                 <Mic className="size-4" />
@@ -2362,14 +2381,17 @@ export function GrokPane({
           </p>
         ) : null}
         {dictation?.listening && sttEnabled && !locked ? (
-          <p className="text-[10px] text-muted-foreground">
-            {dictation.continuous || dictation.sessionContinuous
-              ? "Listening — continuous on this box until Stop."
-              : "Listening — one utterance…"}
+          <p className="text-[10px] text-muted-foreground" data-mic-state="live" role="status">
+            {MIC_LIVE}
+            {dictation.continuous || dictation.sessionContinuous ? " — continuous until Stop." : ""}
           </p>
         ) : dictation?.idleHint && sttEnabled && !locked ? (
-          <p className="text-[10px] text-muted-foreground" role="status">
+          <p className="text-[10px] text-muted-foreground" data-mic-state="idle" role="status">
             {dictation.idleHint}
+          </p>
+        ) : sttEnabled && !locked ? (
+          <p className="sr-only" data-mic-state="idle">
+            {MIC_IDLE}
           </p>
         ) : null}
         {dragOver ? (

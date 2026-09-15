@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collapseRestatedSpeech, foldSpeech, lastCommittedSentence, newFinalSegment, normalizeSpoken } from "./stt-buffer";
+import {
+  appendSpoken,
+  collapseRestatedSpeech,
+  foldSpeech,
+  lastCommittedSentence,
+  newFinalSegment,
+  normalizeSpoken,
+} from "./stt-buffer";
 
 test("normalizeSpoken collapses whitespace", () => {
   assert.equal(normalizeSpoken("  Hello   there\n"), "Hello there");
@@ -8,6 +15,17 @@ test("normalizeSpoken collapses whitespace", () => {
 
 test("newFinalSegment inserts the first final in full", () => {
   assert.equal(newFinalSegment("The slope is steep.", "", ""), "The slope is steep.");
+});
+
+test("newFinalSegment keeps only new words after a chunk final (hello Junior)", () => {
+  assert.equal(newFinalSegment("hello Junior", "hello", "hello"), "Junior");
+  assert.equal(newFinalSegment("hello Junior", "hello Junior", "hello Junior"), "");
+});
+
+test("appendSpoken pads once", () => {
+  assert.equal(appendSpoken("", "hello Junior"), "hello Junior");
+  assert.equal(appendSpoken("hello", "Junior"), "hello Junior");
+  assert.equal(appendSpoken("hello ", "Junior"), "hello Junior");
 });
 
 test("newFinalSegment skips a repeat of the committed utterance", () => {

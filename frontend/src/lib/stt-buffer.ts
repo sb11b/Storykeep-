@@ -4,6 +4,15 @@ export function normalizeSpoken(text: string): string {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
+/** Append a final to the field without doubling spaces. */
+export function appendSpoken(current: string, piece: string): string {
+  const text = (piece || "").trim();
+  if (!text) return current || "";
+  const before = current || "";
+  const padLeft = before && !/\s$/.test(before) ? " " : "";
+  return `${before}${padLeft}${text}`;
+}
+
 export function foldSpeech(text: string): string {
   return (text || "")
     .toLowerCase()
