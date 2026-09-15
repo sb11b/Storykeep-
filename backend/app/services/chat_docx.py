@@ -54,7 +54,12 @@ _KEEP_NOTES_TAIL = re.compile(
 def strip_keep_notes_cta(content: str) -> str:
     """Drop system keep/notes footers so Copy/Word/clipboard stay the answer body."""
     text = (content or "").replace("\r\n", "\n")
-    lines = [line for line in text.split("\n") if not _KEEP_NOTES_LINE.match(line.strip())]
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip().strip("*_").strip()
+        if _KEEP_NOTES_LINE.match(stripped):
+            continue
+        lines.append(line)
     cleaned = "\n".join(lines)
     cleaned = _KEEP_NOTES_TAIL.sub("", cleaned)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()

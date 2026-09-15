@@ -202,7 +202,7 @@ export function GrokChatMessage({
   const [isCorrection, setIsCorrection] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [savingClean, setSavingClean] = useState(false);
-  const words = role === "assistant" && content ? wordCount(content) : 0;
+  const words = role === "assistant" && content ? wordCount(replyCopyText(content)) : 0;
   const marked = role === "assistant" && hasGrammarMarks(content);
   const hasWordBody = replyHasWordBody(content);
   const showWord =
@@ -235,13 +235,13 @@ export function GrokChatMessage({
 
   useEffect(() => {
     if (!filing) return;
-    setDraft(content);
+    setDraft(replyCopyText(content));
   }, [filing, content]);
 
   useEffect(() => {
     const root = bodyRef.current;
     if (!root || role !== "assistant" || !content) return;
-    root.innerHTML = sanitizeHtml(renderMarkdown(content));
+    root.innerHTML = sanitizeHtml(renderMarkdown(replyCopyText(content)));
     buildVisibleSpeechScript(root);
   }, [content, id, role]);
 

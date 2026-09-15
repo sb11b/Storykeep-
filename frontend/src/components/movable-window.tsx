@@ -43,6 +43,8 @@ export function useMovableWindow({
   estimatedSize?: { w: number; h: number };
 }) {
   const [pos, setPos] = useState<WindowPoint>({ x: 16, y: 16 });
+  const posRef = useRef(pos);
+  posRef.current = pos;
   const dragRef = useRef<{ dx: number; dy: number; w: number; h: number } | null>(null);
 
   const place = useCallback(
@@ -66,6 +68,15 @@ export function useMovableWindow({
     place(estimatedSize.w, estimatedSize.h);
   }, [open, estimatedSize.h, estimatedSize.w, place]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onResize = () => {
+      place(estimatedSize.w, estimatedSize.h, posRef.current);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open, estimatedSize.h, estimatedSize.w, place]);
+
   const onHandlePointerDown = useCallback(
     (event: PointerEvent<HTMLElement>) => {
       if (!canStartWindowDrag(event.target)) return;
@@ -79,6 +90,11 @@ export function useMovableWindow({
         h: rect.height,
       };
       event.preventDefault();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        /* capture is optional */
+      }
     },
     [],
   );

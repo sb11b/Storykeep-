@@ -21,7 +21,7 @@ const KEEP_NOTES_TAIL =
 /** Answer body for Copy / clipboard / Markdown / text. Spend chip stays off. */
 export function stripKeepNotesCta(content: string): string {
   const text = (content || "").replace(/\r\n/g, "\n");
-  const kept = text.split("\n").filter((line) => !KEEP_NOTES_LINE.test(line.trim()));
+  const kept = text.split("\n").filter((line) => !KEEP_NOTES_LINE.test(line.trim().replace(/^[*_]+|[*_]+$/g, "").trim()));
   return kept.join("\n").replace(KEEP_NOTES_TAIL, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
