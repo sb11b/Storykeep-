@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -343,6 +344,33 @@ def imagine_image(
     }
 
 
+# First byte must land well inside the client's 8s watchdog.
+CHAT_SETUP_BUDGET_SEC = 6.0
+CHAT_SETUP_TIMEOUT_DETAIL = "Chat stalled before xAI. Try again."
+
+
+class _SetupStage:
+    """Names the last setup step so a stall says where it stalled."""
+
+    def __init__(self) -> None:
+        self.name = "start"
+        self._started = time.monotonic()
+
+    def mark(self, name: str) -> None:
+        self.name = name
+
+    def elapsed_ms(self) -> int:
+        return int((time.monotonic() - self._started) * 1000)
+
+
+async def _setup_timeout_events(stage_name: str):
+    yield chat_service.SSE_PADDING
+    await asyncio.sleep(0)
+    yield chat_service.encode_sse(
+        chat_service.stream_error_event(504, f"{CHAT_SETUP_TIMEOUT_DETAIL} (stalled at {stage_name})")
+    )
+
+
 def _sse_headers() -> dict[str, str]:
     return {
         "Cache-Control": "no-cache, no-transform",
@@ -451,8 +479,26 @@ async def chat(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> StreamingResponse:
+    stage = _SetupStage()
     try:
-        return await _chat(payload, request, db, user)
+        # Setup is synchronous DB work. On the event loop a single slow query
+        # freezes the whole worker, so every later request 502s.
+        return await asyncio.wait_for(
+            run_in_threadpool(_chat, payload, request, db, user, stage),
+            timeout=CHAT_SETUP_BUDGET_SEC,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "chat setup timed out stage=%s ms=%s user=%s",
+            stage.name,
+            stage.elapsed_ms(),
+            getattr(user, "id", None),
+        )
+        return StreamingResponse(
+            _setup_timeout_events(stage.name),
+            media_type="text/event-stream",
+            headers=_sse_headers(),
+        )
     except HTTPException:
         raise
     except MemoryError:
@@ -463,12 +509,15 @@ async def chat(
         raise HTTPException(status_code=500, detail="Chat failed.") from None
 
 
-async def _chat(
+def _chat(
     payload: ChatIn,
     request: Request,
     db: Session,
     user: User,
+    stage: _SetupStage | None = None,
 ) -> StreamingResponse:
+    step = (stage or _SetupStage()).mark
+    step("auth")
     reject_locked(user)
     chat_service.require_key()
     user_id = user.id
@@ -491,6 +540,7 @@ async def _chat(
     media_ids = list(payload.media_ids or [])
     current_files: list[dict] = []
 
+    step("history")
     if persist:
         if payload.retry:
             if not conversation_id:
@@ -634,6 +684,7 @@ async def _chat(
     history_for_route = chat_service.drop_trailing_assistants(
         [{"role": item.get("role"), "content": item.get("content") or ""} for item in history]
     )
+    step("route")
     history_window = chat_service.thread_window(history_for_route)
     # Route Auto on this turn's typed line only. Extracts/articles must not lift hello to xhigh.
     route_message = (user_text or "").strip() or "attached file"
@@ -649,6 +700,7 @@ async def _chat(
         None,
     )
     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
+    step("prepare")
     prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
     history_for_xai = chat_service.validate_payload(prepared)
     excerpt = None
@@ -730,14 +782,17 @@ async def _chat(
         include_meta = include_slice_meta(working_slice)
     chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
     has_attachments = any(item.get("files") for item in history)
+    step("unread")
     unread_catalog = unread_news_block(db, user.id, user_text)
     if unread_catalog:
         history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
+    step("calendar")
     calendar_connected = calendars.is_connected(db, user_id) and not is_locked(user)
     extras = []
     if unread_catalog:
         extras.append(UNREAD_READER_SYSTEM)
     extras.append(CALENDAR_ON_APPEND if calendar_connected else CALENDAR_OFF_APPEND)
+    step("memory")
     memory_block = junior_memory.system_section(db, user)
     if memory_block:
         extras.append(memory_block)
@@ -775,6 +830,7 @@ async def _chat(
             log_chat_exception("Failed to persist assistant reply", user=user_id, conversation=conversation_id)
             return None
 
+    step("stream_open")
     cancelled = asyncio.Event()
     stream = chat_service.stream_completion(
         history_for_xai,

@@ -10,6 +10,17 @@ from app.config import settings
 # Local Compose hostname `db` and Railway private DNS do not use the public proxy cert.
 _NO_TLS_HOSTS = {"127.0.0.1", "localhost", "::1", "db"}
 
+# Postgres waits on a row lock forever by default. One leaked transaction then
+# freezes every later writer, and a writer on the event loop freezes the worker.
+LOCK_TIMEOUT_MS = 8_000
+STATEMENT_TIMEOUT_MS = 60_000
+IDLE_IN_TRANSACTION_TIMEOUT_MS = 300_000
+SESSION_TIMEOUT_OPTIONS = (
+    f"-c lock_timeout={LOCK_TIMEOUT_MS}"
+    f" -c statement_timeout={STATEMENT_TIMEOUT_MS}"
+    f" -c idle_in_transaction_session_timeout={IDLE_IN_TRANSACTION_TIMEOUT_MS}"
+)
+
 
 @dataclass(frozen=True)
 class DatabaseConnect:
@@ -61,7 +72,7 @@ def parse_database_url(raw: str) -> DatabaseConnect:
         port=port,
         database=database,
     )
-    connect_args: dict[str, str] = {}
+    connect_args: dict[str, str] = {"options": SESSION_TIMEOUT_OPTIONS}
     if _wants_proxy_tls(host):
         connect_args["sslmode"] = "require"
     return DatabaseConnect(

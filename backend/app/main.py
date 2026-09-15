@@ -70,10 +70,14 @@ def _create_schema() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     _try_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     _try_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-    with engine.begin() as connection:
-        Base.metadata.create_all(bind=connection)
-        connection.execute(text("CREATE INDEX IF NOT EXISTS articles_search_idx ON articles USING GIN (search_vector)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS change_log_user_cursor_idx ON change_log (user_id, id)"))
+    try:
+        with engine.begin() as connection:
+            Base.metadata.create_all(bind=connection)
+            connection.execute(text("CREATE INDEX IF NOT EXISTS articles_search_idx ON articles USING GIN (search_vector)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS change_log_user_cursor_idx ON change_log (user_id, id)"))
+    except Exception:
+        # lock_timeout can bite during a rolling deploy. Boot anyway; DDL is idempotent.
+        logger.exception("Schema create_all skipped")
     _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'note'")
     _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS color VARCHAR(24)")
     _try_sql("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS prefix TEXT")
