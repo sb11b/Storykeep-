@@ -32,10 +32,14 @@ export function loadCalcStored(userId: string, vw: number, vh: number): CalcStor
     const raw = window.localStorage.getItem(calculatorStorageKey(userId));
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<CalcStored>;
-    const bubble =
+    let bubble =
       parsed.bubble && typeof parsed.bubble.x === "number" && typeof parsed.bubble.y === "number"
         ? parsed.bubble
         : fallback.bubble;
+    const juniorDefault = { x: Math.max(16, vw - 72), y: Math.max(16, vh - 72) };
+    if (Math.abs(bubble.x - juniorDefault.x) < 8 && Math.abs(bubble.y - juniorDefault.y) < 8) {
+      bubble = fallback.bubble;
+    }
     const panelIn = parsed.panel;
     const panel = clampCalcBox(
       {

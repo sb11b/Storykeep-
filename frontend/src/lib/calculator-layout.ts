@@ -17,7 +17,8 @@ export function defaultCalcSize(vw: number, vh: number) {
 }
 
 export function defaultCalcBubblePos(vw: number, vh: number) {
-  return clampWindowPoint(vw - 72, vh - 72, 56, 56, vw, vh, CALC_MARGIN);
+  // Sit left of Junior's default bottom-right bubble so they are not stacked.
+  return clampWindowPoint(vw - 72 - 64, vh - 72, 56, 56, vw, vh, CALC_MARGIN);
 }
 
 export function clampCalcBox(box: CalcBox, vw: number, vh: number): CalcBox {

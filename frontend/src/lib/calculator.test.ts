@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluateExpression, looksLikeSchoolPaper, pushCalcHistory } from "./calculator";
-import { clampCalcBox, CALC_MIN_H, CALC_MIN_W } from "./calculator-layout";
+import { clampCalcBox, defaultCalcBubblePos, CALC_MIN_H, CALC_MIN_W } from "./calculator-layout";
 
 test("2^10 is 1024", () => {
   const result = evaluateExpression("2^10", "deg");
@@ -53,6 +53,12 @@ test("history keeps the last 20 locally", () => {
   }
   assert.equal(items.length, 20);
   assert.equal(items[0]?.expr, "24");
+});
+
+test("calculator bubble defaults left of Junior's bottom-right corner", () => {
+  const pos = defaultCalcBubblePos(1000, 800);
+  assert.equal(pos.x < 1000 - 72, true);
+  assert.equal(pos.y, 800 - 72);
 });
 
 test("calculator panel stays on screen", () => {

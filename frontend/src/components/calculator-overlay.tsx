@@ -337,7 +337,7 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
   const bubbleEl = (
     <button
       type="button"
-      className="fixed z-[70] flex size-14 items-center justify-center rounded-full bg-secondary text-secondary-foreground shadow-lg ring-1 ring-black/10"
+      className="fixed z-[81] flex size-14 flex-col items-center justify-center rounded-full bg-secondary text-secondary-foreground shadow-lg ring-1 ring-black/10"
       style={{ left: bubble.x, top: bubble.y }}
       aria-label="Open Calculator"
       title="Calculator"
@@ -350,7 +350,8 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
         openPanel();
       }}
     >
-      <Calculator className="size-5" />
+      <Calculator className="size-4" />
+      <span className="text-[9px] font-medium leading-none">Calc</span>
     </button>
   );
 
