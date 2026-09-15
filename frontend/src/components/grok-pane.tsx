@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
+import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
