@@ -329,6 +329,14 @@ class OverlayAdditionIn(BaseModel):
     confirm_short: bool = False
 
 
+class ApplyJuniorReplyIn(BaseModel):
+    markdown: str = Field(min_length=1)
+    confirm_short: bool = False
+    mode: str | None = None
+    heading: str | None = Field(default=None, max_length=400)
+    offset: int = 0
+
+
 class OverlayAdditionOut(BaseModel):
     id: uuid.UUID
     article_id: uuid.UUID | None

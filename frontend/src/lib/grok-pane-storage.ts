@@ -12,6 +12,8 @@ type SavedPaneMeta = {
   noteDest?: string;
   noteFolderId?: string | null;
   conversationId?: string | null;
+  workingNoteId?: string | null;
+  workingNoteTitle?: string | null;
   pendingAttachments?: PendingAttachment[];
 };
 
@@ -55,6 +57,8 @@ export function loadSavedGrokPanes(): GrokPaneState[] | null {
       const folderId = typeof row.noteFolderId === "string" && FOLDER_ID.test(row.noteFolderId) ? row.noteFolderId : null;
       const conversationId =
         typeof row.conversationId === "string" && FOLDER_ID.test(row.conversationId) ? row.conversationId : null;
+      const workingNoteId =
+        typeof row.workingNoteId === "string" && FOLDER_ID.test(row.workingNoteId) ? row.workingNoteId : null;
       return {
         ...createGrokPane(index),
         id: row.id || crypto.randomUUID(),
@@ -63,6 +67,8 @@ export function loadSavedGrokPanes(): GrokPaneState[] | null {
         noteDest: asFilingDestination(row.noteDest, "notes"),
         noteFolderId: folderId,
         conversationId,
+        workingNoteId,
+        workingNoteTitle: workingNoteId && typeof row.workingNoteTitle === "string" ? row.workingNoteTitle : null,
         pendingAttachments: sanitizePendingAttachments(row.pendingAttachments),
       };
     });
@@ -80,6 +86,8 @@ export function saveGrokPanes(panes: GrokPaneState[]) {
       noteDest: pane.noteDest,
       noteFolderId: pane.noteFolderId,
       conversationId: pane.conversationId,
+      workingNoteId: pane.workingNoteId,
+      workingNoteTitle: pane.workingNoteTitle,
       pendingAttachments: sanitizePendingAttachments(pane.pendingAttachments),
     }));
     window.localStorage.setItem(GROK_PANES_KEY, JSON.stringify(payload));

@@ -137,6 +137,13 @@ Steve attached one StoryKeep note (not the whole vault). An excerpt is below.
 - Do not invent quotes or facts that are not supported by the excerpt.
 """
 
+WORKING_NOTE_MODE_APPEND = """
+Steve opened a StoryKeep-authored note with Work in Junior. The markdown is on the server — not in his textarea. He only types instructions.
+- Do not ask him to paste the note.
+- Edit against this markdown. If this is a heading or chunk slice, only that slice is here; he can send the next chunk or heading.
+- When he asks to tighten, rewrite, or fix, reply with the updated markdown for this slice (the full note when the whole note is here). Prefer a markdown code fence. Do not invent other vault files.
+"""
+
 GENERAL_MODE_APPEND = """
 Steve disconnected the current article (or has no article open). You are in general-knowledge mode.
 - Answer freely from your training: explain concepts, summarize topics, compare ideas, help with study questions, and give practical information.
@@ -289,13 +296,23 @@ def normalize_model_choice(choice: str | None) -> str:
     return cleaned
 
 
+def is_small_talk_turn(message: str) -> bool:
+    """Hello / thanks — keep these off xhigh and off the working-note payload."""
+    text = (message or "").strip()
+    return bool(text) and len(text) < 160 and bool(_SMALL_TALK_RE.match(text))
+
+
+def should_attach_working_note(message: str) -> bool:
+    return not is_small_talk_turn(message)
+
+
 def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
     """True only for school/code, or a long analyze turn. History and small talk stay low."""
     del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
     if not text:
         return False
-    if len(text) < 160 and _SMALL_TALK_RE.match(text):
+    if is_small_talk_turn(text):
         return False
     if _SCHOOL_CODE_RE.search(text):
         return True
@@ -806,6 +823,7 @@ def build_xai_messages(
     has_attachments: bool = False,
     include_note: bool = False,
     note_excerpt: str | None = None,
+    working_excerpt: str | None = None,
     extra_system: str | None = None,
 ) -> list[dict]:
     system = SYSTEM_PROMPT
@@ -815,6 +833,9 @@ def build_xai_messages(
         grounded = True
     if include_note and note_excerpt:
         system += NOTE_MODE_APPEND + "\n\nIncluded note excerpt (truncated):\n" + note_excerpt
+        grounded = True
+    if working_excerpt:
+        system += WORKING_NOTE_MODE_APPEND + "\n\nWorking note markdown:\n" + working_excerpt
         grounded = True
     if extra_system:
         system += "\n\n" + extra_system
@@ -885,6 +906,7 @@ async def stream_completion(
     include_note: bool = False,
     note_excerpt: str | None = None,
     extra_system: str | None = None,
+    working_excerpt: str | None = None,
     cancelled: asyncio.Event | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
@@ -900,6 +922,7 @@ async def stream_completion(
             has_attachments=has_attachments,
             include_note=include_note,
             note_excerpt=note_excerpt,
+            working_excerpt=working_excerpt,
             extra_system=extra_system,
         ),
         model=model,

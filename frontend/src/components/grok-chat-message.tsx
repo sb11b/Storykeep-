@@ -143,6 +143,7 @@ export function GrokChatMessage({
   onListen,
   onTtsWordPick,
   onAddToNotes,
+  onApplyToNote,
   onRetry,
   conversationId = null,
   articleId = null,
@@ -183,6 +184,7 @@ export function GrokChatMessage({
   onListen?: (messageId: string, trigger: HTMLElement) => void;
   onTtsWordPick?: (messageId: string, wordIndex: number) => void;
   onAddToNotes: (payload: AddToNotesPayload) => void;
+  onApplyToNote?: () => void;
   onRetry?: () => void;
   conversationId?: string | null;
   articleId?: string | null;
@@ -443,6 +445,11 @@ export function GrokChatMessage({
               <NotebookPen className="size-3" />
               Add to notes
             </Button>
+            {onApplyToNote ? (
+              <Button type="button" size="xs" variant="secondary" disabled={busy} onClick={() => onApplyToNote()}>
+                Apply to note
+              </Button>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-1">
             <Button

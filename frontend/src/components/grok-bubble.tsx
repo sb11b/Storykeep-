@@ -31,6 +31,7 @@ import {
 } from "@/lib/grok-panel-resize";
 import { cn } from "@/lib/utils";
 import { loadJuniorRailHidden, saveJuniorRailHidden } from "@/lib/junior-rail";
+import { WORK_IN_JUNIOR_EVENT, type WorkInJuniorDetail } from "@/lib/work-in-junior";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
 const PANEL_KEY = "storykeep-grok-panel";
@@ -116,6 +117,7 @@ export function GrokBubble({
   const [size, setSize] = useState({ w: 640, h: 720 });
   const [panes, setPanes] = useState<GrokPaneState[]>(() => loadSavedGrokPanes() ?? [createGrokPane(0)]);
   const [focusedPaneId, setFocusedPaneId] = useState<string>(() => (loadSavedGrokPanes() ?? [createGrokPane(0)])[0]!.id);
+  const focusedPaneIdRef = useRef(focusedPaneId);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<TtsVoice[]>([]);
@@ -150,6 +152,43 @@ export function GrokBubble({
   const panelRef = useRef<HTMLDivElement>(null);
 
   const focusedPane = panes.find((pane) => pane.id === focusedPaneId) ?? panes[0]!;
+
+  useEffect(() => {
+    focusedPaneIdRef.current = focusedPaneId;
+  }, [focusedPaneId]);
+
+  useEffect(() => {
+    function onWork(event: Event) {
+      const detail = (event as CustomEvent<WorkInJuniorDetail>).detail;
+      const noteId = detail?.noteId;
+      if (!noteId) return;
+      setOpen(true);
+      setPanes((current) => {
+        const focusId = focusedPaneIdRef.current;
+        return current.map((pane) =>
+          pane.id === focusId
+            ? {
+                ...pane,
+                workingNoteId: noteId,
+                workingNoteTitle: detail.title || pane.workingNoteTitle,
+                includeArticle: false,
+                includeNoteId: null,
+                includeNoteTitle: null,
+                includeOffset: 0,
+                includeMode: "auto",
+                includeHeading: null,
+                conversationId: null,
+                messages: [],
+                draft: "",
+                savedNoteId: noteId,
+              }
+            : pane,
+        );
+      });
+    }
+    window.addEventListener(WORK_IN_JUNIOR_EVENT, onWork);
+    return () => window.removeEventListener(WORK_IN_JUNIOR_EVENT, onWork);
+  }, []);
 
   const refreshHistory = useCallback(async () => {
     if (!persist) return;
@@ -809,11 +848,13 @@ export function GrokBubble({
     window.innerHeight,
   );
   const subtitle =
-    focusedPane.includeArticle && articleTitle
-      ? `Connected: ${articleTitle}`
-      : articleTitle
-        ? "Thread only (article not included)"
-        : "School coding help";
+    focusedPane.workingNoteTitle
+      ? `Working note: ${focusedPane.workingNoteTitle}`
+      : focusedPane.includeArticle && articleTitle
+        ? `Connected: ${articleTitle}`
+        : articleTitle
+          ? "Thread only (article not included)"
+          : "School coding help";
 
   const panel = (
     <div

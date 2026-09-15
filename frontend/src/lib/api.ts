@@ -303,6 +303,26 @@ export const api = {
     request<Article>(`/api/v1/articles/${articleId}/note-revisions/undo`, { method: "POST" }),
   restoreNoteRevision: (articleId: string, revisionId: string) =>
     request<Article>(`/api/v1/articles/${articleId}/note-revisions/${revisionId}/restore`, { method: "POST" }),
+  applyJuniorReply: (
+    articleId: string,
+    body: {
+      markdown: string;
+      confirm_short?: boolean;
+      mode?: string | null;
+      heading?: string | null;
+      offset?: number;
+    },
+  ) =>
+    request<Article>(`/api/v1/articles/${articleId}/note-revisions/apply-reply`, {
+      method: "POST",
+      body: JSON.stringify({
+        markdown: body.markdown,
+        confirm_short: Boolean(body.confirm_short),
+        mode: body.mode || null,
+        heading: body.heading || null,
+        offset: body.offset || 0,
+      }),
+    }),
   setNoteDestination: (articleId: string, destination: string, isCorrection?: boolean, folderId?: string | null) =>
     request<Article>(`/api/v1/articles/${articleId}/destination`, {
       method: "PATCH",
@@ -636,6 +656,7 @@ export const api = {
       article_id: string | null;
       include_article: boolean;
       include_note_id?: string | null;
+      working_note_id?: string | null;
       include_mode?: string;
       include_selection?: string;
       include_heading?: string;

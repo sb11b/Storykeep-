@@ -15,6 +15,7 @@ import {
   Maximize2,
   Minimize2,
   Paperclip,
+  Sparkles,
   Underline,
   Undo2,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import { ApiError, api } from "@/lib/api";
 import { restoreCharsConfirm } from "@/lib/api-errors";
 import { formatRelative } from "@/lib/format";
 import type { Article, NoteRevision } from "@/lib/types";
+import { openWorkInJunior } from "@/lib/work-in-junior";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   normalizeCodeLang,
@@ -87,6 +89,7 @@ export function NoteComposer({
   onExpandedChange,
   noteId,
   onRestored,
+  workingTitle,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -102,6 +105,7 @@ export function NoteComposer({
   onExpandedChange?: (expanded: boolean) => void;
   noteId?: string | null;
   onRestored?: (article: Article) => void;
+  workingTitle?: string;
 }) {
   const dictation = useDictation();
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -467,6 +471,17 @@ export function NoteComposer({
               >
                 <Undo2 className="size-3.5" />
                 Undo last save
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  openWorkInJunior({ noteId, title: workingTitle || undefined })
+                }
+              >
+                <Sparkles className="size-3.5" />
+                Work in Junior
               </Button>
               <Button
                 type="button"

@@ -11,6 +11,7 @@ from app.models import OverlayAddition, User
 from app.presenters import article_out
 from app.routers.articles import _article_payload, _owned_article
 from app.schemas import (
+    ApplyJuniorReplyIn,
     ArticleOut,
     CorrectionIn,
     CorrectionOut,
@@ -35,6 +36,7 @@ from app.services.note_media import (
 from app.services.overlay_pack import build_obsidian_pack
 from app.services.file_ingest import MAX_UPLOAD_BYTES, ingest_upload, original_file_path
 from app.services.note_revisions import NoteShrinkBlocked, list_revisions, latest_revision, owned_revision
+from app.services.working_note import apply_junior_reply
 from app.services.vault_import import (
     MAX_VAULT_ZIP_BYTES,
     create_composed_note,
@@ -230,6 +232,42 @@ def restore_note_revision(
             confirm_short=True,
             snapshot=True,
         )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _article_payload(db, user, article.id)
+
+
+@router.post("/articles/{article_id}/note-revisions/apply-reply", response_model=ArticleOut)
+def apply_note_from_junior(
+    article_id: UUID,
+    payload: ApplyJuniorReplyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    try:
+        apply_junior_reply(
+            db,
+            user,
+            article,
+            payload.markdown,
+            mode=payload.mode,
+            heading=payload.heading,
+            offset=payload.offset or 0,
+            confirm_short=payload.confirm_short,
+        )
+    except NoteShrinkBlocked as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "note_shrink",
+                "message": str(exc),
+                "current_chars": exc.current_chars,
+                "incoming_chars": exc.incoming_chars,
+            },
+        ) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc

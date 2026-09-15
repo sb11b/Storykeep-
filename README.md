@@ -8,7 +8,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 
 - Add RSS/Atom feeds, grouped into categories
 - Optional one-way import of Steve's Surface Vault (zip). Obsidian is paused; StoryKeep is the working archive. StoryKeep never writes to that folder on disk.
-- One Notes workspace with destination + folder dropdowns: Vault, Additions, Books, Notes, Schoolwork. Edits update the StoryKeep DB row only. StoryKeep-authored notes keep the last 20 saves (or 30 days); **Undo last save** and History restore a prior version. A save that is under 20% of the stored length asks before overwrite. Vault originals stay read-only.
+- One Notes workspace with destination + folder dropdowns: Vault, Additions, Books, Notes, Schoolwork. Edits update the StoryKeep DB row only. StoryKeep-authored notes keep the last 20 saves (or 30 days); **Undo last save** and History restore a prior version. A save that is under 20% of the stored length asks before overwrite. Vault originals stay read-only. **Work in Junior** loads the note on the server (80k cap, next chunk / heading if longer); the textarea is instructions only. **Apply to note** writes a revision, not a blind overwrite.
 - Highlight and add overlay notes (with in-note highlights and images). Optional **Obsidian overlay pack** download — not required for backup.
 - Read extracted article text in a dedicated reader, or listen with xAI speech (L from the start, Shift+L from a selected word; long books warn before synth)
 - Save stories for later / for life, star them, mark read

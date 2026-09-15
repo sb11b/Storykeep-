@@ -25,9 +25,11 @@ from app.services import chat_docx
 from app.services import grok_conversations as grok_store
 from app.services import imagine as imagine_service
 from app.services.demo_lock import is_locked, reject_locked
+from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
 from app.services.include_chunk import format_excerpt as format_include_excerpt
 from app.services.include_chunk import resolve_include_slice
 from app.services.include_chunk import slice_meta as include_slice_meta
+from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
 
 router = APIRouter(tags=["chat"])
@@ -41,6 +43,7 @@ class ChatIn(BaseModel):
     article_id: UUID | None = None
     include_article: bool = False
     include_note_id: UUID | None = None
+    working_note_id: UUID | None = None
     include_mode: str | None = None
     include_selection: str | None = Field(default=None, max_length=12_000)
     include_heading: str | None = Field(default=None, max_length=400)
@@ -632,9 +635,10 @@ async def chat(
     note_body = None
     include_article = bool(payload.include_article)
     include_note = bool(payload.include_note_id)
+    working_excerpt = None
     include_meta: dict[str, object] = {}
 
-    def _owned_include_slice(article):
+    def _owned_include_slice(article, *, cap: int | None = None, hard_max: int | None = None):
         try:
             return resolve_include_slice(
                 chat_service.article_body_text(article),
@@ -644,6 +648,8 @@ async def chat(
                 offset=payload.include_offset or 0,
                 title=article.title,
                 html=getattr(article, "content_html", None),
+                cap=cap,
+                hard_max=hard_max,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -672,6 +678,34 @@ async def chat(
             note_excerpt = format_include_excerpt((note.title or "Untitled").strip(), note_slice)
             if not include_meta:
                 include_meta = include_slice_meta(note_slice)
+    if payload.working_note_id and chat_service.should_attach_working_note(user_text):
+        working = _owned_article(db, user, payload.working_note_id)
+        if not is_composed_guid(working.guid):
+            raise HTTPException(status_code=400, detail="Work in Junior is for StoryKeep-authored notes.")
+        work_mode = payload.include_mode
+        work_heading = payload.include_heading
+        if (not work_mode or work_mode == "auto") and not (work_heading or "").strip():
+            guessed = heading_from_instruction(user_text, chat_service.article_body_text(working))
+            if guessed:
+                work_mode = "heading"
+                work_heading = guessed
+        try:
+            working_slice = resolve_include_slice(
+                chat_service.article_body_text(working),
+                mode=work_mode,
+                selection=payload.include_selection,
+                heading=work_heading,
+                offset=payload.include_offset or 0,
+                title=working.title,
+                html=getattr(working, "content_html", None),
+                cap=WORKING_NOTE_CHAR_CAP,
+                hard_max=WORKING_NOTE_CHAR_CAP,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        working_excerpt = format_include_excerpt((working.title or "Untitled").strip(), working_slice)
+        working_excerpt = f"working_note_id: {working.id}\n{working_excerpt}"
+        include_meta = include_slice_meta(working_slice)
     chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
     has_attachments = any(item.get("files") for item in history)
     unread_catalog = unread_news_block(db, user.id, user_text)
@@ -721,6 +755,7 @@ async def chat(
         has_attachments=has_attachments,
         include_note=include_note,
         note_excerpt=note_excerpt,
+        working_excerpt=working_excerpt,
         extra_system=UNREAD_READER_SYSTEM if unread_catalog else None,
         cancelled=cancelled,
     )

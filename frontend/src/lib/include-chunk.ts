@@ -1,5 +1,6 @@
 export const INCLUDE_TURN_CHAR_CAP = 10_000;
 export const INCLUDE_TURN_CHAR_MAX = 12_000;
+export const WORKING_NOTE_CHAR_CAP = 80_000;
 
 export type IncludeMode = "auto" | "selection" | "heading" | "chunk";
 
@@ -47,12 +48,12 @@ export function parseSections(body: string): ArticleSection[] {
   return sections;
 }
 
-export function articleNeedsIncludeSlice(body: string | null | undefined): boolean {
-  return (body || "").length > INCLUDE_TURN_CHAR_CAP;
+export function articleNeedsIncludeSlice(body: string | null | undefined, cap = INCLUDE_TURN_CHAR_CAP): boolean {
+  return (body || "").length > cap;
 }
 
-export function clampIncludeSlice(text: string, cap = INCLUDE_TURN_CHAR_CAP): string {
-  const limit = Math.min(Math.max(1, cap), INCLUDE_TURN_CHAR_MAX);
+export function clampIncludeSlice(text: string, cap = INCLUDE_TURN_CHAR_CAP, hardMax = INCLUDE_TURN_CHAR_MAX): string {
+  const limit = Math.min(Math.max(1, cap), hardMax);
   if (text.length <= limit) return text;
   let cut = text.slice(0, limit);
   const space = cut.lastIndexOf(" ");
@@ -67,14 +68,19 @@ export function resolveIncludeSlice(input: {
   heading?: string | null;
   offset?: number;
   title?: string | null;
+  cap?: number;
+  hardMax?: number;
 }): IncludeSlice {
   const source = input.body || "";
   const mode = input.mode || "auto";
   const fallback = (input.title || "").trim() || "Included";
+  const turnCap = input.cap ?? INCLUDE_TURN_CHAR_CAP;
+  const ceiling = input.hardMax ?? (input.cap ?? INCLUDE_TURN_CHAR_MAX);
+  const clip = (text: string) => clampIncludeSlice(text, turnCap, ceiling);
 
   if (mode === "selection") {
     const quote = (input.selection || "").replace(/\s+/g, " ").trim();
-    const text = clampIncludeSlice(quote);
+    const text = clip(quote);
     const found = quote ? source.indexOf(quote.slice(0, Math.min(quote.length, 80))) : -1;
     const start = found >= 0 ? found : 0;
     const end = start + text.length;
@@ -103,8 +109,8 @@ export function resolveIncludeSlice(input: {
       sections.find((section) => section.title.toLowerCase() === want) ||
       sections.find((section) => section.title.toLowerCase().includes(want));
     const start = match?.start ?? 0;
-    const end = match?.end ?? Math.min(source.length, start + INCLUDE_TURN_CHAR_CAP);
-    const text = clampIncludeSlice(source.slice(start, end));
+    const end = match?.end ?? Math.min(source.length, start + turnCap);
+    const text = clip(source.slice(start, end));
     const next = sections.find((section) => section.start >= end);
     const hasMore = Boolean(next) || start + text.length < source.length;
     const label = match?.title || fallback;
@@ -122,7 +128,7 @@ export function resolveIncludeSlice(input: {
   }
 
   const start = Math.max(0, input.offset || 0);
-  const chunk = clampIncludeSlice(source.slice(start));
+  const chunk = clip(source.slice(start));
   const end = start + chunk.length;
   const hasMore = end < source.length;
   let label = fallback;
@@ -133,7 +139,7 @@ export function resolveIncludeSlice(input: {
     }
     if (hasMore && section.start >= end && !nextHeading) nextHeading = section.title;
   }
-  if (start === 0 && source.length <= INCLUDE_TURN_CHAR_CAP) {
+  if (start === 0 && source.length <= turnCap) {
     return {
       text: chunk,
       label: fallback,

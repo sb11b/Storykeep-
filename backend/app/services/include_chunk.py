@@ -6,6 +6,7 @@ from dataclasses import dataclass
 # Per-turn include slice. Never the whole vault.
 INCLUDE_TURN_CHAR_CAP = 10_000
 INCLUDE_TURN_CHAR_MAX = 12_000
+WORKING_NOTE_CHAR_CAP = 80_000
 
 INCLUDE_MODES = ("auto", "selection", "heading", "chunk")
 
@@ -71,9 +72,10 @@ def parse_sections(body: str) -> list[tuple[str, int, int]]:
     return sections
 
 
-def clamp_slice(text: str, cap: int = INCLUDE_TURN_CHAR_CAP) -> str:
+def clamp_slice(text: str, cap: int = INCLUDE_TURN_CHAR_CAP, *, hard_max: int | None = None) -> str:
     cleaned = text or ""
-    limit = min(max(1, cap), INCLUDE_TURN_CHAR_MAX)
+    ceiling = INCLUDE_TURN_CHAR_MAX if hard_max is None else max(1, hard_max)
+    limit = min(max(1, cap), ceiling)
     if len(cleaned) <= limit:
         return cleaned
     cut = cleaned[:limit]
@@ -82,8 +84,8 @@ def clamp_slice(text: str, cap: int = INCLUDE_TURN_CHAR_CAP) -> str:
     return cut.rstrip()
 
 
-def _needs_chunk(body: str) -> bool:
-    return len(body or "") > INCLUDE_TURN_CHAR_CAP
+def _needs_chunk(body: str, cap: int = INCLUDE_TURN_CHAR_CAP) -> bool:
+    return len(body or "") > cap
 
 
 def resolve_include_slice(
@@ -95,8 +97,16 @@ def resolve_include_slice(
     offset: int = 0,
     title: str | None = None,
     html: str | None = None,
+    cap: int | None = None,
+    hard_max: int | None = None,
 ) -> IncludeSlice:
     source = normalize_include_body(body, html)
+    turn_cap = cap or INCLUDE_TURN_CHAR_CAP
+    ceiling = hard_max if hard_max is not None else (cap if cap else INCLUDE_TURN_CHAR_MAX)
+
+    def clip(text: str) -> str:
+        return clamp_slice(text, turn_cap, hard_max=ceiling)
+
     cleaned_mode = (mode or "auto").strip().lower()
     if cleaned_mode not in INCLUDE_MODES:
         cleaned_mode = "auto"
@@ -106,7 +116,7 @@ def resolve_include_slice(
         quote = re.sub(r"\s+", " ", (selection or "").strip())
         if not quote:
             raise ValueError("Highlight text in the reader, then Include selection.")
-        text = clamp_slice(quote)
+        text = clip(quote)
         found = source.find(quote[: min(len(quote), 80)]) if source else -1
         start = found if found >= 0 else 0
         end = start + len(text)
@@ -140,7 +150,7 @@ def resolve_include_slice(
         if match is None:
             raise ValueError(f"No heading named {heading!r} in this note.")
         label, start, end = match
-        chunk = clamp_slice(source[start:end])
+        chunk = clip(source[start:end])
         next_heading = None
         next_offset = None
         has_more = False
@@ -168,7 +178,7 @@ def resolve_include_slice(
     if start >= len(source) and source:
         start = 0
     remainder = source[start:]
-    chunk = clamp_slice(remainder)
+    chunk = clip(remainder)
     end = start + len(chunk)
     has_more = end < len(source)
     label = fallback_label
@@ -179,7 +189,7 @@ def resolve_include_slice(
                 label = sec_label
         if has_more and sec_start >= end and next_heading is None:
             next_heading = sec_label
-    if start == 0 and not _needs_chunk(source):
+    if start == 0 and not _needs_chunk(source, turn_cap):
         label = fallback_label
         has_more = False
         next_heading = None

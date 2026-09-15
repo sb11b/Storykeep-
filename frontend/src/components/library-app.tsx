@@ -3690,6 +3690,7 @@ function Reader({
                 value={editBody}
                 onChange={setEditBody}
                 noteId={article.id}
+                workingTitle={editTitle}
                 onRestored={(next) => {
                   setEditTitle(next.title);
                   setEditBody(next.content_text || "");

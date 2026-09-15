@@ -54,8 +54,11 @@ import {
   parseSections,
   readerIncludeContext,
   resolveIncludeSlice,
+  WORKING_NOTE_CHAR_CAP,
   type IncludeMode,
 } from "@/lib/include-chunk";
+import { isNoteShrinkMessage } from "@/lib/api-errors";
+import { headingFromInstruction } from "@/lib/work-in-junior";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
@@ -78,6 +81,9 @@ export type ChatLine = {
   includeHasMore?: boolean;
   includeNextOffset?: number | null;
   includeNextHeading?: string | null;
+  includeMode?: IncludeMode;
+  includeHeading?: string | null;
+  includeOffset?: number;
 };
 
 export type GrokPaneState = {
@@ -96,6 +102,8 @@ export type GrokPaneState = {
   includeOffset: number;
   includeNoteId: string | null;
   includeNoteTitle: string | null;
+  workingNoteId: string | null;
+  workingNoteTitle: string | null;
   noteDest: FilingDestination;
   noteFolderId: string | null;
   recapQuestion: boolean;
@@ -126,6 +134,8 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     includeOffset: 0,
     includeNoteId: null,
     includeNoteTitle: null,
+    workingNoteId: null,
+    workingNoteTitle: null,
     noteDest: "notes",
     noteFolderId: null,
     recapQuestion: false,
@@ -603,6 +613,7 @@ export function GrokPane({
           article_id: articleId,
           include_article: Boolean(pane.includeArticle && articleId),
           include_note_id: pane.includeNoteId || undefined,
+          working_note_id: pane.workingNoteId || undefined,
           include_mode: options.includeMode || pane.includeMode,
           include_selection: options.includeSelection || undefined,
           include_heading: options.includeHeading || pane.includeHeading || undefined,
@@ -868,6 +879,28 @@ export function GrokPane({
     });
   }
 
+  function plannedWorkingSlice() {
+    if (!pane.workingNoteId) return null;
+    const body = pane.workingNoteId === articleId ? articleBody || "" : "";
+    if (!body) return null;
+    const over = articleNeedsIncludeSlice(body, WORKING_NOTE_CHAR_CAP);
+    const mode: IncludeMode =
+      pane.includeMode && pane.includeMode !== "auto"
+        ? pane.includeMode
+        : over
+          ? "chunk"
+          : "auto";
+    return resolveIncludeSlice({
+      body,
+      mode,
+      heading: pane.includeHeading,
+      offset: pane.includeOffset,
+      title: pane.workingNoteTitle || articleTitle,
+      cap: WORKING_NOTE_CHAR_CAP,
+      hardMax: WORKING_NOTE_CHAR_CAP,
+    });
+  }
+
   function plannedIncludeSlice() {
     if (!pane.includeArticle || !articleId) return null;
     const mode: IncludeMode =
@@ -1029,12 +1062,37 @@ export function GrokPane({
     const imageIds = thisTurnImageMediaIds(files);
     const intent = imageToolIntent(content, imageIds.length > 0);
     const wantsImage = intent === "edit" || intent === "generate";
-    const includeMode = opts?.includeMode || pane.includeMode;
-    const includeHeading = opts?.includeHeading ?? pane.includeHeading;
+    let includeMode = opts?.includeMode || pane.includeMode;
+    let includeHeading = opts?.includeHeading ?? pane.includeHeading;
     const includeSelection = opts?.includeSelection || (includeMode === "selection" ? readerCtx.selection : undefined);
     const includeOffset = opts?.includeOffset ?? pane.includeOffset ?? 0;
-    const previewSlice =
-      pane.includeArticle && articleId
+    if (pane.workingNoteId && (includeMode === "auto" || !includeMode) && !includeHeading) {
+      const guessed = headingFromInstruction(
+        content,
+        pane.workingNoteId === articleId ? articleBody || "" : "",
+      );
+      if (guessed) {
+        includeMode = "heading";
+        includeHeading = guessed;
+      }
+    }
+    const workingBody = pane.workingNoteId === articleId ? articleBody || "" : "";
+    const previewSlice = pane.workingNoteId
+      ? workingBody
+        ? resolveIncludeSlice({
+            body: workingBody,
+            mode:
+              includeMode === "auto" && articleNeedsIncludeSlice(workingBody, WORKING_NOTE_CHAR_CAP)
+                ? "chunk"
+                : includeMode,
+            heading: includeHeading,
+            offset: includeOffset,
+            title: pane.workingNoteTitle || articleTitle,
+            cap: WORKING_NOTE_CHAR_CAP,
+            hardMax: WORKING_NOTE_CHAR_CAP,
+          })
+        : null
+      : pane.includeArticle && articleId
         ? resolveIncludeSlice({
             body: articleBody || "",
             mode: includeMode === "auto" && articleNeedsIncludeSlice(articleBody) ? "chunk" : includeMode,
@@ -1050,6 +1108,9 @@ export function GrokPane({
       content,
       files: files.map(pendingToMessageFile),
       includeChip: previewSlice?.chip,
+      includeMode,
+      includeHeading,
+      includeOffset,
     };
     const assistantId = crypto.randomUUID();
     onUpdate((current) => ({
@@ -1363,6 +1424,39 @@ export function GrokPane({
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");
     }
+  }
+
+  async function applyToWorkingNote(content: string, assistantId?: string) {
+    const noteId = pane.workingNoteId;
+    if (!noteId) return;
+    const index = assistantId ? pane.messages.findIndex((item) => item.id === assistantId) : -1;
+    const prior = index > 0 ? pane.messages[index - 1] : null;
+    const save = async (confirmShort = false) => {
+      try {
+        const next = await api.applyJuniorReply(noteId, {
+          markdown: content,
+          confirm_short: confirmShort,
+          mode: prior?.includeMode || pane.includeMode,
+          heading: prior?.includeHeading || pane.includeHeading,
+          offset: prior?.includeOffset ?? pane.includeOffset,
+        });
+        patch({ savedNoteId: next.id });
+        toast.success("Applied to the note. Previous save is in History.");
+        await onSavedNote(next.id, (next.destination as FilingDestination) || pane.noteDest, next.folder_id);
+      } catch (error) {
+        if (
+          !confirmShort &&
+          error instanceof ApiError &&
+          error.status === 409 &&
+          isNoteShrinkMessage(error.message)
+        ) {
+          if (window.confirm(error.message)) await save(true);
+          return;
+        }
+        toast.error(error instanceof ApiError ? error.message : "Could not apply that reply");
+      }
+    };
+    await save(false);
   }
 
   async function saveChat() {
@@ -1737,9 +1831,11 @@ export function GrokPane({
         <div className="space-y-3 px-3 py-3">
           {pane.messages.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {pane.includeArticle && articleId
-                ? "Ask about this article or school coding."
-                : "Ask for school coding help — explanations, debugging, or fenced code."}
+              {pane.workingNoteId
+                ? `Type instructions only. Junior already has “${pane.workingNoteTitle || "this note"}” on the server.`
+                : pane.includeArticle && articleId
+                  ? "Ask about this article or school coding."
+                  : "Ask for school coding help — explanations, debugging, or fenced code."}
             </p>
           ) : (
             pane.messages.map((item) => (
@@ -1810,6 +1906,11 @@ export function GrokPane({
                   clickedWordRef.current = { messageId, index };
                 }}
                 onAddToNotes={(payload) => void addToNotes(payload, item.id)}
+                onApplyToNote={
+                  pane.workingNoteId && item.role === "assistant" && item.content.trim()
+                    ? () => void applyToWorkingNote(item.content, item.id)
+                    : undefined
+                }
                 onRetry={item.role === "assistant" && item.failed ? () => void retryAssistant(item.id) : undefined}
                 onRunSnippet={(messageId, code) => void runSnippet(messageId, code)}
                 onOpenArticle={onOpenArticle}
@@ -1894,6 +1995,19 @@ export function GrokPane({
               />
               Include note…
             </label>
+            {pane.workingNoteTitle ? (
+              <span className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5">
+                <span className="truncate">Working: {pane.workingNoteTitle}</span>
+                <button
+                  type="button"
+                  className="rounded-full p-0.5 hover:bg-background"
+                  aria-label="Stop working on that note"
+                  onClick={() => patch({ workingNoteId: null, workingNoteTitle: null })}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ) : null}
             {pane.includeNoteTitle ? (
               <span className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5">
                 <span className="truncate">{pane.includeNoteTitle}</span>
@@ -1966,6 +2080,52 @@ export function GrokPane({
                 </Button>
               </div>
             </div>
+          ) : null}
+          {pane.workingNoteId &&
+          pane.workingNoteId === articleId &&
+          articleNeedsIncludeSlice(articleBody, WORKING_NOTE_CHAR_CAP) ? (
+            <div className="rounded-md border bg-muted/20 p-1.5 text-[11px] text-foreground">
+              <p className="text-muted-foreground">This note is over 80k characters. Junior gets a heading or chunk — not the textarea.</p>
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <select
+                  className="h-7 max-w-[14rem] rounded-md border bg-background px-1 text-[11px]"
+                  aria-label="Work on this heading"
+                  value={pane.includeMode === "heading" ? pane.includeHeading || "" : ""}
+                  onChange={(event) => {
+                    const heading = event.target.value;
+                    patch({
+                      includeMode: heading ? "heading" : "chunk",
+                      includeHeading: heading || null,
+                      includeOffset: 0,
+                    });
+                  }}
+                >
+                  <option value="">This heading…</option>
+                  {parseSections(articleBody || "")
+                    .map((item) => item.title)
+                    .filter((title) => title !== "Opening")
+                    .filter((title, index, all) => all.indexOf(title) === index)
+                    .map((title) => (
+                      <option key={title} value={title}>
+                        {title}
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={pane.includeMode === "chunk" || pane.includeMode === "auto" ? "secondary" : "outline"}
+                  onClick={() => patch({ includeMode: "chunk", includeOffset: 0, includeHeading: null })}
+                >
+                  First chunk + next
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {plannedWorkingSlice()?.chip ? (
+            <span className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
+              {plannedWorkingSlice()?.chip}
+            </span>
           ) : null}
           {pane.includeArticle && plannedIncludeSlice()?.chip ? (
             <span className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
@@ -2053,9 +2213,11 @@ export function GrokPane({
             value={pane.draft}
             onChange={(event) => patch({ draft: event.target.value })}
             placeholder={
-              pane.includeArticle && articleId
-                ? "Ask about this article or school coding…"
-                : `Ask ${label} for school coding help…`
+              pane.workingNoteId
+                ? "Instructions only — the note is already on the server…"
+                : pane.includeArticle && articleId
+                  ? "Ask about this article or school coding…"
+                  : `Ask ${label} for school coding help…`
             }
             disabled={!enabled}
             onFocus={() => {
