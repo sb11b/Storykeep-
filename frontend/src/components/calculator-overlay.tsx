@@ -19,7 +19,6 @@ import {
   clampCalcBox,
   type CalcResizeEdge,
 } from "@/lib/calculator-layout";
-import { clampWindowPoint } from "@/lib/movable-window";
 import { loadCalcStored, saveCalcStored } from "@/lib/calculator-storage";
 import { cn } from "@/lib/utils";
 
@@ -110,10 +109,8 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
   const [angle, setAngle] = useState<AngleMode>("deg");
   const [memory, setMemory] = useState(0);
   const [history, setHistory] = useState<{ expr: string; result: string }[]>([]);
-  const [bubble, setBubble] = useState({ x: 24, y: 24 });
   const [panel, setPanel] = useState({ x: 24, y: 24, w: 360, h: 580 });
-  const dragRef = useRef<{ kind: "bubble" | "panel"; dx: number; dy: number } | null>(null);
-  const movedRef = useRef(false);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizeRef = useRef<{ edge: CalcResizeEdge; startX: number; startY: number; box: { left: number; top: number; w: number; h: number } } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -121,7 +118,6 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
   useEffect(() => {
     setMounted(true);
     const next = stored();
-    setBubble(next.bubble);
     setPanel(next.panel);
     setHistory(next.history);
     setAngle(next.angle);
@@ -130,8 +126,8 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
 
   useEffect(() => {
     if (!mounted) return;
-    saveCalcStored(userId, { bubble, panel, history, angle, memory });
-  }, [angle, bubble, history, memory, mounted, panel, userId]);
+    saveCalcStored(userId, { panel, history, angle, memory });
+  }, [angle, history, memory, mounted, panel, userId]);
 
   const openPanel = useCallback(() => {
     setOpen(true);
@@ -144,7 +140,7 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
 
   useImperativeHandle(ref, () => ({ open: openPanel }), [openPanel]);
 
-  const shrinkToBubble = useCallback(() => {
+  const closePanel = useCallback(() => {
     setFullscreen(false);
     setOpen(false);
   }, []);
@@ -159,7 +155,6 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
     function onResize() {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      setBubble((current) => clampWindowPoint(current.x, current.y, 56, 56, vw, vh));
       if (!open || fullscreen) return;
       const next = clampCalcBox({ left: panel.x, top: panel.y, w: panel.w, h: panel.h }, vw, vh);
       setPanel({ x: next.left, y: next.top, w: next.w, h: next.h });
@@ -241,12 +236,7 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
     function onMove(event: PointerEvent) {
       const drag = dragRef.current;
       if (drag) {
-        movedRef.current = true;
-        if (drag.kind === "bubble") {
-          setBubble(
-            clampWindowPoint(event.clientX - drag.dx, event.clientY - drag.dy, 56, 56, window.innerWidth, window.innerHeight),
-          );
-        } else if (!fullscreen) {
+        if (!fullscreen) {
           const next = clampCalcBox(
             { left: event.clientX - drag.dx, top: event.clientY - drag.dy, w: panelBox.w, h: panelBox.h },
             window.innerWidth,
@@ -293,11 +283,11 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
         setFullscreen(false);
         return;
       }
-      shrinkToBubble();
+      closePanel();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [fullscreen, open, shrinkToBubble]);
+  }, [fullscreen, open, closePanel]);
 
   function onPanelKey(event: ReactKeyboardEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement | null;
@@ -332,28 +322,7 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
     }
   }
 
-  if (!mounted) return null;
-
-  const bubbleEl = (
-    <button
-      type="button"
-      className="fixed z-[81] flex size-14 flex-col items-center justify-center rounded-full bg-secondary text-secondary-foreground shadow-lg ring-1 ring-black/10"
-      style={{ left: bubble.x, top: bubble.y }}
-      aria-label="Open Calculator"
-      title="Calculator"
-      onPointerDown={(event) => {
-        movedRef.current = false;
-        dragRef.current = { kind: "bubble", dx: event.clientX - bubble.x, dy: event.clientY - bubble.y };
-      }}
-      onClick={() => {
-        if (movedRef.current) return;
-        openPanel();
-      }}
-    >
-      <Calculator className="size-4" />
-      <span className="text-[9px] font-medium leading-none">Calc</span>
-    </button>
-  );
+  if (!mounted || !open) return null;
 
   const panelEl = (
     <div
@@ -381,7 +350,6 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
           if (fullscreen) return;
           if ((event.target as HTMLElement).closest("button, [data-resize]")) return;
           dragRef.current = {
-            kind: "panel",
             dx: event.clientX - panelBox.left,
             dy: event.clientY - panelBox.top,
           };
@@ -411,7 +379,7 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
             <Maximize2 className="size-3.5" />
           </Button>
         )}
-        <Button size="icon-xs" variant="ghost" onClick={shrinkToBubble} aria-label="Shrink to bubble">
+        <Button size="icon-xs" variant="ghost" onClick={closePanel} aria-label="Close calculator">
           <X className="size-3.5" />
         </Button>
       </div>
@@ -507,11 +475,5 @@ export const CalculatorOverlay = forwardRef<CalculatorHandle, { userId: string }
     </div>
   );
 
-  return createPortal(
-    <>
-      {!open ? bubbleEl : null}
-      {open ? panelEl : null}
-    </>,
-    document.body,
-  );
+  return createPortal(panelEl, document.body);
 });

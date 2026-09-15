@@ -1,5 +1,3 @@
-import { clampWindowPoint } from "@/lib/movable-window";
-
 export const CALC_MIN_W = 300;
 export const CALC_MIN_H = 420;
 export const CALC_MARGIN = 8;
@@ -14,11 +12,6 @@ export function defaultCalcSize(vw: number, vh: number) {
     w: Math.min(CALC_DEFAULT_W, Math.max(CALC_MIN_W, vw - CALC_MARGIN * 2)),
     h: Math.min(CALC_DEFAULT_H, Math.max(CALC_MIN_H, vh - CALC_MARGIN * 2)),
   };
-}
-
-export function defaultCalcBubblePos(vw: number, vh: number) {
-  // Sit left of Junior's default bottom-right bubble so they are not stacked.
-  return clampWindowPoint(vw - 72 - 64, vh - 72, 56, 56, vw, vh, CALC_MARGIN);
 }
 
 export function clampCalcBox(box: CalcBox, vw: number, vh: number): CalcBox {
