@@ -80,10 +80,12 @@ import {
 } from "@/lib/format";
 import { clearFindMarks, findMarksInArticle, focusFindMark } from "@/lib/article-find";
 import {
+  dedupeArticlesById,
+  listNextPageOffset,
   listRemovesOnRead,
   listShowsUnreadOnly,
-  nextRowIndex,
-  pickAdvanceTarget,
+  nextDistinctArticle,
+  prevDistinctArticle,
   shelfSupportsUnreadFilter,
 } from "@/lib/list-navigation";
 import { applyHighlights, HIGHLIGHT_COLORS, selectionInRoot } from "@/lib/highlights";
@@ -645,6 +647,9 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const listFeedKeyRef = useRef<string>(shelfKey(shelf));
   const shelfRef = useRef(shelf);
   const loadListRef = useRef<(() => Promise<void>) | null>(null);
+  const fetchedCountRef = useRef(0);
+  const unreadOnlyFilterRef = useRef(false);
+  const advancingRef = useRef(false);
   const [listEpoch, setListEpoch] = useState(0);
   const [listFirstOffset, setListFirstOffset] = useState(0);
   const [listFirstPage, setListFirstPage] = useState(1);
@@ -655,6 +660,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   totalRef.current = total;
   selectedIdRef.current = selectedId;
   shelfRef.current = shelf;
+  unreadOnlyFilterRef.current = unreadOnlyFilter;
 
   const loadNav = useCallback(async (rssShelfId?: string | null) => {
     const shelves = await api.rssShelves();
@@ -715,17 +721,11 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       setArticle(preview);
       void loadArticleById(id, preview);
       if (item.is_read) return;
-      const removeFromList = listRemovesOnRead(shelfRef.current);
-      if (removeFromList) {
-        setItems((current) => {
-          const next = current.filter((row) => row.id !== id);
-          itemsRef.current = next;
-          return next;
-        });
-        setTotal((count) => Math.max(0, count - 1));
-      } else {
-        setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: true } : row)));
-      }
+      setItems((current) => {
+        const rows = current.map((row) => (row.id === id ? { ...row, is_read: true } : row));
+        itemsRef.current = itemsRef.current.map((row) => (row.id === id ? { ...row, is_read: true } : row));
+        return rows;
+      });
       void api
         .patchArticle(id, { is_read: true })
         .then((next) => {
@@ -733,17 +733,21 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           setArticle((current) =>
             current && current.id === id ? { ...current, is_read: next.is_read, read_at: next.read_at } : current,
           );
-          if (!removeFromList) {
-            setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)));
-          }
+          setItems((current) => {
+            const rows = current.map((row) => (row.id === id ? { ...row, is_read: next.is_read, read_at: next.read_at } : row));
+            itemsRef.current = itemsRef.current.map((row) =>
+              row.id === id ? { ...row, is_read: next.is_read, read_at: next.read_at } : row,
+            );
+            return rows;
+          });
           void loadNav();
         })
         .catch(() => {
-          if (removeFromList) {
-            void loadListRef.current?.();
-          } else {
-            setItems((current) => current.map((row) => (row.id === id ? { ...row, is_read: false } : row)));
-          }
+          setItems((current) => {
+            const rows = current.map((row) => (row.id === id ? { ...row, is_read: false } : row));
+            itemsRef.current = itemsRef.current.map((row) => (row.id === id ? { ...row, is_read: false } : row));
+            return rows;
+          });
         });
     },
     [loadArticleById, loadNav],
@@ -813,6 +817,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     firstPageReadyRef.current = false;
     loadingMoreRef.current = false;
     itemsRef.current = [];
+    fetchedCountRef.current = 0;
     setLoadingMore(false);
     setLoadingList(true);
     setListError(null);
@@ -823,9 +828,11 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     setItems([]);
     try {
       const result = await fetchShelfPage(0, true);
+      const unique = dedupeArticlesById(result.items);
       if (gen !== listGenRef.current) return;
-      itemsRef.current = result.items;
-      setItems(result.items);
+      itemsRef.current = unique;
+      fetchedCountRef.current = result.items.length;
+      setItems(unique);
       setTotal(result.total);
       setListFirstOffset(result.offset);
       setListFirstPage(result.page);
@@ -843,26 +850,35 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
 
   const loadMore = useCallback(async () => {
     if (!firstPageReadyRef.current || loadingMoreRef.current || loadingList) return;
-    const loaded = itemsRef.current.length;
+    const visible = itemsRef.current.length;
     const tot = totalRef.current;
-    if (tot > 0 && loaded >= tot) return;
-    if (loaded === 0 || loaded % LIST_PAGE !== 0) return;
+    if (tot > 0 && visible >= tot && fetchedCountRef.current >= tot) return;
+    const unreadApi = listShowsUnreadOnly(shelfRef.current, unreadOnlyFilterRef.current);
+    const offset = listNextPageOffset({
+      unreadApi,
+      visibleCount: visible,
+      fetchedCount: fetchedCountRef.current,
+    });
+    if (offset > 0 && tot > 0 && offset >= tot) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const listGen = listGenRef.current;
     const loadMoreGen = loadMoreGenRef.current;
-    const offset = loaded;
     try {
       const result = await fetchShelfPage(offset);
       if (listGen !== listGenRef.current || loadMoreGen !== loadMoreGenRef.current) return;
       if (!result.items.length) {
-        setTotal(loaded);
+        setTotal(itemsRef.current.length);
         return;
       }
-      setItems((current) => {
-        const seen = new Set(current.map((item) => item.id));
-        const next = [...current, ...result.items.filter((item) => !seen.has(item.id))];
+      setItems(() => {
+        const next = dedupeArticlesById([...itemsRef.current, ...result.items]);
         itemsRef.current = next;
+        if (unreadApi) {
+          fetchedCountRef.current = next.length;
+        } else {
+          fetchedCountRef.current += result.items.length;
+        }
         return next;
       });
       setTotal(result.total);
@@ -937,83 +953,87 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const selectRelative = useCallback(
     (delta: number) => {
       void (async () => {
-        let list = itemsRef.current;
-        if (!list.length) return;
-        const index = selectedIdRef.current ? list.findIndex((item) => item.id === selectedIdRef.current) : -1;
-
-        if (delta > 0 && index >= 0 && selectedIdRef.current) {
+        if (advancingRef.current) return;
+        advancingRef.current = true;
+        try {
+          let list = dedupeArticlesById(itemsRef.current);
+          if (list.length !== itemsRef.current.length) {
+            itemsRef.current = list;
+            setItems(list);
+          }
+          if (!list.length) return;
           const currentId = selectedIdRef.current;
-          const current = list[index];
-          const queueRemovesOnRead = listRemovesOnRead(shelfRef.current);
-          const markingRead = !current.is_read;
-          const shouldRemove = queueRemovesOnRead && markingRead;
 
-          if (markingRead) {
-            setArticle((row) => (row?.id === currentId ? { ...row, is_read: true } : row));
-            void api
-              .patchArticle(currentId, { is_read: true })
-              .then((next) => {
-                if (!shouldRemove) {
-                  setItems((rows) =>
-                    rows.map((row) => (row.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)),
-                  );
-                }
-                if (selectedIdRef.current === currentId) {
-                  setArticle((row) => (row?.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row));
-                }
-                void loadNav();
-              })
-              .catch(() => {
-                if (shouldRemove) {
-                  void loadListRef.current?.();
-                } else {
-                  setItems((rows) => rows.map((row) => (row.id === currentId ? { ...row, is_read: false } : row)));
-                  if (selectedIdRef.current === currentId) {
-                    setArticle((row) => (row?.id === currentId ? { ...row, is_read: false } : row));
+          if (delta < 0) {
+            const prev = prevDistinctArticle(list, currentId);
+            if (!prev) {
+              toast.message("End of list");
+              return;
+            }
+            openArticle(prev.id);
+            return;
+          }
+
+          if (currentId) {
+            const current = list.find((item) => item.id === currentId);
+            const queueRemovesOnRead = listRemovesOnRead(shelfRef.current);
+            const markingRead = Boolean(current && !current.is_read);
+            const shouldRemove = Boolean(queueRemovesOnRead && current);
+
+            if (current && markingRead) {
+              setArticle((row) => (row?.id === currentId ? { ...row, is_read: true } : row));
+              void api
+                .patchArticle(currentId, { is_read: true })
+                .then((next) => {
+                  if (!shouldRemove) {
+                    setItems((rows) =>
+                      rows.map((row) => (row.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row)),
+                    );
                   }
-                }
-              });
+                  if (selectedIdRef.current === currentId) {
+                    setArticle((row) => (row?.id === currentId ? { ...row, is_read: next.is_read, read_at: next.read_at } : row));
+                  }
+                  void loadNav();
+                })
+                .catch(() => {
+                  if (!shouldRemove) {
+                    setItems((rows) => rows.map((row) => (row.id === currentId ? { ...row, is_read: false } : row)));
+                    if (selectedIdRef.current === currentId) {
+                      setArticle((row) => (row?.id === currentId ? { ...row, is_read: false } : row));
+                    }
+                  }
+                });
+            }
+
+            if (shouldRemove) {
+              list = list.filter((row) => row.id !== currentId);
+              itemsRef.current = list;
+              setItems(list);
+              setTotal((count) => Math.max(0, count - 1));
+            } else if (markingRead) {
+              list = list.map((row) => (row.id === currentId ? { ...row, is_read: true } : row));
+              itemsRef.current = list;
+              setItems(list);
+            }
           }
 
-          let updatedList = shouldRemove
-            ? list.filter((row) => row.id !== currentId)
-            : markingRead
-              ? list.map((row) => (row.id === currentId ? { ...row, is_read: true } : row))
-              : list;
-          itemsRef.current = updatedList;
-          setItems(updatedList);
-          const nextTotal = shouldRemove ? Math.max(0, totalRef.current - 1) : totalRef.current;
-          if (shouldRemove) {
-            setTotal(nextTotal);
-          }
-
-          let target = pickAdvanceTarget(updatedList, index, shouldRemove);
-          const targetIndex = nextRowIndex(index, shouldRemove);
-          if (!target && updatedList.length < nextTotal) {
+          let target = nextDistinctArticle(list, currentId);
+          if (!target) {
             await loadMore();
-            updatedList = itemsRef.current;
-            target = updatedList[targetIndex] ?? null;
+            list = dedupeArticlesById(itemsRef.current);
+            target = nextDistinctArticle(list, currentId);
           }
-
-          if (target) {
-            openArticle(target.id);
-          } else {
-            clearReaderSelection();
+          if (!target || target.id === currentId) {
+            toast.message("End of list");
+            return;
           }
-          return;
+          openArticle(target.id);
+        } finally {
+          advancingRef.current = false;
         }
-
-        let nextIndex = index < 0 ? 0 : Math.min(list.length - 1, Math.max(0, index + delta));
-        if (delta > 0 && index >= list.length - 1 && list.length < totalRef.current) {
-          await loadMore();
-          list = itemsRef.current;
-          nextIndex = Math.min(list.length - 1, (index < 0 ? 0 : index) + 1);
-        }
-        const next = list[nextIndex];
-        if (next) openArticle(next.id);
       })();
     },
-    [clearReaderSelection, loadMore, loadNav, openArticle],
+    [loadMore, loadNav, openArticle],
   );
 
   useEffect(() => {
