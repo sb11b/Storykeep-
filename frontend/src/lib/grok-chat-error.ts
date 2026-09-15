@@ -10,8 +10,10 @@ export function readableXaiToast(message: string): string {
 
 /** FastAPI 422 on a tiny maxlength — never show a blank validation dump. */
 export function isOversizedPasteHttp(status: number, detail: string): boolean {
+  if (status === 413) return true;
   if (status === 422 && /at most \d+ character/i.test(detail)) return true;
   if (status === 400 && /too long|over the cap|payload is too large/i.test(detail)) return true;
+  if (status === 502 && /over the cap|payload too large|entity too large/i.test(detail)) return true;
   return false;
 }
 

@@ -48,6 +48,7 @@ test("readableXaiToast keeps the upstream xAI message", () => {
 test("oversized paste HTTP is not a blank 422", () => {
   assert.equal(isOversizedPasteHttp(422, "String should have at most 8000 characters"), true);
   assert.equal(isOversizedPasteHttp(400, "This turn is over the cap. Include a heading, a selection, or the next chunk."), true);
+  assert.equal(isOversizedPasteHttp(413, "This turn is over the cap. Include a heading, a selection, or the next chunk."), true);
   assert.equal(isOversizedPasteHttp(422, "unknown variant `code_interpreter`"), false);
 });
 

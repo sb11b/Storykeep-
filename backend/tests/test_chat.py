@@ -142,7 +142,7 @@ class ChatGuardTests(unittest.TestCase):
                 [{"role": "user", "content": "summarize this"}],
                 article_body="x" * 24_001,
             )
-        self.assertEqual(caught.exception.status_code, 400)
+        self.assertEqual(caught.exception.status_code, 413)
         self.assertEqual(caught.exception.detail, SEND_CONTEXT_TOO_LARGE)
         reject_oversized_send([{"role": "user", "content": "hello"}], article_body="short")
         reject_oversized_send(

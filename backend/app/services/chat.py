@@ -365,7 +365,9 @@ def chat_error_message(status: int, detail: str) -> str:
 
 
 def stream_error_event(status: int, detail: str, *, partial: bool = False) -> dict[str, object]:
-    message = detail.strip() or "Unknown error."
+    from app.http_limits import redact_secrets
+
+    message = redact_secrets(detail.strip() or "Unknown error.")
     return {
         "error": chat_error_message(status, message),
         "message": message,
@@ -746,18 +748,18 @@ def validate_payload(messages: list[dict]) -> list[dict]:
             if not text and not any(isinstance(part, dict) and part.get("type") == "image_url" for part in content):
                 raise HTTPException(status_code=400, detail="Empty messages are not allowed.")
             if len(text) > MERGED_MESSAGE_CHAR_CAP:
-                raise HTTPException(status_code=400, detail="A message is too long.")
+                raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
             total += len(text)
             cleaned.append({"role": role, "content": content})
             continue
         if not text:
             raise HTTPException(status_code=400, detail="Empty messages are not allowed.")
         if len(text) > MERGED_MESSAGE_CHAR_CAP:
-            raise HTTPException(status_code=400, detail="A message is too long.")
+            raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
         total += len(text)
         cleaned.append({"role": role, "content": text})
     if total > TOTAL_CHAR_CAP:
-        raise HTTPException(status_code=400, detail="That chat payload is too large.")
+        raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
     if cleaned[-1]["role"] != "user":
         raise HTTPException(status_code=400, detail="The last message must come from you.")
     return cleaned
@@ -798,7 +800,7 @@ def reject_oversized_send(
     note_body: str | None = None,
 ) -> None:
     if send_context_chars(history, article_body=article_body, note_body=note_body) > SEND_CONTEXT_CHAR_CAP:
-        raise HTTPException(status_code=400, detail=SEND_CONTEXT_TOO_LARGE)
+        raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
 
 
 def article_excerpt(article: Article, limit: int = INCLUDE_TURN_CHAR_CAP) -> str:

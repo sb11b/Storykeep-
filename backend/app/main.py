@@ -6,6 +6,7 @@ import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -13,6 +14,7 @@ from sqlalchemy import select, text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import settings
+from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
 from app.routers import articles, auth, backups, chat, feeds, junior_jobs, library, overlay, school, stt, sync, tts
@@ -245,7 +247,50 @@ async def http_exception_with_message(request: Request, exc: StarletteHTTPExcept
     return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 
 
+@app.exception_handler(MemoryError)
+async def memory_error_handler(request: Request, _exc: MemoryError) -> JSONResponse:
+    log_chat_exception("memory error", path=request.url.path)
+    return JSONResponse(
+        status_code=413,
+        content={"detail": PAYLOAD_TOO_LARGE, "code": "payload_too_large"},
+    )
+
+
+def _chat_message_too_long(exc: RequestValidationError) -> bool:
+    for err in exc.errors():
+        loc = err.get("loc") or ()
+        msg = str(err.get("msg") or "").lower()
+        if "message" in loc and ("at most" in msg or "too long" in msg or err.get("type") == "string_too_long"):
+            return True
+        if "at most" in msg and "character" in msg:
+            return True
+    return False
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    path = request.url.path.rstrip("/")
+    if request.method == "POST" and path == "/api/v1/chat" and _chat_message_too_long(exc):
+        return JSONResponse(
+            status_code=413,
+            content={"detail": PAYLOAD_TOO_LARGE, "code": "payload_too_large"},
+        )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, StarletteHTTPException):
+        return await http_exception_with_message(request, exc)
+    log_chat_exception("unhandled", path=request.url.path, method=request.method)
+    path = request.url.path.rstrip("/")
+    if path in {"/health", "/api/health"}:
+        return JSONResponse(status_code=200, content=health_payload())
+    return JSONResponse(status_code=500, content={"detail": "Something went wrong."})
+
+
 app.add_middleware(NormalizeApiPathMiddleware)
+app.add_middleware(LimitChatBodyMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

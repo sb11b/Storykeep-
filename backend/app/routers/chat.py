@@ -18,6 +18,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.routers.articles import _owned_article
 from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConversationPatchIn, GrokMessageFileOut, GrokMessageOut
+from app.http_limits import log_chat_exception
 from app.services import chat as chat_service
 from app.services import chat_attachments
 from app.services import chat_image
@@ -384,11 +385,7 @@ def _image_tool_events(
             try:
                 await asyncio.shield(job)
             except Exception:
-                logger.exception(
-                    "chat image job failed after disconnect user=%s conversation=%s",
-                    user_id,
-                    conversation_id,
-                )
+                log_chat_exception("chat image job failed after disconnect", user=user_id, conversation=conversation_id)
 
         try:
             while not job.done():
@@ -428,13 +425,11 @@ def _image_tool_events(
             await _finish_job()
             raise
         except Exception as exc:
-            logger.exception(
-                "chat image intercept error user=%s conversation=%s",
-                user_id,
-                conversation_id,
-            )
+            from app.http_limits import redact_secrets
+
+            log_chat_exception("chat image intercept error", user=user_id, conversation=conversation_id)
             yield chat_service.encode_sse(
-                chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__)
+                chat_service.stream_error_event(500, redact_secrets(str(exc) or exc.__class__.__name__))
             )
 
     return events()
@@ -446,6 +441,24 @@ async def chat(
     request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    try:
+        return await _chat(payload, request, db, user)
+    except HTTPException:
+        raise
+    except MemoryError:
+        log_chat_exception("chat memory error", user=getattr(user, "id", None))
+        raise HTTPException(status_code=413, detail=chat_service.SEND_CONTEXT_TOO_LARGE) from None
+    except Exception:
+        log_chat_exception("chat failed", user=getattr(user, "id", None))
+        raise HTTPException(status_code=500, detail="Chat failed.") from None
+
+
+async def _chat(
+    payload: ChatIn,
+    request: Request,
+    db: Session,
+    user: User,
 ) -> StreamingResponse:
     reject_locked(user)
     chat_service.require_key()
@@ -735,11 +748,7 @@ async def chat(
                 stream_db.commit()
                 return str(assistant_row.id)
         except Exception:
-            logger.exception(
-                "Failed to persist assistant reply user=%s conversation=%s",
-                user_id,
-                conversation_id,
-            )
+            log_chat_exception("Failed to persist assistant reply", user=user_id, conversation=conversation_id)
             return None
 
     cancelled = asyncio.Event()
@@ -865,11 +874,13 @@ async def chat(
             raise
         except Exception as exc:
             partial_text = "".join(assistant_parts)
-            logger.exception(
-                "Chat stream unexpected error user=%s conversation=%s partial_chars=%s",
-                user_id,
-                conversation_id,
-                len(partial_text),
+            from app.http_limits import log_chat_exception, redact_secrets
+
+            log_chat_exception(
+                "Chat stream unexpected error",
+                user=user_id,
+                conversation=conversation_id,
+                partial_chars=len(partial_text),
             )
             saved_id = _persist_assistant(partial_text) if persist else None
             if saved_id and conversation_id:
@@ -881,7 +892,11 @@ async def chat(
                     }
                 )
             yield chat_service.encode_sse(
-                chat_service.stream_error_event(500, str(exc) or exc.__class__.__name__, partial=bool(partial_text))
+                chat_service.stream_error_event(
+                    500,
+                    redact_secrets(str(exc) or exc.__class__.__name__),
+                    partial=bool(partial_text),
+                )
             )
         finally:
             cancelled.set()
