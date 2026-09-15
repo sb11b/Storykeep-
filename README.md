@@ -18,7 +18,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
 - **Junior jobs** (full screen Junior): scheduled prompts into a Junior thread (`cron` + timezone). Optional note on a shelf. Cap 20 runs/user/day. Railway can hit `POST /api/v1/junior/jobs/run` with `JUNIOR_CRON_SECRET`. Unread / Fox titles in a job or Include reply open in the StoryKeep reader (`#article/{id}`), not a publisher tab.
 - **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy.
-- **Calendar:** Google Calendar (OAuth, calendar.events only). Tokens stay encrypted on the server. Library **Calendar** is week/month. Junior can propose an event; Confirm writes it. No Gmail.
+- **Calendar:** Fastmail CalDAV first (per-user app password or API token, encrypted on the server). Library **Calendar** is week/month. Junior proposes an event; Confirm writes it. Google Calendar OAuth remains optional. No Gmail, IMAP, or Fastmail mail/JMAP in this deploy.
 
 ## Stack
 
@@ -78,6 +78,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `XAI_API_KEY` | xAI key from [console.x.ai](https://console.x.ai) (starts with `xai-`). Enables Listen, dictation, and the Junior chat bubble. Server only — never in git or the browser. |
 | `XAI_CHAT_MODEL` | Chat model, default `grok-4.6`. Auto uses grok-4.6 with reasoning `low` (short) or `xhigh` (school/code). |
 | `JUNIOR_CRON_SECRET` | Shared secret for `POST /api/v1/junior/jobs/run` (Railway cron). StoryKeep also ticks due jobs every minute. |
+| `FASTMAIL_CALDAV_URL` | Optional. Fastmail CalDAV origin; default `https://caldav.fastmail.com`. Connect still shows if this is unset. |
 
 The Junior bubble is a movable panel. Replies stay in the session until **Add to notes**, which creates or updates a StoryKeep addition (`guid storykeep-note:` / `StoryKeep/Additions/`). It never overwrites `Steve's Surface Vault/**`. Chat is capped at 120 requests per hour per user (`CHAT_REQUESTS_PER_HOUR`). **Image** (next to the paperclip) generates a picture from the typed prompt via the xAI image API (`XAI_API_KEY` on the server only), stores it as owner-only media, and keeps it in the thread. Image gen is 10 per hour (`IMAGINE_REQUESTS_PER_HOUR`). Demo accounts cannot use chat or Imagine. Dictation uses streaming STT at `$0.20/hr` via the server.
 

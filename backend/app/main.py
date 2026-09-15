@@ -148,6 +148,13 @@ def _create_schema() -> None:
         "created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())"
     )
     _try_sql(
+        "CREATE TABLE IF NOT EXISTS fastmail_calendar_accounts ("
+        "user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
+        "fastmail_email TEXT NOT NULL, token_encrypted TEXT NOT NULL, "
+        "calendar_href TEXT NOT NULL DEFAULT '', calendar_name TEXT, "
+        "created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())"
+    )
+    _try_sql(
         "CREATE TABLE IF NOT EXISTS auth_challenges ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
         "user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, "

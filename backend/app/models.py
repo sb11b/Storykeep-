@@ -55,6 +55,7 @@ class User(Base):
     tags: Mapped[list[Tag]] = relationship(back_populates="user")
     folders: Mapped[list["Folder"]] = relationship(back_populates="user")
     google_calendar: Mapped["GoogleCalendarAccount | None"] = relationship(back_populates="user", uselist=False)
+    fastmail_calendar: Mapped["FastmailCalendarAccount | None"] = relationship(back_populates="user", uselist=False)
 
 
 class RssShelf(Base):
@@ -541,6 +542,24 @@ class GoogleCalendarAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="google_calendar")
+
+
+class FastmailCalendarAccount(Base):
+    """Fastmail CalDAV app password or API token. Ciphertext only — never the account password, never the browser."""
+
+    __tablename__ = "fastmail_calendar_accounts"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    fastmail_email: Mapped[str] = mapped_column(Text, nullable=False)
+    token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    calendar_href: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    calendar_name: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship(back_populates="fastmail_calendar")
 
 
 def ensure_search_index(connection) -> None:

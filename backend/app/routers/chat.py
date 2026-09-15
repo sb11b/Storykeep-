@@ -23,7 +23,7 @@ from app.services import chat as chat_service
 from app.services import chat_attachments
 from app.services import chat_image
 from app.services import chat_docx
-from app.services import google_calendar as gcal
+from app.services import calendar_access as calendars
 from app.services.calendar_tool import (
     ADD_EVENT_TOOL,
     CALENDAR_OFF_APPEND,
@@ -732,7 +732,7 @@ async def _chat(
     unread_catalog = unread_news_block(db, user.id, user_text)
     if unread_catalog:
         history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
-    calendar_connected = gcal.is_connected(db, user_id) and not is_locked(user)
+    calendar_connected = calendars.is_connected(db, user_id) and not is_locked(user)
     extras = []
     if unread_catalog:
         extras.append(UNREAD_READER_SYSTEM)

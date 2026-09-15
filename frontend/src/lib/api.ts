@@ -809,6 +809,11 @@ export const api = {
   deleteCalendarEvent: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/calendar/events/${encodeURIComponent(id)}`, { method: "DELETE" }),
   disconnectCalendar: () => request<{ ok: boolean; connected: boolean }>("/api/v1/calendar/disconnect", { method: "POST" }),
+  connectFastmailCalendar: (body: { email: string; token: string }) =>
+    request<{ ok: boolean; connected: boolean; provider: string; fastmail_email: string; calendar_name: string | null }>(
+      "/api/v1/calendar/fastmail/connect",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 };
 
 export type JuniorJob = {

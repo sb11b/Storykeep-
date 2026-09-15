@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_oauth_redirect: str = ""
+    fastmail_caldav_url: str = ""
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -130,6 +131,11 @@ class Settings(BaseSettings):
     @property
     def google_calendar_configured(self) -> bool:
         return bool(self.google_client_id.strip() and self.google_client_secret.strip())
+
+    @property
+    def fastmail_calendar_configured(self) -> bool:
+        """Per-user tokens. Missing FASTMAIL_* env still offers Connect (public CalDAV host)."""
+        return True
 
 
 settings = Settings()

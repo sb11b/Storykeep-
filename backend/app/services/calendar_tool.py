@@ -10,7 +10,7 @@ ADD_EVENT_TOOL = {
     "type": "function",
     "function": {
         "name": ADD_EVENT_NAME,
-        "description": "Propose a Google Calendar event. StoryKeep asks Steve to Confirm before writing anything.",
+        "description": "Propose a calendar event. StoryKeep asks Steve to Confirm before writing anything.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -24,16 +24,16 @@ ADD_EVENT_TOOL = {
 }
 
 CALENDAR_ON_APPEND = """
-Steve connected Google Calendar. When he asks to schedule or add an event, call the add_event tool with title, start, and end as ISO 8601 datetimes (include the timezone offset). Do not say the event is already on the calendar. StoryKeep will show Confirm before writing. Never request Gmail, IMAP, or a mailbox password.
+Steve connected a calendar. When he asks to schedule or add an event, call the add_event tool with title, start, and end as ISO 8601 datetimes (include the timezone offset). Do not say the event is already on the calendar. StoryKeep will show Confirm before writing. Never request the Fastmail account password, Gmail, IMAP, or JMAP mail.
 If you cannot call tools, reply with only this fence:
 ```storykeep-event
 {"title":"...","start":"...","end":"..."}
 ```
-Do not invent a Google confirmation number.
+Do not invent a confirmation number.
 """
 
 CALENDAR_OFF_APPEND = """
-Steve has not connected Google Calendar. If he asks to add a calendar event, tell him to open Calendar in the StoryKeep library and click Connect Google. Do not invent a confirmation. Do not ask for a Gmail or IMAP password.
+Steve has not connected a calendar. If he asks to add an event, tell him to open Calendar in the StoryKeep library and connect Fastmail with an app password or API token. Do not invent a confirmation. Do not ask for the Fastmail account password, Gmail, IMAP, or an inbox.
 """
 
 CALENDAR_FENCE = re.compile(r"```(?:storykeep-event|json)\s*(\{[\s\S]*?\})\s*```", re.I)

@@ -38,9 +38,12 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
   const [anchor, setAnchor] = useState(() => new Date());
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [editor, setEditor] = useState<ReturnType<typeof emptyDraft> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [fmEmail, setFmEmail] = useState("");
+  const [fmToken, setFmToken] = useState("");
+  const [connecting, setConnecting] = useState(false);
 
   const range = useMemo(() => (view === "week" ? weekRange(anchor) : monthGridRange(anchor)), [anchor, view]);
 
@@ -62,6 +65,19 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
       setEvents(payload.items || []);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not load the calendar.");
+      setStatus((current) =>
+        current || {
+          configured: true,
+          connected: false,
+          provider: null,
+          google_configured: false,
+          fastmail_configured: true,
+          google_email: null,
+          fastmail_email: null,
+          demo_locked: false,
+        },
+      );
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -79,6 +95,25 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
     window.addEventListener(WROTE_EVENT, onWrote);
     return () => window.removeEventListener(WROTE_EVENT, onWrote);
   }, [load, open]);
+
+  async function connectFastmail() {
+    if (!fmEmail.trim() || fmToken.trim().length < 8) {
+      toast.error("Use your Fastmail email and an app password or API token.");
+      return;
+    }
+    setConnecting(true);
+    const token = fmToken;
+    setFmToken("");
+    try {
+      await api.connectFastmailCalendar({ email: fmEmail.trim(), token });
+      toast.success("Fastmail Calendar connected.");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not connect Fastmail.");
+    } finally {
+      setConnecting(false);
+    }
+  }
 
   async function saveEditor() {
     if (!editor?.title.trim()) {
@@ -151,7 +186,11 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {status?.connected ? (
             <>
-              <span className="text-[11px] text-muted-foreground">{status.google_email || "Google Calendar"}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {status.provider === "fastmail"
+                  ? status.fastmail_email || status.calendar_name || "Fastmail Calendar"
+                  : status.google_email || "Google Calendar"}
+              </span>
               <Button size="xs" variant="outline" onClick={() => setEditor(emptyDraft(new Date()))}>
                 New event
               </Button>
@@ -161,7 +200,7 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
                 onClick={async () => {
                   try {
                     await api.disconnectCalendar();
-                    toast.success("Google Calendar disconnected.");
+                    toast.success("Calendar disconnected.");
                     await load();
                   } catch (error) {
                     toast.error(error instanceof ApiError ? error.message : "Could not disconnect.");
@@ -178,16 +217,44 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        {status?.demo_locked ? (
-          <p className="text-sm text-muted-foreground">Demo accounts cannot connect Google Calendar.</p>
-        ) : !status?.configured ? (
-          <p className="text-sm text-muted-foreground">Calendar is off until GOOGLE_CLIENT_ID is set on the server.</p>
+        {status === null ? (
+          <p className="text-sm text-muted-foreground">Loading calendar…</p>
+        ) : status.demo_locked ? (
+          <p className="text-sm text-muted-foreground">Demo accounts cannot connect Fastmail Calendar.</p>
         ) : !status?.connected ? (
-          <div className="flex max-w-md flex-col gap-2">
-            <p className="text-sm">Connect Google Calendar to see this week and add events. StoryKeep only asks for Calendar — not Gmail.</p>
-            <Button onClick={() => { window.location.href = "/api/v1/calendar/connect"; }}>
-              Connect Google
-            </Button>
+          <div className="flex max-w-md flex-col gap-3">
+            <p className="text-sm">
+              Connect Fastmail Calendar to see this week. Use an app password or API token from Fastmail Settings — never your account password. Mail stays off until a later phase.
+            </p>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="fm-email">Fastmail email</Label>
+              <Input
+                id="fm-email"
+                type="email"
+                autoComplete="username"
+                value={fmEmail}
+                onChange={(event) => setFmEmail(event.target.value)}
+              />
+              <Label htmlFor="fm-token">App password or API token</Label>
+              <Input
+                id="fm-token"
+                type="password"
+                autoComplete="off"
+                value={fmToken}
+                onChange={(event) => setFmToken(event.target.value)}
+              />
+              <Button disabled={connecting} onClick={() => void connectFastmail()}>
+                Connect Fastmail
+              </Button>
+            </div>
+            {status?.google_configured ? (
+              <div className="border-t pt-3">
+                <p className="mb-2 text-xs text-muted-foreground">Or connect Google Calendar (calendar scope only — not Gmail).</p>
+                <Button variant="outline" onClick={() => { window.location.href = "/api/v1/calendar/connect"; }}>
+                  Connect Google
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : loading ? (
           <p className="text-sm text-muted-foreground">Loading events…</p>
@@ -287,7 +354,7 @@ export function CalendarProposalCard({
 }) {
   const [busy, setBusy] = useState(false);
   if (proposal.status === "wrote") {
-    return <p className="mt-2 text-xs text-muted-foreground">Added to Google Calendar.</p>;
+    return <p className="mt-2 text-xs text-muted-foreground">Added to your calendar.</p>;
   }
   return (
     <div className="mt-2 rounded-md border bg-background p-2 text-sm">
@@ -305,7 +372,7 @@ export function CalendarProposalCard({
             await api.createCalendarEvent({ title: proposal.title, start: proposal.start, end: proposal.end }, tzName());
             window.dispatchEvent(new Event(WROTE_EVENT));
             onWrote?.("wrote");
-            toast.success("Event added to Google Calendar.");
+            toast.success("Event added to your calendar.");
           } catch (error) {
             onWrote?.("error");
             toast.error(error instanceof ApiError ? error.message : "Could not add that event.");

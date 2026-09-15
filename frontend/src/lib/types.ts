@@ -389,7 +389,12 @@ export type CalendarEvent = {
 export type CalendarStatus = {
   configured: boolean;
   connected: boolean;
+  provider?: "fastmail" | "google" | null;
+  google_configured?: boolean;
+  fastmail_configured?: boolean;
   google_email: string | null;
+  fastmail_email?: string | null;
+  calendar_name?: string | null;
   demo_locked: boolean;
 };
 

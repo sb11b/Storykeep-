@@ -11,6 +11,8 @@ from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
+from app.services import calendar_access as calendars
+from app.services import fastmail_calendar as fmcal
 from app.services import google_calendar as gcal
 from app.services import google_oauth
 from app.services.calendar_tool import normalize_add_event
@@ -47,14 +49,14 @@ def _tz(value: str | None) -> str:
     return name[:80]
 
 
+class FastmailConnectIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    token: str = Field(min_length=8, max_length=400)
+
+
 @router.get("/status")
 def calendar_status(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    return gcal.status_payload(
-        db,
-        user.id,
-        configured=google_oauth.google_configured(),
-        demo_locked=is_locked(user),
-    )
+    return calendars.status_payload(db, user.id, demo_locked=is_locked(user))
 
 
 @router.get("/connect")
@@ -122,10 +124,28 @@ def calendar_callback(
     return redirect
 
 
+@router.post("/fastmail/connect")
+def calendar_fastmail_connect(
+    payload: FastmailConnectIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    reject_locked(user)
+    row = fmcal.connect(db, user.id, email=payload.email, token=payload.token)
+    db.commit()
+    return {
+        "ok": True,
+        "connected": True,
+        "provider": "fastmail",
+        "fastmail_email": row.fastmail_email,
+        "calendar_name": row.calendar_name,
+    }
+
+
 @router.post("/disconnect")
 def calendar_disconnect(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     reject_locked(user)
-    gcal.disconnect(db, user.id)
+    calendars.disconnect(db, user.id)
     db.commit()
     return {"ok": True, "connected": False}
 
@@ -159,7 +179,7 @@ def calendar_events(
 ) -> dict:
     reject_locked(user)
     start, end = _range(time_min, time_max, view)
-    items = gcal.list_events(db, user.id, time_min=start, time_max=end, timezone_name=_tz(tz))
+    items = calendars.list_events(db, user.id, time_min=start, time_max=end, timezone_name=_tz(tz))
     return {"items": items, "time_min": start, "time_max": end, "view": view}
 
 
@@ -174,7 +194,7 @@ def calendar_create(
     proposal = normalize_add_event(payload.model_dump())
     if not proposal:
         raise HTTPException(status_code=400, detail="Need a title, start, and end.")
-    event = gcal.create_event(
+    event = calendars.create_event(
         db,
         user.id,
         title=proposal["title"],
@@ -195,7 +215,7 @@ def calendar_patch(
     user: User = Depends(get_current_user),
 ) -> dict:
     reject_locked(user)
-    event = gcal.patch_event(
+    event = calendars.patch_event(
         db,
         user.id,
         event_id,
@@ -215,6 +235,6 @@ def calendar_delete(
     user: User = Depends(get_current_user),
 ) -> dict:
     reject_locked(user)
-    gcal.delete_event(db, user.id, event_id)
+    calendars.delete_event(db, user.id, event_id)
     db.commit()
     return {"ok": True}
