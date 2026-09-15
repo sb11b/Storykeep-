@@ -147,6 +147,7 @@ def _create_schema() -> None:
         "calendar_href TEXT NOT NULL DEFAULT '', calendar_name TEXT, "
         "created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())"
     )
+    _try_sql("ALTER TABLE fastmail_calendar_accounts ADD COLUMN IF NOT EXISTS calendars_json JSONB DEFAULT '[]'::jsonb")
     _try_sql(
         "CREATE TABLE IF NOT EXISTS auth_challenges ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "

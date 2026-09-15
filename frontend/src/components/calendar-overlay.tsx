@@ -19,18 +19,43 @@ import {
   toRfc3339,
   weekRange,
 } from "@/lib/calendar-range";
-import type { CalendarEvent, CalendarStatus } from "@/lib/types";
+import type { CalendarEvent, CalendarFolder, CalendarStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const WROTE_EVENT = "storykeep-calendar-wrote";
+
+const EVENT_SWATCHES = ["#2563EB", "#DC2626", "#059669", "#D97706", "#7C3AED", "#DB2777", "#0891B2", "#EA580C"];
 
 function tzName() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-function emptyDraft(start: Date) {
+type EventDraft = {
+  id: string | null;
+  title: string;
+  start: string;
+  end: string;
+  location: string;
+  meeting_url: string;
+  online: boolean;
+  color: string;
+  calendar_id: string;
+};
+
+function emptyDraft(start: Date, calendars: CalendarFolder[] = []): EventDraft {
   const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return { id: null as string | null, title: "", start: localInputValue(start.toISOString()), end: localInputValue(end.toISOString()) };
+  const calendar = calendars[0];
+  return {
+    id: null,
+    title: "",
+    start: localInputValue(start.toISOString()),
+    end: localInputValue(end.toISOString()),
+    location: "",
+    meeting_url: "",
+    online: false,
+    color: calendar?.color || EVENT_SWATCHES[0],
+    calendar_id: calendar?.id || "",
+  };
 }
 
 export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -39,8 +64,9 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editor, setEditor] = useState<ReturnType<typeof emptyDraft> | null>(null);
+  const [editor, setEditor] = useState<EventDraft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [placeHits, setPlaceHits] = useState<{ label: string }[]>([]);
   const [fmEmail, setFmEmail] = useState("");
   const [fmToken, setFmToken] = useState("");
   const [fmCalendarUrl, setFmCalendarUrl] = useState("");
@@ -96,6 +122,21 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
     return () => window.removeEventListener(WROTE_EVENT, onWrote);
   }, [load, open]);
 
+  useEffect(() => {
+    const query = (editor?.location || "").trim();
+    if (!editor || query.length < 3) {
+      setPlaceHits([]);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void api
+        .calendarPlaces(query)
+        .then((payload) => setPlaceHits(payload.items || []))
+        .catch(() => setPlaceHits([]));
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [editor]);
+
   async function connectFastmail(retry = false) {
     if (!fmEmail.trim() || fmToken.trim().length < 8) {
       toast.error("Use your Fastmail email and an app password or API token.");
@@ -134,7 +175,16 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
     }
     setSaving(true);
     try {
-      const body = { title: editor.title.trim(), start: fromLocalInput(editor.start), end: fromLocalInput(editor.end) };
+      const body = {
+        title: editor.title.trim(),
+        start: fromLocalInput(editor.start),
+        end: fromLocalInput(editor.end),
+        location: editor.location.trim() || (editor.online ? "Online" : ""),
+        meeting_url: editor.meeting_url.trim(),
+        online: editor.online,
+        color: editor.color,
+        calendar_id: editor.calendar_id || undefined,
+      };
       if (editor.id) await api.patchCalendarEvent(editor.id, body, tzName());
       else await api.createCalendarEvent(body, tzName());
       setEditor(null);
@@ -201,7 +251,7 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
               <span className="text-[11px] text-muted-foreground">
                 {status.fastmail_email || status.calendar_name || "Fastmail Calendar"}
               </span>
-              <Button size="xs" variant="outline" onClick={() => setEditor(emptyDraft(new Date()))}>
+              <Button size="xs" variant="outline" onClick={() => setEditor(emptyDraft(new Date(), status.calendars || []))}>
                 New event
               </Button>
               <Button
@@ -305,7 +355,7 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
                   onClick={() => {
                     const start = new Date(day);
                     start.setHours(9, 0, 0, 0);
-                    setEditor(emptyDraft(start));
+                    setEditor(emptyDraft(start, status.calendars || []));
                   }}
                 >
                   <span className="text-[11px] font-medium">{day.getDate()}</span>
@@ -313,7 +363,11 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
                     {dayEvents.map((item) => (
                       <li key={item.id}>
                         <span
-                          className="block truncate rounded bg-primary/10 px-1 text-[11px] text-foreground"
+                          className="block truncate rounded px-1 text-[11px] text-foreground"
+                          style={{
+                            backgroundColor: `${item.color || "#2563EB"}22`,
+                            borderLeft: `3px solid ${item.color || "#2563EB"}`,
+                          }}
                           onClick={(event) => {
                             event.stopPropagation();
                             setEditor({
@@ -321,6 +375,11 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
                               title: item.title,
                               start: localInputValue(item.start),
                               end: localInputValue(item.end),
+                              location: item.location || "",
+                              meeting_url: item.meeting_url || "",
+                              online: Boolean(item.online),
+                              color: item.color || EVENT_SWATCHES[0],
+                              calendar_id: item.calendar_id || "",
                             });
                           }}
                         >
@@ -343,10 +402,92 @@ export function CalendarOverlay({ open, onClose }: { open: boolean; onClose: () 
           <div className="flex flex-col gap-2">
             <Label htmlFor="cal-title">Title</Label>
             <Input id="cal-title" value={editor?.title || ""} onChange={(event) => setEditor((current) => current && { ...current, title: event.target.value })} />
+            {(status?.calendars?.length || 0) > 1 ? (
+              <>
+                <Label htmlFor="cal-folder">Calendar</Label>
+                <select
+                  id="cal-folder"
+                  className="h-8 rounded-md border bg-background px-2 text-sm"
+                  value={editor?.calendar_id || ""}
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    const folder = status?.calendars?.find((item) => item.id === nextId);
+                    setEditor((current) => current && { ...current, calendar_id: nextId, color: current.id ? current.color : folder?.color || current.color });
+                  }}
+                >
+                  {(status?.calendars || []).map((folder) => (
+                    <option key={folder.id} value={folder.id}>
+                      {folder.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
             <Label htmlFor="cal-start">Start</Label>
             <Input id="cal-start" type="datetime-local" value={editor?.start || ""} onChange={(event) => setEditor((current) => current && { ...current, start: event.target.value })} />
             <Label htmlFor="cal-end">End</Label>
             <Input id="cal-end" type="datetime-local" value={editor?.end || ""} onChange={(event) => setEditor((current) => current && { ...current, end: event.target.value })} />
+            <Label htmlFor="cal-location">Location</Label>
+            <Input
+              id="cal-location"
+              value={editor?.location || ""}
+              placeholder="Address or place"
+              onChange={(event) => setEditor((current) => current && { ...current, location: event.target.value })}
+            />
+            {placeHits.length ? (
+              <ul className="max-h-32 overflow-auto rounded-md border bg-background text-sm">
+                {placeHits.map((hit) => (
+                  <li key={hit.label}>
+                    <button
+                      type="button"
+                      className="block w-full truncate px-2 py-1 text-left hover:bg-muted"
+                      onClick={() => {
+                        setEditor((current) => current && { ...current, location: hit.label });
+                        setPlaceHits([]);
+                      }}
+                    >
+                      {hit.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="xs"
+                variant={editor?.online ? "default" : "outline"}
+                onClick={() => setEditor((current) => current && { ...current, online: !current.online })}
+              >
+                Online
+              </Button>
+              <span className="text-xs text-muted-foreground">Meeting link. You can keep a place too.</span>
+            </div>
+            {editor?.online ? (
+              <>
+                <Label htmlFor="cal-url">Meeting URL</Label>
+                <Input
+                  id="cal-url"
+                  type="url"
+                  placeholder="https://"
+                  value={editor.meeting_url}
+                  onChange={(event) => setEditor((current) => current && { ...current, meeting_url: event.target.value })}
+                />
+              </>
+            ) : null}
+            <Label>Color</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {EVENT_SWATCHES.map((swatch) => (
+                <button
+                  key={swatch}
+                  type="button"
+                  aria-label={`Color ${swatch}`}
+                  className={cn("size-6 rounded-full border", editor?.color === swatch && "ring-2 ring-offset-1 ring-foreground")}
+                  style={{ backgroundColor: swatch }}
+                  onClick={() => setEditor((current) => current && { ...current, color: swatch })}
+                />
+              ))}
+            </div>
           </div>
           <DialogFooter className="gap-2">
             {editor?.id ? (

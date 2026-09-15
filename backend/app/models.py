@@ -535,6 +535,7 @@ class FastmailCalendarAccount(Base):
     token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     calendar_href: Mapped[str] = mapped_column(Text, nullable=False, default="")
     calendar_name: Mapped[str | None] = mapped_column(Text)
+    calendars_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

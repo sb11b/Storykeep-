@@ -12,6 +12,7 @@ from app.models import User
 from app.services import calendar_access as calendars
 from app.services import fastmail_calendar as fmcal
 from app.services.calendar_tool import normalize_add_event
+from app.services.nominatim_places import suggest_places
 from app.services.demo_lock import is_locked, reject_locked
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -21,12 +22,22 @@ class CalendarEventIn(BaseModel):
     title: str = Field(min_length=1, max_length=400)
     start: str
     end: str
+    location: str | None = Field(default=None, max_length=400)
+    meeting_url: str | None = Field(default=None, max_length=800)
+    online: bool = False
+    color: str | None = Field(default=None, max_length=16)
+    calendar_id: str | None = Field(default=None, max_length=800)
 
 
 class CalendarEventPatchIn(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=400)
     start: str | None = None
     end: str | None = None
+    location: str | None = Field(default=None, max_length=400)
+    meeting_url: str | None = Field(default=None, max_length=800)
+    online: bool | None = None
+    color: str | None = Field(default=None, max_length=16)
+    calendar_id: str | None = Field(default=None, max_length=800)
 
 
 class FastmailConnectIn(BaseModel):
@@ -61,6 +72,17 @@ def calendar_fastmail_connect(
         "fastmail_email": row.fastmail_email,
         "calendar_name": row.calendar_name,
     }
+
+
+@router.get("/places")
+def calendar_places(
+    q: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    del db
+    reject_locked(user)
+    return {"items": suggest_places(q)}
 
 
 @router.post("/disconnect")
@@ -122,6 +144,11 @@ def calendar_create(
         start=proposal["start"],
         end=proposal["end"],
         timezone_name=_tz(tz),
+        location=payload.location,
+        meeting_url=payload.meeting_url,
+        online=payload.online,
+        color=payload.color,
+        calendar_id=payload.calendar_id,
     )
     db.commit()
     return event
@@ -144,6 +171,11 @@ def calendar_patch(
         start=payload.start,
         end=payload.end,
         timezone_name=_tz(tz),
+        location=payload.location,
+        meeting_url=payload.meeting_url,
+        online=payload.online,
+        color=payload.color,
+        calendar_id=payload.calendar_id,
     )
     db.commit()
     return event

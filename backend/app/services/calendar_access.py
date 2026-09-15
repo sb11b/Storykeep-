@@ -22,6 +22,7 @@ def status_payload(db: Session, user_id: UUID, *, demo_locked: bool) -> dict[str
         "provider": "fastmail" if connected else None,
         "fastmail_email": fastmail.get("fastmail_email"),
         "calendar_name": fastmail.get("calendar_name"),
+        "calendars": fastmail.get("calendars") or [],
         "demo_locked": demo_locked,
     }
 
@@ -41,11 +42,27 @@ def create_event(
     start: str,
     end: str,
     timezone_name: str,
+    location: str | None = None,
+    meeting_url: str | None = None,
+    online: bool = False,
+    color: str | None = None,
+    calendar_id: str | None = None,
 ) -> dict[str, object]:
     del timezone_name
     if not fmcal.is_connected(db, user_id):
         raise HTTPException(status_code=409, detail="Connect Fastmail Calendar first.")
-    return fmcal.create_event(db, user_id, title=title, start=start, end=end)
+    return fmcal.create_event(
+        db,
+        user_id,
+        title=title,
+        start=start,
+        end=end,
+        location=location,
+        meeting_url=meeting_url,
+        online=online,
+        color=color,
+        calendar_id=calendar_id,
+    )
 
 
 def patch_event(
@@ -57,9 +74,26 @@ def patch_event(
     start: str | None,
     end: str | None,
     timezone_name: str,
+    location: str | None = None,
+    meeting_url: str | None = None,
+    online: bool | None = None,
+    color: str | None = None,
+    calendar_id: str | None = None,
 ) -> dict[str, object]:
     del timezone_name
-    return fmcal.patch_event(db, user_id, event_id, title=title, start=start, end=end)
+    return fmcal.patch_event(
+        db,
+        user_id,
+        event_id,
+        title=title,
+        start=start,
+        end=end,
+        location=location,
+        meeting_url=meeting_url,
+        online=online,
+        color=color,
+        calendar_id=calendar_id,
+    )
 
 
 def delete_event(db: Session, user_id: UUID, event_id: str) -> None:

@@ -16,12 +16,32 @@ def is_connected(db: Session, user_id: UUID) -> bool:
     return bool(row and row.token_encrypted)
 
 
+def _public_calendars(row: FastmailCalendarAccount | None) -> list[dict[str, str]]:
+    raw = list(row.calendars_json or []) if row else []
+    out: list[dict[str, str]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        href = str(item.get("href") or "")
+        name = str(item.get("name") or "Calendar")
+        color = str(item.get("color") or "")
+        record = caldav.calendar_record(href, name, color, index=index) if href else None
+        if record:
+            out.append({"id": record["id"], "name": record["name"], "color": record["color"]})
+    if not out and row and row.calendar_href:
+        record = caldav.calendar_record(row.calendar_href, row.calendar_name or "Calendar", None)
+        out.append({"id": record["id"], "name": record["name"], "color": record["color"]})
+    return out
+
+
 def status_payload(db: Session, user_id: UUID, *, demo_locked: bool) -> dict[str, object]:
     row = db.get(FastmailCalendarAccount, user_id)
+    connected = bool(row and row.token_encrypted) and not demo_locked
     return {
-        "connected": bool(row and row.token_encrypted) and not demo_locked,
+        "connected": connected,
         "fastmail_email": row.fastmail_email if row and not demo_locked else None,
         "calendar_name": row.calendar_name if row and not demo_locked else None,
+        "calendars": _public_calendars(row) if connected else [],
     }
 
 
@@ -40,6 +60,39 @@ def _creds(db: Session, user_id: UUID) -> tuple[FastmailCalendarAccount, str]:
     return row, token
 
 
+def stored_calendars(row: FastmailCalendarAccount) -> list[dict[str, str]]:
+    raw = list(row.calendars_json or [])
+    out: list[dict[str, str]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict) or not item.get("href"):
+            continue
+        out.append(
+            caldav.calendar_record(
+                str(item["href"]),
+                str(item.get("name") or "Calendar"),
+                str(item.get("color") or "") or None,
+                index=index,
+            )
+        )
+    if not out and row.calendar_href:
+        out.append(caldav.calendar_record(row.calendar_href, row.calendar_name or "Calendar", None))
+    return out
+
+
+def resolve_calendar(row: FastmailCalendarAccount, calendar_id: str | None) -> dict[str, str]:
+    calendars = stored_calendars(row)
+    if calendar_id:
+        for item in calendars:
+            if item["id"] == calendar_id:
+                return item
+        href = caldav.decode_event_id(calendar_id)
+        if href:
+            return caldav.calendar_record(href, "Calendar", None)
+    if calendars:
+        return calendars[0]
+    raise HTTPException(status_code=409, detail="Connect Fastmail Calendar first.")
+
+
 def connect(db: Session, user_id: UUID, *, email: str, token: str, calendar_url: str | None = None) -> FastmailCalendarAccount:
     address = (email or "").strip()
     secret = (token or "").strip()
@@ -52,10 +105,11 @@ def connect(db: Session, user_id: UUID, *, email: str, token: str, calendar_url:
     if row is None:
         row = FastmailCalendarAccount(user_id=user_id, token_encrypted="", fastmail_email=address)
         db.add(row)
-    row.fastmail_email = discovered["email"]
+    row.fastmail_email = str(discovered["email"])
     row.token_encrypted = encrypt_secret(secret)
-    row.calendar_href = discovered["calendar_href"]
-    row.calendar_name = discovered["calendar_name"]
+    row.calendar_href = str(discovered["calendar_href"])
+    row.calendar_name = str(discovered.get("calendar_name") or "Calendar")
+    row.calendars_json = list(discovered.get("calendars") or [])
     row.updated_at = datetime.now(timezone.utc)
     db.flush()
     return row
@@ -71,7 +125,16 @@ def disconnect(db: Session, user_id: UUID) -> None:
 
 def list_events(db: Session, user_id: UUID, *, time_min: str, time_max: str) -> list[dict[str, object]]:
     row, token = _creds(db, user_id)
-    return caldav.list_events(row.fastmail_email, token, row.calendar_href, time_min=time_min, time_max=time_max)
+    items: list[dict[str, object]] = []
+    for calendar in stored_calendars(row):
+        try:
+            items.extend(
+                caldav.list_events(row.fastmail_email, token, calendar, time_min=time_min, time_max=time_max)
+            )
+        except HTTPException:
+            continue
+    items.sort(key=lambda item: str(item.get("start") or ""))
+    return items
 
 
 def create_event(
@@ -81,15 +144,25 @@ def create_event(
     title: str,
     start: str,
     end: str,
+    location: str | None = None,
+    meeting_url: str | None = None,
+    online: bool = False,
+    color: str | None = None,
+    calendar_id: str | None = None,
 ) -> dict[str, object]:
     row, token = _creds(db, user_id)
+    calendar = resolve_calendar(row, calendar_id)
     return caldav.create_event(
         row.fastmail_email,
         token,
-        row.calendar_href,
+        calendar,
         title=title,
         start=start,
         end=end,
+        location=location,
+        meeting_url=meeting_url,
+        online=online,
+        color=color,
     )
 
 
@@ -101,8 +174,14 @@ def patch_event(
     title: str | None,
     start: str | None,
     end: str | None,
+    location: str | None = None,
+    meeting_url: str | None = None,
+    online: bool | None = None,
+    color: str | None = None,
+    calendar_id: str | None = None,
 ) -> dict[str, object]:
     row, token = _creds(db, user_id)
+    calendar = resolve_calendar(row, calendar_id) if calendar_id else None
     return caldav.patch_event(
         row.fastmail_email,
         token,
@@ -110,6 +189,11 @@ def patch_event(
         title=title,
         start=start,
         end=end,
+        location=location,
+        meeting_url=meeting_url,
+        online=online,
+        color=color,
+        calendar=calendar,
     )
 
 

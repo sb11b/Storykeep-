@@ -796,16 +796,42 @@ export const api = {
       `/api/v1/calendar/events${q ? `?${q}` : ""}`,
     );
   },
-  createCalendarEvent: (body: { title: string; start: string; end: string }, tz?: string) =>
+  createCalendarEvent: (body: {
+    title: string;
+    start: string;
+    end: string;
+    location?: string;
+    meeting_url?: string;
+    online?: boolean;
+    color?: string;
+    calendar_id?: string;
+  }, tz?: string) =>
     request<CalendarEvent>(`/api/v1/calendar/events${tz ? `?tz=${encodeURIComponent(tz)}` : ""}`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  patchCalendarEvent: (id: string, body: { title?: string; start?: string; end?: string }, tz?: string) =>
+  patchCalendarEvent: (
+    id: string,
+    body: {
+      title?: string;
+      start?: string;
+      end?: string;
+      location?: string;
+      meeting_url?: string;
+      online?: boolean;
+      color?: string;
+      calendar_id?: string;
+    },
+    tz?: string,
+  ) =>
     request<CalendarEvent>(`/api/v1/calendar/events/${encodeURIComponent(id)}${tz ? `?tz=${encodeURIComponent(tz)}` : ""}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  calendarPlaces: (q: string) =>
+    request<{ items: { label: string; lat: string; lon: string }[] }>(
+      `/api/v1/calendar/places?q=${encodeURIComponent(q)}`,
+    ),
   deleteCalendarEvent: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/calendar/events/${encodeURIComponent(id)}`, { method: "DELETE" }),
   disconnectCalendar: () => request<{ ok: boolean; connected: boolean }>("/api/v1/calendar/disconnect", { method: "POST" }),

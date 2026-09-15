@@ -377,6 +377,12 @@ export type Shelf =
   | { kind: "tag"; id: string }
   | { kind: "search"; q: string };
 
+export type CalendarFolder = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 export type CalendarEvent = {
   id: string;
   title: string;
@@ -384,6 +390,12 @@ export type CalendarEvent = {
   end: string;
   all_day?: boolean;
   html_link?: string | null;
+  location?: string;
+  meeting_url?: string;
+  online?: boolean;
+  color?: string;
+  calendar_id?: string;
+  calendar_name?: string;
 };
 
 export type CalendarStatus = {
@@ -393,6 +405,7 @@ export type CalendarStatus = {
   fastmail_configured?: boolean;
   fastmail_email?: string | null;
   calendar_name?: string | null;
+  calendars?: CalendarFolder[];
   demo_locked: boolean;
 };
 

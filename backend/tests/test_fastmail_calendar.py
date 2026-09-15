@@ -153,8 +153,8 @@ class FastmailCalDavTests(unittest.TestCase):
         chosen = pick_calendar(found)
         self.assertIsNotNone(chosen)
         assert chosen is not None
-        self.assertTrue(chosen[0].endswith("/aabbccdd/"))
-        self.assertEqual(chosen[1], "Calendar")
+        self.assertTrue(chosen["href"].endswith("/aabbccdd/"))
+        self.assertEqual(chosen["name"], "Calendar")
 
     def test_empty_listing_uses_create_on_fastmail_copy(self):
         from fastapi import HTTPException
@@ -184,6 +184,37 @@ class FastmailCalDavTests(unittest.TestCase):
 
         with self.assertRaises(HTTPException):
             normalize_calendar_url("https://evil.example/dav/", email="steve@fastmail.com")
+
+    def test_vevent_stores_location_url_and_color(self):
+        ics = build_vevent(
+            uid="zoom@storykeep",
+            title="Zoom",
+            start="2026-09-16T15:00:00-04:00",
+            end="2026-09-16T16:00:00-04:00",
+            location="Online",
+            meeting_url="https://zoom.example/j/1",
+            online=True,
+            color="#DC2626",
+        )
+        self.assertIn("LOCATION:Online", ics)
+        self.assertIn("URL:https://zoom.example/j/1", ics)
+        self.assertIn("COLOR:#DC2626", ics)
+        self.assertIn("X-APPLE-CALENDAR-COLOR:#DC2626", ics)
+        found = parse_vevents(ics)
+        self.assertTrue(found[0]["online"])
+        self.assertEqual(found[0]["color"], "#DC2626")
+        office = build_vevent(
+            uid="office@storykeep",
+            title="Office hours",
+            start="2026-09-16T10:00:00-04:00",
+            end="2026-09-16T11:00:00-04:00",
+            location="12 Main St, Boston",
+            color="#2563EB",
+        )
+        parsed = parse_vevents(office)[0]
+        self.assertEqual(parsed["location"], "12 Main St, Boston")
+        self.assertEqual(parsed["color"], "#2563EB")
+        self.assertNotEqual(parsed["color"], found[0]["color"])
 
 
 if __name__ == "__main__":
