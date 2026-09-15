@@ -27,6 +27,8 @@ import type {
   GrokMessage,
   Correction,
   NoteRevision,
+  CalendarEvent,
+  CalendarStatus,
 } from "./types";
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
@@ -782,6 +784,31 @@ export const api = {
       `/api/v1/chat/messages/${messageId}/run-snippet`,
       { method: "POST", body: JSON.stringify({ code }) },
     ),
+  calendarStatus: () => request<CalendarStatus>("/api/v1/calendar/status"),
+  calendarEvents: (params: { view?: string; time_min?: string; time_max?: string; tz?: string }) => {
+    const search = new URLSearchParams();
+    if (params.view) search.set("view", params.view);
+    if (params.time_min) search.set("time_min", params.time_min);
+    if (params.time_max) search.set("time_max", params.time_max);
+    if (params.tz) search.set("tz", params.tz);
+    const q = search.toString();
+    return request<{ items: CalendarEvent[]; time_min: string; time_max: string; view: string }>(
+      `/api/v1/calendar/events${q ? `?${q}` : ""}`,
+    );
+  },
+  createCalendarEvent: (body: { title: string; start: string; end: string }, tz?: string) =>
+    request<CalendarEvent>(`/api/v1/calendar/events${tz ? `?tz=${encodeURIComponent(tz)}` : ""}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  patchCalendarEvent: (id: string, body: { title?: string; start?: string; end?: string }, tz?: string) =>
+    request<CalendarEvent>(`/api/v1/calendar/events/${encodeURIComponent(id)}${tz ? `?tz=${encodeURIComponent(tz)}` : ""}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteCalendarEvent: (id: string) =>
+    request<{ ok: boolean }>(`/api/v1/calendar/events/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  disconnectCalendar: () => request<{ ok: boolean; connected: boolean }>("/api/v1/calendar/disconnect", { method: "POST" }),
 };
 
 export type JuniorJob = {

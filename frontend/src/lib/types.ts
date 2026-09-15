@@ -376,3 +376,26 @@ export type Shelf =
   | { kind: "category"; id: string }
   | { kind: "tag"; id: string }
   | { kind: "search"; q: string };
+
+export type CalendarEvent = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  all_day?: boolean;
+  html_link?: string | null;
+};
+
+export type CalendarStatus = {
+  configured: boolean;
+  connected: boolean;
+  google_email: string | null;
+  demo_locked: boolean;
+};
+
+export type CalendarProposal = {
+  title: string;
+  start: string;
+  end: string;
+  status?: "pending" | "wrote" | "error";
+};

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
-import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
+import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { wordIndexFromSelection } from "@/lib/tts-words";
@@ -86,6 +86,7 @@ export type ChatLine = {
   includeMode?: IncludeMode;
   includeHeading?: string | null;
   includeOffset?: number;
+  calendarProposal?: { title: string; start: string; end: string; status?: "pending" | "wrote" | "error" };
 };
 
 export type GrokPaneState = {
@@ -723,6 +724,19 @@ export function GrokPane({
                         includeHasMore: item.role === "assistant" ? Boolean(meta.include_has_more) : item.includeHasMore,
                         includeNextOffset: meta.include_next_offset ?? null,
                         includeNextHeading: meta.include_next_heading ?? null,
+                      }
+                    : item,
+                ),
+              };
+            }
+            if (meta.calendar_proposal) {
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === assistantId || item.id === meta.assistant_message_id
+                    ? {
+                        ...item,
+                        calendarProposal: { ...meta.calendar_proposal!, status: "pending" },
                       }
                     : item,
                 ),
@@ -1855,6 +1869,7 @@ export function GrokPane({
             </p>
           ) : (
             pane.messages.map((item) => (
+              <div key={item.id}>
               <GrokChatMessage
                 key={item.id}
                 id={item.id}
@@ -1931,6 +1946,22 @@ export function GrokPane({
                 onRunSnippet={(messageId, code) => void runSnippet(messageId, code)}
                 onOpenArticle={onOpenArticle}
               />
+              {item.calendarProposal ? (
+                <CalendarProposalCard
+                  proposal={item.calendarProposal}
+                  onWrote={(status) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      messages: current.messages.map((row) =>
+                        row.id === item.id && row.calendarProposal
+                          ? { ...row, calendarProposal: { ...row.calendarProposal, status } }
+                          : row,
+                      ),
+                    }))
+                  }
+                />
+              ) : null}
+              </div>
             ))
           )}
         </div>

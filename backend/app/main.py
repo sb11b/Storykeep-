@@ -17,7 +17,7 @@ from app.config import settings
 from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, chat, feeds, junior_jobs, library, overlay, school, stt, sync, tts
+from app.routers import articles, auth, backups, calendar, chat, feeds, junior_jobs, library, overlay, school, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -139,6 +139,14 @@ def _create_schema() -> None:
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_otp_enabled BOOLEAN DEFAULT FALSE")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS backup_code_hashes JSONB DEFAULT '[]'::jsonb")
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS google_calendar_accounts ("
+        "user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
+        "google_sub TEXT, google_email TEXT, "
+        "access_token_encrypted TEXT NOT NULL, refresh_token_encrypted TEXT, "
+        "token_expiry TIMESTAMPTZ, scope TEXT NOT NULL, "
+        "created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())"
+    )
     _try_sql(
         "CREATE TABLE IF NOT EXISTS auth_challenges ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
@@ -319,6 +327,7 @@ app.include_router(chat.router, prefix=API)
 app.include_router(school.router, prefix=API)
 app.include_router(junior_jobs.router, prefix=API)
 app.include_router(stt.router, prefix=API)
+app.include_router(calendar.router, prefix=API)
 
 
 # Logged-out browsers opening these paths used to get the SPA shell and hang on

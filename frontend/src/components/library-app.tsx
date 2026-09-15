@@ -8,6 +8,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Calculator,
+  CalendarDays,
   Check,
   CheckCheck,
   ChevronDown,
@@ -35,6 +36,7 @@ import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
 import { CalculatorOverlay, type CalculatorHandle } from "@/components/calculator-overlay";
+import { CalendarOverlay } from "@/components/calendar-overlay";
 import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect, FolderSelect, RssShelfSelect } from "@/components/destination-controls";
 import { NoteAttachmentChips } from "@/components/note-attachments";
@@ -636,6 +638,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const noteFocusRef = useRef<(() => void) | null>(null);
   const listenRef = useRef<ListenControlsHandle>(null);
   const calculatorRef = useRef<CalculatorHandle>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const caretWordRef = useRef<(() => number | null) | null>(null);
   const itemsRef = useRef<ArticleListItem[]>([]);
   const totalRef = useRef(0);
@@ -913,6 +916,10 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
 
   useEffect(() => {
     const openFromLocation = () => {
+      if (window.location.hash === "#calendar") {
+        setCalendarOpen(true);
+        return;
+      }
       const fromHash = parseArticleHash(window.location.hash);
       const fromQuery = new URLSearchParams(window.location.search).get("article");
       const articleId = fromHash || fromQuery;
@@ -1509,7 +1516,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
         <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
@@ -1625,6 +1632,18 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               <Calculator className="size-3" />
               Calculator
+            </Button>
+            <Button
+              size="xs"
+              variant={calendarOpen ? "default" : "outline"}
+              title="Open StoryKeep Calendar"
+              onClick={() => {
+                setCalendarOpen(true);
+                window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#calendar`);
+              }}
+            >
+              <CalendarDays className="size-3" />
+              Calendar
             </Button>
             <Button
               size="xs"
@@ -2101,6 +2120,15 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             )}
           </section>
         </div>
+        <CalendarOverlay
+          open={calendarOpen}
+          onClose={() => {
+            setCalendarOpen(false);
+            if (window.location.hash === "#calendar") {
+              window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+            }
+          }}
+        />
       </div>
 
       <AddFeedDialog

@@ -23,6 +23,14 @@ from app.services import chat as chat_service
 from app.services import chat_attachments
 from app.services import chat_image
 from app.services import chat_docx
+from app.services import google_calendar as gcal
+from app.services.calendar_tool import (
+    ADD_EVENT_TOOL,
+    CALENDAR_OFF_APPEND,
+    CALENDAR_ON_APPEND,
+    assemble_tool_calls,
+    extract_calendar_proposal,
+)
 from app.services import grok_conversations as grok_store
 from app.services import imagine as imagine_service
 from app.services.demo_lock import is_locked, reject_locked
@@ -724,6 +732,14 @@ async def _chat(
     unread_catalog = unread_news_block(db, user.id, user_text)
     if unread_catalog:
         history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
+    calendar_connected = gcal.is_connected(db, user_id) and not is_locked(user)
+    extras = []
+    if unread_catalog:
+        extras.append(UNREAD_READER_SYSTEM)
+    extras.append(CALENDAR_ON_APPEND if calendar_connected else CALENDAR_OFF_APPEND)
+    extra_system = "\n".join(extras)
+    calendar_tools = [ADD_EVENT_TOOL] if calendar_connected else None
+    tool_calls_out: list[dict] = []
 
     def _persist_assistant(text: str) -> str | None:
         cleaned = (text or "").strip()
@@ -765,8 +781,10 @@ async def _chat(
         include_note=include_note,
         note_excerpt=note_excerpt,
         working_excerpt=working_excerpt,
-        extra_system=UNREAD_READER_SYSTEM if unread_catalog else None,
+        extra_system=extra_system,
         cancelled=cancelled,
+        tools=calendar_tools,
+        tool_calls_out=tool_calls_out,
     )
 
     async def watch_disconnect() -> None:
@@ -835,6 +853,11 @@ async def _chat(
             if cancelled.is_set() or await request.is_disconnected():
                 _persist_assistant("".join(assistant_parts))
                 return
+            proposal = assemble_tool_calls(tool_calls_out) or extract_calendar_proposal("".join(assistant_parts))
+            if proposal and not "".join(assistant_parts).strip():
+                note = "I can add this to your Google Calendar after you confirm."
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if persist and conversation_id:
                 assistant_text = "".join(assistant_parts).strip() or "No reply came back."
                 assistant_message_id = _persist_assistant(assistant_text)
@@ -848,6 +871,8 @@ async def _chat(
                             "reasoning_effort": resolved_reasoning,
                         }
                     )
+            if proposal:
+                yield chat_service.encode_sse({"calendar_proposal": proposal})
             yield chat_service.encode_sse("[DONE]")
         except HTTPException as exc:
             status_code, detail = chat_service.http_exception_detail(exc)

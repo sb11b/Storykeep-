@@ -910,6 +910,8 @@ async def stream_completion(
     extra_system: str | None = None,
     working_excerpt: str | None = None,
     cancelled: asyncio.Event | None = None,
+    tools: list[dict] | None = None,
+    tool_calls_out: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
@@ -932,7 +934,7 @@ async def stream_completion(
         max_tokens=max_tokens,
         stream=True,
         temperature=0.6,
-        tools=None,
+        tools=tools,
     )
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -949,6 +951,27 @@ async def stream_completion(
                 if xai_status >= 400:
                     body = (await response.aread()).decode("utf-8", errors="replace")
                     detail = parse_xai_error_body(body, xai_status)
+                    if tools and xai_status in {400, 422}:
+                        async for piece in stream_completion(
+                            history,
+                            excerpt,
+                            include_article=include_article,
+                            recap_question=recap_question,
+                            model=model,
+                            model_choice=model_choice,
+                            reasoning_effort=reasoning_effort,
+                            user_id=user_id,
+                            has_attachments=has_attachments,
+                            include_note=include_note,
+                            note_excerpt=note_excerpt,
+                            extra_system=extra_system,
+                            working_excerpt=working_excerpt,
+                            cancelled=cancelled,
+                            tools=None,
+                            tool_calls_out=tool_calls_out,
+                        ):
+                            yield piece
+                        return
                     _xai_ttft_log(
                         ok=False,
                         ttft_ms=int((time.perf_counter() - started) * 1000),
@@ -1006,7 +1029,10 @@ async def stream_completion(
                         data = line.strip()
                     if data == "[DONE]":
                         break
-                    text, active = _parse_sse_chunk(data)
+                    text, active, tool_bits = _parse_sse_payload(data)
+                    if tool_bits and tool_calls_out is not None:
+                        tool_calls_out.extend(tool_bits)
+                        active = True
                     if not active and not text:
                         continue
                     if first_token_at is None:
@@ -1071,15 +1097,15 @@ async def stream_completion(
         ) from exc
 
 
-def _parse_sse_chunk(raw: str) -> tuple[str, bool]:
-    """Return (user-visible text, whether xAI sent any token activity)."""
+def _parse_sse_payload(raw: str) -> tuple[str, bool, list[dict]]:
+    """Return (user-visible text, activity, tool_call fragments)."""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return "", False
+        return "", False, []
     choices = parsed.get("choices") or []
     if not choices:
-        return "", False
+        return "", False, []
     delta = choices[0].get("delta") or {}
     content = delta.get("content")
     visible = content if isinstance(content, str) and content else ""
@@ -1089,8 +1115,19 @@ def _parse_sse_chunk(raw: str) -> tuple[str, bool]:
         if isinstance(fallback, str) and fallback:
             visible = fallback
     reasoning = delta.get("reasoning_content")
-    active = bool(visible) or (isinstance(reasoning, str) and bool(reasoning))
-    return visible, active
+    tool_calls = delta.get("tool_calls") or []
+    bits = [item for item in tool_calls if isinstance(item, dict)]
+    if not bits:
+        message = choices[0].get("message") or {}
+        extra = message.get("tool_calls") or []
+        bits = [item for item in extra if isinstance(item, dict)]
+    active = bool(visible) or (isinstance(reasoning, str) and bool(reasoning)) or bool(bits)
+    return visible, active, bits
+
+
+def _parse_sse_chunk(raw: str) -> tuple[str, bool]:
+    text, active, _ = _parse_sse_payload(raw)
+    return text, active
 
 
 def _delta_text(raw: str) -> str:
