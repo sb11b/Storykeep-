@@ -54,22 +54,16 @@ _DEAD_MODEL_ALIASES = {
 }
 XAI_MODELS_CACHE_SEC = 900.0
 AUTO_LOW_MAX_CHARS = 400
-# Auto: short talk → low. Long prompts, school, or code → xhigh. Explicit
-# "think harder" / "deep dive" also lifts the current turn.
-_AUTO_XHIGH_PATTERNS = tuple(
-    re.compile(pattern)
-    for pattern in (
-        r"\bthink (?:really |very |much )?(?:hard|harder|deeply|deeper)\b",
-        r"\bdeep dive\b",
-        r"\bdeep think\b",
-        r"\bmax(?:imum)? (?:reasoning|effort)\b",
-        r"\bxhigh\b",
-        r"\breason (?:hard|harder)\b",
-        r"\btake your time\b",
-        r"\bstep by step\b",
-        r"\bwork through (?:this|it) carefully\b",
-    )
+# Auto: hello / small talk / a short paste → grok-4.6 · low.
+# xhigh only for school, code, or a long analyze turn.
+_SMALL_TALK_RE = re.compile(
+    r"^(?:hi|hello|hey|yo|thanks|thank you|"
+    r"good (?:morning|afternoon|evening|night)|"
+    r"how(?:'s| is| was| were)? (?:it going|your (?:morning|day|evening|night)|you)|"
+    r"what(?:'s| is|s) up)[\s!?.]*$",
+    re.I,
 )
+_ANALYZE_RE = re.compile(r"\banaly[sz]e\b", re.I)
 CODE_KEYWORDS = (
     "code",
     "debug",
@@ -296,17 +290,16 @@ def normalize_model_choice(choice: str | None) -> str:
 
 
 def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
-    """True for long, school, or code turns (and explicit deep-think asks). History is ignored."""
+    """True only for school/code, or a long analyze turn. History and small talk stay low."""
     del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
     if not text:
         return False
-    lower = text.lower()
-    if any(pattern.search(lower) for pattern in _AUTO_XHIGH_PATTERNS):
-        return True
-    if len(text) >= AUTO_LOW_MAX_CHARS:
-        return True
+    if len(text) < 160 and _SMALL_TALK_RE.match(text):
+        return False
     if _SCHOOL_CODE_RE.search(text):
+        return True
+    if len(text) >= AUTO_LOW_MAX_CHARS and _ANALYZE_RE.search(text):
         return True
     return False
 
@@ -331,11 +324,16 @@ def resolve_reasoning_for_request(
 ) -> str:
     normalized_model = normalize_model_choice(model_choice)
     if normalized_model == MODEL_AUTO:
-        return "xhigh" if pick_xhigh_for_auto(message) else "low"
-    cleaned = normalize_reasoning_effort(reasoning_choice)
-    if cleaned == REASONING_AUTO:
-        return "xhigh" if pick_xhigh_for_auto(message) else "low"
-    return clamp_reasoning_effort(normalized_model, cleaned)
+        effort = "xhigh" if pick_xhigh_for_auto(message) else "low"
+    else:
+        cleaned = normalize_reasoning_effort(reasoning_choice)
+        if cleaned == REASONING_AUTO:
+            effort = "xhigh" if pick_xhigh_for_auto(message) else "low"
+        else:
+            effort = clamp_reasoning_effort(normalized_model, cleaned)
+    if effort == "xhigh" and not pick_xhigh_for_auto(message):
+        return "low"
+    return effort
 
 
 def model_label(choice: str, resolved: str | None = None) -> str:

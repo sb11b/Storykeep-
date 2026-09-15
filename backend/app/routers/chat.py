@@ -606,12 +606,12 @@ async def chat(
             media_type="text/event-stream",
             headers=_sse_headers(),
         )
-    route_text = chat_attachments.merge_attachment_text(user_text, current_files, include_extracts=True)
     history_for_route = chat_service.drop_trailing_assistants(
         [{"role": item.get("role"), "content": item.get("content") or ""} for item in history]
     )
     history_window = chat_service.thread_window(history_for_route)
-    route_message = route_text or user_text or "attached file"
+    # Route Auto on this turn's typed line only. Extracts/articles must not lift hello to xhigh.
+    route_message = (user_text or "").strip() or "attached file"
     resolved_model = chat_service.resolve_model_for_request(
         model_choice,
         route_message,

@@ -85,6 +85,31 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertIn('"stream_status": "writing"', response.text)
         self.assertIn("Hi", response.text)
 
+    def test_morning_auto_sends_grok46_low(self):
+        captured: dict = {}
+
+        async def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            yield "Fine"
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "how was your morning", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured.get("model"), "grok-4.6")
+        self.assertEqual(captured.get("reasoning_effort"), "low")
+        self.assertNotIn("code_interpreter", response.text)
+        self.assertIn('"reasoning_effort": "low"', response.text)
+
     def test_chat_health_includes_xai_status(self):
         app = _app()
         payload = {

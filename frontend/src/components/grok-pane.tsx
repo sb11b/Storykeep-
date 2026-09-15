@@ -58,6 +58,7 @@ import {
 } from "@/lib/include-chunk";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
+import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
@@ -241,6 +242,7 @@ export function GrokPane({
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
   const [aborting, setAborting] = useState(false);
   const [inFlightSpend, setInFlightSpend] = useState<string | null>(null);
+  const turnSpendRef = useRef({ model: "grok-4.6", reasoning: "low" });
   const [savingChat, setSavingChat] = useState(false);
   const [notePickerOpen, setNotePickerOpen] = useState(false);
   const [noteQuery, setNoteQuery] = useState("");
@@ -580,7 +582,14 @@ export function GrokPane({
     abortRef.current = controller;
     abortingRef.current = false;
     setAborting(false);
-    setInFlightSpend(null);
+    const posted = postedSpendForTurn(pane.modelChoice, pane.reasoningEffort, message);
+    turnSpendRef.current = posted;
+    setInFlightSpend(spendChipLabel(posted.model, posted.reasoning));
+    onUpdate((current) => ({
+      ...current,
+      lastResolvedModel: posted.model,
+      lastResolvedReasoning: posted.reasoning,
+    }));
 
     setBusy(true);
     try {
@@ -716,10 +725,10 @@ export function GrokPane({
               };
             }
             if (meta.model || meta.reasoning_effort) {
-              const spend = spendChipLabel(
-                meta.model || next.lastResolvedModel,
-                meta.reasoning_effort || next.lastResolvedReasoning,
-              );
+              const model = meta.model || turnSpendRef.current.model;
+              const reasoning = meta.reasoning_effort || turnSpendRef.current.reasoning;
+              turnSpendRef.current = { model, reasoning };
+              const spend = spendChipLabel(model, reasoning);
               setInFlightSpend(spend);
               const targetId = meta.assistant_message_id || assistantId;
               next = {
@@ -756,6 +765,9 @@ export function GrokPane({
         : formatChatError(status, detail, label);
       const timeoutToast = chatTimeoutToast(status, formatted);
       const oversizedPaste = isOversizedPasteHttp(status, detail);
+      if (oversizedPaste) {
+        offerPasteSplit(userLine?.content || message);
+      }
       const imageFail = generatingRef.current || /did not return an image|could not generate that image/i.test(detail);
       const shortImage = readableXaiToast(detail);
       const toastText = imageFail
@@ -784,7 +796,9 @@ export function GrokPane({
             : item,
         ),
       }));
-      toast.error(toastText);
+      if (!oversizedPaste) {
+        toast.error(toastText);
+      }
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       abortingRef.current = false;

@@ -155,6 +155,7 @@ export async function readGrokChatStream(
   let firstDeltaAt: number | null = null;
   let postedModel: string | undefined;
   let postedReasoning: string | undefined;
+  let xaiStatus: number | string | null = null;
   const wrapped: GrokStreamHandlers = {
     onDelta: handlers.onDelta,
     onMeta: (meta) => {
@@ -183,12 +184,14 @@ export async function readGrokChatStream(
     if (!receivedDelta.value) {
       const budget = preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs;
       if (now - startedAt >= budget) {
+        xaiStatus = 504;
         throw new ApiError(504, formatChatError(504, "xAI silent"));
       }
       return;
     }
     if (now - lastActivityAt >= idle.ms) {
       const detail = idle.ms > GROK_STREAM_IDLE_AFTER_MS ? "Timed out waiting for the image." : "Timed out after 60s.";
+      xaiStatus = 504;
       throw new ApiError(504, formatChatError(504, detail), {
         partial: true,
       });
@@ -234,15 +237,20 @@ export async function readGrokChatStream(
           if (receivedDelta.value) {
             lastActivityAt = Date.now();
             if (firstDeltaAt == null) firstDeltaAt = lastActivityAt;
+            if (xaiStatus == null) xaiStatus = 200;
           }
           if (outcome === "done") {
             if (!receivedDelta.value) {
+              xaiStatus = 504;
               throw new ApiError(504, formatChatError(504, "xAI silent"));
             }
             return;
           }
         } catch (error) {
-          if (error instanceof ApiError) throw error;
+          if (error instanceof ApiError) {
+            xaiStatus = error.status;
+            throw error;
+          }
         }
       }
     }
@@ -255,11 +263,17 @@ export async function readGrokChatStream(
       }
     }
     if (!receivedDelta.value) {
+      xaiStatus = 504;
       throw new ApiError(504, formatChatError(504, "xAI silent"));
     }
   } finally {
     const ttftMs = firstDeltaAt != null ? firstDeltaAt - startedAt : -1;
-    console.info("xAI", spendChipLabel(postedModel, postedReasoning), { ttft_ms: ttftMs, flushed: receivedDelta.value });
+    console.info("xAI", spendChipLabel(postedModel, postedReasoning), {
+      ttft_ms: ttftMs,
+      model: postedModel || "grok-4.6",
+      reasoning: postedReasoning || "low",
+      xai_status: xaiStatus,
+    });
     try {
       await reader.cancel();
     } catch {

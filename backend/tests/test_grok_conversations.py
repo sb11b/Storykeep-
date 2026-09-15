@@ -117,27 +117,35 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "xhigh")
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "please analyze this", []), "low")
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "what is photo metadata", []), "low")
+        ramble = "Hey, just checking in. " * 40
+        self.assertGreaterEqual(len(ramble), AUTO_LOW_MAX_CHARS)
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", ramble, []), "low")
 
-    def test_auto_uses_xhigh_for_school_code_and_explicit_asks(self):
+    def test_auto_uses_xhigh_for_school_code_and_long_analyze(self):
         self.assertEqual(
             resolve_reasoning_for_request(MODEL_AUTO, "auto", "think harder about this proof", []),
-            "xhigh",
+            "low",
         )
         self.assertEqual(
             resolve_reasoning_for_request(MODEL_AUTO, "auto", "do a deep dive on my schema", []),
-            "xhigh",
+            "low",
         )
-        self.assertFalse(pick_fast_for_auto("think harder about this proof"))
+        self.assertTrue(pick_fast_for_auto("think harder about this proof"))
         self.assertEqual(
             resolve_reasoning_for_request(MODEL_AUTO, "auto", "help with this python homework", []),
             "xhigh",
         )
+        long_analyze = "Please analyze this dataset. " + ("notes " * 80)
+        self.assertGreaterEqual(len(long_analyze), 400)
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", long_analyze, []), "xhigh")
 
     def test_locked_model_skips_auto_routing(self):
         resolved = resolve_model_for_request("grok-4.6", "hi", [])
         self.assertEqual(resolved, "grok-4.6")
         self.assertEqual(resolve_model_for_request("grok-4", "hi", []), "grok-4.6")
         self.assertEqual(resolve_reasoning_for_request("grok-4.6", "high", "hello", []), "high")
+        self.assertEqual(resolve_reasoning_for_request("grok-4.6", "xhigh", "hello", []), "low")
+        self.assertEqual(resolve_reasoning_for_request("grok-4.6", "xhigh", "help with this python homework", []), "xhigh")
 
     def test_rewrites_dead_fast_alias(self):
         from app.services.chat import CURRENT_CHAT_MODEL, CURRENT_FAST_MODEL, rewrite_xai_model
