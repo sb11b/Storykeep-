@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  articleIdFromHref,
   chatArticleClick,
   noteMarkdownHtml,
   parseArticleHash,
@@ -171,6 +172,7 @@ test("article hash links open in the reader without a publisher href", () => {
   assert.doesNotMatch(html, /target="_blank"/);
   assert.doesNotMatch(html, /foxnews\.com|newsmax\.com/i);
   assert.equal(parseArticleHash(`#article/${id}`), id);
+  assert.equal(articleIdFromHref(`/articles/${id}`), id);
 });
 
 test("publisher headline markdown is not an outbound href", () => {

@@ -45,6 +45,12 @@ List the exact titles. Each title must be a markdown link [title](#article/{arti
 Never use a publisher URL as the href. Never invent ids. Stay in StoryKeep; do not send the reader to another site.
 """
 UNREAD_TITLE_CAP = 40
+UNREAD_DEFAULT_LIMIT = 5
+PUBLISHER_MD_LINK_RE = re.compile(
+    r"\[([^\]]+)\]\(https?://(?:www\.)?(?:foxnews\.com|newsmax\.com)[^)\s]*\)",
+    re.I,
+)
+PUBLISHER_URL_RE = re.compile(r"https?://(?:www\.)?(?:foxnews\.com|newsmax\.com)\S*", re.I)
 
 
 def parse_cron(expr: str) -> tuple[str, str, str, str, str]:
@@ -222,9 +228,12 @@ def prompt_wants_unread_catalog(prompt: str) -> bool:
     )
 
 
-def unread_limit_from_prompt(prompt: str) -> int:
-    if FIVE_NEWEST_RE.search(prompt or ""):
+def unread_limit_from_prompt(prompt: str, title: str = "") -> int:
+    blob = f"{title}\n{prompt}"
+    if FIVE_NEWEST_RE.search(blob) or re.search(r"\btop\s*(?:five|5)\b", blob, re.I):
         return 5
+    if prompt_wants_unread_catalog(prompt):
+        return UNREAD_DEFAULT_LIMIT
     return UNREAD_TITLE_CAP
 
 
@@ -232,46 +241,36 @@ def unread_feed_scope(prompt: str) -> str:
     text = prompt or ""
     fox = bool(FOX_FEED_RE.search(text))
     newsmax = bool(NEWSMAX_FEED_RE.search(text))
-    if fox and not newsmax:
-        return "fox"
     if newsmax and not fox:
         return "newsmax"
-    return "all"
+    if fox and newsmax:
+        return "fox_or_newsmax"
+    if fox:
+        return "fox"
+    return "fox_maybe_newsmax"
 
 
 def _feed_scope_filter(scope: str):
+    fox = or_(
+        Feed.title.ilike("%fox%"),
+        Feed.url.ilike("%foxnews%"),
+        Feed.site_url.ilike("%foxnews%"),
+    )
+    newsmax = or_(
+        Feed.title.ilike("%newsmax%"),
+        Feed.url.ilike("%newsmax%"),
+        Feed.site_url.ilike("%newsmax%"),
+    )
     if scope == "fox":
-        return or_(
-            Feed.title.ilike("%fox%"),
-            Feed.url.ilike("%foxnews%"),
-            Feed.site_url.ilike("%foxnews%"),
-        )
+        return fox
     if scope == "newsmax":
-        return or_(
-            Feed.title.ilike("%newsmax%"),
-            Feed.url.ilike("%newsmax%"),
-            Feed.site_url.ilike("%newsmax%"),
-        )
+        return newsmax
+    if scope in {"fox_or_newsmax", "fox_maybe_newsmax"}:
+        return or_(fox, newsmax)
     return None
 
 
-def unread_items(db: Session, user_id: UUID, prompt: str) -> list[dict[str, str]]:
-    limit = unread_limit_from_prompt(prompt)
-    stmt = (
-        select(Article.id, Article.title, Feed.title)
-        .join(Feed, Article.feed_id == Feed.id)
-        .where(
-            Feed.user_id == user_id,
-            Article.is_read.is_(False),
-            Article.source_kind == "rss",
-        )
-        .order_by(Article.published_at.desc().nulls_last(), Article.created_at.desc())
-        .limit(limit)
-    )
-    scope_filter = _feed_scope_filter(unread_feed_scope(prompt))
-    if scope_filter is not None:
-        stmt = stmt.where(scope_filter)
-    rows = db.execute(stmt).all()
+def _rows_to_unread_items(rows) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for article_id, title, feed_title in rows:
         cleaned = " ".join((title or "").split())
@@ -285,6 +284,36 @@ def unread_items(db: Session, user_id: UUID, prompt: str) -> list[dict[str, str]
             }
         )
     return items
+
+
+def fetch_unread(db: Session, user_id: UUID, scope: str, limit: int) -> list[dict[str, str]]:
+    stmt = (
+        select(Article.id, Article.title, Feed.title)
+        .join(Feed, Article.feed_id == Feed.id)
+        .where(
+            Feed.user_id == user_id,
+            Article.is_read.is_(False),
+            Article.source_kind == "rss",
+        )
+        .order_by(Article.published_at.desc().nulls_last(), Article.created_at.desc())
+        .limit(limit)
+    )
+    scope_filter = _feed_scope_filter(scope)
+    if scope_filter is not None:
+        stmt = stmt.where(scope_filter)
+    return _rows_to_unread_items(db.execute(stmt).all())
+
+
+def unread_items(db: Session, user_id: UUID, prompt: str, title: str = "") -> list[dict[str, str]]:
+    limit = unread_limit_from_prompt(prompt, title)
+    scope = unread_feed_scope(prompt)
+    if scope == "fox_maybe_newsmax":
+        fox = fetch_unread(db, user_id, "fox", limit)
+        newsmax = fetch_unread(db, user_id, "newsmax", limit)
+        if not newsmax:
+            return fox[:limit]
+        return fetch_unread(db, user_id, "fox_or_newsmax", limit)[:limit]
+    return fetch_unread(db, user_id, scope, limit)
 
 
 def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) -> list[str]:
@@ -308,10 +337,52 @@ def format_unread_news_block(items: list[dict[str, str]]) -> str:
     )
 
 
-def unread_news_block(db: Session, user_id: UUID, prompt: str) -> str | None:
+def unread_news_block(db: Session, user_id: UUID, prompt: str, title: str = "") -> str | None:
     if not prompt_wants_unread_catalog(prompt):
         return None
-    return format_unread_news_block(unread_items(db, user_id, prompt))
+    return format_unread_news_block(unread_items(db, user_id, prompt, title))
+
+
+def reader_list_markdown(items: list[dict[str, str]]) -> str:
+    return "\n".join(f"- [{item['title']}](#article/{item['article_id']})" for item in items)
+
+
+def rewrite_unread_links(text: str, items: list[dict[str, str]]) -> str:
+    if not items:
+        return text or ""
+    by_title = {item["title"].casefold(): item for item in items}
+
+    def replace_publisher(match: re.Match[str]) -> str:
+        title = match.group(1) or ""
+        item = by_title.get(title.casefold())
+        if not item:
+            return match.group(0)
+        return f"[{item['title']}](#article/{item['article_id']})"
+
+    out = PUBLISHER_MD_LINK_RE.sub(replace_publisher, text or "")
+    out = PUBLISHER_URL_RE.sub("", out)
+    for item in items:
+        linked = f"[{item['title']}](#article/{item['article_id']})"
+        if f"#article/{item['article_id']}" in out:
+            continue
+        pattern = re.compile(rf"(?<!\[){re.escape(item['title'])}(?!\s*\]\()", re.I)
+        out, n = pattern.subn(linked, out, count=1)
+        if n == 0:
+            continue
+    return out
+
+
+def ensure_reader_links(text: str, items: list[dict[str, str]]) -> str:
+    if not items:
+        return text or ""
+    rewritten = rewrite_unread_links(text or "", items)
+    missing = [item for item in items if f"#article/{item['article_id']}" not in rewritten]
+    if not missing:
+        return rewritten
+    catalog = reader_list_markdown(items)
+    if rewritten.strip() in {"", SEARCH_FAILED}:
+        return catalog
+    return f"{rewritten.rstrip()}\n\n{catalog}"
 
 
 def attach_unread_catalog(history: list[dict], catalog: str | None) -> list[dict]:
@@ -420,7 +491,8 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
     reasoning = job_reasoning(job)
     excerpt = _include_excerpt(db, user, job.include_article_id)
     user_line = f"[Junior job: {job.title}]\n\n{job.prompt.strip()}"
-    news = unread_news_block(db, user.id, job.prompt)
+    unread = unread_items(db, user.id, job.prompt, job.title) if prompt_wants_unread_catalog(job.prompt) else []
+    news = format_unread_news_block(unread) if prompt_wants_unread_catalog(job.prompt) else None
     if news:
         user_line = f"{user_line}\n\n{news}"
     history: list[dict] = []
@@ -481,6 +553,7 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
         error = str(exc)
         output = error
         logger.exception("Junior job failed id=%s", job.id)
+    output = ensure_reader_links(output, unread)
     grok_store.append_message(db, conversation, role="user", content=user_line, set_title_from_user=False)
     assistant = grok_store.append_message(db, conversation, role="assistant", content=output)
     conversation.last_model = model
@@ -504,6 +577,12 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
     db.commit()
     db.refresh(job)
     db.refresh(assistant)
+    logger.info(
+        "junior_job_run job_id=%s status=%s chars=%s",
+        job.id,
+        status,
+        len(assistant.content or ""),
+    )
     if status == "ok" and job.shelf:
         try:
             dest = normalize_destination(job.shelf, user)

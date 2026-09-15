@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
-import { ApiError, api, type JuniorJob } from "@/lib/api";
+import { api, type JuniorJob } from "@/lib/api";
+import { toastActionError } from "@/lib/toast-message";
 import type { CustomNoteShelf } from "@/lib/custom-note-shelves";
 import type { Folder } from "@/lib/types";
 import {
@@ -192,7 +193,7 @@ export function JuniorJobsPanel({
       const payload = await api.juniorJobs();
       setJobs(payload.items || []);
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not load Junior jobs.");
+      toastActionError(error, "load Junior jobs", "Could not load Junior jobs.");
     } finally {
       setLoading(false);
     }
@@ -251,7 +252,7 @@ export function JuniorJobsPanel({
       }
       cancelForm();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save that job.");
+      toastActionError(error, "save that job", "Could not save that job.");
     } finally {
       setBusy(false);
     }
@@ -263,7 +264,7 @@ export function JuniorJobsPanel({
       const saved = await api.patchJuniorJob(job.id, { enabled: !job.enabled });
       setJobs((current) => current.map((item) => (item.id === saved.id ? saved : item)));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not update that job.");
+      toastActionError(error, "update that job", "Could not update that job.");
     } finally {
       setBusy(false);
     }
@@ -277,7 +278,7 @@ export function JuniorJobsPanel({
       setJobs((current) => current.filter((item) => item.id !== job.id));
       if (editingId === job.id) cancelForm();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not delete that job.");
+      toastActionError(error, "delete that job", "Could not delete that job.");
     } finally {
       setBusy(false);
     }
@@ -291,7 +292,7 @@ export function JuniorJobsPanel({
       if (result.conversation_id) onRanConversation(result.conversation_id);
       toast.success(result.job.last_status === "ok" ? "Job finished — check the thread" : "Job ran with an error");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not run that job.");
+      toastActionError(error, "run that job", "Could not run that job.");
     } finally {
       setBusy(false);
     }

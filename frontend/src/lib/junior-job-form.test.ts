@@ -32,7 +32,9 @@ test("edit payload keeps the same fields and new prompt", () => {
   assert.equal(body.prompt, "Unread Fox only");
   assert.equal(body.cron, "0 8 * * 1-5");
   assert.equal(body.web_search, false);
+  assert.equal(body.xhigh, false);
   assert.equal(body.enabled, true);
+  assert.equal(body.shelf, null);
 });
 
 test("new draft defaults search off and enabled on", () => {

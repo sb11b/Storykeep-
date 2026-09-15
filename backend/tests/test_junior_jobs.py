@@ -86,10 +86,17 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertTrue(prompt_wants_my_news("Use only my StoryKeep Unread from Fox News. Five newest by published time."))
         self.assertFalse(prompt_wants_my_news("what's on Reuters homepage"))
         self.assertEqual(unread_feed_scope("Unread from Fox News. Five newest."), "fox")
+        self.assertEqual(unread_feed_scope("Unread Fox only"), "fox")
+        self.assertEqual(unread_feed_scope("What is my news today?"), "fox_maybe_newsmax")
         self.assertEqual(unread_limit_from_prompt("Five newest by published time. Exact titles."), 5)
+        self.assertEqual(unread_limit_from_prompt("Unread Fox only"), 5)
         article_id = uuid4()
         db = MagicMock()
-        db.execute.return_value.all.return_value = [(article_id, "DAT-200 quiz", "Fox News")]
+        fox = MagicMock()
+        fox.all.return_value = [(article_id, "DAT-200 quiz", "Fox News")]
+        empty = MagicMock()
+        empty.all.return_value = []
+        db.execute.side_effect = [fox, empty]
         block = unread_news_block(db, uuid4(), "What is my news today?")
         self.assertIn("StoryKeep Unread", block)
         self.assertIn("DAT-200 quiz", block)
@@ -98,6 +105,41 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertIn(f"[DAT-200 quiz](#article/{article_id})", block)
         self.assertNotIn("http://", block or "")
         self.assertIsNone(unread_news_block(db, uuid4(), "what's on Reuters homepage"))
+
+    def test_unread_is_fox_unless_newsmax_has_items(self):
+        from app.services.junior_jobs import unread_items
+
+        fox_id, nm_id = uuid4(), uuid4()
+        db = MagicMock()
+        fox = MagicMock()
+        fox.all.return_value = [(fox_id, "Fox A", "Fox News")]
+        empty = MagicMock()
+        empty.all.return_value = []
+        db.execute.side_effect = [fox, empty]
+        items = unread_items(db, uuid4(), "my Unread")
+        self.assertEqual([item["title"] for item in items], ["Fox A"])
+
+        db2 = MagicMock()
+        fox2 = MagicMock()
+        fox2.all.return_value = [(fox_id, "Fox A", "Fox News")]
+        nm = MagicMock()
+        nm.all.return_value = [(nm_id, "NM B", "Newsmax")]
+        both = MagicMock()
+        both.all.return_value = [(fox_id, "Fox A", "Fox News"), (nm_id, "NM B", "Newsmax")]
+        db2.execute.side_effect = [fox2, nm, both]
+        titles = [item["title"] for item in unread_items(db2, uuid4(), "Unread today")]
+        self.assertEqual(titles, ["Fox A", "NM B"])
+
+    def test_rewrite_publisher_urls_to_reader_hash(self):
+        from app.services.junior_jobs import ensure_reader_links
+
+        article_id = str(uuid4())
+        items = [{"article_id": article_id, "title": "Senate vote", "feed": "Fox News"}]
+        out = ensure_reader_links("[Senate vote](https://www.foxnews.com/politics/x)", items)
+        self.assertIn(f"[Senate vote](#article/{article_id})", out)
+        self.assertNotIn("foxnews.com", out)
+        listed = ensure_reader_links("Here are five:", items)
+        self.assertIn(f"- [Senate vote](#article/{article_id})", listed)
 
     def test_unread_catalog_is_reader_links(self):
         article_id = uuid4()
@@ -221,6 +263,77 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertEqual(row.prompt, "Unread Fox only")
         self.assertEqual(row.title, "Top Five")
         self.assertTrue(all(call.args[0] is row for call in db.add.call_args_list))
+        self.assertEqual(db.add.call_count, 1)
+
+    @patch("app.services.junior_jobs.logger")
+    @patch("app.services.junior_jobs.chat_service.complete_once")
+    def test_run_now_appends_assistant_and_logs_chars(self, complete, log):
+        from app.services.junior_jobs import execute_job
+
+        complete.return_value = {
+            "text": "See https://www.foxnews.com/politics/example",
+            "model": "grok-4.6",
+            "reasoning": "low",
+        }
+        user = SimpleNamespace(id=uuid4(), email="reader@example.com", is_demo_locked=False)
+        conversation = SimpleNamespace(id=uuid4(), last_model=None, last_reasoning=None, title=None, updated_at=None)
+        job = SimpleNamespace(
+            id=uuid4(),
+            user_id=user.id,
+            title="Top Five",
+            prompt="Unread Fox only",
+            conversation_id=conversation.id,
+            include_article_id=None,
+            model="grok-4.6",
+            reasoning="low",
+            xhigh=False,
+            web_search=False,
+            shelf=None,
+            folder_id=None,
+            last_run_at=None,
+            last_status=None,
+            updated_at=None,
+        )
+        article_ids = [uuid4() for _ in range(5)]
+        assistant = SimpleNamespace(id=uuid4(), content="", conversation_id=conversation.id)
+        db = MagicMock()
+        db.get.return_value = user
+        fox = MagicMock()
+        fox.all.return_value = [(article_ids[i], f"Headline {i+1}", "Fox News") for i in range(5)]
+        db.execute.return_value = fox
+
+        def append(_db, _conv, *, role, content, **_kwargs):
+            if role == "assistant":
+                assistant.content = content
+                return assistant
+            return SimpleNamespace(id=uuid4(), content=content)
+
+        with (
+            patch("app.services.junior_jobs.is_locked", return_value=False),
+            patch("app.services.junior_jobs.reject_locked"),
+            patch("app.services.junior_jobs.enforce_daily_cap"),
+            patch("app.services.junior_jobs.chat_service.enforce_rate_limit"),
+            patch("app.services.junior_jobs.chat_service.rewrite_xai_model", return_value="grok-4.6"),
+            patch("app.services.junior_jobs.grok_store.owned_conversation", return_value=conversation),
+            patch("app.services.junior_jobs.grok_store.conversation_history", return_value=[]),
+            patch("app.services.junior_jobs.grok_store.append_message", side_effect=append),
+            patch(
+                "app.services.junior_jobs.chat_service.build_xai_messages",
+                return_value=[{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+            ),
+        ):
+            result = execute_job(db, job, trigger="manual")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["conversation_id"], conversation.id)
+        self.assertEqual(result["assistant_message"], assistant)
+        self.assertIn("#article/", assistant.content)
+        self.assertNotIn("foxnews.com", assistant.content)
+        self.assertEqual(assistant.content.count("#article/"), 5)
+        args = log.info.call_args[0]
+        self.assertIn("job_id=%s", args[0])
+        self.assertEqual(args[1], job.id)
+        self.assertEqual(args[2], "ok")
+        self.assertEqual(args[3], len(assistant.content))
 
     @patch("app.services.junior_jobs.chat_service.complete_once")
     @patch("app.services.junior_jobs.chat_service.complete_with_code_execution")

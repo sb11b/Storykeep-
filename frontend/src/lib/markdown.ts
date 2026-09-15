@@ -59,7 +59,7 @@ const PUBLISHER_MD_LINK_SRC =
 
 export function articleIdFromHref(href: string | null | undefined): string | null {
   const value = href || "";
-  const match = value.match(new RegExp(`(?:#article/|[?&]article=)(${ARTICLE_UUID})`, "i"));
+  const match = value.match(new RegExp(`(?:#article/|[?&]article=|/articles/)(${ARTICLE_UUID})`, "i"));
   return match?.[1] || null;
 }
 
