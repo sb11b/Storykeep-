@@ -188,8 +188,9 @@ class ChatGuardTests(unittest.TestCase):
         enforce_rate_limit(user, now=now + 3601)
 
     def test_hello_payload_has_no_code_interpreter(self):
-        from app.services.chat import build_chat_completions_payload, map_xai_http_error
+        from app.services.chat import build_chat_completions_payload, map_xai_http_error, should_attach_chat_tools
 
+        self.assertFalse(should_attach_chat_tools("hello"))
         payload = build_chat_completions_payload(
             messages=[{"role": "user", "content": "hello"}],
             model="grok-4.6",
@@ -197,7 +198,10 @@ class ChatGuardTests(unittest.TestCase):
             max_tokens=256,
             stream=True,
             temperature=0.6,
+            tools=[{"type": "code_interpreter"}],
         )
+        blob = str(payload)
+        self.assertNotIn("code_interpreter", blob)
         self.assertNotIn("tools", payload)
         self.assertEqual(payload["messages"][-1]["content"], "hello")
         mapped = map_xai_http_error(422, "unknown variant `code_interpreter`", "grok-4.6")

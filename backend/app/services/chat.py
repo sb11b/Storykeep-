@@ -302,21 +302,30 @@ def is_small_talk_turn(message: str) -> bool:
     return bool(text) and len(text) < 160 and bool(_SMALL_TALK_RE.match(text))
 
 
+def is_short_chat(message: str) -> bool:
+    """Typed line is short — grok-4.6 · low, no tools, never xhigh."""
+    text = (message or "").strip()
+    return bool(text) and len(text) < AUTO_LOW_MAX_CHARS
+
+
 def should_attach_working_note(message: str) -> bool:
     return not is_small_talk_turn(message)
 
 
+def should_attach_chat_tools(message: str) -> bool:
+    """Calendar function tools delay first token; skip them on short chat."""
+    return not is_short_chat(message) and not is_small_talk_turn(message)
+
+
 def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = None) -> bool:
-    """True only for school/code, or a long analyze turn. History and small talk stay low."""
+    """True only for school/code, or a long analyze turn. Short chat stays low."""
     del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
-    if not text:
-        return False
-    if is_small_talk_turn(text):
+    if not text or is_short_chat(text) or is_small_talk_turn(text):
         return False
     if _SCHOOL_CODE_RE.search(text):
         return True
-    if len(text) >= AUTO_LOW_MAX_CHARS and _ANALYZE_RE.search(text):
+    if _ANALYZE_RE.search(text):
         return True
     return False
 
@@ -917,6 +926,13 @@ async def stream_completion(
     model = rewrite_xai_model(model)
     reasoning_effort = clamp_reasoning_effort(model, reasoning_effort)
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
+    last_user = ""
+    for item in reversed(history or []):
+        if (item.get("role") or "") == "user":
+            content = item.get("content")
+            last_user = content if isinstance(content, str) else ""
+            break
+    attach_tools = tools if should_attach_chat_tools(last_user) else None
     payload = build_chat_completions_payload(
         messages=build_xai_messages(
             history,
@@ -934,7 +950,7 @@ async def stream_completion(
         max_tokens=max_tokens,
         stream=True,
         temperature=0.6,
-        tools=tools,
+        tools=attach_tools,
     )
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -1192,6 +1208,9 @@ def build_chat_completions_payload(
     allowed = filter_completions_tools(tools)
     if allowed:
         payload["tools"] = allowed
+    dumped = json.dumps(payload)
+    if "code_interpreter" in dumped:
+        payload.pop("tools", None)
     return attach_reasoning_effort(payload, resolved_model, effort)
 
 

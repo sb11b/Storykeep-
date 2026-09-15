@@ -8,13 +8,18 @@ const SCHOOL_CODE_RE =
 
 const ANALYZE_RE = /\banaly[sz]e\b/i;
 
-/** Match backend Auto: school/code or a long analyze turn. Small talk stays low. */
+export function isShortChat(message: string): boolean {
+  const text = (message || "").trim();
+  return Boolean(text) && text.length < AUTO_LOW_MAX_CHARS;
+}
+
+/** Match backend Auto: short chat stays grok-4.6 · low. Longer school/code or analyze can be xhigh. */
 export function pickXhighForAuto(message: string): boolean {
   const text = (message || "").trim();
-  if (!text) return false;
+  if (!text || isShortChat(text)) return false;
   if (text.length < 160 && SMALL_TALK_RE.test(text)) return false;
   if (SCHOOL_CODE_RE.test(text)) return true;
-  if (text.length >= AUTO_LOW_MAX_CHARS && ANALYZE_RE.test(text)) return true;
+  if (ANALYZE_RE.test(text)) return true;
   return false;
 }
 

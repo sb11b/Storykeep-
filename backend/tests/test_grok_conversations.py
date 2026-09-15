@@ -108,7 +108,7 @@ class GrokConversationTests(unittest.TestCase):
             resolve_reasoning_for_request(MODEL_AUTO, "auto", "how was your morning", long_history),
             "low",
         )
-        prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"
+        prompt = "Debug this Python function:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```\n" + ("x" * 400)
         self.assertFalse(pick_fast_for_auto(prompt))
         self.assertEqual(resolve_model_for_request(MODEL_AUTO, prompt, []), CURRENT_CHAT_MODEL)
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", prompt, []), "xhigh")
@@ -133,8 +133,11 @@ class GrokConversationTests(unittest.TestCase):
         self.assertTrue(pick_fast_for_auto("think harder about this proof"))
         self.assertEqual(
             resolve_reasoning_for_request(MODEL_AUTO, "auto", "help with this python homework", []),
-            "xhigh",
+            "low",
         )
+        long_homework = "help with this python homework\n" + ("notes " * 80)
+        self.assertGreaterEqual(len(long_homework), 400)
+        self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", long_homework, []), "xhigh")
         long_analyze = "Please analyze this dataset. " + ("notes " * 80)
         self.assertGreaterEqual(len(long_analyze), 400)
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", long_analyze, []), "xhigh")
@@ -145,7 +148,9 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(resolve_model_for_request("grok-4", "hi", []), "grok-4.6")
         self.assertEqual(resolve_reasoning_for_request("grok-4.6", "high", "hello", []), "high")
         self.assertEqual(resolve_reasoning_for_request("grok-4.6", "xhigh", "hello", []), "low")
-        self.assertEqual(resolve_reasoning_for_request("grok-4.6", "xhigh", "help with this python homework", []), "xhigh")
+        self.assertEqual(resolve_reasoning_for_request("grok-4.6", "xhigh", "help with this python homework", []), "low")
+        long_homework = "help with this python homework\n" + ("notes " * 80)
+        self.assertEqual(resolve_reasoning_for_request("grok-4.6", "xhigh", long_homework, []), "xhigh")
 
     def test_rewrites_dead_fast_alias(self):
         from app.services.chat import CURRENT_CHAT_MODEL, CURRENT_FAST_MODEL, rewrite_xai_model

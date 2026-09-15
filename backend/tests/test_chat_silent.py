@@ -81,9 +81,38 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertIn("text/event-stream", response.headers.get("content-type", ""))
         self.assertEqual(captured.get("model"), "grok-4.6")
         self.assertEqual(captured.get("reasoning_effort"), "low")
+        self.assertIsNone(captured.get("tools"))
+        self.assertNotIn("code_interpreter", response.text)
+        self.assertNotIn('"reasoning_effort": "xhigh"', response.text)
         self.assertIn('"stream_status": "working"', response.text)
         self.assertIn('"stream_status": "writing"', response.text)
         self.assertIn("Hi", response.text)
+
+    def test_hello_skips_calendar_tools_when_connected(self):
+        captured: dict = {}
+
+        async def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            yield "Hi"
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.calendars.is_connected", return_value=True),
+            patch("app.routers.chat.is_locked", return_value=False),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "hello", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(captured.get("tools"))
+        self.assertEqual(captured.get("reasoning_effort"), "low")
+        self.assertNotIn("code_interpreter", response.text)
 
     def test_empty_piece_after_connect_is_thinking(self):
         async def fake_stream(*_args, **kwargs):

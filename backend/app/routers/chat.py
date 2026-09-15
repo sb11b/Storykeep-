@@ -742,7 +742,11 @@ async def _chat(
     if memory_block:
         extras.append(memory_block)
     extra_system = "\n".join(extras)
-    calendar_tools = [ADD_EVENT_TOOL] if calendar_connected else None
+    calendar_tools = (
+        [ADD_EVENT_TOOL]
+        if calendar_connected and chat_service.should_attach_chat_tools(user_text)
+        else None
+    )
     tool_calls_out: list[dict] = []
 
     def _persist_assistant(text: str) -> str | None:

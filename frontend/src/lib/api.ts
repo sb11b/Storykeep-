@@ -678,48 +678,56 @@ export const api = {
     signal?: AbortSignal,
     onOpen?: () => void,
   ) => {
-    const watchdog = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
-    try {
-      const response = await fetch("/api/v1/chat", {
-        method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify(body),
-        signal: watchdog.signal,
-      });
-      const contentType = response.headers.get("content-type") || "";
-      if (!response.ok || !contentType.includes("text/event-stream")) {
-        watchdog.disarm();
-        let detail = response.statusText || `HTTP ${response.status}`;
+      const headerWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
+      let tokenWatch: ReturnType<typeof startChatFirstByteWatchdog> | null = null;
+      try {
+        let response: Response;
         try {
-          const data = (await response.json()) as { detail?: unknown; message?: string; error?: unknown };
-          const parsed = parseErrorPayload(data);
-          if (parsed) detail = parsed;
-          else if (typeof data.message === "string" && data.message.trim()) detail = data.message;
-        } catch {
-          /* ignore */
+          response = await fetch("/api/v1/chat", {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+            body: JSON.stringify(body),
+            signal: headerWatch.signal,
+          });
+        } catch (error) {
+          headerWatch.throwIfSilent(error);
         }
-        throw new ApiError(response.status, formatChatError(response.status, detail));
-      }
-      onOpen?.();
-      await readGrokChatStream(
-        response,
-        {
-          onDelta: (text) => {
-            watchdog.disarm();
-            onDelta(text);
+        headerWatch.disarm();
+        const contentType = response.headers.get("content-type") || "";
+        if (!response.ok || !contentType.includes("text/event-stream")) {
+          let detail = response.statusText || `HTTP ${response.status}`;
+          try {
+            const data = (await response.json()) as { detail?: unknown; message?: string; error?: unknown };
+            const parsed = parseErrorPayload(data);
+            if (parsed) detail = parsed;
+            else if (typeof data.message === "string" && data.message.trim()) detail = data.message;
+          } catch {
+            /* ignore */
+          }
+          throw new ApiError(response.status, formatChatError(response.status, detail));
+        }
+        onOpen?.();
+        tokenWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
+        await readGrokChatStream(
+          response,
+          {
+            onDelta: (text) => {
+              tokenWatch?.disarm();
+              onDelta(text);
+            },
+            onMeta,
           },
-          onMeta,
-        },
-        watchdog.signal,
-        { firstByteMs: watchdog.remainingFirstByteMs() },
-      );
-    } catch (error) {
-      watchdog.throwIfSilent(error);
-    } finally {
-      watchdog.disarm();
-    }
+          tokenWatch.signal,
+          { firstByteMs: GROK_STREAM_FIRST_BYTE_MS },
+        );
+      } catch (error) {
+        (tokenWatch ?? headerWatch).throwIfSilent(error);
+      } finally {
+        headerWatch.disarm();
+        tokenWatch?.disarm();
+      }
   },
   articleSpeechVisible: async (
     id: string,

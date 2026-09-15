@@ -31,9 +31,14 @@ test("short paste and small talk stay low", () => {
 });
 
 test("school, code, and long analyze POST xhigh", () => {
-  assert.equal(autoReasoningEffort("help with this python homework"), "xhigh");
+  assert.equal(autoReasoningEffort("help with this python homework"), "low");
+  const longHomework = `help with this python homework\n${"notes ".repeat(80)}`;
+  assert.ok(longHomework.length >= AUTO_LOW_MAX_CHARS);
+  assert.equal(autoReasoningEffort(longHomework), "xhigh");
   assert.equal(
-    autoReasoningEffort("Debug this:\n```python\ndef avg(nums):\n    return sum(nums)/len(nums)\n```"),
+    autoReasoningEffort(
+      `Debug this:\n\`\`\`python\ndef avg(nums):\n    return sum(nums)/len(nums)\n\`\`\`\n${"x".repeat(400)}`,
+    ),
     "xhigh",
   );
   const longAnalyze = `Please analyze this dataset. ${"notes ".repeat(80)}`;

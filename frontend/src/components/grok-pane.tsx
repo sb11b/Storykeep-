@@ -329,22 +329,33 @@ export function GrokPane({
     onUpdate((current) => (current.streamStatus == null ? current : { ...current, streamStatus: null }));
   }, [onUpdate]);
 
+  const clearWorkingKeepPartial = useCallback(
+    (assistantId?: string) => {
+      setStreamStatus(null);
+      setBusy(false);
+      setAborting(false);
+      abortingRef.current = false;
+      onUpdate((current) => ({
+        ...current,
+        streamStatus: null,
+        messages: current.messages.map((item) => {
+          if (!item.waiting) return item;
+          if (assistantId && item.id !== assistantId && item.role !== "assistant") return item;
+          return { ...item, waiting: false };
+        }),
+      }));
+    },
+    [onUpdate],
+  );
+
   const stopGeneration = useCallback(() => {
     dictation?.abort();
     turnIdRef.current += 1;
     inFlightRef.current = false;
-    abortingRef.current = false;
-    setAborting(false);
     abortRef.current?.abort();
     abortRef.current = null;
-    setBusy(false);
-    clearStreamStatus();
-    onUpdate((current) => ({
-      ...current,
-      streamStatus: null,
-      messages: current.messages.map((item) => (item.waiting ? { ...item, waiting: false } : item)),
-    }));
-  }, [clearStreamStatus, dictation, onUpdate]);
+    clearWorkingKeepPartial();
+  }, [clearWorkingKeepPartial, dictation]);
 
   const markWriting = useCallback(() => {
     applyStreamStatus("writing");
@@ -801,15 +812,10 @@ export function GrokPane({
       if (turnId !== turnIdRef.current) return;
       const aborted = controller.signal.aborted && !(error instanceof ApiError);
       if (aborted) {
-        onUpdate((current) => ({
-          ...current,
-          streamStatus: null,
-          messages: current.messages.map((item) =>
-            item.id === assistantId ? { ...item, waiting: false } : item,
-          ),
-        }));
+        clearWorkingKeepPartial(assistantId);
         return;
       }
+      setStreamStatus(null);
       const status = error instanceof ApiError ? error.status : 502;
       const detail = error instanceof ApiError ? error.message : `${label} did not reply`;
       const formatted = detail.startsWith("Chat failed (HTTP")
@@ -831,22 +837,22 @@ export function GrokPane({
         ...current,
         streamStatus: null,
         draft: oversizedPaste && (userLine?.content || message) ? userLine?.content || message : current.draft,
-        messages: current.messages.map((item) =>
-          item.id === assistantId
-            ? {
-                ...item,
-                waiting: false,
-                failed: true,
-                error: imageFail ? shortImage || "Could not generate that image." : formatted,
-                content:
-                  hasMediaImage(item.content) || /\/api\/v1\/media\//.test(item.content)
-                    ? item.content
-                    : /Generating the image|Here's the image|implemented and passing/i.test(item.content)
-                      ? ""
-                      : item.content,
-              }
-            : item,
-        ),
+        messages: current.messages.map((item) => {
+          const target = item.role === "assistant" && (item.waiting || item.id === assistantId);
+          if (!target) return item;
+          const kept = (item.content || "").trim();
+          const wipePlaceholder =
+            !hasMediaImage(item.content) &&
+            !/\/api\/v1\/media\//.test(item.content) &&
+            /Generating the image|Here's the image|implemented and passing/i.test(item.content);
+          return {
+            ...item,
+            waiting: false,
+            failed: wipePlaceholder || !kept,
+            error: wipePlaceholder || !kept ? (imageFail ? shortImage || "Could not generate that image." : formatted) : item.error,
+            content: wipePlaceholder ? "" : item.content,
+          };
+        }),
       }));
       if (!oversizedPaste) {
         toast.error(toastText);
@@ -860,8 +866,9 @@ export function GrokPane({
       clearStreamStatus();
       onUpdate((current) => ({
         ...current,
+        streamStatus: null,
         messages: current.messages.map((item) =>
-          item.id === assistantId && item.waiting ? { ...item, waiting: false } : item,
+          item.waiting ? { ...item, waiting: false } : item,
         ),
       }));
     }
