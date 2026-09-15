@@ -115,6 +115,7 @@ import {
   shelfFolderId,
   shelfFromFilingDestination,
 } from "@/lib/folders";
+import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import { wordIndexFromSelection } from "@/lib/tts-words";
 import {
   buildVisibleSpeechScript,
@@ -1964,6 +1965,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                       }
                       await api.addAddition(id, title, markdown, destination, false, folderId);
                     }
+                    saveLastFiling(destination, folderId ?? null);
                     const next = await api.article(id);
                     if (selectedIdRef.current !== id) return;
                     setArticle(next);
@@ -2046,6 +2048,9 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                       if (selectedIdRef.current !== id) return;
                       setArticle(next);
                       setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                      const dest = asFilingDestination(next.destination, destination);
+                      saveLastFiling(dest, next.folder_id ?? folderId ?? null);
+                      setShelf(shelfFromFilingDestination(dest, next.folder_id ?? folderId));
                       toast.success("StoryKeep note updated");
                       void Promise.all([loadNav(), loadList()]);
                     } catch (error) {
@@ -2151,6 +2156,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           await Promise.all([loadNav(), loadList()]);
         }}
         onCreatedNote={async (articleId, destination, folderId) => {
+          saveLastFiling(destination, folderId ?? null);
           openArticle(articleId);
           setShelf(shelfFromFilingDestination(destination, folderId));
           setReaderFull(true);
@@ -2220,9 +2226,11 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
         }}
         onSavedNote={async (noteId, destination, folderId) => {
           await loadNav();
+          const dest = destination || loadLastFiling().dest || "notes";
+          saveLastFiling(dest, folderId ?? null);
           const currentId = selectedIdRef.current;
           if (noteId && noteId !== currentId) {
-            setShelf(shelfFromFilingDestination(destination || "notes", folderId));
+            setShelf(shelfFromFilingDestination(dest, folderId));
             openArticle(noteId);
             return;
           }
@@ -2686,8 +2694,9 @@ function Reader({
 }) {
   const [note, setNote] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
-  const [noteDest, setNoteDest] = useState<FilingDestination>("notes");
-  const [noteFolder, setNoteFolder] = useState<string | null>(null);
+  const lastFiling = loadLastFiling();
+  const [noteDest, setNoteDest] = useState<FilingDestination>(lastFiling.dest);
+  const [noteFolder, setNoteFolder] = useState<string | null>(lastFiling.folderId);
   const [noteCorrection, setNoteCorrection] = useState(false);
   const [fileDest, setFileDest] = useState<FilingDestination | "">(displayArticleShelf(article));
   const [fileFolder, setFileFolder] = useState<string | null>(article.folder_id ?? null);
@@ -2716,6 +2725,7 @@ function Reader({
     if (!next) return;
     setNoteDest(next);
     setNoteFolder(null);
+    saveLastFiling(next, null);
   }
 
   function handleEditDestChange(next: FilingDestination | "") {
@@ -3676,7 +3686,10 @@ function Reader({
                     shelf={noteDest}
                     folders={folders}
                     value={noteFolder}
-                    onChange={setNoteFolder}
+                    onChange={(next) => {
+                      setNoteFolder(next);
+                      saveLastFiling(noteDest, next);
+                    }}
                     onCreateFolder={() => void handleCreateNoteFolder()}
                   />
                   <CorrectionCheck checked={noteCorrection} onChange={setNoteCorrection} />
@@ -4190,14 +4203,15 @@ function AddFeedDialog({
   const [additionTitle, setAdditionTitle] = useState("");
   const [additionSubject, setAdditionSubject] = useState("");
   const [additionBody, setAdditionBody] = useState("");
-  const [composeDest, setComposeDest] = useState<FilingDestination>("vault");
-  const [composeFolder, setComposeFolder] = useState<string | null>(null);
+  const [composeDest, setComposeDest] = useState<FilingDestination>(() => loadLastFiling("notes").dest);
+  const [composeFolder, setComposeFolder] = useState<string | null>(() => loadLastFiling("notes").folderId);
   const [composeCorrection, setComposeCorrection] = useState(false);
 
   function handleComposeDestChange(next: FilingDestination | "") {
     if (!next) return;
     setComposeDest(next);
     setComposeFolder(null);
+    saveLastFiling(next, null);
   }
 
   async function handleComposeCreateFolder() {
@@ -4237,6 +4251,9 @@ function AddFeedDialog({
   useEffect(() => {
     if (!open) return;
     setRssShelfId(activeRssShelfId || rssShelves[0]?.id || "");
+    const last = loadLastFiling("notes");
+    setComposeDest(last.dest);
+    setComposeFolder(last.folderId);
   }, [activeRssShelfId, open, rssShelves]);
 
   const shelfCategories = categories.filter((row) => row.shelf_id === rssShelfId);
@@ -4594,23 +4611,27 @@ function AddFeedDialog({
                     .split(/[,#]/)
                     .map((part) => part.trim())
                     .filter(Boolean);
+                  const dest = composeDest;
+                  const folder = composeFolder;
                   const article = await api.composeVaultNote(
                     additionTitle.trim(),
                     additionBody.trim(),
                     tags,
-                    composeDest,
+                    dest,
                     composeCorrection,
-                    composeFolder,
+                    folder,
                   );
+                  const filedDest = asFilingDestination(article.destination, dest);
+                  const filedFolder = article.folder_id ?? folder;
+                  saveLastFiling(filedDest, filedFolder);
                   toast.success("Note saved on that StoryKeep shelf. Steve's Surface Vault was not overwritten.");
                   setAdditionTitle("");
                   setAdditionSubject("");
                   setAdditionBody("");
-                  setComposeFolder(null);
                   setComposeCorrection(false);
                   setComposeFull(false);
                   onOpenChange(false);
-                  await onCreatedNote(article.id, composeDest, composeFolder);
+                  await onCreatedNote(article.id, filedDest, filedFolder);
                 } catch (error) {
                   toast.error(error instanceof ApiError ? error.message : "Could not save the note");
                 } finally {
@@ -4658,7 +4679,10 @@ function AddFeedDialog({
                       shelf={composeDest}
                       folders={folders}
                       value={composeFolder}
-                      onChange={setComposeFolder}
+                      onChange={(next) => {
+                        setComposeFolder(next);
+                        saveLastFiling(composeDest, next);
+                      }}
                       onCreateFolder={() => void handleComposeCreateFolder()}
                     />
                     <CorrectionCheck checked={composeCorrection} onChange={setComposeCorrection} />

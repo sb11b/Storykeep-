@@ -174,6 +174,35 @@ def _title_from_markdown(text: str) -> str | None:
     return None
 
 
+def find_composed_note(
+    db: Session,
+    user: User,
+    title: str,
+    destination: str,
+    folder_id=None,
+) -> Article | None:
+    heading = (title or "").strip()[:500]
+    dest = (destination or "").strip().lower()
+    if not heading or not dest:
+        return None
+    stmt = (
+        select(Article)
+        .join(Feed)
+        .where(
+            Feed.user_id == user.id,
+            Article.guid.startswith("storykeep-note:"),
+            Article.title == heading,
+            Article.destination == dest,
+        )
+        .order_by(Article.updated_at.desc())
+    )
+    if folder_id:
+        stmt = stmt.where(Article.folder_id == folder_id)
+    else:
+        stmt = stmt.where(Article.folder_id.is_(None))
+    return db.scalars(stmt).first()
+
+
 def create_composed_note(
     db: Session,
     user: User,
@@ -199,6 +228,18 @@ def create_composed_note(
     tags_l = [(tag or "").lower() for tag in tags or []]
     if dest == DEFAULT_DESTINATION and (heading.startswith("_book_") or "book" in tags_l):
         dest = "books"
+    existing = find_composed_note(db, user, heading, dest, resolved_folder_id)
+    if existing:
+        return update_composed_note(
+            db,
+            user,
+            existing,
+            heading,
+            body,
+            is_correction,
+            destination=dest,
+            folder_id=resolved_folder_id,
+        )
     now = datetime.now(timezone.utc)
     feed = vault_feed(db, user)
     kind = source_kind_for_destination(dest)
@@ -214,6 +255,8 @@ def create_composed_note(
         content_html=markdown_to_html(body),
         published_at=now,
         fetched_at=now,
+        is_read=True,
+        read_at=now,
         is_saved=True,
         saved_at=now,
         source_kind=kind,
@@ -246,7 +289,7 @@ def create_composed_note(
         tag = ensure_tag(db, user, name)
         if tag not in article.tags:
             article.tags.append(tag)
-    changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "source_ref": article.source_ref, "destination": dest})
+    changelog.record(db, user.id, "article", article.id, "upsert", {"composed": True, "source_ref": article.source_ref, "destination": dest, "folder_id": str(resolved_folder_id) if resolved_folder_id else None})
     changelog.record(db, user.id, "addition", addition.id, "upsert", {"article_id": str(article.id), "composed": True, "destination": dest})
     db.commit()
     return article
@@ -264,6 +307,7 @@ def update_composed_note(
     markdown: str,
     is_correction: bool | None = None,
     folder_id=_UNSET,
+    destination=_UNSET,
     *,
     commit: bool = True,
     confirm_short: bool = False,
@@ -283,15 +327,19 @@ def update_composed_note(
 
         snapshot_before_save(db, user, article, body, confirm_short=confirm_short)
     now = datetime.now(timezone.utc)
+    dest = getattr(article, "destination", None) or DEFAULT_DESTINATION
+    if destination is not _UNSET and destination:
+        dest = normalize_destination(destination, user)
+        apply_destination(article, dest, None, user)
     if is_correction is not None:
         article.is_correction = bool(is_correction)
+        article.source_kind = source_kind_for_destination(dest)
     if folder_id is not _UNSET:
         from app.services.folders import resolve_folder_id
 
         if folder_id is None:
             article.folder_id = None
         else:
-            dest = getattr(article, "destination", None) or DEFAULT_DESTINATION
             article.folder_id = resolve_folder_id(db, user, dest, folder_id)
     article.title = heading[:500]
     article.summary = body[:280]
@@ -306,8 +354,8 @@ def update_composed_note(
     if addition:
         addition.title = heading[:200]
         addition.markdown = body
+        addition.destination = dest
         addition.updated_at = now
-        addition.destination = getattr(article, "destination", None) or DEFAULT_DESTINATION
         addition.is_correction = bool(getattr(article, "is_correction", False))
     else:
         addition = OverlayAddition(

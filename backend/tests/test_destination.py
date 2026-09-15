@@ -52,6 +52,16 @@ class DestinationTests(unittest.TestCase):
         )()
         self.assertEqual(effective_destination(article), "schoolwork")
 
+    def test_effective_destination_keeps_custom_junior_shelf(self):
+        from app.services.destination import effective_destination
+
+        article = type(
+            "Article",
+            (),
+            {"guid": "storykeep-note:abc", "source_kind": "obsidian", "destination": "junior"},
+        )()
+        self.assertEqual(effective_destination(article), "junior")
+
 
 if __name__ == "__main__":
     unittest.main()

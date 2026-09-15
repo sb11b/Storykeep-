@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { folderById } from "@/lib/folders";
+import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
   formatChatError,
   chatTimeoutToast,
@@ -122,6 +123,7 @@ export { DEFAULT_PANE_NAME, defaultGrokPaneName };
 type ListenTarget = { id: string; trigger: HTMLElement | null; script: string };
 
 export function createGrokPane(paneIndex = 0): GrokPaneState {
+  const last = loadLastFiling();
   return {
     id: crypto.randomUUID(),
     displayName: defaultGrokPaneName(paneIndex),
@@ -140,8 +142,8 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     includeNoteTitle: null,
     workingNoteId: null,
     workingNoteTitle: null,
-    noteDest: "notes",
-    noteFolderId: null,
+    noteDest: last.dest,
+    noteFolderId: last.folderId,
     recapQuestion: false,
     pendingAttachments: [],
     streamStatus: null,
@@ -1421,8 +1423,10 @@ export function GrokPane({
   async function addToNotes(payload: AddToNotesPayload, assistantId?: string) {
     const body = payload.content.trim();
     if (!body) return;
-    const dest = payload.dest;
-    const folderId = payload.folderId;
+    const filing = filingFromDropdowns(payload.dest, payload.folderId, folders);
+    const dest = filing.dest;
+    const folderId = filing.folderId;
+    saveLastFiling(dest, folderId);
     patch({ noteDest: dest, noteFolderId: folderId });
     const fromUser =
       assistantId != null
@@ -1445,13 +1449,17 @@ export function GrokPane({
         payload.isCorrection,
         folderId,
       );
-      const folderName = folderById(folders, folderId)?.name;
+      const filedDest = (article.destination as FilingDestination) || dest;
+      const filedFolder = article.folder_id ?? folderId;
+      saveLastFiling(filedDest, filedFolder);
+      patch({ noteDest: filedDest, noteFolderId: filedFolder, savedNoteId: article.id });
+      const folderName = folderById(folders, filedFolder)?.name;
       toast.success(
         folderName
-          ? `Saved to StoryKeep/${destinationLabel(dest, customShelves)}/${folderName}.`
-          : `Saved to StoryKeep/${destinationLabel(dest, customShelves)}.`,
+          ? `Saved to StoryKeep/${destinationLabel(filedDest, customShelves)}/${folderName}.`
+          : `Saved to StoryKeep/${destinationLabel(filedDest, customShelves)}.`,
       );
-      await onSavedNote(article.id, dest, folderId);
+      await onSavedNote(article.id, filedDest, filedFolder);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not save that note");
     }
@@ -1492,12 +1500,16 @@ export function GrokPane({
 
   async function saveChat() {
     if (savingChat) return;
-    const dest = (pane.noteDest || "").trim();
+    const filing = filingFromDropdowns(pane.noteDest, pane.noteFolderId, folders);
+    const dest = filing.dest;
+    const folderId = filing.folderId;
     if (!dest) {
       toast.error("Pick a shelf before saving this chat.");
       document.getElementById(shelfSelectId)?.focus();
       return;
     }
+    saveLastFiling(dest, folderId);
+    patch({ noteDest: dest, noteFolderId: folderId });
     const turns = saveableThreadTurns(pane.messages);
     if (!turns.length) {
       toast.error("Nothing to save — this thread is empty.");
@@ -1520,7 +1532,7 @@ export function GrokPane({
             markdown,
             dest,
             false,
-            pane.noteFolderId,
+            folderId,
           );
           updated = true;
         } catch (error) {
@@ -1530,9 +1542,12 @@ export function GrokPane({
         }
       }
       if (!article) {
-        article = await api.composeVaultNote(title, markdown, ["grok"], dest, false, pane.noteFolderId);
+        article = await api.composeVaultNote(title, markdown, ["grok"], dest, false, folderId);
       }
-      patch({ savedNoteId: article.id, conversationTitle: title });
+      const filedDest = (article.destination as FilingDestination) || dest;
+      const filedFolder = article.folder_id ?? folderId;
+      saveLastFiling(filedDest, filedFolder);
+      patch({ savedNoteId: article.id, conversationTitle: title, noteDest: filedDest, noteFolderId: filedFolder });
       if (pane.conversationId && persist) {
         try {
           await api.patchChatConversation(pane.conversationId, { saved_note_id: article.id });
@@ -1540,12 +1555,12 @@ export function GrokPane({
           /* note is saved; linking it to the thread is best-effort */
         }
       }
-      const folderName = folderById(folders, pane.noteFolderId)?.name;
+      const folderName = folderById(folders, filedFolder)?.name;
       const where = folderName
-        ? `${destinationLabel(dest, customShelves)} / ${folderName}`
-        : destinationLabel(dest, customShelves);
+        ? `${destinationLabel(filedDest, customShelves)} / ${folderName}`
+        : destinationLabel(filedDest, customShelves);
       toast.success(updated ? `Updated “${title}” on ${where}.` : `Saved “${title}” to ${where}.`);
-      await onSavedNote(article.id, dest, pane.noteFolderId);
+      await onSavedNote(article.id, filedDest, filedFolder);
     } catch (error) {
       toastErrorFromUnknown(error, "Could not save this chat");
     } finally {
@@ -1615,6 +1630,7 @@ export function GrokPane({
       const row = await api.createFolder(shelf, name.trim());
       setFolders((current) => [...current, row]);
       patch({ noteDest: shelf, noteFolderId: row.id });
+      saveLastFiling(shelf, row.id);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not create folder");
     }
@@ -1623,6 +1639,7 @@ export function GrokPane({
   function handleNoteDestChange(next: FilingDestination | "") {
     if (!next) return;
     patch({ noteDest: next, noteFolderId: null });
+    saveLastFiling(next, null);
   }
 
   function handleVoiceChange(next: string) {
@@ -1813,7 +1830,10 @@ export function GrokPane({
           shelf={pane.noteDest}
           folders={folders}
           value={pane.noteFolderId}
-          onChange={(next) => patch({ noteFolderId: next })}
+          onChange={(next) => {
+            patch({ noteFolderId: next });
+            saveLastFiling(pane.noteDest, next);
+          }}
           onCreateFolder={() => void createNoteFolder()}
           className="max-w-[6.5rem] text-[11px]"
         />
@@ -1892,7 +1912,10 @@ export function GrokPane({
                 customShelves={customShelves}
                 onCreateNoteShelf={onCreateNoteShelf}
                 onCreateFolder={(shelf) => void createNoteFolder(shelf)}
-                onRememberFiling={(dest, folderId) => patch({ noteDest: dest, noteFolderId: folderId })}
+                onRememberFiling={(dest, folderId) => {
+                  patch({ noteDest: dest, noteFolderId: folderId });
+                  saveLastFiling(dest, folderId);
+                }}
                 conversationId={pane.conversationId}
                 articleId={articleId}
                 schoolEnabled={!locked}

@@ -138,6 +138,7 @@ def edit_composed_note(
 ) -> ArticleOut:
     article = _owned_article(db, user, article_id)
     try:
+        dest = payload.destination or getattr(article, "destination", None) or "additions"
         update_composed_note(
             db,
             user,
@@ -145,11 +146,11 @@ def edit_composed_note(
             payload.title,
             payload.markdown,
             payload.is_correction,
+            destination=dest,
             folder_id=payload.folder_id,
             commit=False,
             confirm_short=payload.confirm_short,
         )
-        dest = payload.destination or getattr(article, "destination", None) or "additions"
         set_composed_destination(
             db, user, article, dest, payload.is_correction, folder_id=payload.folder_id, commit=False
         )

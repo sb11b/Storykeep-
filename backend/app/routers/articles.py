@@ -242,6 +242,10 @@ def list_articles(
         stmt = stmt.where(Article.is_starred.is_(starred))
     if read is not None:
         stmt = stmt.where(Article.is_read.is_(read))
+        if read is False:
+            from app.services.destination import composed_clause
+
+            stmt = stmt.where(Article.destination.is_(None), ~composed_clause())
     if since:
         stmt = stmt.where(Article.updated_at >= since)
     stmt = apply_shelf_filter(stmt, shelf)

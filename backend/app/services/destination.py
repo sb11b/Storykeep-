@@ -41,8 +41,8 @@ def composed_clause() -> ColumnElement[bool]:
 
 
 def effective_destination(article: Article) -> str | None:
-    dest = getattr(article, "destination", None)
-    if dest in DESTINATIONS:
+    dest = (getattr(article, "destination", None) or "").strip()
+    if dest:
         return dest
     if not is_composed_guid(article.guid):
         if is_imported_textbook(article):
