@@ -51,6 +51,7 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 | `FASTMAIL_CALDAV_URL` | No | Optional CalDAV origin. Defaults to `https://caldav.fastmail.com`. Missing `FASTMAIL_*` still shows Connect — tokens are per user. |
+| `FASTMAIL_TOKEN` | No | Fastmail JMAP API token for owner Mail. Server only. Missing token returns 401 “Connect Fastmail”, not 500. |
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 

@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     login_2fa_challenge_minutes: int = 10
     login_email_otp_max_attempts: int = 5
     fastmail_caldav_url: str = ""
+    fastmail_token: str = ""
+    fastmail_jmap_session_url: str = "https://api.fastmail.com/jmap/session"
 
     @field_validator("database_url", mode="before")
     @classmethod

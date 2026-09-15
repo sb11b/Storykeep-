@@ -9,6 +9,7 @@ import {
   BookmarkCheck,
   Calculator,
   CalendarDays,
+  Mail,
   Check,
   CheckCheck,
   ChevronDown,
@@ -37,6 +38,7 @@ import { ListenControls, type ListenControlsHandle } from "@/components/listen-c
 import { GrokBubble } from "@/components/grok-bubble";
 import { CalculatorOverlay, type CalculatorHandle } from "@/components/calculator-overlay";
 import { CalendarOverlay } from "@/components/calendar-overlay";
+import { MailOverlay } from "@/components/mail-overlay";
 import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect, FolderSelect, RssShelfSelect } from "@/components/destination-controls";
 import { NoteAttachmentChips } from "@/components/note-attachments";
@@ -640,6 +642,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const listenRef = useRef<ListenControlsHandle>(null);
   const calculatorRef = useRef<CalculatorHandle>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [mailOpen, setMailOpen] = useState(false);
   const caretWordRef = useRef<(() => number | null) | null>(null);
   const itemsRef = useRef<ArticleListItem[]>([]);
   const totalRef = useRef(0);
@@ -919,6 +922,10 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     const openFromLocation = () => {
       if (window.location.hash === "#calendar") {
         setCalendarOpen(true);
+        return;
+      }
+      if (window.location.hash === "#mail") {
+        setMailOpen(true);
         return;
       }
       const fromHash = parseArticleHash(window.location.hash);
@@ -1639,12 +1646,26 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
               variant={calendarOpen ? "default" : "outline"}
               title="Open StoryKeep Calendar"
               onClick={() => {
+                setMailOpen(false);
                 setCalendarOpen(true);
                 window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#calendar`);
               }}
             >
               <CalendarDays className="size-3" />
               Calendar
+            </Button>
+            <Button
+              size="xs"
+              variant={mailOpen ? "default" : "outline"}
+              title="Open Fastmail Mail"
+              onClick={() => {
+                setCalendarOpen(false);
+                setMailOpen(true);
+                window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#mail`);
+              }}
+            >
+              <Mail className="size-3" />
+              Mail
             </Button>
             <Button
               size="xs"
@@ -2130,6 +2151,15 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           onClose={() => {
             setCalendarOpen(false);
             if (window.location.hash === "#calendar") {
+              window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+            }
+          }}
+        />
+        <MailOverlay
+          open={mailOpen}
+          onClose={() => {
+            setMailOpen(false);
+            if (window.location.hash === "#mail") {
               window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
             }
           }}

@@ -32,6 +32,7 @@ export type GrokStreamMeta = {
   include_next_offset?: number;
   include_next_heading?: string;
   calendar_proposal?: { title: string; start: string; end: string };
+  mail_proposal?: { to: string; subject: string; body: string };
 };
 
 export type GrokStreamHandlers = {
@@ -64,6 +65,7 @@ type StreamPayload = {
   include_next_offset?: number;
   include_next_heading?: string;
   calendar_proposal?: { title: string; start: string; end: string };
+  mail_proposal?: { to: string; subject: string; body: string };
 };
 
 function parseSsePart(
@@ -103,7 +105,8 @@ function parseSsePart(
     parsed.stream_status ||
     parsed.partial ||
     parsed.include_chip ||
-    parsed.calendar_proposal
+    parsed.calendar_proposal ||
+    parsed.mail_proposal
   ) {
     handlers.onMeta?.({
       conversation_id: parsed.conversation_id,
@@ -124,6 +127,7 @@ function parseSsePart(
       include_next_offset: parsed.include_next_offset,
       include_next_heading: parsed.include_next_heading,
       calendar_proposal: parsed.calendar_proposal,
+      mail_proposal: parsed.mail_proposal,
     });
   }
   return "continue" as const;

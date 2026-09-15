@@ -55,6 +55,7 @@ class User(Base):
     tags: Mapped[list[Tag]] = relationship(back_populates="user")
     folders: Mapped[list["Folder"]] = relationship(back_populates="user")
     fastmail_calendar: Mapped["FastmailCalendarAccount | None"] = relationship(back_populates="user", uselist=False)
+    fastmail_mail: Mapped["FastmailMailAccount | None"] = relationship(back_populates="user", uselist=False)
     junior_memory: Mapped["JuniorMemory | None"] = relationship(back_populates="user", uselist=False)
 
 
@@ -541,6 +542,22 @@ class FastmailCalendarAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="fastmail_calendar")
+
+
+class FastmailMailAccount(Base):
+    """Fastmail JMAP API token. Ciphertext only — never the account password, never the browser, never logs."""
+
+    __tablename__ = "fastmail_mail_accounts"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    fastmail_email: Mapped[str] = mapped_column(Text, nullable=False)
+    token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship(back_populates="fastmail_mail")
 
 
 class JuniorMemory(Base):

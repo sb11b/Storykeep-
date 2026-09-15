@@ -114,6 +114,126 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertEqual(captured.get("reasoning_effort"), "low")
         self.assertNotIn("code_interpreter", response.text)
 
+    def test_summarize_unread_uses_mail_list_and_low(self):
+        captured: dict = {}
+
+        async def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            yield "Two unread."
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.mail_service.has_token", return_value=True),
+            patch("app.routers.chat.mail_service.require_token", return_value="fmu1-test-token-not-real"),
+            patch(
+                "app.routers.chat.jmap.list_emails",
+                return_value={
+                    "items": [
+                        {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
+                    ]
+                },
+            ),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "summarize unread", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured.get("model"), "grok-4.6")
+        self.assertEqual(captured.get("reasoning_effort"), "low")
+        extra = captured.get("extra_system") or ""
+        self.assertIn("Ada", extra)
+        self.assertIn("cap 50", extra)
+        tools = captured.get("tools")
+        self.assertTrue(
+            tools is None
+            or all((item.get("function") or {}).get("name") != "propose_send_mail" for item in tools)
+        )
+
+    def test_summarize_unread_uses_mail_list_and_low(self):
+        captured: dict = {}
+
+        async def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            yield "Two unread."
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.mail_service.has_token", return_value=True),
+            patch("app.routers.chat.mail_service.require_token", return_value="fmu1-test-token-not-real"),
+            patch(
+                "app.routers.chat.jmap.list_emails",
+                return_value={
+                    "items": [
+                        {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
+                    ]
+                },
+            ),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "summarize unread", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured.get("model"), "grok-4.6")
+        self.assertEqual(captured.get("reasoning_effort"), "low")
+        extra = captured.get("extra_system") or ""
+        self.assertIn("Ada", extra)
+        self.assertIn("cap 50", extra)
+        tools = captured.get("tools")
+        self.assertTrue(
+            tools is None
+            or all((item.get("function") or {}).get("name") != "propose_send_mail" for item in tools)
+        )
+
+    def test_summarize_unread_uses_mail_list_and_low(self):
+        captured: dict = {}
+
+        async def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            yield "Two unread."
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.mail_service.has_token", return_value=True),
+            patch("app.routers.chat.mail_service.require_token", return_value="fmu1-test-token-not-real"),
+            patch(
+                "app.routers.chat.jmap.list_emails",
+                return_value={
+                    "items": [
+                        {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
+                    ]
+                },
+            ),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "summarize unread", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured.get("model"), "grok-4.6")
+        self.assertEqual(captured.get("reasoning_effort"), "low")
+        extra = captured.get("extra_system") or ""
+        self.assertIn("Ada", extra)
+        self.assertIn("cap 50", extra)
+        tools = captured.get("tools")
+        self.assertTrue(tools is None or all((t.get("function") or {}).get("name") != "propose_send_mail" for t in tools))
+
     def test_empty_piece_after_connect_is_thinking(self):
         async def fake_stream(*_args, **kwargs):
             yield ""

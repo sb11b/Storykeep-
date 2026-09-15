@@ -17,7 +17,7 @@ CHAT_PATHS = frozenset({"/api/v1/chat"})
 PAYLOAD_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
 
 _SECRET_RE = re.compile(
-    r"(?i)(?:xai-[A-Za-z0-9_-]{8,}|bearer\s+[A-Za-z0-9._\-+/=]+|authorization:\s*\S+)"
+    r"(?i)(?:xai-[A-Za-z0-9_-]{8,}|fmu1-[A-Za-z0-9_-]+|bearer\s+[A-Za-z0-9._\-+/=]+|authorization:\s*\S+)"
 )
 
 

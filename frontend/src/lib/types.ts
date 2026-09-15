@@ -415,3 +415,43 @@ export type CalendarProposal = {
   end: string;
   status?: "pending" | "wrote" | "error";
 };
+
+export type MailMailbox = {
+  id: string;
+  name: string;
+  role?: string | null;
+  unread?: number;
+};
+
+export type MailMessage = {
+  id: string;
+  from: string;
+  to?: string;
+  cc?: string;
+  subject: string;
+  date: string;
+  unseen: boolean;
+  preview?: string;
+  body?: string;
+  body_html?: string;
+  has_attachment?: boolean;
+};
+
+export type MailStatus = {
+  configured: boolean;
+  connected: boolean;
+  owner_only: boolean;
+  is_owner: boolean;
+  demo_locked: boolean;
+  fastmail_email?: string | null;
+  source?: string | null;
+  mailboxes?: MailMailbox[];
+  connect_detail?: string;
+};
+
+export type MailProposal = {
+  to: string;
+  subject: string;
+  body: string;
+  status?: "pending" | "wrote" | "error";
+};

@@ -17,7 +17,7 @@ from app.config import settings
 from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, calendar, chat, feeds, junior_jobs, junior_memory, library, overlay, school, stt, sync, tts
+from app.routers import articles, auth, backups, calendar, chat, feeds, junior_jobs, junior_memory, library, mail, overlay, school, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -156,6 +156,12 @@ def _create_schema() -> None:
         "created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())"
     )
     _try_sql("ALTER TABLE fastmail_calendar_accounts ADD COLUMN IF NOT EXISTS calendars_json JSONB DEFAULT '[]'::jsonb")
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS fastmail_mail_accounts ("
+        "user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
+        "fastmail_email TEXT NOT NULL, token_encrypted TEXT NOT NULL, "
+        "created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())"
+    )
     _try_sql(
         "CREATE TABLE IF NOT EXISTS junior_memory ("
         "user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
@@ -348,6 +354,7 @@ app.include_router(junior_jobs.router, prefix=API)
 app.include_router(junior_memory.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 app.include_router(calendar.router, prefix=API)
+app.include_router(mail.router, prefix=API)
 
 
 # Logged-out browsers opening these paths used to get the SPA shell and hang on

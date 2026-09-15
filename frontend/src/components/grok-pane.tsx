@@ -9,6 +9,7 @@ import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
+import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { wordIndexFromSelection } from "@/lib/tts-words";
@@ -89,6 +90,7 @@ export type ChatLine = {
   includeHeading?: string | null;
   includeOffset?: number;
   calendarProposal?: { title: string; start: string; end: string; status?: "pending" | "wrote" | "error" };
+  mailProposal?: { to: string; subject: string; body: string; status?: "pending" | "wrote" | "error" };
 };
 
 export type GrokPaneState = {
@@ -760,6 +762,19 @@ export function GrokPane({
                     ? {
                         ...item,
                         calendarProposal: { ...meta.calendar_proposal!, status: "pending" },
+                      }
+                    : item,
+                ),
+              };
+            }
+            if (meta.mail_proposal) {
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === assistantId || item.id === meta.assistant_message_id
+                    ? {
+                        ...item,
+                        mailProposal: { ...meta.mail_proposal!, status: "pending" },
                       }
                     : item,
                 ),
@@ -2001,6 +2016,21 @@ export function GrokPane({
                       messages: current.messages.map((row) =>
                         row.id === item.id && row.calendarProposal
                           ? { ...row, calendarProposal: { ...row.calendarProposal, status } }
+                          : row,
+                      ),
+                    }))
+                  }
+                />
+              ) : null}
+              {item.mailProposal ? (
+                <MailProposalCard
+                  proposal={item.mailProposal}
+                  onWrote={(status) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      messages: current.messages.map((row) =>
+                        row.id === item.id && row.mailProposal
+                          ? { ...row, mailProposal: { ...row.mailProposal, status } }
                           : row,
                       ),
                     }))

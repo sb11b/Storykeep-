@@ -35,6 +35,9 @@ from app.services.calendar_tool import (
 from app.services import grok_conversations as grok_store
 from app.services import imagine as imagine_service
 from app.services import junior_memory
+from app.services import mail as mail_service
+from app.services import mail_tool
+from app.services import fastmail_jmap as jmap
 from app.services.demo_lock import is_locked, reject_locked
 from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
 from app.services.include_chunk import format_excerpt as format_include_excerpt
@@ -700,6 +703,11 @@ def _chat(
         None,
     )
     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
+    mail_unread = mail_tool.wants_unread_mail(user_text)
+    if mail_unread:
+        resolved_model = chat_service.CURRENT_CHAT_MODEL
+        resolved_reasoning = "low"
+        resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     step("prepare")
     prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
     history_for_xai = chat_service.validate_payload(prepared)
@@ -783,7 +791,7 @@ def _chat(
     chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
     has_attachments = any(item.get("files") for item in history)
     step("unread")
-    unread_catalog = unread_news_block(db, user.id, user_text)
+    unread_catalog = None if mail_unread else unread_news_block(db, user.id, user_text)
     if unread_catalog:
         history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
     step("calendar")
@@ -792,6 +800,24 @@ def _chat(
     if unread_catalog:
         extras.append(UNREAD_READER_SYSTEM)
     extras.append(CALENDAR_ON_APPEND if calendar_connected else CALENDAR_OFF_APPEND)
+    step("mail")
+    mail_connected = mail_service.has_token(db, user)
+    unread_mail_md = None
+    if mail_unread:
+        if mail_connected:
+            try:
+                listed = jmap.list_emails(
+                    mail_service.require_token(db, user), role="inbox", unseen=True, limit=50
+                )
+                unread_mail_md = mail_tool.unread_mail_markdown(listed.get("items") or [])
+            except Exception:
+                unread_mail_md = "Fastmail unread list was unavailable this turn."
+        else:
+            unread_mail_md = "Fastmail mail is not connected. Open Mail in StoryKeep."
+        extras.append(mail_tool.UNREAD_MAIL_SYSTEM)
+        if unread_mail_md:
+            extras.append(unread_mail_md)
+    extras.append(mail_tool.MAIL_ON_APPEND if mail_connected else mail_tool.MAIL_OFF_APPEND)
     step("memory")
     memory_block = junior_memory.system_section(db, user)
     if memory_block:
@@ -802,6 +828,12 @@ def _chat(
         if calendar_connected and chat_service.should_attach_chat_tools(user_text)
         else None
     )
+    mail_tools = (
+        [mail_tool.PROPOSE_SEND_TOOL]
+        if mail_connected and mail_tool.wants_send_mail(user_text)
+        else None
+    )
+    tools = (*(calendar_tools or []), *(mail_tools or [])) or None
     tool_calls_out: list[dict] = []
 
     def _persist_assistant(text: str) -> str | None:
@@ -847,7 +879,7 @@ def _chat(
         working_excerpt=working_excerpt,
         extra_system=extra_system,
         cancelled=cancelled,
-        tools=calendar_tools,
+        tools=tools,
         tool_calls_out=tool_calls_out,
     )
 
@@ -918,8 +950,15 @@ def _chat(
                 _persist_assistant("".join(assistant_parts))
                 return
             proposal = assemble_tool_calls(tool_calls_out) or extract_calendar_proposal("".join(assistant_parts))
+            mail_proposal = mail_tool.assemble_send_proposal(tool_calls_out) or mail_tool.extract_send_proposal(
+                "".join(assistant_parts)
+            )
             if proposal and not "".join(assistant_parts).strip():
                 note = "I can add this to Fastmail Calendar after you confirm."
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+            if mail_proposal and not "".join(assistant_parts).strip():
+                note = "I can send this Fastmail message after you confirm."
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if persist and conversation_id:
@@ -937,6 +976,8 @@ def _chat(
                     )
             if proposal:
                 yield chat_service.encode_sse({"calendar_proposal": proposal})
+            if mail_proposal:
+                yield chat_service.encode_sse({"mail_proposal": mail_proposal})
             yield chat_service.encode_sse("[DONE]")
         except HTTPException as exc:
             status_code, detail = chat_service.http_exception_detail(exc)

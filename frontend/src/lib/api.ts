@@ -29,6 +29,9 @@ import type {
   NoteRevision,
   CalendarEvent,
   CalendarStatus,
+  MailMailbox,
+  MailMessage,
+  MailStatus,
 } from "./types";
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
@@ -871,6 +874,30 @@ export const api = {
   deleteCalendarEvent: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/calendar/events/${encodeURIComponent(id)}`, { method: "DELETE" }),
   disconnectCalendar: () => request<{ ok: boolean; connected: boolean }>("/api/v1/calendar/disconnect", { method: "POST" }),
+  mailStatus: () => request<MailStatus>("/api/v1/mail/status"),
+  mailMessages: (params?: { mailbox_id?: string; role?: string; unseen?: boolean; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.mailbox_id) search.set("mailbox_id", params.mailbox_id);
+    if (params?.role) search.set("role", params.role);
+    if (params?.unseen) search.set("unseen", "true");
+    if (params?.limit) search.set("limit", String(params.limit));
+    const q = search.toString();
+    return request<{ items: MailMessage[]; mailboxes: MailMailbox[]; total: number; mailbox: MailMailbox }>(
+      `/api/v1/mail/messages${q ? `?${q}` : ""}`,
+    );
+  },
+  mailMessage: (id: string) => request<MailMessage>(`/api/v1/mail/messages/${encodeURIComponent(id)}`),
+  sendMail: (body: { to: string; subject: string; body: string; confirm: boolean }) =>
+    request<{ ok: boolean; id: string; to: string; subject: string }>("/api/v1/mail/send", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  connectFastmailMail: (body: { token: string }) =>
+    request<{ ok: boolean; connected: boolean; fastmail_email: string }>("/api/v1/mail/connect", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  disconnectMail: () => request<{ ok: boolean; connected: boolean }>("/api/v1/mail/disconnect", { method: "POST" }),
   connectFastmailCalendar: (body: { email: string; token: string; calendar_url?: string }) =>
     request<{ ok: boolean; connected: boolean; provider: string; fastmail_email: string; calendar_name: string | null }>(
       "/api/v1/calendar/fastmail/connect",
