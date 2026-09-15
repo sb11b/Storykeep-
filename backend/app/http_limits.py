@@ -136,7 +136,10 @@ class LimitChatBodyMiddleware:
         async def replay() -> dict:
             nonlocal sent
             if sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
+                # StreamingResponse polls receive() until http.disconnect. Answering
+                # that with a synthetic message spins the loop with no await, which
+                # pegs the GIL and freezes the worker. Wait on the real client.
+                return await receive()
             sent = True
             return {"type": "http.request", "body": buffered, "more_body": False}
 
