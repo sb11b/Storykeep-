@@ -17,7 +17,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - Full-text search across titles, authors, summaries, and stored bodies
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
 - **Junior jobs** (full screen Junior): scheduled prompts into a Junior thread (`cron` + timezone). Optional note on a shelf. Cap 20 runs/user/day. Railway can hit `POST /api/v1/junior/jobs/run` with `JUNIOR_CRON_SECRET`. Unread / Fox titles in a job or Include reply open in the StoryKeep reader (`#article/{id}`), not a publisher tab.
-- **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy; optional in-thread Run via xAI `code_interpreter`.
+- **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy.
 
 ## Stack
 

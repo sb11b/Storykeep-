@@ -1,5 +1,13 @@
 import { httpErrorFallback } from "@/lib/api-errors";
 
+export function readableXaiToast(message: string): string {
+  const stripped = message
+    .replace(/^Chat failed \(HTTP \d+\):\s*/i, "")
+    .replace(/^xAI HTTP \d+:\s*/i, "")
+    .trim();
+  return stripped || message;
+}
+
 export function formatChatError(status: number, detail: string, assistantName?: string): string {
   const message = detail.trim() || httpErrorFallback(status);
   return `Chat failed (HTTP ${status}): ${withAssistantName(message, assistantName)}`;

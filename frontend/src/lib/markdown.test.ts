@@ -94,7 +94,7 @@ test("fenced code blocks preserve angle brackets and hash comments", () => {
   assert.match(html, /<pre class="sk-code">/);
   assert.match(html, /<span class="sk-code-lang">python<\/span>/);
   assert.match(html, /data-copy>Copy<\/button>/);
-  assert.match(html, /data-run>Run<\/button>/);
+  assert.equal(html.includes("data-run"), false);
   assert.match(html, /print\('&lt;div&gt;'\)/);
   assert.match(html, /# comment/);
   assert.equal(html.includes("<div>"), false);

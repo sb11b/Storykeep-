@@ -205,7 +205,7 @@ def tools_for_job(job: object) -> list[dict] | None:
     """xAI search tools only when the job checkbox is on. Never code_interpreter."""
     if not job_allows_web_search(job):
         return None
-    return [{"type": "web_search"}]
+    return [{"type": "live_search"}]
 
 
 def prompt_wants_my_news(prompt: str) -> bool:
@@ -568,13 +568,13 @@ def run_snippet(db: Session, user: User, message_id: UUID, code: str) -> dict:
         {
             "role": "system",
             "content": (
-                "You are Junior. Use the code_interpreter tool to run the snippet. "
+                "You are Junior. Use the code_execution tool to run the snippet. "
                 "Return a short result in the thread. Do not open a terminal or edit StoryKeep files."
             ),
         },
         *chat_service.thread_window([*history, {"role": "user", "content": user_line}]),
     ]
-    result = chat_service.complete_with_code_interpreter(
+    result = chat_service.complete_with_code_execution(
         messages,
         model=chat_service.CURRENT_CHAT_MODEL,
         reasoning_effort="low",

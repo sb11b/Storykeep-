@@ -82,7 +82,7 @@ function parseSsePart(
     const status = typeof parsed.status === "number" ? parsed.status : 502;
     const detail =
       (typeof parsed.message === "string" ? parsed.message : undefined) || parsed.detail || parsed.error;
-    throw new ApiError(status, parsed.error || formatChatError(status, detail), {
+    throw new ApiError(status, detail || formatChatError(status, "Chat failed"), {
       partial: Boolean(parsed.partial),
     });
   }

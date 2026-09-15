@@ -376,8 +376,21 @@ async def _anext_or_none(lines: AsyncIterator[str]) -> str | None:
 
 def http_exception_detail(exc: HTTPException) -> tuple[int, str]:
     status_code = int(exc.status_code or 502)
-    detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
-    return status_code, detail
+    detail = exc.detail
+    if isinstance(detail, str) and detail.strip():
+        return status_code, detail
+    if isinstance(detail, list):
+        parts: list[str] = []
+        for item in detail:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                msg = item.get("msg") or item.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    parts.append(msg.strip())
+        if parts:
+            return status_code, "; ".join(parts)
+    return status_code, "Request failed."
 
 
 def parse_xai_error_body(raw: str, status_code: int) -> str:
@@ -485,8 +498,8 @@ def map_xai_http_error(status_code: int, detail: str, model: str) -> HTTPExcepti
         return HTTPException(status_code=401, detail="xAI auth failed")
     if status_code == 404:
         return HTTPException(status_code=400, detail=f"Invalid xAI model: {model}")
-    if status_code == 400:
-        return HTTPException(status_code=400, detail=cleaned)
+    if status_code in {400, 422}:
+        return HTTPException(status_code=502, detail=cleaned)
     return HTTPException(status_code=502, detail=f"xAI HTTP {status_code}: {cleaned}")
 
 
@@ -880,25 +893,23 @@ async def stream_completion(
     model = rewrite_xai_model(model)
     reasoning_effort = clamp_reasoning_effort(model, reasoning_effort)
     max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
-    payload = attach_reasoning_effort(
-        {
-            "model": model,
-            "messages": build_xai_messages(
-                history,
-                excerpt,
-                include_article=include_article,
-                recap_question=recap_question,
-                has_attachments=has_attachments,
-                include_note=include_note,
-                note_excerpt=note_excerpt,
-                extra_system=extra_system,
-            ),
-            "stream": True,
-            "max_tokens": max_tokens,
-            "temperature": 0.6,
-        },
-        model,
-        reasoning_effort,
+    payload = build_chat_completions_payload(
+        messages=build_xai_messages(
+            history,
+            excerpt,
+            include_article=include_article,
+            recap_question=recap_question,
+            has_attachments=has_attachments,
+            include_note=include_note,
+            note_excerpt=note_excerpt,
+            extra_system=extra_system,
+        ),
+        model=model,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        stream=True,
+        temperature=0.6,
+        tools=None,
     )
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -1072,16 +1083,54 @@ def _strip_tags(html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-_COMPLETIONS_SERVER_TOOLS = frozenset({"code_interpreter", "code_execution", "web_search", "live_search"})
+# Chat Completions rejects code_interpreter (422). Send may only attach function / live_search.
+COMPLETIONS_ALLOWED_TOOL_TYPES = frozenset({"function", "live_search"})
+RESPONSES_SEARCH_TOOL_TYPES = ("live_search", "web_search")
+RESPONSES_CODE_TOOL_TYPES = ("code_execution",)
 
 
-def _server_tool_types(tools: list[dict] | None) -> tuple[str, ...]:
-    seen: list[str] = []
+def filter_completions_tools(tools: list[dict] | None) -> list[dict] | None:
+    """Drop code_interpreter and any type Completions does not allow."""
+    kept: list[dict] = []
     for item in tools or []:
+        if not isinstance(item, dict):
+            continue
         kind = str(item.get("type") or "").strip()
-        if kind in _COMPLETIONS_SERVER_TOOLS and kind not in seen:
-            seen.append(kind)
-    return tuple(seen)
+        if kind in COMPLETIONS_ALLOWED_TOOL_TYPES:
+            kept.append(item)
+    return kept or None
+
+
+def wants_responses_search(tools: list[dict] | None) -> bool:
+    for item in tools or []:
+        if isinstance(item, dict) and str(item.get("type") or "").strip() in {"web_search", "live_search"}:
+            return True
+    return False
+
+
+def build_chat_completions_payload(
+    *,
+    messages: list[dict],
+    model: str,
+    reasoning_effort: str,
+    max_tokens: int,
+    stream: bool,
+    temperature: float,
+    tools: list[dict] | None = None,
+) -> dict[str, object]:
+    resolved_model = rewrite_xai_model(model)
+    effort = clamp_reasoning_effort(resolved_model, reasoning_effort)
+    payload: dict[str, object] = {
+        "model": resolved_model,
+        "messages": messages,
+        "stream": stream,
+        "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
+        "temperature": temperature,
+    }
+    allowed = filter_completions_tools(tools)
+    if allowed:
+        payload["tools"] = allowed
+    return attach_reasoning_effort(payload, resolved_model, effort)
 
 
 def complete_once(
@@ -1093,34 +1142,27 @@ def complete_once(
     timeout_sec: float = 45.0,
     tools: list[dict] | None = None,
 ) -> dict[str, str]:
-    """One-shot chat for Junior jobs. Server tools go to Responses — completions 422s them."""
-    server_types = _server_tool_types(tools)
-    if server_types:
-        search = any(kind in {"web_search", "live_search"} for kind in server_types)
-        return complete_with_server_tools(
+    """One-shot chat for Junior jobs. Never POST code_interpreter on Completions."""
+    if wants_responses_search(tools):
+        return complete_with_web_search(
             messages,
-            tool_types=server_types,
             model=model,
             reasoning_effort=reasoning_effort,
             max_tokens=max_tokens,
             timeout_sec=timeout_sec,
-            fail_detail="search failed" if search else "Could not run that snippet.",
-            require_search=search,
         )
     key = require_key()
     resolved_model = rewrite_xai_model(model or default_full_model())
     effort = clamp_reasoning_effort(resolved_model, reasoning_effort or DEFAULT_REASONING_EFFORT)
-    payload: dict[str, object] = {
-        "model": resolved_model,
-        "messages": messages,
-        "stream": False,
-        "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
-        "temperature": 0.4,
-    }
-    function_tools = [item for item in (tools or []) if str(item.get("type") or "") == "function"]
-    if function_tools:
-        payload["tools"] = function_tools
-    payload = attach_reasoning_effort(payload, resolved_model, effort)
+    payload = build_chat_completions_payload(
+        messages=messages,
+        model=resolved_model,
+        reasoning_effort=effort,
+        max_tokens=max_tokens,
+        stream=False,
+        temperature=0.4,
+        tools=tools,
+    )
     try:
         with httpx.Client(
             timeout=httpx.Timeout(
@@ -1200,8 +1242,8 @@ def complete_with_server_tools(
     fail_detail: str = "search failed",
     require_search: bool = False,
 ) -> dict[str, str]:
-    """POST /v1/responses with a server tool. Chat completions 422s web_search and code_interpreter."""
-    kinds = tuple(kind for kind in tool_types if kind)
+    """POST /v1/responses with a server tool. Never send code_interpreter."""
+    kinds = tuple(kind for kind in tool_types if kind and kind != "code_interpreter")
     if not kinds:
         raise HTTPException(status_code=502, detail=fail_detail)
     key = require_key()
@@ -1248,7 +1290,7 @@ def complete_with_server_tools(
         if require_search and _CANT_SEARCH.search(text) and not responses_used_search(body):
             raise HTTPException(status_code=502, detail=fail_detail)
         return {"text": text, "model": resolved_model, "reasoning": effort}
-    raise HTTPException(status_code=502, detail=fail_detail)
+    raise HTTPException(status_code=502, detail=last_detail or fail_detail)
 
 
 def complete_with_web_search(
@@ -1259,10 +1301,10 @@ def complete_with_web_search(
     max_tokens: int = 1200,
     timeout_sec: float = 90.0,
 ) -> dict[str, str]:
-    """Junior job search via Responses web_search. Chat completions rejects that tool type (422)."""
+    """Junior job search via Responses live_search. Completions 422s code_interpreter."""
     return complete_with_server_tools(
         messages,
-        tool_types=("web_search", "live_search"),
+        tool_types=RESPONSES_SEARCH_TOOL_TYPES,
         model=model,
         reasoning_effort=reasoning_effort,
         max_tokens=max_tokens,
@@ -1272,7 +1314,7 @@ def complete_with_web_search(
     )
 
 
-def complete_with_code_interpreter(
+def complete_with_code_execution(
     messages: list[dict],
     *,
     model: str | None = None,
@@ -1280,10 +1322,10 @@ def complete_with_code_interpreter(
     max_tokens: int = 700,
     timeout_sec: float = 60.0,
 ) -> dict[str, str]:
-    """In-thread Run uses Responses code_interpreter. Completions 422s that tool type."""
+    """In-thread Run uses Responses code_execution — never code_interpreter."""
     return complete_with_server_tools(
         messages,
-        tool_types=("code_interpreter", "code_execution"),
+        tool_types=RESPONSES_CODE_TOOL_TYPES,
         model=model,
         reasoning_effort=reasoning_effort,
         max_tokens=max_tokens,
@@ -1291,3 +1333,6 @@ def complete_with_code_interpreter(
         fail_detail="Could not run that snippet.",
         require_search=False,
     )
+
+
+complete_with_code_interpreter = complete_with_code_execution

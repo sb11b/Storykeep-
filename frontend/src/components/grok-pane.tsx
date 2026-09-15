@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { folderById } from "@/lib/folders";
-import { formatChatError, chatTimeoutToast, withAssistantName } from "@/lib/grok-chat-error";
+import { formatChatError, chatTimeoutToast, readableXaiToast, withAssistantName } from "@/lib/grok-chat-error";
 import {
   attachmentMarkdown,
   formatFileSize,
@@ -754,7 +754,7 @@ export function GrokPane({
             : item,
         ),
       }));
-      toast.error(timeoutToast || formatted);
+      toast.error(timeoutToast || readableXaiToast(formatted));
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       abortingRef.current = false;

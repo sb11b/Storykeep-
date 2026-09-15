@@ -78,7 +78,7 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertIsNone(tools_for_job(SimpleNamespace(web_search=False)))
         self.assertIsNone(tools_for_job(SimpleNamespace()))
         tools = tools_for_job(SimpleNamespace(web_search=True))
-        self.assertEqual(tools, [{"type": "web_search"}])
+        self.assertEqual(tools, [{"type": "live_search"}])
         self.assertFalse(any(item.get("type") == "code_interpreter" for item in tools))
 
     def test_my_news_prefers_unread_titles(self):
@@ -223,7 +223,7 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertTrue(all(call.args[0] is row for call in db.add.call_args_list))
 
     @patch("app.services.junior_jobs.chat_service.complete_once")
-    @patch("app.services.junior_jobs.chat_service.complete_with_code_interpreter")
+    @patch("app.services.junior_jobs.chat_service.complete_with_code_execution")
     def test_run_snippet_uses_responses_not_completions(self, code_run, complete):
         from app.services.junior_jobs import run_snippet
 
@@ -247,19 +247,25 @@ class JuniorJobsTests(unittest.TestCase):
         self.assertEqual(kwargs["reasoning_effort"], "low")
         self.assertNotIn("tools", kwargs)
 
-    @patch("app.services.chat.complete_with_server_tools")
-    def test_complete_once_does_not_send_code_interpreter_to_completions(self, server):
-        from app.services.chat import complete_once
+    def test_complete_once_drops_code_interpreter_from_completions(self):
+        from app.services.chat import build_chat_completions_payload, filter_completions_tools
 
-        server.return_value = {"text": "2", "model": "grok-4.6", "reasoning": "low"}
-        result = complete_once(
-            [{"role": "user", "content": "print(1)"}],
+        self.assertIsNone(filter_completions_tools([{"type": "code_interpreter"}]))
+        self.assertIsNone(filter_completions_tools([{"type": "code_execution"}]))
+        self.assertEqual(filter_completions_tools([{"type": "live_search"}]), [{"type": "live_search"}])
+        payload = build_chat_completions_payload(
+            messages=[{"role": "user", "content": "hello"}],
+            model="grok-4.6",
+            reasoning_effort="low",
+            max_tokens=64,
+            stream=True,
+            temperature=0.6,
             tools=[{"type": "code_interpreter"}],
         )
-        server.assert_called_once()
-        self.assertEqual(server.call_args.kwargs["tool_types"], ("code_interpreter",))
-        self.assertFalse(server.call_args.kwargs["require_search"])
-        self.assertEqual(result["text"], "2")
+        self.assertNotIn("tools", payload)
+        self.assertNotIn("code_interpreter", str(payload))
+
+    def test_patch_missing_job_is_404(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 

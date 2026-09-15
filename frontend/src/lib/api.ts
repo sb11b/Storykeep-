@@ -30,7 +30,6 @@ import type {
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 import { fetchSpeechChunk } from "@/lib/tts-speech-client";
-import { formatChatError } from "@/lib/grok-chat-error";
 import { readGrokChatStream, type GrokStreamMeta } from "@/lib/grok-stream";
 
 export type NoteMediaUpload = {
@@ -654,13 +653,14 @@ export const api = {
     if (!response.ok || !contentType.includes("text/event-stream")) {
       let detail = response.statusText;
       try {
-        const data = (await response.json()) as { detail?: string; message?: string };
-        if (typeof data.message === "string" && data.message.trim()) detail = data.message;
-        else if (typeof data.detail === "string") detail = data.detail;
+        const data = (await response.json()) as { detail?: unknown; message?: string; error?: unknown };
+        const parsed = parseErrorPayload(data);
+        if (parsed) detail = parsed;
+        else if (typeof data.message === "string" && data.message.trim()) detail = data.message;
       } catch {
         /* ignore */
       }
-      throw new ApiError(response.status, formatChatError(response.status, detail));
+      throw new ApiError(response.status, detail);
     }
     onOpen?.();
     await readGrokChatStream(response, { onDelta, onMeta }, signal);

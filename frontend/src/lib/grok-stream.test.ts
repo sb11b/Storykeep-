@@ -150,7 +150,7 @@ test("readGrokChatStream keeps tokens when a partial 504 arrives", async () => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.status, 504);
       assert.equal(error.partial, true);
-      assert.match(error.message, /504/);
+      assert.match(error.message, /timed out after 45s/);
       return true;
     },
   );

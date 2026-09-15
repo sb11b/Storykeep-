@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_IDLE_TIMEOUT_TOAST, chatTimeoutToast, formatChatError, withAssistantName } from "./grok-chat-error";
+import { CHAT_IDLE_TIMEOUT_TOAST, chatTimeoutToast, formatChatError, readableXaiToast, withAssistantName } from "./grok-chat-error";
 
 test("formatChatError includes HTTP status and detail", () => {
   assert.equal(
@@ -27,6 +27,15 @@ test("formatChatError shows the pane name instead of the upstream model name", (
 test("withAssistantName leaves a message alone when there is no pane name", () => {
   assert.equal(withAssistantName("Grok timed out."), "Grok timed out.");
   assert.equal(withAssistantName("Grokking is fine", "Junior"), "Grokking is fine");
+});
+
+test("readableXaiToast keeps the upstream xAI message", () => {
+  assert.equal(
+    readableXaiToast("Chat failed (HTTP 502): unknown variant `code_interpreter`"),
+    "unknown variant `code_interpreter`",
+  );
+  assert.equal(readableXaiToast("xAI HTTP 422: invalid tool"), "invalid tool");
+  assert.equal(readableXaiToast("rate limit exceeded"), "rate limit exceeded");
 });
 
 test("idle timeout toast stays Timed out after 60s", () => {
