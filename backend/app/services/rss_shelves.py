@@ -16,10 +16,12 @@ SEED_SHELVES: list[tuple[str, int]] = [
     ("News", 2),
     ("Book", 3),
 ]
+# Uncategorized is not listed here. uncategorized_category() creates it for every
+# shelf below, and sessions run with autoflush off, so a second copy here inserts
+# twice in one batch and trips categories_shelf_name_idx.
 INBOX_STARTER_CATEGORIES: list[tuple[str, int]] = [
     ("News", 10),
     ("Science", 20),
-    (UNCATEGORIZED, 99),
 ]
 
 
