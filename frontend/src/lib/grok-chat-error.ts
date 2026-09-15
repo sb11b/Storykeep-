@@ -8,6 +8,13 @@ export function readableXaiToast(message: string): string {
   return stripped || message;
 }
 
+/** FastAPI 422 on a tiny maxlength — never show a blank validation dump. */
+export function isOversizedPasteHttp(status: number, detail: string): boolean {
+  if (status === 422 && /at most \d+ character/i.test(detail)) return true;
+  if (status === 400 && /too long|over the cap|payload is too large/i.test(detail)) return true;
+  return false;
+}
+
 export function formatChatError(status: number, detail: string, assistantName?: string): string {
   const message = detail.trim() || httpErrorFallback(status);
   return `Chat failed (HTTP ${status}): ${withAssistantName(message, assistantName)}`;

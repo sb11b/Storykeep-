@@ -34,7 +34,7 @@ router = APIRouter(tags=["chat"])
 
 
 class ChatIn(BaseModel):
-    message: str = Field(default="", max_length=8000)
+    message: str = Field(default="", max_length=100_000)
     conversation_id: UUID | None = None
     model: str | None = None
     reasoning_effort: str | None = None

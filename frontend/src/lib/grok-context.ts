@@ -1,9 +1,36 @@
 import { INCLUDE_TURN_CHAR_MAX } from "@/lib/include-chunk";
 
 export const GROK_CONTEXT_CHAR_CAP = 24_000;
+export const PASTE_FIRST_CHUNK_CHARS = 12_000;
+export const JUNIOR_TEXTAREA_MAX_LENGTH = 1_000_000;
 export const GROK_CONTEXT_TOAST =
   "This turn is over the cap. Include a heading, a selection, or the next chunk.";
 export const GROK_CONTEXT_THREAD_WINDOW = 12;
+
+export function pasteSplitToast(chars: number): string {
+  return `This paste is ${chars.toLocaleString("en-US")} chars. Send first 12k or split.`;
+}
+
+/** First 12k plus remainder — never drop the leftover. */
+export function splitPasteChunk(
+  text: string,
+  chunk = PASTE_FIRST_CHUNK_CHARS,
+): { first: string; remainder: string } {
+  const source = text || "";
+  if (source.length <= chunk) return { first: source, remainder: "" };
+  let cut = chunk;
+  const space = source.lastIndexOf(" ", chunk);
+  if (space > chunk * 0.6) cut = space;
+  return { first: source.slice(0, cut).trimEnd(), remainder: source.slice(cut).replace(/^\s+/, "") };
+}
+
+export function textareaSelection(el: HTMLTextAreaElement | null | undefined): string {
+  if (!el) return "";
+  const start = el.selectionStart ?? 0;
+  const end = el.selectionEnd ?? 0;
+  if (end <= start) return "";
+  return el.value.slice(start, end);
+}
 
 export type ContextMessage = {
   role?: string;

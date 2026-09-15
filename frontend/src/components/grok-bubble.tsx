@@ -359,6 +359,21 @@ export function GrokBubble({
     setFocusedPaneId(next.id);
   }
 
+  function openRemainderChat(remainder: string): boolean {
+    if (locked || panes.length >= MAX_PANES) return false;
+    const next = createGrokPane(panes.length);
+    next.draft = remainder;
+    next.modelChoice = "auto";
+    next.reasoningEffort = "low";
+    setPanes((current) => {
+      const result = [...current, next];
+      void persistPaneLabels(result);
+      return result;
+    });
+    setFocusedPaneId(next.id);
+    return true;
+  }
+
   function removePane(id: string) {
     setPanes((current) => {
       const next = current.filter((pane) => pane.id !== id);
@@ -953,6 +968,7 @@ export function GrokBubble({
                   customShelves={customShelves}
                   onCreateNoteShelf={createNoteShelf}
                   onOpenArticle={onOpenArticle}
+                  onOpenRemainderChat={openRemainderChat}
                 />
               </div>
             ))}
@@ -986,6 +1002,7 @@ export function GrokBubble({
             customShelves={customShelves}
             onCreateNoteShelf={createNoteShelf}
             onOpenArticle={onOpenArticle}
+            onOpenRemainderChat={openRemainderChat}
           />
           </div>
         )}

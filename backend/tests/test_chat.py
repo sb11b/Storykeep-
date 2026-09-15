@@ -18,9 +18,20 @@ class ChatGuardTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             validate_payload([{"role": "assistant", "content": "hi"}])
         with self.assertRaises(HTTPException):
-            validate_payload([{"role": "user", "content": "x" * 25_000}])
+            validate_payload([{"role": "user", "content": "x" * 40_000}])
         cleaned = validate_payload([{"role": "user", "content": "What is this about?"}])
         self.assertEqual(cleaned[0]["role"], "user")
+        twelve_k = validate_payload([{"role": "user", "content": "x" * 12_000}])
+        self.assertEqual(len(twelve_k[0]["content"]), 12_000)
+
+    def test_chat_in_accepts_a_large_paste_instead_of_422(self):
+        from pydantic import ValidationError
+        from app.routers.chat import ChatIn
+
+        body = ChatIn(message="x" * 24_000)
+        self.assertEqual(len(body.message), 24_000)
+        with self.assertRaises(ValidationError):
+            ChatIn(message="x" * 100_001)
 
     def test_excerpt_is_capped(self):
         from types import SimpleNamespace

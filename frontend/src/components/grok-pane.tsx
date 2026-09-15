@@ -17,7 +17,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { folderById } from "@/lib/folders";
-import { formatChatError, chatTimeoutToast, readableXaiToast, withAssistantName } from "@/lib/grok-chat-error";
+import {
+  formatChatError,
+  chatTimeoutToast,
+  isOversizedPasteHttp,
+  readableXaiToast,
+  withAssistantName,
+} from "@/lib/grok-chat-error";
 import {
   attachmentMarkdown,
   formatFileSize,
@@ -32,7 +38,17 @@ import {
   type PendingAttachment,
 } from "@/lib/larry-attach";
 import { toastActionError, toastErrorFromUnknown } from "@/lib/toast-message";
-import { chatContextOverCap, GROK_CONTEXT_TOAST } from "@/lib/grok-context";
+import {
+  chatContextOverCap,
+  estimateChatContextChars,
+  GROK_CONTEXT_CHAR_CAP,
+  GROK_CONTEXT_TOAST,
+  JUNIOR_TEXTAREA_MAX_LENGTH,
+  PASTE_FIRST_CHUNK_CHARS,
+  pasteSplitToast,
+  splitPasteChunk,
+  textareaSelection,
+} from "@/lib/grok-context";
 import {
   articleNeedsIncludeSlice,
   parseSections,
@@ -167,6 +183,7 @@ export function GrokPane({
   customShelves = [],
   onCreateNoteShelf,
   onOpenArticle,
+  onOpenRemainderChat,
 }: {
   pane: GrokPaneState;
   label: string;
@@ -180,6 +197,7 @@ export function GrokPane({
   customShelves?: CustomNoteShelf[];
   onCreateNoteShelf?: () => void | Promise<void>;
   onOpenArticle?: (id: string) => void;
+  onOpenRemainderChat?: (remainder: string) => boolean;
   focused?: boolean;
   canRemove?: boolean;
   articleId: string | null;
@@ -395,7 +413,11 @@ export function GrokPane({
 
   useEffect(() => {
     const el = draftRef.current;
-    if (el) dictation?.attach(el);
+    if (!el) return;
+    dictation?.attach(el);
+    el.style.height = "auto";
+    const cap = Math.round(window.innerHeight * 0.6);
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
   }, [dictation, pane.draft]);
 
   useEffect(() => {
@@ -733,14 +755,18 @@ export function GrokPane({
         ? withAssistantName(detail, label)
         : formatChatError(status, detail, label);
       const timeoutToast = chatTimeoutToast(status, formatted);
+      const oversizedPaste = isOversizedPasteHttp(status, detail);
       const imageFail = generatingRef.current || /did not return an image|could not generate that image/i.test(detail);
       const shortImage = readableXaiToast(detail);
       const toastText = imageFail
         ? (shortImage.length > 180 ? "Could not generate that image." : shortImage)
-        : timeoutToast || formatted;
+        : oversizedPaste
+          ? pasteSplitToast((userLine?.content || message).length)
+          : timeoutToast || formatted;
       onUpdate((current) => ({
         ...current,
         streamStatus: null,
+        draft: oversizedPaste && (userLine?.content || message) ? userLine?.content || message : current.draft,
         messages: current.messages.map((item) =>
           item.id === assistantId
             ? {
@@ -846,11 +872,11 @@ export function GrokPane({
     });
   }
 
-  function contextTooLarge(draft: string, extraMessages: ChatLine[] = pane.messages) {
+  function contextInput(draft: string, extraMessages: ChatLine[] = pane.messages) {
     const noteBody =
       pane.includeNoteId && articleId && pane.includeNoteId === articleId ? articleBody : null;
     const slice = plannedIncludeSlice();
-    return chatContextOverCap({
+    return {
       messages: extraMessages,
       draft,
       includeArticle: Boolean(pane.includeArticle && articleId),
@@ -859,11 +885,95 @@ export function GrokPane({
       noteBody,
       includeSliceChars: slice?.chars,
       pendingExtracts: (pane.pendingAttachments ?? []).map((item) => item.extract_text),
-    });
+    };
+  }
+
+  function contextTooLarge(draft: string, extraMessages: ChatLine[] = pane.messages) {
+    return chatContextOverCap(contextInput(draft, extraMessages));
+  }
+
+  function pasteChunkSize() {
+    const used = estimateChatContextChars(contextInput(""));
+    const budget = GROK_CONTEXT_CHAR_CAP - used;
+    return Math.min(PASTE_FIRST_CHUNK_CHARS, Math.max(1, budget));
+  }
+
+  function offerPasteSplit(draft: string) {
+    const source = draft;
+    const n = source.length;
+    toast.custom(
+      (id) => (
+        <div className="flex w-[min(100%,22rem)] flex-col gap-2 rounded-lg border bg-background p-3 text-sm shadow-md">
+          <p>{pasteSplitToast(n)}</p>
+          <div className="flex flex-col gap-1">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 justify-start"
+              onClick={() => {
+                toast.dismiss(id);
+                const { first, remainder } = splitPasteChunk(source, pasteChunkSize());
+                void send({ message: first, keepDraft: remainder, skipPasteSplit: true });
+              }}
+            >
+              Send first chunk
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 justify-start"
+              onClick={() => {
+                const selected = textareaSelection(draftRef.current) || readerCtx.selection;
+                if (!selected.trim()) {
+                  toast.error("Highlight text in the box, then Include selection.");
+                  return;
+                }
+                toast.dismiss(id);
+                void send({
+                  message: selected,
+                  keepDraft: source,
+                  skipPasteSplit: selected.length <= PASTE_FIRST_CHUNK_CHARS,
+                });
+              }}
+            >
+              Include selection
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 justify-start"
+              onClick={() => {
+                toast.dismiss(id);
+                const { first, remainder } = splitPasteChunk(source, pasteChunkSize());
+                let parked = false;
+                if (remainder && onOpenRemainderChat) {
+                  parked = Boolean(onOpenRemainderChat(remainder));
+                }
+                if (remainder && !parked) {
+                  toast.message("Remainder stayed in this box — Junior is full.");
+                }
+                void send({
+                  message: first,
+                  keepDraft: remainder && !parked ? remainder : "",
+                  skipPasteSplit: true,
+                });
+              }}
+            >
+              New chat with remainder
+            </Button>
+          </div>
+        </div>
+      ),
+      { duration: 30_000 },
+    );
   }
 
   async function send(opts?: {
     message?: string;
+    keepDraft?: string;
+    skipPasteSplit?: boolean;
     includeMode?: IncludeMode;
     includeHeading?: string | null;
     includeSelection?: string | null;
@@ -891,6 +1001,11 @@ export function GrokPane({
       }
     }
     if (contextTooLarge(content)) {
+      const raw = opts?.message ?? pane.draft;
+      if (!opts?.skipPasteSplit && raw.length >= PASTE_FIRST_CHUNK_CHARS) {
+        offerPasteSplit(raw);
+        return;
+      }
       toast.error(GROK_CONTEXT_TOAST);
       return;
     }
@@ -925,7 +1040,7 @@ export function GrokPane({
     const assistantId = crypto.randomUUID();
     onUpdate((current) => ({
       ...current,
-      draft: "",
+      draft: opts?.keepDraft ?? "",
       pendingAttachments: [],
       streamStatus: wantsImage ? "generating" : "working",
       messages: [
@@ -1919,7 +2034,8 @@ export function GrokPane({
           <Textarea
             ref={draftRef}
             dictate={false}
-            className="min-h-12 max-h-28 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
+            maxLength={JUNIOR_TEXTAREA_MAX_LENGTH}
+            className="min-h-12 max-h-[min(60vh,28rem)] flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
             value={pane.draft}
             onChange={(event) => patch({ draft: event.target.value })}
             placeholder={

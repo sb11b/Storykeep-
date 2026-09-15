@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_IDLE_TIMEOUT_TOAST, chatTimeoutToast, formatChatError, readableXaiToast, withAssistantName } from "./grok-chat-error";
+import {
+  CHAT_IDLE_TIMEOUT_TOAST,
+  chatTimeoutToast,
+  formatChatError,
+  isOversizedPasteHttp,
+  readableXaiToast,
+  withAssistantName,
+} from "./grok-chat-error";
 
 test("formatChatError includes HTTP status and detail", () => {
   assert.equal(
@@ -36,6 +43,12 @@ test("readableXaiToast keeps the upstream xAI message", () => {
   );
   assert.equal(readableXaiToast("xAI HTTP 422: invalid tool"), "invalid tool");
   assert.equal(readableXaiToast("rate limit exceeded"), "rate limit exceeded");
+});
+
+test("oversized paste HTTP is not a blank 422", () => {
+  assert.equal(isOversizedPasteHttp(422, "String should have at most 8000 characters"), true);
+  assert.equal(isOversizedPasteHttp(400, "This turn is over the cap. Include a heading, a selection, or the next chunk."), true);
+  assert.equal(isOversizedPasteHttp(422, "unknown variant `code_interpreter`"), false);
 });
 
 test("idle timeout toast stays Timed out after 60s", () => {

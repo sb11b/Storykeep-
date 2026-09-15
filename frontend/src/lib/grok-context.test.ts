@@ -3,8 +3,11 @@ import test from "node:test";
 import {
   GROK_CONTEXT_CHAR_CAP,
   GROK_CONTEXT_TOAST,
+  PASTE_FIRST_CHUNK_CHARS,
   chatContextOverCap,
   estimateChatContextChars,
+  pasteSplitToast,
+  splitPasteChunk,
 } from "./grok-context";
 
 test("small talk plus a short article stays under the cap", () => {
@@ -30,6 +33,21 @@ test("a stuffed vault article is counted as one capped slice, not the whole book
     false,
   );
   assert.match(GROK_CONTEXT_TOAST, /heading|selection|chunk/i);
+});
+
+test("over-cap paste toast names the size and first 12k split", () => {
+  assert.match(pasteSplitToast(30_000), /This paste is 30[,.]?000 chars\. Send first 12k or split\./);
+});
+
+test("splitPasteChunk keeps the remainder instead of truncating", () => {
+  const paste = `${"lesson ".repeat(2_000)} leftover ask`;
+  const { first, remainder } = splitPasteChunk(paste);
+  assert.ok(first.length <= PASTE_FIRST_CHUNK_CHARS);
+  assert.ok(remainder.length > 0);
+  assert.equal(`${first} ${remainder}`.replace(/\s+/g, " ").trim(), paste.replace(/\s+/g, " ").trim());
+  const small = splitPasteChunk("short leftover ask");
+  assert.equal(small.first, "short leftover ask");
+  assert.equal(small.remainder, "");
 });
 
 test("thread plus extracts plus include all count", () => {
