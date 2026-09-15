@@ -138,6 +138,7 @@ import type {
 import { showExtractCaughtError, showExtractFailed, showExtractSuccess } from "@/lib/extract-toast";
 import { initialListDebug, listRangeLabel } from "@/lib/list-range";
 import { toastErrorFromUnknown } from "@/lib/toast-message";
+import { isNoteShrinkMessage } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 function isStoryKeepNote(article: Article): boolean {
@@ -2012,16 +2013,43 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                 }}
                 onEditComposed={async (title, markdown, destination, isCorrection, folderId) => {
                   const id = article.id;
-                  try {
-                    const next = await api.updateComposedNote(id, title, markdown, destination, isCorrection, folderId);
-                    if (selectedIdRef.current !== id) return;
-                    setArticle(next);
-                    setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
-                    toast.success("StoryKeep note updated");
-                    void Promise.all([loadNav(), loadList()]);
-                  } catch (error) {
-                    readerActionError(error, "Could not update that note");
-                  }
+                  const save = async (confirmShort = false) => {
+                    try {
+                      const next = await api.updateComposedNote(
+                        id,
+                        title,
+                        markdown,
+                        destination,
+                        isCorrection,
+                        folderId,
+                        confirmShort,
+                      );
+                      if (selectedIdRef.current !== id) return;
+                      setArticle(next);
+                      setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                      toast.success("StoryKeep note updated");
+                      void Promise.all([loadNav(), loadList()]);
+                    } catch (error) {
+                      if (
+                        !confirmShort &&
+                        error instanceof ApiError &&
+                        error.status === 409 &&
+                        isNoteShrinkMessage(error.message)
+                      ) {
+                        if (window.confirm(error.message)) {
+                          await save(true);
+                        }
+                        return;
+                      }
+                      readerActionError(error, "Could not update that note");
+                    }
+                  };
+                  await save(false);
+                }}
+                onComposedRestored={(next) => {
+                  setArticle(next);
+                  setItems((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+                  void Promise.all([loadNav(), loadList()]);
                 }}
                 onDownloadPack={async () => {
                   try {
@@ -2589,6 +2617,7 @@ function Reader({
   onFileArticle,
   onMoveNote,
   onEditComposed,
+  onComposedRestored,
   onDownloadPack,
   onOpenNote,
   onCreateLinkedNote,
@@ -2622,6 +2651,7 @@ function Reader({
   onFileArticle: (destination: FilingDestination | "", folderId?: string | null) => Promise<void>;
   onMoveNote: (noteId: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
   onEditComposed: (title: string, markdown: string, destination: FilingDestination, isCorrection: boolean, folderId?: string | null) => Promise<void>;
+  onComposedRestored: (article: Article) => void;
   onDownloadPack: () => Promise<void>;
   onOpenNote: (id: string) => void;
   onCreateLinkedNote: (title: string, shelf: FilingDestination | "", folderId: string | null) => Promise<string | null>;
@@ -3659,6 +3689,12 @@ function Reader({
               <NoteComposer
                 value={editBody}
                 onChange={setEditBody}
+                noteId={article.id}
+                onRestored={(next) => {
+                  setEditTitle(next.title);
+                  setEditBody(next.content_text || "");
+                  onComposedRestored(next);
+                }}
                 placeholder="Full note, with ==highlights== and images…"
                 rows={10}
                 fill

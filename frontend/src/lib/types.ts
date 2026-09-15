@@ -112,6 +112,13 @@ export type OverlayHighlight = {
   created_at: string;
 };
 
+export type NoteRevision = {
+  id: string;
+  note_id: string;
+  char_count: number;
+  created_at: string;
+};
+
 export type OverlayAddition = {
   id: string;
   article_id: string | null;

@@ -5,6 +5,7 @@ import {
   Bold,
   Code2,
   Highlighter,
+  History,
   ImagePlus,
   Italic,
   Link2,
@@ -15,6 +16,7 @@ import {
   Minimize2,
   Paperclip,
   Underline,
+  Undo2,
 } from "lucide-react";
 import { NoteAttachmentEditorList } from "@/components/note-attachments";
 import { toast } from "sonner";
@@ -22,6 +24,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useDictation } from "@/components/dictation";
 import { ApiError, api } from "@/lib/api";
+import { restoreCharsConfirm } from "@/lib/api-errors";
+import { formatRelative } from "@/lib/format";
+import type { Article, NoteRevision } from "@/lib/types";
 import { onCodeCopyClick } from "@/lib/code-copy";
 import {
   normalizeCodeLang,
@@ -80,6 +85,8 @@ export function NoteComposer({
   toolbarExtra,
   fill = false,
   onExpandedChange,
+  noteId,
+  onRestored,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -93,6 +100,8 @@ export function NoteComposer({
   toolbarExtra?: ReactNode;
   fill?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  noteId?: string | null;
+  onRestored?: (article: Article) => void;
 }) {
   const dictation = useDictation();
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -108,6 +117,9 @@ export function NoteComposer({
   const [wikilinkPick, setWikilinkPick] = useState<{ query: string; replaceFrom: number; replaceTo: number } | null>(
     null,
   );
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [revisions, setRevisions] = useState<NoteRevision[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   useEffect(() => {
     if (readComposeFull()) setOpen(true);
@@ -256,6 +268,55 @@ export function NoteComposer({
     applyWrap(result.text, result.selectionStart, result.selectionEnd);
   }
 
+  async function loadRevisions() {
+    if (!noteId) return;
+    try {
+      setRevisions(await api.listNoteRevisions(noteId));
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not load note history");
+    }
+  }
+
+  async function undoLastSave() {
+    if (!noteId) return;
+    setHistoryBusy(true);
+    try {
+      const rows = await api.listNoteRevisions(noteId);
+      const latest = rows[0];
+      if (!latest) {
+        toast.error("No previous save to undo.");
+        return;
+      }
+      if (!window.confirm(restoreCharsConfirm(latest.char_count))) return;
+      const article = await api.undoNoteRevision(noteId);
+      onChange(article.content_text || "");
+      onRestored?.(article);
+      toast.success("Restored previous save");
+      await loadRevisions();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not undo that save");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function restoreRevision(row: NoteRevision) {
+    if (!noteId) return;
+    if (!window.confirm(restoreCharsConfirm(row.char_count))) return;
+    setHistoryBusy(true);
+    try {
+      const article = await api.restoreNoteRevision(noteId, row.id);
+      onChange(article.content_text || "");
+      onRestored?.(article);
+      toast.success("Restored that version");
+      await loadRevisions();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not restore that version");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
   const pinned = expanded || fill;
 
   return (
@@ -395,6 +456,34 @@ export function NoteComposer({
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
+          {noteId ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={historyBusy}
+                onClick={() => void undoLastSave()}
+              >
+                <Undo2 className="size-3.5" />
+                Undo last save
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={historyBusy}
+                onClick={() => {
+                  const next = !historyOpen;
+                  setHistoryOpen(next);
+                  if (next) void loadRevisions();
+                }}
+              >
+                <History className="size-3.5" />
+                History
+              </Button>
+            </>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -439,6 +528,28 @@ export function NoteComposer({
           }}
         />
       </div>
+      {noteId && historyOpen ? (
+        <div className="max-h-40 shrink-0 overflow-y-auto rounded-md border bg-muted/30 px-2 py-1.5">
+          {revisions.length === 0 ? (
+            <p className="m-0 text-[11px] text-muted-foreground">
+              No earlier saves yet. History appears after you update this note.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {revisions.map((row) => (
+                <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span>
+                    {formatRelative(row.created_at)} · {row.char_count} characters
+                  </span>
+                  <Button type="button" size="xs" variant="ghost" disabled={historyBusy} onClick={() => void restoreRevision(row)}>
+                    Restore
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
       <div className="shrink-0 space-y-2">
         {header ? <div className="space-y-2">{header}</div> : null}
         <NoteAttachmentEditorList markdown={value} onChange={onChange} />

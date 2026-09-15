@@ -326,6 +326,7 @@ class OverlayAdditionIn(BaseModel):
     folder_id: uuid.UUID | None = None
     is_correction: bool = False
     parent_id: uuid.UUID | None = None
+    confirm_short: bool = False
 
 
 class OverlayAdditionOut(BaseModel):
@@ -337,6 +338,15 @@ class OverlayAdditionOut(BaseModel):
     is_correction: bool = False
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NoteRevisionOut(BaseModel):
+    id: uuid.UUID
+    note_id: uuid.UUID
+    char_count: int
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

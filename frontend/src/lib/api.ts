@@ -26,6 +26,7 @@ import type {
   GrokConversationDetail,
   GrokMessage,
   Correction,
+  NoteRevision,
 } from "./types";
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
@@ -283,6 +284,7 @@ export const api = {
     destination?: string,
     isCorrection?: boolean,
     folderId?: string | null,
+    confirmShort?: boolean,
   ) =>
     request<Article>(`/api/v1/articles/${articleId}/storykeep-note`, {
       method: "PATCH",
@@ -292,8 +294,15 @@ export const api = {
         destination,
         folder_id: folderId ?? null,
         is_correction: Boolean(isCorrection),
+        confirm_short: Boolean(confirmShort),
       }),
     }),
+  listNoteRevisions: (articleId: string) =>
+    request<NoteRevision[]>(`/api/v1/articles/${articleId}/note-revisions`),
+  undoNoteRevision: (articleId: string) =>
+    request<Article>(`/api/v1/articles/${articleId}/note-revisions/undo`, { method: "POST" }),
+  restoreNoteRevision: (articleId: string, revisionId: string) =>
+    request<Article>(`/api/v1/articles/${articleId}/note-revisions/${revisionId}/restore`, { method: "POST" }),
   setNoteDestination: (articleId: string, destination: string, isCorrection?: boolean, folderId?: string | null) =>
     request<Article>(`/api/v1/articles/${articleId}/destination`, {
       method: "PATCH",

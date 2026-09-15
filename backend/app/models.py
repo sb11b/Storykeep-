@@ -195,6 +195,9 @@ class Article(Base):
     corrections: Mapped[list["Correction"]] = relationship(
         back_populates="article", cascade="all, delete-orphan"
     )
+    note_revisions: Mapped[list["NoteRevision"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
 
 
 class Folder(Base):
@@ -305,6 +308,24 @@ class OverlayAddition(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     article: Mapped[Article | None] = relationship(back_populates="overlay_additions")
+
+
+class NoteRevision(Base):
+    """Pre-save snapshots of StoryKeep-authored notes. Never vault originals."""
+
+    __tablename__ = "note_revisions"
+    __table_args__ = (Index("note_revisions_note_created_idx", "article_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    article_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("articles.id", ondelete="CASCADE"), nullable=False
+    )
+    markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    article: Mapped[Article] = relationship(back_populates="note_revisions")
 
 
 class NoteMedia(Base):

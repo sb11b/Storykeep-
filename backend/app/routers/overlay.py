@@ -15,6 +15,7 @@ from app.schemas import (
     CorrectionIn,
     CorrectionOut,
     DestinationIn,
+    NoteRevisionOut,
     OverlayAdditionIn,
     OverlayAdditionOut,
     VaultImportOut,
@@ -33,6 +34,7 @@ from app.services.note_media import (
 )
 from app.services.overlay_pack import build_obsidian_pack
 from app.services.file_ingest import MAX_UPLOAD_BYTES, ingest_upload, original_file_path
+from app.services.note_revisions import NoteShrinkBlocked, list_revisions, latest_revision, owned_revision
 from app.services.vault_import import (
     MAX_VAULT_ZIP_BYTES,
     create_composed_note,
@@ -143,12 +145,91 @@ def edit_composed_note(
             payload.is_correction,
             folder_id=payload.folder_id,
             commit=False,
+            confirm_short=payload.confirm_short,
         )
         dest = payload.destination or getattr(article, "destination", None) or "additions"
         set_composed_destination(
             db, user, article, dest, payload.is_correction, folder_id=payload.folder_id, commit=False
         )
         db.commit()
+    except NoteShrinkBlocked as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "note_shrink",
+                "message": str(exc),
+                "current_chars": exc.current_chars,
+                "incoming_chars": exc.incoming_chars,
+            },
+        ) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _article_payload(db, user, article.id)
+
+
+def _revision_out(row) -> NoteRevisionOut:
+    return NoteRevisionOut(id=row.id, note_id=row.article_id, char_count=row.char_count, created_at=row.created_at)
+
+
+@router.get("/articles/{article_id}/note-revisions", response_model=list[NoteRevisionOut])
+def get_note_revisions(
+    article_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[NoteRevisionOut]:
+    article = _owned_article(db, user, article_id)
+    return [_revision_out(row) for row in list_revisions(db, user, article)]
+
+
+@router.post("/articles/{article_id}/note-revisions/undo", response_model=ArticleOut)
+def undo_note_revision(
+    article_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    previous = latest_revision(db, user, article)
+    if not previous:
+        raise HTTPException(status_code=400, detail="No previous save to undo.")
+    try:
+        update_composed_note(
+            db,
+            user,
+            article,
+            article.title,
+            previous.markdown,
+            commit=True,
+            confirm_short=True,
+            snapshot=False,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _article_payload(db, user, article.id)
+
+
+@router.post("/articles/{article_id}/note-revisions/{revision_id}/restore", response_model=ArticleOut)
+def restore_note_revision(
+    article_id: UUID,
+    revision_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ArticleOut:
+    article = _owned_article(db, user, article_id)
+    previous = owned_revision(db, user, article, revision_id)
+    try:
+        update_composed_note(
+            db,
+            user,
+            article,
+            article.title,
+            previous.markdown,
+            commit=True,
+            confirm_short=True,
+            snapshot=True,
+        )
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc

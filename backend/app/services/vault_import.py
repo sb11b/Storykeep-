@@ -266,6 +266,8 @@ def update_composed_note(
     folder_id=_UNSET,
     *,
     commit: bool = True,
+    confirm_short: bool = False,
+    snapshot: bool = True,
 ) -> Article:
     """Edit a StoryKeep-authored note. Imported vault files stay read-only."""
     if not is_composed_note(article):
@@ -276,6 +278,10 @@ def update_composed_note(
         raise ValueError("Title and body are required.")
     if len(body.encode("utf-8")) > MAX_NOTE_BYTES:
         raise ValueError("That note is larger than 1.5 MB.")
+    if snapshot:
+        from app.services.note_revisions import NoteShrinkBlocked, snapshot_before_save
+
+        snapshot_before_save(db, user, article, body, confirm_short=confirm_short)
     now = datetime.now(timezone.utc)
     if is_correction is not None:
         article.is_correction = bool(is_correction)
