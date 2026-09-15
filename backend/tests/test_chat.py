@@ -74,6 +74,17 @@ class ChatGuardTests(unittest.TestCase):
         self.assertIn("word next to copy", lower)
         self.assertNotIn("if steve wants a reply kept, tell him to use add to notes", lower)
         self.assertIn("never append a keep/notes footer", lower)
+        self.assertIn("photo metadata", lower)
+        self.assertIn("never ask him to attach a photo", lower)
+        self.assertNotIn("please attach", lower)
+
+    def test_owner_upload_prompt_transcribes_without_copyright_lecture(self):
+        from app.services.chat import ATTACHMENT_MODE_APPEND
+
+        lower = ATTACHMENT_MODE_APPEND.lower()
+        self.assertIn("transcribe", lower)
+        self.assertIn("do not give a copyright lecture", lower)
+        self.assertIn("owner-uploaded", lower)
 
     def test_article_mode_includes_excerpt(self):
         excerpt = "Title: Demo\n\nBody text"

@@ -7,7 +7,6 @@ import re
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -138,9 +137,26 @@ def decode_b64_image(raw: str) -> bytes:
         payload = base64.b64decode(text, validate=False)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="xAI returned an image that could not be read.") from exc
-    if not payload:
+    return require_raster_image(payload)
+
+
+def require_raster_image(payload: bytes) -> bytes:
+    """Reject SVG/HTML/text stubs (including 'implemented and passing' mock graphics)."""
+    data = payload or b""
+    if len(data) < 8:
         raise HTTPException(status_code=502, detail="xAI did not return an image.")
-    return payload
+    sample = data[:4096].lower()
+    if b"implemented and passing" in sample or b"<svg" in sample or sample.lstrip()[:5] in {b"<?xml", b"<html"}:
+        raise HTTPException(status_code=502, detail="Could not generate that image.")
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return data
+    if data[:2] == b"\xff\xd8":
+        return data
+    if data[:6] in {b"GIF87a", b"GIF89a"}:
+        return data
+    if data[:4] == b"RIFF" and len(data) >= 12 and data[8:12] == b"WEBP":
+        return data
+    raise HTTPException(status_code=502, detail="xAI did not return an image.")
 
 
 def extract_image_bytes(body: dict[str, Any], client: httpx.Client | None = None) -> bytes:
@@ -161,7 +177,7 @@ def extract_image_bytes(body: dict[str, Any], client: httpx.Client | None = None
             raise HTTPException(status_code=502, detail="Could not download the generated image.") from exc
         if response.status_code >= 400 or not response.content:
             raise HTTPException(status_code=502, detail="Could not download the generated image.")
-        return response.content
+        return require_raster_image(response.content)
     raise HTTPException(status_code=502, detail="xAI did not return an image.")
 
 
@@ -344,6 +360,40 @@ def save_generated_image(db: Any, user: User, prompt: str, payload: bytes) -> No
         raise HTTPException(status_code=502, detail=str(exc) or "Could not store that image.") from exc
 
 
+def persist_imagine_user(
+    db: Any,
+    user: User,
+    *,
+    prompt: str,
+    conversation_id: UUID | None,
+    source_media_ids: list[UUID] | None = None,
+) -> tuple[Any, GrokMessage]:
+    """Save the user prompt before Imagine runs so a failed generate still keeps it."""
+    if conversation_id:
+        conversation = grok_store.owned_conversation(db, user, conversation_id)
+        is_first = not conversation.messages
+    else:
+        conversation = grok_store.create_conversation(db, user)
+        is_first = True
+    user_row = grok_store.append_message(
+        db,
+        conversation,
+        role="user",
+        content=prompt,
+        set_title_from_user=is_first,
+    )
+    if source_media_ids:
+        chat_attachments.attach_to_message(db, user, user_row, source_media_ids)
+    db.commit()
+    user_row = db.scalar(
+        select(GrokMessage).options(selectinload(GrokMessage.files)).where(GrokMessage.id == user_row.id)
+    )
+    if user_row is None:
+        raise HTTPException(status_code=500, detail="Could not save that prompt.")
+    conversation = grok_store.owned_conversation(db, user, conversation.id)
+    return conversation, user_row
+
+
 def persist_imagine_turn(
     db: Any,
     user: User,
@@ -356,55 +406,22 @@ def persist_imagine_turn(
     last_model: str | None = None,
     last_reasoning: str | None = None,
 ) -> tuple[Any, GrokMessage, GrokMessage]:
-    if conversation_id:
-        conversation = grok_store.owned_conversation(db, user, conversation_id)
-        is_first = not conversation.messages
-    else:
-        conversation = grok_store.create_conversation(db, user)
-        is_first = True
-    now = datetime.now(timezone.utc)
-    user_row = grok_store.append_message(
-        db,
-        conversation,
-        role="user",
-        content=prompt,
-        set_title_from_user=is_first,
-        created_at=now,
-    )
-    if source_media_ids:
-        chat_attachments.attach_to_message(db, user, user_row, source_media_ids)
-    assistant_row = grok_store.append_message(
-        db,
-        conversation,
-        role="assistant",
-        content=assistant_content or assistant_image_markdown(prompt, media.id),
-        created_at=now + timedelta(milliseconds=1),
-    )
-    chat_attachments.attach_to_message(
+    conversation, user_row = persist_imagine_user(
         db,
         user,
-        assistant_row,
-        [media.id],
-        allow_assistant=True,
+        prompt=prompt,
+        conversation_id=conversation_id,
+        source_media_ids=source_media_ids,
     )
-    grok_store.patch_conversation_for_user(
+    assistant_row = persist_generated_assistant(
         db,
-        user.id,
-        conversation.id,
+        user,
+        conversation_id=conversation.id,
+        markdown=assistant_content or assistant_image_markdown(prompt, media.id),
+        media=media,
         last_model=last_model,
         last_reasoning=last_reasoning,
     )
-    db.commit()
-    user_row = db.scalar(
-        select(GrokMessage).options(selectinload(GrokMessage.files)).where(GrokMessage.id == user_row.id)
-    )
-    assistant_row = db.scalar(
-        select(GrokMessage)
-        .options(selectinload(GrokMessage.files))
-        .where(GrokMessage.id == assistant_row.id)
-    )
-    if user_row is None or assistant_row is None:
-        raise HTTPException(status_code=500, detail="Could not save that image in the thread.")
     conversation = grok_store.owned_conversation(db, user, conversation.id)
     return conversation, user_row, assistant_row
 

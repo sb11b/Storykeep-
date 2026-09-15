@@ -733,6 +733,11 @@ export function GrokPane({
         ? withAssistantName(detail, label)
         : formatChatError(status, detail, label);
       const timeoutToast = chatTimeoutToast(status, formatted);
+      const imageFail = generatingRef.current || /did not return an image|could not generate that image/i.test(detail);
+      const shortImage = readableXaiToast(detail);
+      const toastText = imageFail
+        ? (shortImage.length > 180 ? "Could not generate that image." : shortImage)
+        : timeoutToast || formatted;
       onUpdate((current) => ({
         ...current,
         streamStatus: null,
@@ -742,19 +747,18 @@ export function GrokPane({
                 ...item,
                 waiting: false,
                 failed: true,
-                error: formatted,
-                // Keep streamed words; drop fake Imagine captions with no media id.
+                error: imageFail ? shortImage || "Could not generate that image." : formatted,
                 content:
                   hasMediaImage(item.content) || /\/api\/v1\/media\//.test(item.content)
                     ? item.content
-                    : /Generating the image|Here's the image/i.test(item.content)
+                    : /Generating the image|Here's the image|implemented and passing/i.test(item.content)
                       ? ""
                       : item.content,
               }
             : item,
         ),
       }));
-      toast.error(timeoutToast || readableXaiToast(formatted));
+      toast.error(toastText);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       abortingRef.current = false;
@@ -931,24 +935,6 @@ export function GrokPane({
       ],
     }));
     setStreamStatus(wantsImage ? "generating" : "working");
-    if (intent === "edit" && imageIds.length) {
-      await runImagineFromChat({
-        prompt: content,
-        mediaIds: imageIds,
-        userLine,
-        assistantId,
-      });
-      return;
-    }
-    if (intent === "generate") {
-      await runImagineFromChat({
-        prompt: content,
-        mediaIds: imageIds,
-        userLine,
-        assistantId,
-      });
-      return;
-    }
     await runStream({
       message: content || (files[0] ? `Please look at ${files.map((item) => item.name).join(", ")}.` : ""),
       userLine,
@@ -1159,9 +1145,9 @@ export function GrokPane({
     }));
     setStreamStatus(retryWantsImage ? "generating" : "working");
     if (retryWantsImage) {
-      await runImagineFromChat({
-        prompt: userLine.content,
-        mediaIds: retryImages,
+      await runStream({
+        message: userLine.content,
+        retry: true,
         userLine,
         assistantId,
       });

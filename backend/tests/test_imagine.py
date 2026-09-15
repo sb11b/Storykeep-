@@ -104,12 +104,20 @@ class ImagineServiceTests(unittest.TestCase):
         self.assertIn("did not return an image", raised.exception.detail)
 
     def test_extract_image_bytes_from_b64(self):
-        raw = b"\xff\xd8\xff" + b"jpeg"
+        raw = b"\xff\xd8\xff" + b"jpeg-bytes"
         encoded = base64.b64encode(raw).decode("ascii")
         payload = extract_image_bytes({"data": [{"b64_json": encoded}]})
         self.assertEqual(payload, raw)
 
-    def test_extract_image_bytes_missing_data(self):
+    def test_reject_svg_and_mock_passing_graphic(self):
+        from app.services.imagine import require_raster_image
+
+        with self.assertRaises(HTTPException) as raised:
+            require_raster_image(b'<svg xmlns="http://www.w3.org/2000/svg">implemented and passing</svg>')
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail, "Could not generate that image.")
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+        self.assertEqual(require_raster_image(png)[:8], b"\x89PNG\r\n\x1a\n")
         with self.assertRaises(HTTPException) as raised:
             extract_image_bytes({"data": []})
         self.assertEqual(raised.exception.status_code, 502)

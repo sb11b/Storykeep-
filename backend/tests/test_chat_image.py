@@ -52,6 +52,7 @@ class ChatImageIntentTests(unittest.TestCase):
         self.assertIsNone(image_tool_intent("what is a picture element in HTML", False))
         self.assertEqual(image_tool_intent("generate an image of a red notebook", False), "generate")
         self.assertEqual(image_tool_intent("Generate a red notebook", False), "generate")
+        self.assertIsNone(image_tool_intent("What is photo metadata?", False))
 
     def test_chat_reliability_question_is_not_image_intent(self):
         self.assertIsNone(image_tool_intent("what should I expect from chat reliability?", False))
