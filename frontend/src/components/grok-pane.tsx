@@ -246,6 +246,7 @@ export function GrokPane({
   const abortRef = useRef<AbortController | null>(null);
   const abortingRef = useRef(false);
   const inFlightRef = useRef(false);
+  const turnIdRef = useRef(0);
   const dictation = useDictation();
   const draftValueRef = useRef(pane.draft);
   draftValueRef.current = pane.draft;
@@ -260,6 +261,8 @@ export function GrokPane({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
+  const streamStatusRef = useRef<ChatStatusKind | null>(null);
+  streamStatusRef.current = streamStatus;
   const [aborting, setAborting] = useState(false);
   const [inFlightSpend, setInFlightSpend] = useState<string | null>(null);
   const turnSpendRef = useRef({ model: "grok-4.6", reasoning: "low" });
@@ -295,6 +298,12 @@ export function GrokPane({
     (kind: ChatStatusKind | null) => {
       if (kind === "thinking" && gotDeltaRef.current) return;
       if (kind === "working" && (gotDeltaRef.current || generatingRef.current)) return;
+      if (
+        kind === "working" &&
+        (streamStatusRef.current === "thinking" || streamStatusRef.current === "writing")
+      ) {
+        return;
+      }
       if (kind === "writing" || kind === "generating" || kind == null) {
         if (thinkingTimerRef.current != null) {
           window.clearTimeout(thinkingTimerRef.current);
@@ -322,9 +331,12 @@ export function GrokPane({
 
   const stopGeneration = useCallback(() => {
     dictation?.abort();
-    abortingRef.current = true;
-    setAborting(true);
+    turnIdRef.current += 1;
+    inFlightRef.current = false;
+    abortingRef.current = false;
+    setAborting(false);
     abortRef.current?.abort();
+    abortRef.current = null;
     setBusy(false);
     clearStreamStatus();
     onUpdate((current) => ({
@@ -333,15 +345,6 @@ export function GrokPane({
       messages: current.messages.map((item) => (item.waiting ? { ...item, waiting: false } : item)),
     }));
   }, [clearStreamStatus, dictation, onUpdate]);
-
-  const beginStreamStatus = useCallback(() => {
-    if (thinkingTimerRef.current != null) {
-      window.clearTimeout(thinkingTimerRef.current);
-      thinkingTimerRef.current = null;
-    }
-    gotDeltaRef.current = false;
-    applyStreamStatus("working");
-  }, [applyStreamStatus]);
 
   const markWriting = useCallback(() => {
     applyStreamStatus("writing");
@@ -424,7 +427,7 @@ export function GrokPane({
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       dictation?.abort();
-      if (abortRef.current || busy) {
+      if (abortRef.current || busy || inFlightRef.current) {
         event.preventDefault();
         stopGeneration();
       }
@@ -606,9 +609,13 @@ export function GrokPane({
     includeHeading?: string | null;
     includeSelection?: string | null;
     includeOffset?: number;
+    controller?: AbortController;
+    turnId?: number;
   }) {
     const { message, retry = false, userLine, assistantId } = options;
-    const controller = new AbortController();
+    const turnId = options.turnId ?? turnIdRef.current;
+    const controller = options.controller ?? new AbortController();
+    if (turnId !== turnIdRef.current || controller.signal.aborted) return;
     abortRef.current = controller;
     abortingRef.current = false;
     setAborting(false);
@@ -642,6 +649,7 @@ export function GrokPane({
           media_ids: retry ? undefined : options.mediaIds,
         },
         (delta) => {
+          if (turnId !== turnIdRef.current) return;
           const generating = generatingRef.current;
           if (!generating) markWriting();
           onUpdate((current) => ({
@@ -661,6 +669,7 @@ export function GrokPane({
           }));
         },
         (meta) => {
+          if (turnId !== turnIdRef.current) return;
           if (
             meta.stream_status === "working" ||
             meta.stream_status === "thinking" ||
@@ -787,12 +796,11 @@ export function GrokPane({
           if (meta.conversation_id || meta.assistant_message_id) onHistoryChanged?.();
         },
         controller.signal,
-        () => {
-          beginStreamStatus();
-        },
       );
     } catch (error) {
-      if (controller.signal.aborted) {
+      if (turnId !== turnIdRef.current) return;
+      const aborted = controller.signal.aborted && !(error instanceof ApiError);
+      if (aborted) {
         onUpdate((current) => ({
           ...current,
           streamStatus: null,
@@ -844,6 +852,7 @@ export function GrokPane({
         toast.error(toastText);
       }
     } finally {
+      if (turnId !== turnIdRef.current) return;
       if (abortRef.current === controller) abortRef.current = null;
       abortingRef.current = false;
       setAborting(false);
@@ -1091,6 +1100,12 @@ export function GrokPane({
       return;
     }
     inFlightRef.current = true;
+    const turnId = ++turnIdRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    abortingRef.current = false;
+    setAborting(false);
+    setBusy(true);
     try {
     const imageIds = thisTurnImageMediaIds(files);
     const intent = imageToolIntent(content, imageIds.length > 0);
@@ -1167,9 +1182,11 @@ export function GrokPane({
       includeHeading,
       includeSelection,
       includeOffset,
+      controller,
+      turnId,
     });
     } finally {
-      inFlightRef.current = false;
+      if (turnId === turnIdRef.current) inFlightRef.current = false;
     }
   }
 
@@ -1353,6 +1370,12 @@ export function GrokPane({
       return;
     }
     inFlightRef.current = true;
+    const turnId = ++turnIdRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    abortingRef.current = false;
+    setAborting(false);
+    setBusy(true);
     try {
     const retryImages = thisTurnImageMediaIds(userLine.files);
     const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
@@ -1367,23 +1390,16 @@ export function GrokPane({
       ),
     }));
     setStreamStatus(retryWantsImage ? "generating" : "working");
-    if (retryWantsImage) {
-      await runStream({
-        message: userLine.content,
-        retry: true,
-        userLine,
-        assistantId,
-      });
-      return;
-    }
     await runStream({
       message: userLine.content,
       retry: true,
       userLine,
       assistantId,
+      controller,
+      turnId,
     });
     } finally {
-      inFlightRef.current = false;
+      if (turnId === turnIdRef.current) inFlightRef.current = false;
     }
   }
 
@@ -1950,9 +1966,8 @@ export function GrokPane({
                 }
                 statusLine={
                   item.role === "assistant" &&
-                  visibleStatus &&
                   (item.waiting || (visibleStatus === "writing" && item.id === lastAssistantId))
-                    ? chatStatusLine(label, visibleStatus)
+                    ? chatStatusLine(label, visibleStatus || (item.waiting ? "working" : "writing"))
                     : null
                 }
                 onRegisterBody={registerBody}

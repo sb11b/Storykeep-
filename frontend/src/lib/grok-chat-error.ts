@@ -26,12 +26,12 @@ export function formatChatError(status: number, detail: string, assistantName?: 
 export const CHAT_IDLE_TIMEOUT_TOAST = "Timed out after 60s.";
 
 export function chatTimeoutToast(status: number, message: string): string | null {
-  if (status !== 504) return null;
-  if (/xAI silent/i.test(message)) return null;
+  if (status !== 504) return `HTTP ${status}`;
+  if (/xAI silent/i.test(message)) return "xAI silent";
   if (/timed out after \d+s/i.test(message) || /Timed out after 60s/i.test(message)) {
     return CHAT_IDLE_TIMEOUT_TOAST;
   }
-  return null;
+  return `HTTP ${status}`;
 }
 
 /** The backend names the upstream model; the UI shows the pane's name instead. */

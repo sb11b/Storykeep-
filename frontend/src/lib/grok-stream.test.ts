@@ -3,8 +3,10 @@ import test from "node:test";
 import { ApiError } from "@/lib/api";
 import {
   GROK_ARTICLE_INCLUDE_HINT_MAX,
+  GROK_STREAM_FIRST_BYTE_MS,
   readGrokChatStream,
   shouldIncludeArticle,
+  startChatFirstByteWatchdog,
 } from "./grok-stream";
 
 function sseResponse(chunks: string[]): Response {
@@ -21,6 +23,38 @@ function sseResponse(chunks: string[]): Response {
   });
   return new Response(stream);
 }
+
+test("first-byte budget is 8 seconds", () => {
+  assert.equal(GROK_STREAM_FIRST_BYTE_MS, 8_000);
+});
+
+test("first-byte watchdog becomes xAI silent", async () => {
+  const watch = startChatFirstByteWatchdog(undefined, 40);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(watch.silent(), true);
+  assert.throws(
+    () => watch.throwIfSilent(new DOMException("Aborted", "AbortError")),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 504);
+      assert.match(error.message, /xAI silent/);
+      return true;
+    },
+  );
+  watch.disarm();
+});
+
+test("user abort is not xAI silent", () => {
+  const user = new AbortController();
+  const watch = startChatFirstByteWatchdog(user.signal, 5_000);
+  user.abort();
+  assert.equal(watch.silent(), false);
+  assert.throws(
+    () => watch.throwIfSilent(new DOMException("Chat aborted", "AbortError")),
+    (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+  );
+  watch.disarm();
+});
 
 test("shouldIncludeArticle still includes huge bodies as a slice", () => {
   const huge = "x".repeat(GROK_ARTICLE_INCLUDE_HINT_MAX + 1);

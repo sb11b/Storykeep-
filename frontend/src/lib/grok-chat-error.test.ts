@@ -58,6 +58,6 @@ test("idle timeout toast stays Timed out after 60s", () => {
     CHAT_IDLE_TIMEOUT_TOAST,
   );
   assert.equal(chatTimeoutToast(504, "Timed out after 60s."), CHAT_IDLE_TIMEOUT_TOAST);
-  assert.equal(chatTimeoutToast(504, "Chat failed (HTTP 504): xAI silent"), null);
-  assert.equal(chatTimeoutToast(502, "Chat timed out after 60s."), null);
+  assert.equal(chatTimeoutToast(504, "Chat failed (HTTP 504): xAI silent"), "xAI silent");
+  assert.equal(chatTimeoutToast(502, "Chat timed out after 60s."), "HTTP 502");
 });

@@ -85,6 +85,33 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertIn('"stream_status": "writing"', response.text)
         self.assertIn("Hi", response.text)
 
+    def test_empty_piece_after_connect_is_thinking(self):
+        async def fake_stream(*_args, **kwargs):
+            yield ""
+            yield "Hi"
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "hello", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"stream_status": "working"', response.text)
+        self.assertIn('"stream_status": "thinking"', response.text)
+        self.assertIn('"stream_status": "writing"', response.text)
+        working_at = response.text.index('"stream_status": "working"')
+        thinking_at = response.text.index('"stream_status": "thinking"')
+        writing_at = response.text.index('"stream_status": "writing"')
+        self.assertLess(working_at, thinking_at)
+        self.assertLess(thinking_at, writing_at)
+
     def test_morning_auto_sends_grok46_low(self):
         captured: dict = {}
 
@@ -140,6 +167,53 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertEqual(body["reasoning"], "low")
         self.assertIn("xai_status", body)
         self.assertIsNone(body["xai_status"])
+
+
+class StreamConnectStatusTests(unittest.IsolatedAsyncioTestCase):
+    async def test_xai_http_200_yields_empty_before_tokens(self):
+        class FakeResponse:
+            status_code = 200
+
+            def aiter_lines(self):
+                async def lines():
+                    yield 'data: {"choices":[{"delta":{"content":"Hi"}}]}'
+
+                return lines()
+
+        class FakeStream:
+            async def __aenter__(self):
+                return FakeResponse()
+
+            async def __aexit__(self, *_args):
+                return False
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                return FakeStream()
+
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service.httpx, "AsyncClient", FakeClient),
+        ):
+            pieces: list[str] = []
+            async for piece in chat_service.stream_completion(
+                [{"role": "user", "content": "hello"}],
+                None,
+                include_article=False,
+                model="grok-4.6",
+            ):
+                pieces.append(piece)
+        self.assertEqual(pieces[0], "")
+        self.assertEqual(pieces[1], "Hi")
 
 
 if __name__ == "__main__":

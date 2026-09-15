@@ -33,7 +33,13 @@ import type {
 
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 import { fetchSpeechChunk } from "@/lib/tts-speech-client";
-import { readGrokChatStream, type GrokStreamMeta } from "@/lib/grok-stream";
+import { formatChatError } from "@/lib/grok-chat-error";
+import {
+  GROK_STREAM_FIRST_BYTE_MS,
+  readGrokChatStream,
+  startChatFirstByteWatchdog,
+  type GrokStreamMeta,
+} from "@/lib/grok-stream";
 
 export type NoteMediaUpload = {
   id: string;
@@ -672,29 +678,48 @@ export const api = {
     signal?: AbortSignal,
     onOpen?: () => void,
   ) => {
-    const response = await fetch("/api/v1/chat", {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify(body),
-      signal,
-    });
-    const contentType = response.headers.get("content-type") || "";
-    if (!response.ok || !contentType.includes("text/event-stream")) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: unknown; message?: string; error?: unknown };
-        const parsed = parseErrorPayload(data);
-        if (parsed) detail = parsed;
-        else if (typeof data.message === "string" && data.message.trim()) detail = data.message;
-      } catch {
-        /* ignore */
+    const watchdog = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
+    try {
+      const response = await fetch("/api/v1/chat", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify(body),
+        signal: watchdog.signal,
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok || !contentType.includes("text/event-stream")) {
+        watchdog.disarm();
+        let detail = response.statusText || `HTTP ${response.status}`;
+        try {
+          const data = (await response.json()) as { detail?: unknown; message?: string; error?: unknown };
+          const parsed = parseErrorPayload(data);
+          if (parsed) detail = parsed;
+          else if (typeof data.message === "string" && data.message.trim()) detail = data.message;
+        } catch {
+          /* ignore */
+        }
+        throw new ApiError(response.status, formatChatError(response.status, detail));
       }
-      throw new ApiError(response.status, detail);
+      onOpen?.();
+      await readGrokChatStream(
+        response,
+        {
+          onDelta: (text) => {
+            watchdog.disarm();
+            onDelta(text);
+          },
+          onMeta,
+        },
+        watchdog.signal,
+        { firstByteMs: watchdog.remainingFirstByteMs() },
+      );
+    } catch (error) {
+      watchdog.throwIfSilent(error);
+    } finally {
+      watchdog.disarm();
     }
-    onOpen?.();
-    await readGrokChatStream(response, { onDelta, onMeta }, signal);
   },
   articleSpeechVisible: async (
     id: string,

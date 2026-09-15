@@ -980,6 +980,8 @@ async def stream_completion(
                         xai_status=xai_status,
                     )
                     raise map_xai_http_error(xai_status, detail, model)
+                # Headers received — leave "working" for thinking before the first token.
+                yield ""
                 lines = response.aiter_lines()
                 while True:
                     if cancelled is not None and cancelled.is_set():

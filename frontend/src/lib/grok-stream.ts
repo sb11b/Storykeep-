@@ -2,8 +2,8 @@ import { ApiError } from "@/lib/api";
 import { formatChatError } from "@/lib/grok-chat-error";
 import { spendChipLabel } from "@/lib/grok-model";
 
-/** Client slack over the server's 8s first-byte cut so "xAI silent" can arrive. */
-export const GROK_STREAM_FIRST_BYTE_MS = 12_000;
+/** Match the server's 8s first-token cut, including a hung /chat fetch. */
+export const GROK_STREAM_FIRST_BYTE_MS = 8_000;
 /** After tokens started, abort only if the stream goes idle this long. */
 export const GROK_STREAM_IDLE_AFTER_MS = 60_000;
 /** Imagine edits/generations regularly take longer than the text-chat idle window. */
@@ -137,6 +137,62 @@ export type GrokStreamTimeoutOptions = {
   /** Only used before the first token; never cuts a stream that already has words. */
   hardMs?: number;
 };
+
+export function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const live = signals.filter((item): item is AbortSignal => Boolean(item));
+  if (!live.length) return undefined;
+  if (live.length === 1) return live[0];
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(live);
+  const merged = new AbortController();
+  for (const item of live) {
+    if (item.aborted) {
+      merged.abort();
+      return merged.signal;
+    }
+    item.addEventListener("abort", () => merged.abort(), { once: true });
+  }
+  return merged.signal;
+}
+
+export type ChatFirstByteWatchdog = {
+  signal: AbortSignal | undefined;
+  disarm: () => void;
+  remainingFirstByteMs: () => number;
+  throwIfSilent: (error: unknown) => never;
+  silent: () => boolean;
+};
+
+/** Abort hung fetch/stream after 8s with no token. Disarm on the first delta. */
+export function startChatFirstByteWatchdog(
+  userSignal?: AbortSignal,
+  ms: number = GROK_STREAM_FIRST_BYTE_MS,
+): ChatFirstByteWatchdog {
+  const watchdog = new AbortController();
+  const started = Date.now();
+  const timer = globalThis.setTimeout(() => watchdog.abort(), ms);
+  const disarm = () => globalThis.clearTimeout(timer);
+  if (userSignal?.aborted) {
+    disarm();
+    watchdog.abort();
+  } else {
+    userSignal?.addEventListener("abort", disarm, { once: true });
+  }
+  return {
+    signal: mergeAbortSignals(userSignal, watchdog.signal),
+    disarm,
+    remainingFirstByteMs: () => Math.max(250, ms - (Date.now() - started)),
+    silent: () => watchdog.signal.aborted && !userSignal?.aborted,
+    throwIfSilent: (error: unknown) => {
+      if (userSignal?.aborted) {
+        throw error instanceof DOMException ? error : new DOMException("Chat aborted", "AbortError");
+      }
+      if (watchdog.signal.aborted) {
+        throw new ApiError(504, formatChatError(504, "xAI silent"));
+      }
+      throw error;
+    },
+  };
+}
 
 export async function readGrokChatStream(
   response: Response,

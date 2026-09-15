@@ -292,10 +292,10 @@ export function GrokChatMessage({
           {includeChip}
         </p>
       ) : null}
-      {statusLine || (waiting && !failed && !content) ? (
+      {statusLine ? (
         <p className="mb-1 flex items-center gap-2 text-sm font-medium" role="status">
           {waiting && !content ? <LoaderCircle className="size-4 animate-spin shrink-0" /> : null}
-          <span>{statusLine || `${assistantName} is working…`}</span>
+          <span>{statusLine}</span>
         </p>
       ) : null}
       {content ? (
