@@ -22,6 +22,10 @@ from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
 
+# Without this the root logger stays at WARNING and every per-turn xAI line
+# (ttft_ms, xai_status) is dropped, which is what we need when chat misbehaves.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
