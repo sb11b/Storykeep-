@@ -7,6 +7,7 @@ import {
   BookOpen,
   Bookmark,
   BookmarkCheck,
+  Calculator,
   Check,
   CheckCheck,
   ChevronDown,
@@ -33,6 +34,7 @@ import {
 import { toast } from "sonner";
 import { ListenControls, type ListenControlsHandle } from "@/components/listen-controls";
 import { GrokBubble } from "@/components/grok-bubble";
+import { CalculatorOverlay, type CalculatorHandle } from "@/components/calculator-overlay";
 import { ArticleShareMenu } from "@/components/article-share-menu";
 import { CorrectionCheck, DestinationSelect, FolderSelect, RssShelfSelect } from "@/components/destination-controls";
 import { NoteAttachmentChips } from "@/components/note-attachments";
@@ -630,6 +632,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   const searchRef = useRef<HTMLInputElement>(null);
   const noteFocusRef = useRef<(() => void) | null>(null);
   const listenRef = useRef<ListenControlsHandle>(null);
+  const calculatorRef = useRef<CalculatorHandle>(null);
   const caretWordRef = useRef<(() => number | null) | null>(null);
   const itemsRef = useRef<ArticleListItem[]>([]);
   const totalRef = useRef(0);
@@ -1595,6 +1598,15 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
+              variant="outline"
+              title="Open the Calculator overlay"
+              onClick={() => calculatorRef.current?.open()}
+            >
+              <Calculator className="size-3" />
+              Calculator
+            </Button>
+            <Button
+              size="xs"
               variant={readerFull ? "default" : "outline"}
               disabled={!article}
               title="Read this article full screen with every option still available"
@@ -2118,6 +2130,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
           />
         </DialogContent>
       </Dialog>
+      <CalculatorOverlay ref={calculatorRef} userId={user.id} />
       <GrokBubble
         articleId={article?.id ?? null}
         articleTitle={article?.title ?? null}
