@@ -681,7 +681,7 @@ export const api = {
       const headerWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
       let tokenWatch: ReturnType<typeof startChatFirstByteWatchdog> | null = null;
       try {
-        let response: Response;
+        let response: Response | undefined;
         try {
           response = await fetch("/api/v1/chat", {
             method: "POST",
@@ -693,6 +693,9 @@ export const api = {
           });
         } catch (error) {
           headerWatch.throwIfSilent(error);
+        }
+        if (!response) {
+          throw new ApiError(504, formatChatError(504, "xAI silent"));
         }
         headerWatch.disarm();
         const contentType = response.headers.get("content-type") || "";
