@@ -17,6 +17,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - Full-text search across titles, authors, summaries, and stored bodies
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
 - **Junior memory:** one owner note (Junior full screen → Memory). Attached as a short system section on Junior requests (first 8k). Demo never sees or edits it. Do not dump it into reply footers.
+- **Junior live search:** owner chat can call `web_search` in the same thread (xAI live search). Current events, prices, docs, and “look this up” get cited public URLs. Demo has no search tool. Missing key → “Search unavailable, retry later.”
 - **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy.
 - **Calendar:** Fastmail CalDAV (per-user app password or API token, encrypted on the server). Library **Calendar** is week/month. Junior proposes an event; Confirm writes it.
 - **Mail:** Fastmail JMAP (Railway `FASTMAIL_TOKEN`, or an owner-only encrypted token). Library **Mail** lists Inbox / Sent / Drafts (50 per page). Compose asks Confirm before Send. Demo has no mail. Junior “summarize unread” uses that same list (grok-4.6 · low) and never sends without Confirm.

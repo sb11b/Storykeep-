@@ -8,6 +8,8 @@ export const GROK_STREAM_FIRST_BYTE_MS = 8_000;
 export const GROK_STREAM_IDLE_AFTER_MS = 60_000;
 /** Imagine edits/generations regularly take longer than the text-chat idle window. */
 export const GROK_STREAM_IMAGE_IDLE_MS = 180_000;
+/** Live web_search can sit on Searching… longer than the 8s first-token cut. */
+export const GROK_STREAM_SEARCH_IDLE_MS = 45_000;
 /** @deprecated first-byte window; kept so older tests still compile. */
 export const GROK_STREAM_IDLE_MS = GROK_STREAM_FIRST_BYTE_MS;
 /** @deprecated do not hard-kill a stream that is still producing tokens. */
@@ -33,6 +35,9 @@ export type GrokStreamMeta = {
   include_next_heading?: string;
   calendar_proposal?: { title: string; start: string; end: string };
   mail_proposal?: { to: string; subject: string; body: string };
+  toast?: string;
+  toast_kind?: string;
+  search_status?: number;
 };
 
 export type GrokStreamHandlers = {
@@ -66,6 +71,9 @@ type StreamPayload = {
   include_next_heading?: string;
   calendar_proposal?: { title: string; start: string; end: string };
   mail_proposal?: { to: string; subject: string; body: string };
+  toast?: string;
+  toast_kind?: string;
+  search_status?: number;
 };
 
 function parseSsePart(
@@ -81,6 +89,10 @@ function parseSsePart(
   const parsed = JSON.parse(data) as StreamPayload;
   if (parsed.stream_status === "generating" && idle) {
     idle.ms = GROK_STREAM_IMAGE_IDLE_MS;
+  }
+  if (parsed.stream_status === "searching") {
+    receivedDelta.value = true;
+    if (idle) idle.ms = GROK_STREAM_SEARCH_IDLE_MS;
   }
   if (parsed.error) {
     const status = typeof parsed.status === "number" ? parsed.status : 502;
@@ -106,7 +118,8 @@ function parseSsePart(
     parsed.partial ||
     parsed.include_chip ||
     parsed.calendar_proposal ||
-    parsed.mail_proposal
+    parsed.mail_proposal ||
+    parsed.toast
   ) {
     handlers.onMeta?.({
       conversation_id: parsed.conversation_id,
@@ -128,6 +141,9 @@ function parseSsePart(
       include_next_heading: parsed.include_next_heading,
       calendar_proposal: parsed.calendar_proposal,
       mail_proposal: parsed.mail_proposal,
+      toast: parsed.toast,
+      toast_kind: parsed.toast_kind,
+      search_status: parsed.search_status,
     });
   }
   return "continue" as const;

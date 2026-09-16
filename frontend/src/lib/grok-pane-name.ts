@@ -19,12 +19,13 @@ export function isDefaultPaneName(name: string, index: number): boolean {
   );
 }
 
-export type ChatStatusKind = "working" | "thinking" | "writing" | "generating";
+export type ChatStatusKind = "working" | "thinking" | "writing" | "generating" | "searching";
 
 export function chatStatusLine(name: string, kind: ChatStatusKind): string {
   const who = name.trim() || DEFAULT_PANE_NAME;
   if (kind === "working") return `${who} is working…`;
   if (kind === "thinking") return `${who} is thinking…`;
   if (kind === "generating") return `${who} is generating…`;
+  if (kind === "searching") return "Searching…";
   return `${who} is writing…`;
 }

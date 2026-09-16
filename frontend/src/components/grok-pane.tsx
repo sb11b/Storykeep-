@@ -303,7 +303,10 @@ export function GrokPane({
       ) {
         return;
       }
-      if (kind === "writing" || kind === "generating" || kind == null) {
+      if (kind === "working" && streamStatusRef.current === "searching") {
+        return;
+      }
+      if (kind === "writing" || kind === "generating" || kind === "searching" || kind == null) {
         if (thinkingTimerRef.current != null) {
           window.clearTimeout(thinkingTimerRef.current);
           thinkingTimerRef.current = null;
@@ -673,9 +676,14 @@ export function GrokPane({
             meta.stream_status === "working" ||
             meta.stream_status === "thinking" ||
             meta.stream_status === "writing" ||
-            meta.stream_status === "generating"
+            meta.stream_status === "generating" ||
+            meta.stream_status === "searching"
           ) {
             applyStreamStatus(meta.stream_status);
+          }
+          if (meta.toast) {
+            if (meta.toast_kind === "error") toast.error(meta.toast);
+            else toast.message(meta.toast);
           }
           onUpdate((current) => {
             let next = current;

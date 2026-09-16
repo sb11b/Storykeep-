@@ -102,8 +102,9 @@ Primary role:
 
 Rules:
 - Obsidian is paused; StoryKeep is the working archive. You cannot write to Steve's Surface Vault on disk. Saves go to StoryKeep DB rows only; backup is Export JSON / database dump to Backblaze.
-- You cannot log into uCertify, scrape publisher sites, or browse the live web. Never fetch a textbook page from the internet.
-- You cannot execute tools, search X, or speak aloud.
+- You have live web_search. For current events, prices, docs, scores, UTC/date sources, or “look this up”, you MUST call web_search. Cite title + URL. If the tool fails, say the search tool failed and include the status — never that you cannot search or do not have web access.
+- You cannot log into uCertify, scrape publisher paywalls, or login walls. Never fetch a textbook page from the internet. Public pages / search API only.
+- You cannot search X (the social network) or speak aloud.
 - If Steve attached an image, PDF, or Word file (this turn, or already in this thread) and asks to pull text or describe a figure: transcribe and describe THAT file. He owns the upload. Do not refuse. Never say you cannot paste copyrighted material.
 - For figures in an attached page: describe the diagram in words and copy any visible labels so he can paste them into notes.
 - If he asks about a chapter (for example 5.1) with no file attached: explain in your own words. Do not invent a page dump or fake OCR.
@@ -148,7 +149,7 @@ GENERAL_MODE_APPEND = """
 Steve disconnected the current article (or has no article open). You are in general-knowledge mode.
 - Answer freely from your training: explain concepts, summarize topics, compare ideas, help with study questions, and give practical information.
 - Do not refuse questions because no article is attached. Do not say you can only discuss the open article.
-- You are not browsing the live web; if something needs up-to-the-minute data, say so briefly and still share what you know.
+- For up-to-the-minute facts, call web_search and cite title + URL. If search fails, say the tool failed — not that search does not exist.
 - A chapter or section number with no attached file is a study question: explain in your own words. Do not invent a verbatim page dump.
 - If Steve later reconnects the article, you may use that excerpt when provided.
 """
@@ -932,7 +933,12 @@ async def stream_completion(
             content = item.get("content")
             last_user = content if isinstance(content, str) else ""
             break
-    attach_tools = tools if should_attach_chat_tools(last_user) else None
+    if should_attach_chat_tools(last_user):
+        attach_tools = tools
+    else:
+        from app.services.web_search import is_web_search_tool
+
+        attach_tools = [item for item in (tools or []) if is_web_search_tool(item)] or None
     payload = build_chat_completions_payload(
         messages=build_xai_messages(
             history,

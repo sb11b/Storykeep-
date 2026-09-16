@@ -217,6 +217,26 @@ test("readGrokChatStream forwards working then writing stream_status", async () 
   assert.deepEqual(parts, ["Hi"]);
 });
 
+test("readGrokChatStream forwards searching stream_status and toast", async () => {
+  const meta: Array<{ stream_status?: string; toast?: string }> = [];
+  const parts: string[] = [];
+  await readGrokChatStream(
+    sseResponse([
+      'data: {"stream_status":"searching","model":"grok-4.6"}\n\n',
+      'data: {"toast":"no public hits; answering from training.","toast_kind":"message"}\n\n',
+      'data: {"stream_status":"writing","delta":"From training"}\n\n',
+      "data: [DONE]\n\n",
+    ]),
+    {
+      onDelta: (text) => parts.push(text),
+      onMeta: (item) => meta.push(item),
+    },
+  );
+  assert.equal(meta[0]?.stream_status, "searching");
+  assert.equal(meta[1]?.toast, "no public hits; answering from training.");
+  assert.deepEqual(parts, ["From training"]);
+});
+
 test("readGrokChatStream forwards generating stream_status", async () => {
   const meta: Array<{ stream_status?: string; reasoning_effort?: string }> = [];
   const parts: string[] = [];

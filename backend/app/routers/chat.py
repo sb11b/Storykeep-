@@ -45,6 +45,7 @@ from app.services.include_chunk import resolve_include_slice
 from app.services.include_chunk import slice_meta as include_slice_meta
 from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
+from app.services import web_search as search_tool
 
 router = APIRouter(tags=["chat"])
 
@@ -73,6 +74,19 @@ class ChatIn(BaseModel):
         if not self.message.strip() and not self.media_ids:
             raise ValueError("Type a message or attach a file.")
         return self
+
+
+class SearchIn(BaseModel):
+    query: str = Field(min_length=1, max_length=search_tool.QUERY_CHAR_CAP)
+
+
+@router.post("/search")
+def junior_web_search(payload: SearchIn, user: User = Depends(get_current_user)) -> dict:
+    search_tool.reject_demo(user)
+    outcome = search_tool.search(payload.query)
+    if outcome.fatal:
+        raise HTTPException(status_code=outcome.status_code or 503, detail=outcome.detail)
+    return outcome.as_payload()
 
 
 class ImagineIn(BaseModel):
@@ -822,6 +836,10 @@ def _chat(
     memory_block = junior_memory.system_section(db, user)
     if memory_block:
         extras.append(memory_block)
+    search_enabled = search_tool.owner_can_search(user)
+    will_search = search_enabled and search_tool.wants_web_search(user_text)
+    if search_enabled:
+        extras.append(search_tool.SEARCH_ON_APPEND)
     extra_system = "\n".join(extras)
     calendar_tools = (
         [ADD_EVENT_TOOL]
@@ -833,7 +851,12 @@ def _chat(
         if mail_connected and mail_tool.wants_send_mail(user_text)
         else None
     )
-    tools = (*(calendar_tools or []), *(mail_tools or [])) or None
+    search_tools = (
+        [search_tool.WEB_SEARCH_TOOL]
+        if search_enabled and not chat_service.is_small_talk_turn(user_text)
+        else None
+    )
+    tools = (*(calendar_tools or []), *(mail_tools or []), *(search_tools or [])) or None
     tool_calls_out: list[dict] = []
 
     def _persist_assistant(text: str) -> str | None:
@@ -864,24 +887,26 @@ def _chat(
 
     step("stream_open")
     cancelled = asyncio.Event()
-    stream = chat_service.stream_completion(
-        history_for_xai,
-        excerpt,
-        include_article=include_article,
-        recap_question=recap_question,
-        model=resolved_model,
-        model_choice=model_choice,
-        reasoning_effort=resolved_reasoning,
-        user_id=user_id,
-        has_attachments=has_attachments,
-        include_note=include_note,
-        note_excerpt=note_excerpt,
-        working_excerpt=working_excerpt,
-        extra_system=extra_system,
-        cancelled=cancelled,
-        tools=tools,
-        tool_calls_out=tool_calls_out,
-    )
+
+    def _open_stream(extra: str | None, stream_tools: list[dict] | None):
+        return chat_service.stream_completion(
+            history_for_xai,
+            excerpt,
+            include_article=include_article,
+            recap_question=recap_question,
+            model=resolved_model,
+            model_choice=model_choice,
+            reasoning_effort=resolved_reasoning,
+            user_id=user_id,
+            has_attachments=has_attachments,
+            include_note=include_note,
+            note_excerpt=note_excerpt,
+            working_excerpt=working_excerpt,
+            extra_system=extra,
+            cancelled=cancelled,
+            tools=stream_tools,
+            tool_calls_out=tool_calls_out,
+        )
 
     async def watch_disconnect() -> None:
         try:
@@ -914,8 +939,10 @@ def _chat(
         try:
             yield chat_service.SSE_PADDING
             await asyncio.sleep(0)
+            extra = extra_system
+            already_searched = False
             open_meta: dict[str, object] = {
-                "stream_status": "working",
+                "stream_status": "searching" if will_search else "working",
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
@@ -927,6 +954,29 @@ def _chat(
                 open_meta["user_message_id"] = str(user_message_id)
             yield chat_service.encode_sse({key: value for key, value in open_meta.items() if value is not None})
             await asyncio.sleep(0)
+            if will_search:
+                outcome = await asyncio.to_thread(search_tool.search, user_text)
+                already_searched = True
+                if outcome.toast:
+                    yield chat_service.encode_sse(
+                        {
+                            "toast": outcome.toast,
+                            "toast_kind": "error" if outcome.fatal else "message",
+                            "search_status": outcome.status_code,
+                        }
+                    )
+                    await asyncio.sleep(0)
+                if outcome.fatal:
+                    yield chat_service.encode_sse(
+                        chat_service.stream_error_event(outcome.status_code, outcome.detail)
+                    )
+                    return
+                if outcome.empty:
+                    extra = f"{extra}\n{search_tool.EMPTY_SYSTEM}" if extra else search_tool.EMPTY_SYSTEM
+                else:
+                    block = search_tool.format_hits_for_model(outcome.hits)
+                    extra = f"{extra}\n{block}" if extra else block
+            stream = _open_stream(extra, tools)
             async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():
                     cancelled.set()
@@ -949,6 +999,52 @@ def _chat(
             if cancelled.is_set() or await request.is_disconnected():
                 _persist_assistant("".join(assistant_parts))
                 return
+            followup_query = search_tool.assemble_web_search_query(tool_calls_out)
+            if followup_query and not already_searched and search_enabled:
+                yield chat_service.encode_sse({"stream_status": "searching"})
+                await asyncio.sleep(0)
+                outcome = await asyncio.to_thread(search_tool.search, followup_query)
+                if outcome.toast:
+                    yield chat_service.encode_sse(
+                        {
+                            "toast": outcome.toast,
+                            "toast_kind": "error" if outcome.fatal else "message",
+                            "search_status": outcome.status_code,
+                        }
+                    )
+                    await asyncio.sleep(0)
+                if outcome.fatal:
+                    yield chat_service.encode_sse(
+                        chat_service.stream_error_event(outcome.status_code, outcome.detail)
+                    )
+                    return
+                if outcome.empty:
+                    block = search_tool.EMPTY_SYSTEM
+                else:
+                    block = search_tool.format_hits_for_model(outcome.hits)
+                extra = f"{extra_system}\n{block}" if extra_system else block
+                async for piece in _open_stream(extra, None):
+                    if cancelled.is_set() or await request.is_disconnected():
+                        cancelled.set()
+                        if piece:
+                            assistant_parts.append(piece)
+                        _persist_assistant("".join(assistant_parts))
+                        return
+                    if not piece:
+                        if not saw_text:
+                            yield chat_service.encode_sse({"stream_status": "thinking"})
+                            await asyncio.sleep(0)
+                        continue
+                    first = not saw_text
+                    await emit_delta(piece)
+                    payload: dict[str, object] = {"delta": piece}
+                    if first:
+                        payload["stream_status"] = "writing"
+                    yield chat_service.encode_sse(payload)
+                    await asyncio.sleep(0)
+                if cancelled.is_set() or await request.is_disconnected():
+                    _persist_assistant("".join(assistant_parts))
+                    return
             proposal = assemble_tool_calls(tool_calls_out) or extract_calendar_proposal("".join(assistant_parts))
             mail_proposal = mail_tool.assemble_send_proposal(tool_calls_out) or mail_tool.extract_send_proposal(
                 "".join(assistant_parts)
