@@ -3,8 +3,6 @@ import test from "node:test";
 import {
   clipFilename,
   encodeWavPcm16,
-  MIC_BLOCKED_TOAST,
-  micDeniedMessage,
   pickRecorderMime,
   sttFailToast,
 } from "./junior-stt";
@@ -28,12 +26,6 @@ test("sttFailToast always includes a status", () => {
   assert.equal(sttFailToast(401, "Not authenticated"), "STT failed (401)");
   assert.equal(sttFailToast(400, "empty blob"), "STT failed (empty blob)");
   assert.equal(sttFailToast(422, "STT failed (422)"), "STT failed (422)");
-});
-
-test("denied mic copy is Microphone blocked", () => {
-  assert.equal(MIC_BLOCKED_TOAST, "Microphone blocked");
-  const denied = new DOMException("Permission denied", "NotAllowedError");
-  assert.equal(micDeniedMessage(denied), "Microphone blocked");
 });
 
 test("encodeWavPcm16 writes a RIFF header", () => {

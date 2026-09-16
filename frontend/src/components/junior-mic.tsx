@@ -6,14 +6,12 @@ import { ApiError, api } from "@/lib/api";
 import { appendSpoken } from "@/lib/stt-buffer";
 import {
   MAX_CLIP_MS,
-  MIC_BLOCKED_TOAST,
   MIN_CLIP_BYTES,
-  micDeniedMessage,
   startMicClip,
   sttFailToast,
   type MicClipSession,
 } from "@/lib/junior-stt";
-import { MIC_IDLE, MIC_LIVE } from "@/lib/stt-ui";
+import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, micDeniedMessage } from "@/lib/stt-ui";
 
 export function JuniorMicButton({
   enabled,
@@ -96,7 +94,7 @@ export function JuniorMicButton({
     } catch (error) {
       sessionRef.current = null;
       setPhase("idle");
-      toast.error(micDeniedMessage(error) || MIC_BLOCKED_TOAST);
+      toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
     }
   }, [stopAndSend]);
 

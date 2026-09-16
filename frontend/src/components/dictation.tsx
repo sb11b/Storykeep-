@@ -17,6 +17,7 @@ import {
   MIC_DROPPED_TOAST,
   MIC_IDLE,
   MIC_LIVE,
+  micDeniedMessage,
 } from "@/lib/stt-ui";
 import { cn } from "@/lib/utils";
 
@@ -50,18 +51,6 @@ type DictationApi = {
 function sttToast(message: string) {
   const text = message.trim();
   toast.error(text || "STT failed");
-}
-
-function micDeniedMessage(error: unknown) {
-  if (error instanceof DOMException) {
-    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-      return MIC_DENIED_TOAST;
-    }
-    if (error.name === "NotFoundError") {
-      return "No microphone found.";
-    }
-  }
-  return error instanceof Error ? error.message : "Microphone is not available";
 }
 
 const DictationContext = createContext<DictationApi | null>(null);

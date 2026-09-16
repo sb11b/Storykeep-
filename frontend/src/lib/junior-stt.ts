@@ -1,6 +1,5 @@
 /** Junior composer clip STT. Record → POST /api/v1/stt. Never log audio. */
 
-export const MIC_BLOCKED_TOAST = "Microphone blocked";
 export const MAX_CLIP_MS = 60_000;
 export const MIN_CLIP_BYTES = 64;
 
@@ -39,16 +38,6 @@ export function sttFailToast(status: number | string, detail?: string): string {
     return `STT failed (${code})`;
   }
   return text || "STT failed";
-}
-
-export function micDeniedMessage(error: unknown): string {
-  if (error instanceof DOMException) {
-    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError" || error.name === "SecurityError") {
-      return MIC_BLOCKED_TOAST;
-    }
-    if (error.name === "NotFoundError") return "No microphone found.";
-  }
-  return error instanceof Error && error.message.trim() ? error.message : MIC_BLOCKED_TOAST;
 }
 
 export function requireSecureMic(): void {

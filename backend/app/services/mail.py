@@ -16,10 +16,6 @@ CONNECT_DETAIL = "Connect Fastmail"
 DEMO_DETAIL = "Mail is not enabled on this account"
 
 
-def is_demo(user: User | None) -> bool:
-    return is_locked(user)
-
-
 def env_token() -> str:
     return (settings.fastmail_token or "").strip()
 
@@ -39,9 +35,9 @@ def stored_app_password(db: Session, user_id: UUID) -> str:
     return _decrypt_row_token(db.get(FastmailCalendarAccount, user_id))
 
 
-def has_fastmail(db: Session, user: User) -> bool:
+def has_token(db: Session, user: User) -> bool:
     """Stored JMAP token, stored CalDAV app password, or env token for a live StoryKeep login."""
-    if user is None or is_demo(user):
+    if user is None or is_locked(user):
         return False
     if stored_mail_token(db, user.id) or stored_app_password(db, user.id):
         return True
@@ -49,32 +45,24 @@ def has_fastmail(db: Session, user: User) -> bool:
 
 
 def require_mail_user(user: User) -> None:
-    if is_demo(user):
+    if is_locked(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=DEMO_DETAIL)
 
 
-def resolve_token(db: Session, user: User) -> str:
+def require_token(db: Session, user: User) -> str:
     require_mail_user(user)
-    if not has_fastmail(db, user):
+    if not has_token(db, user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=CONNECT_DETAIL)
     return stored_mail_token(db, user.id) or stored_app_password(db, user.id) or env_token()
 
 
-def has_token(db: Session, user: User) -> bool:
-    return has_fastmail(db, user)
-
-
-def require_token(db: Session, user: User) -> str:
-    return resolve_token(db, user)
-
-
 def status_payload(db: Session, user: User) -> dict[str, object]:
-    demo = is_demo(user)
+    demo = is_locked(user)
     connected = False
     email = None
     boxes: list[dict[str, object]] = []
     source = None
-    if not demo and has_fastmail(db, user):
+    if not demo and has_token(db, user):
         token = stored_mail_token(db, user.id) or stored_app_password(db, user.id) or env_token()
         if stored_mail_token(db, user.id):
             source = "account"
@@ -91,7 +79,7 @@ def status_payload(db: Session, user: User) -> dict[str, object]:
             boxes = []
             source = None
     return {
-        "configured": has_fastmail(db, user) if not demo else False,
+        "configured": has_token(db, user) if not demo else False,
         "connected": connected,
         "demo_locked": demo,
         "fastmail_email": email if connected else None,

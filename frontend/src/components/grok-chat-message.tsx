@@ -27,11 +27,8 @@ import { hasGrammarMarks, wordCount } from "@/lib/word-count";
 import type { Folder } from "@/lib/types";
 import { buildVisibleSpeechScript } from "@/lib/tts-visible";
 import { wordIndexFromSelection } from "@/lib/tts-words";
+import { toastErrorFromUnknown } from "@/lib/toast-message";
 import { cn } from "@/lib/utils";
-
-function toastDownloadError(error: unknown) {
-  toast.error(error instanceof Error ? error.message : "Could not download that picture.");
-}
 
 function onReplyBodyClick(
   event: MouseEvent<HTMLElement>,
@@ -57,7 +54,7 @@ function onReplyBodyClick(
       img,
       mediaId,
       url: img?.currentSrc || img?.getAttribute("src") || trigger.getAttribute("data-media-url"),
-    }).catch(toastDownloadError);
+    }).catch((error) => toastErrorFromUnknown(error, "Could not download that picture."));
     return;
   }
   onCodeCopyClick(event, onRun);
@@ -97,7 +94,7 @@ function ChatPicture({
             mediaId,
             url: img?.currentSrc || img?.getAttribute("src") || src,
             contentType,
-          }).catch(toastDownloadError);
+          }).catch((error) => toastErrorFromUnknown(error, "Could not download that picture."));
         }}
       >
         <Download className="size-3" />

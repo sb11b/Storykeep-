@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import logging
-import re
 
 import httpx
 from fastapi import HTTPException
 
+from app.http_limits import redact_secrets
 from app.services.tts import _xai_error_detail
 
 logger = logging.getLogger(__name__)
-
-_SECRET_RE = re.compile(r"(xai-[A-Za-z0-9_-]{8,}|Bearer\s+\S+)", re.IGNORECASE)
-
-
-def redact_secrets(text: str) -> str:
-    return _SECRET_RE.sub("[redacted]", text or "")
 
 
 def log_tts_failure(

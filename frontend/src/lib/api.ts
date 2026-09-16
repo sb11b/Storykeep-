@@ -56,22 +56,7 @@ export type NoteMediaUpload = {
 async function uploadNoteMedia(file: File): Promise<NoteMediaUpload> {
   const body = new FormData();
   body.append("file", file);
-  const response = await fetch("/api/v1/media", {
-    method: "POST",
-    body,
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    let detail: string | null = null;
-    try {
-      detail = parseErrorPayload(await response.json());
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(response.status, detail || httpErrorFallback(response.status));
-  }
-  return (await response.json()) as NoteMediaUpload;
+  return request<NoteMediaUpload>("/api/v1/media", { method: "POST", body });
 }
 
 export class ApiError extends Error {
@@ -86,7 +71,8 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body && !headers.has("Content-Type")) {
+  const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  if (init?.body && !isForm && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   const response = await fetch(path, {
@@ -230,26 +216,10 @@ export const api = {
     request<{ queried_url: string; candidates: FeedCandidate[] }>(
       `/api/v1/feeds/discover?url=${encodeURIComponent(url)}`,
     ),
-  importVault: async (file: File) => {
+  importVault: (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/v1/sources/obsidian/import", {
-      method: "POST",
-      body,
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    return (await response.json()) as VaultImportResult;
+    return request<VaultImportResult>("/api/v1/sources/obsidian/import", { method: "POST", body });
   },
   downloadObsidianPack: async () => {
     const response = await fetch("/api/v1/export/obsidian-pack", { credentials: "include", cache: "no-store" });
@@ -361,31 +331,14 @@ export const api = {
     return request<{ items: Array<{ id: string; title: string }> }>(`/api/v1/articles/note-titles?${params.toString()}`);
   },
   uploadNoteMedia,
-  uploadNoteImage: uploadNoteMedia,
   deleteNoteMedia: (id: string) =>
     request<{ ok: boolean; deleted?: boolean }>(`/api/v1/media/${id}`, { method: "DELETE" }),
-  uploadDocument: async (file: File, title?: string, tags?: string) => {
+  uploadDocument: (file: File, title?: string, tags?: string) => {
     const body = new FormData();
     body.append("file", file);
     if (title?.trim()) body.append("title", title.trim());
     if (tags?.trim()) body.append("tags", tags.trim());
-    const response = await fetch("/api/v1/sources/upload", {
-      method: "POST",
-      body,
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    return (await response.json()) as Article;
+    return request<Article>("/api/v1/sources/upload", { method: "POST", body });
   },
   addAddition: (
     articleId: string,
@@ -412,26 +365,10 @@ export const api = {
     }),
   deleteCorrection: (articleId: string) =>
     request<{ ok: boolean }>(`/api/v1/articles/${articleId}/corrections`, { method: "DELETE" }),
-  importOpml: async (file: File) => {
+  importOpml: (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/v1/feeds/import-opml", {
-      method: "POST",
-      body,
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        const data = (await response.json()) as { detail?: string };
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    return (await response.json()) as OpmlImportResult;
+    return request<OpmlImportResult>("/api/v1/feeds/import-opml", { method: "POST", body });
   },
   exportOpml: async () => {
     const response = await fetch("/api/v1/feeds/opml", { credentials: "include", cache: "no-store" });
@@ -581,7 +518,7 @@ export const api = {
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
   stt: () => request<SttStatus>("/api/v1/stt"),
-  transcribeStt: async (blob: Blob) => {
+  transcribeStt: (blob: Blob) => {
     const type = (blob.type || "audio/webm").split(";", 1)[0].trim() || "audio/webm";
     const name = type.includes("wav")
       ? "clip.wav"
@@ -592,22 +529,7 @@ export const api = {
           : "clip.webm";
     const body = new FormData();
     body.append("file", blob, name);
-    const response = await fetch("/api/v1/stt", {
-      method: "POST",
-      body,
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      let detail: string | null = null;
-      try {
-        detail = parseErrorPayload(await response.json());
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(response.status, detail || httpErrorFallback(response.status));
-    }
-    return (await response.json()) as { text: string };
+    return request<{ text: string }>("/api/v1/stt", { method: "POST", body });
   },
   ttsPlan: (id: string, voiceId: string, opts?: { includeNotes?: boolean }) => {
     const search = new URLSearchParams({ voice_id: voiceId });

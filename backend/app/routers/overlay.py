@@ -21,7 +21,6 @@ from app.schemas import (
     OverlayAdditionOut,
     VaultImportOut,
 )
-from app.services import changelog
 from app.services.corrections import unlink_correction, upsert_correction
 from app.services.note_media import (
     delete_note_media,
