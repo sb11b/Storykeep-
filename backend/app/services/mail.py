@@ -7,87 +7,103 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import FastmailMailAccount, User
+from app.models import FastmailCalendarAccount, FastmailMailAccount, User
 from app.services import fastmail_jmap as jmap
 from app.services.crypto_box import decrypt_secret, encrypt_secret
 from app.services.demo_lock import is_locked
-from app.services.junior_memory import OWNER_EMAIL, owner_email
 
 CONNECT_DETAIL = "Connect Fastmail"
-OWNER_ONLY_DETAIL = "Mail is only available on the owner account."
-DEMO_DETAIL = "Demo accounts cannot use mail."
+DEMO_DETAIL = "Mail is not enabled on this account"
 
 
-def is_mail_owner(user: User | None) -> bool:
-    return owner_email(user) == OWNER_EMAIL
+def is_demo(user: User | None) -> bool:
+    return is_locked(user)
 
 
 def env_token() -> str:
     return (settings.fastmail_token or "").strip()
 
 
-def stored_token(db: Session, user_id: UUID) -> str:
-    row = db.get(FastmailMailAccount, user_id)
-    raw = getattr(row, "token_encrypted", None) if row else None
+def _decrypt_row_token(row: object | None) -> str:
+    raw = getattr(row, "token_encrypted", None) if row is not None else None
     if not isinstance(raw, str) or not raw.strip():
         return ""
     return (decrypt_secret(raw) or "").strip()
 
 
-def has_token(db: Session, user: User) -> bool:
-    if not is_mail_owner(user) or is_locked(user):
+def stored_mail_token(db: Session, user_id: UUID) -> str:
+    return _decrypt_row_token(db.get(FastmailMailAccount, user_id))
+
+
+def stored_app_password(db: Session, user_id: UUID) -> str:
+    return _decrypt_row_token(db.get(FastmailCalendarAccount, user_id))
+
+
+def has_fastmail(db: Session, user: User) -> bool:
+    """Stored JMAP token, stored CalDAV app password, or env token for a live StoryKeep login."""
+    if user is None or is_demo(user):
         return False
-    return bool(env_token() or stored_token(db, user.id))
+    if stored_mail_token(db, user.id) or stored_app_password(db, user.id):
+        return True
+    return bool(env_token())
 
 
-def require_owner(user: User) -> None:
-    if is_locked(user):
+def require_mail_user(user: User) -> None:
+    if is_demo(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=DEMO_DETAIL)
-    if not is_mail_owner(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=OWNER_ONLY_DETAIL)
+
+
+def resolve_token(db: Session, user: User) -> str:
+    require_mail_user(user)
+    if not has_fastmail(db, user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=CONNECT_DETAIL)
+    return stored_mail_token(db, user.id) or stored_app_password(db, user.id) or env_token()
+
+
+def has_token(db: Session, user: User) -> bool:
+    return has_fastmail(db, user)
 
 
 def require_token(db: Session, user: User) -> str:
-    require_owner(user)
-    token = env_token() or stored_token(db, user.id)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=CONNECT_DETAIL)
-    return token
+    return resolve_token(db, user)
 
 
 def status_payload(db: Session, user: User) -> dict[str, object]:
-    demo = is_locked(user)
-    owner = is_mail_owner(user)
-    token = env_token() if owner and not demo else ""
-    source = "env" if token else None
-    if owner and not demo and not token and stored_token(db, user.id):
-        token = stored_token(db, user.id)
-        source = "account"
-    connected = bool(token) and owner and not demo
+    demo = is_demo(user)
+    connected = False
     email = None
     boxes: list[dict[str, object]] = []
-    if connected:
+    source = None
+    if not demo and has_fastmail(db, user):
+        token = stored_mail_token(db, user.id) or stored_app_password(db, user.id) or env_token()
+        if stored_mail_token(db, user.id):
+            source = "account"
+        elif stored_app_password(db, user.id):
+            source = "account"
+        elif env_token():
+            source = "env"
         try:
             session, _, boxes = jmap.mailboxes(token)
             email = str(session.get("username") or "") or None
+            connected = True
         except HTTPException:
             connected = False
             boxes = []
+            source = None
     return {
-        "configured": bool(env_token()) or bool(owner and stored_token(db, user.id)),
+        "configured": has_fastmail(db, user) if not demo else False,
         "connected": connected,
-        "owner_only": True,
-        "is_owner": owner,
         "demo_locked": demo,
         "fastmail_email": email if connected else None,
         "source": source if connected else None,
         "mailboxes": boxes if connected else [],
         "connect_detail": CONNECT_DETAIL,
+        "disabled_detail": DEMO_DETAIL,
     }
 
 
 def connect(db: Session, user: User, *, token: str) -> FastmailMailAccount:
-    require_owner(user)
+    require_mail_user(user)
     secret = (token or "").strip()
     if len(secret) < 8 or len(secret) > 400:
         raise HTTPException(status_code=400, detail="Use a Fastmail API token, never the account password.")
@@ -108,9 +124,13 @@ def connect(db: Session, user: User, *, token: str) -> FastmailMailAccount:
 
 
 def disconnect(db: Session, user: User) -> None:
-    require_owner(user)
-    row = db.get(FastmailMailAccount, user.id)
-    if row:
-        db.delete(row)
-        db.flush()
+    """Clear this user's stored Fastmail credentials. Does not end the StoryKeep session."""
+    require_mail_user(user)
+    mail_row = db.get(FastmailMailAccount, user.id)
+    if mail_row:
+        db.delete(mail_row)
+    cal_row = db.get(FastmailCalendarAccount, user.id)
+    if cal_row:
+        db.delete(cal_row)
+    db.flush()
     jmap._session_cache.clear()

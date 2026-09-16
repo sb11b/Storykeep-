@@ -440,13 +440,12 @@ export type MailMessage = {
 export type MailStatus = {
   configured: boolean;
   connected: boolean;
-  owner_only: boolean;
-  is_owner: boolean;
   demo_locked: boolean;
   fastmail_email?: string | null;
   source?: string | null;
   mailboxes?: MailMailbox[];
   connect_detail?: string;
+  disabled_detail?: string;
 };
 
 export type MailProposal = {

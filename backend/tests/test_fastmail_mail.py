@@ -20,7 +20,6 @@ from app.routers import mail as mail_router
 from app.services import fastmail_jmap as jmap
 from app.services import mail as mail_service
 from app.services import mail_tool
-from app.services.junior_memory import OWNER_EMAIL
 
 SESSION = {
     "username": "steve@fastmail.com",
@@ -198,20 +197,17 @@ class MailAccessTests(unittest.TestCase):
         settings.fastmail_token = self._prev
 
     def test_demo_forbidden(self):
+        settings.fastmail_token = "fmu1-test-token-not-real"
         user = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
         client = TestClient(_app(user))
         response = client.get("/api/v1/mail/messages")
         self.assertEqual(response.status_code, 403)
-        self.assertIn("Demo", response.json()["detail"])
+        self.assertEqual(response.json()["detail"], "Mail is not enabled on this account")
+        self.assertNotIn("owner account", response.json()["detail"])
+        self.assertNotEqual(response.status_code, 500)
 
-    def test_non_owner_forbidden(self):
+    def test_live_login_without_credentials_is_401_connect(self):
         user = SimpleNamespace(id=uuid.uuid4(), email="other@example.com", is_demo_locked=False)
-        client = TestClient(_app(user))
-        response = client.get("/api/v1/mail/messages")
-        self.assertEqual(response.status_code, 403)
-
-    def test_owner_missing_token_is_401_connect(self):
-        user = SimpleNamespace(id=uuid.uuid4(), email=OWNER_EMAIL, is_demo_locked=False)
         db = MagicMock()
         db.get.return_value = None
 
@@ -225,9 +221,59 @@ class MailAccessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"], "Connect Fastmail")
 
+    def test_env_token_opens_mail_without_owner_email(self):
+        settings.fastmail_token = "fmu1-test-token-not-real"
+        user = SimpleNamespace(id=uuid.uuid4(), email="steve-login@example.com", is_demo_locked=False)
+        db = MagicMock()
+        db.get.return_value = None
+
+        def fake_db():
+            yield db
+
+        app = _app(user)
+        app.dependency_overrides[get_db] = fake_db
+        with patch("app.services.fastmail_jmap.httpx.Client", FakeClient):
+            client = TestClient(app)
+            response = client.get("/api/v1/mail/messages")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["mailbox"]["role"], "inbox")
+        self.assertTrue(response.json()["items"])
+
+    def test_stored_mail_token_opens_inbox_without_env(self):
+        settings.fastmail_token = ""
+        user = SimpleNamespace(id=uuid.uuid4(), email="other@example.com", is_demo_locked=False)
+        with (
+            patch("app.services.mail.stored_mail_token", return_value="fmu1-test-token-not-real"),
+            patch("app.services.mail.stored_app_password", return_value=""),
+            patch("app.services.fastmail_jmap.httpx.Client", FakeClient),
+        ):
+            client = TestClient(_app(user))
+            response = client.get("/api/v1/mail/messages")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["mailbox"]["role"], "inbox")
+
+    def test_disconnect_clears_stored_fastmail_not_session(self):
+        user = SimpleNamespace(id=uuid.uuid4(), email="steve-login@example.com", is_demo_locked=False)
+        mail_row = object()
+        cal_row = object()
+        db = MagicMock()
+
+        def fake_get(model, _id):
+            if model is mail_service.FastmailMailAccount:
+                return mail_row
+            if model is mail_service.FastmailCalendarAccount:
+                return cal_row
+            return None
+
+        db.get.side_effect = fake_get
+        mail_service.disconnect(db, user)
+        db.delete.assert_any_call(mail_row)
+        db.delete.assert_any_call(cal_row)
+        db.flush.assert_called()
+
     def test_send_requires_confirm(self):
         settings.fastmail_token = "fmu1-test-token-not-real"
-        user = SimpleNamespace(id=uuid.uuid4(), email=OWNER_EMAIL, is_demo_locked=False)
+        user = SimpleNamespace(id=uuid.uuid4(), email="steve-login@example.com", is_demo_locked=False)
         client = TestClient(_app(user))
         response = client.post(
             "/api/v1/mail/send",
@@ -238,6 +284,14 @@ class MailAccessTests(unittest.TestCase):
 
     def test_redact_fastmail_token(self):
         self.assertNotIn("fmu1-abcd1234secret", redact_secrets("token=fmu1-abcd1234secret"))
+
+    def test_mail_module_has_no_owner_email_string(self):
+        import inspect
+        import app.services.mail as mail_mod
+
+        source = inspect.getsource(mail_mod)
+        self.assertNotIn("stevebitsko", source)
+        self.assertNotIn("owner account", source)
 
 
 class MailToolTests(unittest.TestCase):
@@ -252,12 +306,6 @@ class MailToolTests(unittest.TestCase):
         )
         self.assertIn("Ada", text)
         self.assertIn("cap 50", text)
-
-
-class MailOwnerGateTests(unittest.TestCase):
-    def test_owner_email(self):
-        self.assertTrue(mail_service.is_mail_owner(SimpleNamespace(email=OWNER_EMAIL)))
-        self.assertFalse(mail_service.is_mail_owner(SimpleNamespace(email="nope@example.com")))
 
 
 if __name__ == "__main__":

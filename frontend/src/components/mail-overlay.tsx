@@ -120,12 +120,18 @@ export function MailOverlay({ open, onClose }: { open: boolean; onClose: () => v
             : {
                 configured: false,
                 connected: false,
-                owner_only: true,
-                is_owner: true,
                 demo_locked: false,
                 connect_detail: "Connect Fastmail",
               },
         );
+      }
+      if (error instanceof ApiError && error.status === 403) {
+        setStatus({
+          configured: false,
+          connected: false,
+          demo_locked: true,
+          disabled_detail: error.message || "Mail is not enabled on this account",
+        });
       }
       setItems([]);
     } finally {
@@ -233,12 +239,12 @@ export function MailOverlay({ open, onClose }: { open: boolean; onClose: () => v
       {status == null ? (
         <p className="p-4 text-sm text-muted-foreground">Loading mail…</p>
       ) : status.demo_locked ? (
-        <p className="p-4 text-sm text-muted-foreground">Demo accounts cannot use mail.</p>
-      ) : !status.is_owner ? (
-        <p className="p-4 text-sm text-muted-foreground">Mail is only available on the owner account.</p>
+        <p className="p-4 text-sm text-muted-foreground">
+          {status.disabled_detail || "Mail is not enabled on this account"}
+        </p>
       ) : !status.connected ? (
         <div className="max-w-md space-y-3 p-4">
-          <p className="text-sm">Connect Fastmail. StoryKeep reads the Railway token when it is set; otherwise paste an API token. It is stored encrypted and never shown again.</p>
+          <p className="text-sm">Connect Fastmail. Paste an API token, or set the Railway token for this StoryKeep login. It is stored encrypted and never shown again.</p>
           <div className="space-y-1.5">
             <Label htmlFor="fm-mail-token">Fastmail API token</Label>
             <Input

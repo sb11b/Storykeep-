@@ -469,6 +469,32 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
                 </div>
               </CardContent>
             </Card>
+
+            {!readOnly ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Fastmail</CardTitle>
+                <CardDescription>Clears this account&apos;s stored Fastmail credentials. You stay signed in to StoryKeep.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      await api.disconnectMail();
+                      toast.success("Fastmail disconnected.");
+                    } catch (error) {
+                      toast.error(error instanceof ApiError ? error.message : "Could not disconnect Fastmail.");
+                    }
+                  }}
+                >
+                  Disconnect Fastmail
+                </Button>
+              </CardContent>
+            </Card>
+            ) : null}
+
           </>
         ) : null}
         </>
