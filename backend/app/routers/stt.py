@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlencode
 
 import websockets
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.auth import decode_access_token
@@ -16,6 +16,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.services.demo_lock import is_locked
+from app.services.stt_clip import key_configured, transcribe_clip
 from app.services.stt_limits import enforce_stt_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,6 @@ CONTINUOUS_MAX_SECONDS = 30 * 60.0
 
 _stream_lock = asyncio.Lock()
 _active_streams: set[str] = set()
-
-
-def key_configured() -> bool:
-    return bool((settings.xai_api_key or "").strip())
 
 
 def _user_from_socket(websocket: WebSocket, db: Session) -> User:
@@ -53,10 +50,24 @@ def stt_status(user: User = Depends(get_current_user)) -> dict:
         "enabled": key_configured() and not locked,
         "locked": locked,
         "provider": "xai",
-        "mode": "streaming",
+        "mode": "clip",
         "price": "$0.20/hr",
         "sessions_per_hour": int(settings.stt_sessions_per_hour or 60),
     }
+
+
+@router.post("/stt")
+async def stt_clip(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    payload = await file.read()
+    return transcribe_clip(
+        user,
+        payload,
+        content_type=file.content_type,
+        filename=file.filename,
+    )
 
 
 @router.websocket("/stt")

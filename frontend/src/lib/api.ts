@@ -581,6 +581,34 @@ export const api = {
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
   stt: () => request<SttStatus>("/api/v1/stt"),
+  transcribeStt: async (blob: Blob) => {
+    const type = (blob.type || "audio/webm").split(";", 1)[0].trim() || "audio/webm";
+    const name = type.includes("wav")
+      ? "clip.wav"
+      : type.includes("ogg")
+        ? "clip.ogg"
+        : type.includes("mp4") || type.includes("m4a")
+          ? "clip.m4a"
+          : "clip.webm";
+    const body = new FormData();
+    body.append("file", blob, name);
+    const response = await fetch("/api/v1/stt", {
+      method: "POST",
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail: string | null = null;
+      try {
+        detail = parseErrorPayload(await response.json());
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail || httpErrorFallback(response.status));
+    }
+    return (await response.json()) as { text: string };
+  },
   ttsPlan: (id: string, voiceId: string, opts?: { includeNotes?: boolean }) => {
     const search = new URLSearchParams({ voice_id: voiceId });
     if (opts?.includeNotes) search.set("include_notes", "true");

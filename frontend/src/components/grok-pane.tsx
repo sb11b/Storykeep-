@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
+import { JuniorMicButton } from "@/components/junior-mic";
 import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
@@ -60,8 +61,6 @@ import {
   WORKING_NOTE_CHAR_CAP,
   type IncludeMode,
 } from "@/lib/include-chunk";
-import { appendSpoken } from "@/lib/stt-buffer";
-import { MIC_IDLE, MIC_LIVE } from "@/lib/stt-ui";
 import { isNoteShrinkMessage } from "@/lib/api-errors";
 import { headingFromInstruction } from "@/lib/work-in-junior";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
@@ -252,8 +251,6 @@ export function GrokPane({
   const dictation = useDictation();
   const draftValueRef = useRef(pane.draft);
   draftValueRef.current = pane.draft;
-  const onUpdateRef = useRef(onUpdate);
-  onUpdateRef.current = onUpdate;
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
@@ -450,27 +447,16 @@ export function GrokPane({
   }, [busy, dictation, stopGeneration]);
 
   useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+  }, [pane.messages]);
+
+  useEffect(() => {
     const el = draftRef.current;
-    if (!el || !dictation) return;
-    dictation.attach(el);
-    dictation.setSink({
-      getValue: () => draftValueRef.current,
-      append: (piece) => {
-        const next = appendSpoken(draftValueRef.current, piece);
-        draftValueRef.current = next;
-        onUpdateRef.current((current) => (current.draft === next ? current : { ...current, draft: next }));
-      },
-    });
+    if (!el) return;
     el.style.height = "auto";
     const cap = Math.round(window.innerHeight * 0.6);
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
-  }, [dictation, pane.draft]);
-
-  useEffect(() => () => dictation?.setSink(null), [dictation]);
-
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [pane.messages]);
+  }, [pane.draft]);
 
   /** Re-read the live reply so playback never depends on stale state. */
   const resolveListenScript = useCallback(() => {
@@ -2345,7 +2331,6 @@ export function GrokPane({
             disabled={!enabled}
             onFocus={() => {
               onFocus();
-              if (draftRef.current) dictation?.attach(draftRef.current);
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -2415,48 +2400,26 @@ export function GrokPane({
             <Sparkles className="size-4" />
           </Button>
           {sttEnabled && !locked ? (
-            <div className="flex shrink-0 flex-col gap-1">
-              <Button
-                type="button"
-                size="icon"
-                variant={dictation?.listening ? "destructive" : "outline"}
-                className="size-9"
-                aria-label={dictation?.listening ? MIC_LIVE : MIC_IDLE}
-                data-mic-state={dictation?.listening ? "live" : "idle"}
-                title={
-                  dictation?.listening
-                    ? `${MIC_LIVE} — tap to stop`
-                    : dictation?.continuous
-                      ? `${MIC_IDLE} — tap to talk (continuous until Stop)`
-                      : `${MIC_IDLE} — tap to talk (one utterance)`
+            <JuniorMicButton
+              enabled={enabled && !busy && !uploadingFiles}
+              locked={locked}
+              getDraft={() => draftValueRef.current}
+              onTranscript={(next) => {
+                draftValueRef.current = next;
+                onUpdate((current) => (current.draft === next ? current : { ...current, draft: next }));
+                const el = draftRef.current;
+                if (el) {
+                  el.style.height = "auto";
+                  const cap = Math.round(window.innerHeight * 0.6);
+                  el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
+                  requestAnimationFrame(() => {
+                    el.focus();
+                    const at = next.length;
+                    el.setSelectionRange(at, at);
+                  });
                 }
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  const el = draftRef.current;
-                  if (!el) return;
-                  dictation?.startFor(el, { continuous: dictation.continuous });
-                }}
-              >
-                <Mic className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant={dictation?.continuous ? "default" : "outline"}
-                className="size-9"
-                aria-pressed={Boolean(dictation?.continuous)}
-                aria-label={dictation?.continuous ? "Continuous dictation on" : "Continuous dictation off"}
-                title={
-                  dictation?.continuous
-                    ? "Continuous on — keep listening across pauses until Stop"
-                    : "Continuous off — one utterance then stop"
-                }
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => dictation?.setContinuous(!dictation.continuous)}
-              >
-                <span className="text-[9px] font-semibold leading-none">Cont</span>
-              </Button>
-            </div>
+              }}
+            />
           ) : null}
           {busy || aborting ? (
             <Button
@@ -2485,20 +2448,6 @@ export function GrokPane({
         {(busy || aborting) && inFlightSpend ? (
           <p className="text-[11px] text-muted-foreground" data-junior-spend="" data-junior-route="">
             {inFlightSpend}
-          </p>
-        ) : null}
-        {dictation?.listening && sttEnabled && !locked ? (
-          <p className="text-[10px] text-muted-foreground" data-mic-state="live" role="status">
-            {MIC_LIVE}
-            {dictation.continuous || dictation.sessionContinuous ? " — continuous until Stop." : ""}
-          </p>
-        ) : dictation?.idleHint && sttEnabled && !locked ? (
-          <p className="text-[10px] text-muted-foreground" data-mic-state="idle" role="status">
-            {dictation.idleHint}
-          </p>
-        ) : sttEnabled && !locked ? (
-          <p className="sr-only" data-mic-state="idle">
-            {MIC_IDLE}
           </p>
         ) : null}
         {dragOver ? (
