@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -149,6 +149,25 @@ def append_message(
     db.add(conversation)
     db.flush()
     return message
+
+
+def last_message_content(db: Session, conversation_id: UUID) -> str | None:
+    row = db.scalar(
+        select(GrokMessage)
+        .where(GrokMessage.conversation_id == conversation_id)
+        .order_by(GrokMessage.created_at.desc(), GrokMessage.id.desc())
+        .limit(1)
+    )
+    if not row:
+        return None
+    return row.content
+
+
+def message_count(db: Session, conversation_id: UUID) -> int:
+    return int(
+        db.scalar(select(func.count()).select_from(GrokMessage).where(GrokMessage.conversation_id == conversation_id))
+        or 0
+    )
 
 
 def first_user_message_content(db: Session, conversation_id: UUID) -> str | None:

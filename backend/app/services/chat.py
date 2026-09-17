@@ -149,6 +149,7 @@ GENERAL_MODE_APPEND = """
 Steve disconnected the current article (or has no article open). You are in general-knowledge mode.
 - Answer freely from your training: explain concepts, summarize topics, compare ideas, help with study questions, and give practical information.
 - Do not refuse questions because no article is attached. Do not say you can only discuss the open article.
+- For other Junior chats: list_chats (index) then read_chat (one slice). Do not claim you have read all chats unless an index or slice is attached this turn. Never invent messages.
 - For up-to-the-minute facts, call web_search and cite title + URL. If search fails, say the tool failed — not that search does not exist.
 - A chapter or section number with no attached file is a study question: explain in your own words. Do not invent a verbatim page dump.
 - If Steve later reconnects the article, you may use that excerpt when provided.
@@ -936,9 +937,12 @@ async def stream_completion(
     if should_attach_chat_tools(last_user):
         attach_tools = tools
     else:
+        from app.services.chat_index import is_chat_index_tool
         from app.services.web_search import is_web_search_tool
 
-        attach_tools = [item for item in (tools or []) if is_web_search_tool(item)] or None
+        attach_tools = [
+            item for item in (tools or []) if is_web_search_tool(item) or is_chat_index_tool(item)
+        ] or None
     payload = build_chat_completions_payload(
         messages=build_xai_messages(
             history,

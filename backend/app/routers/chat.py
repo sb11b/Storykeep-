@@ -46,6 +46,7 @@ from app.services.include_chunk import slice_meta as include_slice_meta
 from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
 from app.services import web_search as search_tool
+from app.services import chat_index
 
 router = APIRouter(tags=["chat"])
 
@@ -876,6 +877,24 @@ def _chat(
     memory_block = junior_memory.system_section(db, user)
     if memory_block:
         extras.append(memory_block)
+    chats_enabled = chat_index.can_use(user)
+    already_indexed = False
+    already_read = False
+    if chats_enabled:
+        extras.append(chat_index.CHATS_ON_APPEND)
+        if chat_index.wants_index(user_text):
+            extras.append(chat_index.format_index(chat_index.build_index(db, user)))
+            already_indexed = True
+        elif chat_index.wants_read(user_text):
+            chat_id = chat_index.extract_conversation_id(user_text)
+            if chat_id:
+                try:
+                    extras.append(chat_index.format_slice(chat_index.read_slice(db, user, chat_id)))
+                    already_read = True
+                except HTTPException:
+                    extras.append("No chat with that id. Use the index. Do not invent a thread.")
+            else:
+                extras.append(chat_index.NEED_ID_SYSTEM)
     search_enabled = search_tool.owner_can_search(user)
     will_search = search_enabled and search_tool.wants_web_search(user_text)
     if search_enabled:
@@ -896,7 +915,19 @@ def _chat(
         if search_enabled and not chat_service.is_small_talk_turn(user_text)
         else None
     )
-    tools = (*(calendar_tools or []), *(mail_tools or []), *(search_tools or [])) or None
+    chat_tools = (
+        chat_index.TOOLS
+        if chats_enabled
+        and (
+            already_indexed
+            or already_read
+            or chat_index.wants_index(user_text)
+            or chat_index.wants_read(user_text)
+            or chat_service.should_attach_chat_tools(user_text)
+        )
+        else None
+    )
+    tools = (*(calendar_tools or []), *(mail_tools or []), *(search_tools or []), *(chat_tools or [])) or None
     tool_calls_out: list[dict] = []
 
     def _persist_assistant(text: str) -> str | None:
@@ -1039,6 +1070,7 @@ def _chat(
             if cancelled.is_set() or await request.is_disconnected():
                 _persist_assistant("".join(assistant_parts))
                 return
+            follow_blocks: list[str] = []
             followup_query = search_tool.assemble_web_search_query(tool_calls_out)
             if followup_query and not already_searched and search_enabled:
                 yield chat_service.encode_sse({"stream_status": "searching"})
@@ -1059,10 +1091,26 @@ def _chat(
                     )
                     return
                 if outcome.empty:
-                    block = search_tool.EMPTY_SYSTEM
+                    follow_blocks.append(search_tool.EMPTY_SYSTEM)
                 else:
-                    block = search_tool.format_hits_for_model(outcome.hits)
-                extra = f"{extra_system}\n{block}" if extra_system else block
+                    follow_blocks.append(search_tool.format_hits_for_model(outcome.hits))
+            chat_call = chat_index.assemble_tool_call(tool_calls_out)
+            if chat_call and chats_enabled:
+                skip_list = chat_call.get("name") == chat_index.LIST_NAME and already_indexed
+                skip_read = chat_call.get("name") == chat_index.READ_NAME and already_read
+                if not skip_list and not skip_read:
+                    block = await asyncio.to_thread(
+                        chat_index.execute_tool_for_user,
+                        user_id,
+                        conversation_id,
+                        chat_call,
+                    )
+                    if block:
+                        follow_blocks.append(block)
+            if follow_blocks:
+                extra = extra_system
+                for block in follow_blocks:
+                    extra = f"{extra}\n{block}" if extra else block
                 async for piece in _open_stream(extra, None):
                     if cancelled.is_set() or await request.is_disconnected():
                         cancelled.set()
