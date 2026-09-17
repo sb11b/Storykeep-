@@ -676,6 +676,15 @@ class ChatSpeechIn(BaseModel):
     message_id: str = Field(min_length=1, max_length=64)
 
 
+class JuniorChatOut(BaseModel):
+    id: uuid.UUID
+    date: str
+    title: str
+    summary: str
+    note_id: uuid.UUID | None = None
+    messages: int = 0
+
+
 class GrokConversationOut(BaseModel):
     id: uuid.UUID
     title: str

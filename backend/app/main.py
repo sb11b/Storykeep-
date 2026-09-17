@@ -18,7 +18,7 @@ from app.https_redirect import HttpsRedirectMiddleware
 from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, calendar, chat, feeds, junior_jobs, junior_memory, library, mail, overlay, school, stt, sync, tts
+from app.routers import articles, auth, backups, calendar, chat, feeds, junior_chats, junior_jobs, junior_memory, library, mail, overlay, school, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -403,6 +403,7 @@ app.include_router(chat.router, prefix=API)
 app.include_router(school.router, prefix=API)
 app.include_router(junior_jobs.router, prefix=API)
 app.include_router(junior_memory.router, prefix=API)
+app.include_router(junior_chats.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 app.include_router(calendar.router, prefix=API)
 app.include_router(mail.router, prefix=API)

@@ -157,6 +157,12 @@ def _parse_day(raw: str | None) -> datetime | None:
         return None
 
 
+def chats_for(db: Session, user: User) -> list[dict[str, Any]]:
+    if not grok_store.should_persist(user):
+        return []
+    return build_index(db, user)
+
+
 def build_index(
     db: Session,
     user: User,
