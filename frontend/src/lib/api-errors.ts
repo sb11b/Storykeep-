@@ -4,18 +4,30 @@ export function httpErrorFallback(status: number): string {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function isFeedId(value: string | null | undefined): boolean {
+export function isUuid(value: string | null | undefined): boolean {
   return Boolean(value && UUID_RE.test(value.trim()));
+}
+
+export function isFeedId(value: string | null | undefined): boolean {
+  return isUuid(value);
 }
 
 function isPydanticUuidDump(text: string): boolean {
   return /valid uuid/i.test(text);
 }
 
-function locHasFeedId(item: unknown): boolean {
+function locHas(item: unknown, name: string): boolean {
   if (!item || typeof item !== "object") return false;
   const loc = (item as { loc?: unknown }).loc;
-  return Array.isArray(loc) && loc.some((part) => part === "feed_id");
+  return Array.isArray(loc) && loc.some((part) => part === name);
+}
+
+function locHasFeedId(item: unknown): boolean {
+  return locHas(item, "feed_id");
+}
+
+function locHasConversationId(item: unknown): boolean {
+  return locHas(item, "conversation_id");
 }
 
 function messageFromUnknown(value: unknown): string | null {
@@ -25,14 +37,10 @@ function messageFromUnknown(value: unknown): string | null {
     return text;
   }
   if (Array.isArray(value) && value.length > 0) {
-    const feedUuid = value.some(
-      (item) =>
-        locHasFeedId(item) &&
-        item &&
-        typeof item === "object" &&
-        String((item as { type?: unknown }).type || "").startsWith("uuid"),
-    );
-    if (feedUuid) return "Invalid feed";
+    const uuidType = (item: unknown) =>
+      Boolean(item && typeof item === "object" && String((item as { type?: unknown }).type || "").startsWith("uuid"));
+    if (value.some((item) => locHasFeedId(item) && uuidType(item))) return "Invalid feed";
+    if (value.some((item) => locHasConversationId(item) && uuidType(item))) return "Invalid chat";
     const parts = value
       .map((item) => {
         if (typeof item === "string" && item.trim()) return item.trim();

@@ -35,6 +35,12 @@ import type {
 } from "./types";
 
 import { httpErrorFallback, isFeedId, parseErrorPayload } from "@/lib/api-errors";
+import {
+  CHAT_CREATE_TIMEOUT_TOAST,
+  INVALID_CHAT_TOAST,
+  conversationIdForRequest,
+  isConversationId,
+} from "@/lib/chat-conversation";
 import { fetchSpeechChunk } from "@/lib/tts-speech-client";
 import { formatChatError } from "@/lib/grok-chat-error";
 import {
@@ -602,17 +608,55 @@ export const api = {
       { method: "POST", body: JSON.stringify(body), signal },
     ),
   chatConversations: () => request<GrokConversation[]>("/api/v1/chat/conversations"),
-  chatConversation: (id: string) => request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`),
+  createChatConversation: async (payload?: {
+    id?: string | null;
+    model?: string;
+    reasoning?: string;
+    pane?: string;
+  }) => {
+    const body: { id?: string; model?: string; reasoning?: string; pane?: string } = {};
+    if (payload?.id != null && payload.id !== "") {
+      if (!isConversationId(payload.id)) {
+        throw new ApiError(422, INVALID_CHAT_TOAST);
+      }
+      body.id = payload.id.trim();
+    }
+    if (payload?.model) body.model = payload.model;
+    if (payload?.reasoning) body.reasoning = payload.reasoning;
+    if (payload?.pane) body.pane = payload.pane;
+    try {
+      return await request<GrokConversation>("/api/v1/chat/conversations", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 504) {
+        throw new ApiError(504, CHAT_CREATE_TIMEOUT_TOAST);
+      }
+      if (error instanceof ApiError && (error.status === 422 || error.status === 400)) {
+        throw new ApiError(error.status, INVALID_CHAT_TOAST);
+      }
+      throw error;
+    }
+  },
+  chatConversation: (id: string) => {
+    if (!isConversationId(id)) return Promise.reject(new ApiError(422, INVALID_CHAT_TOAST));
+    return request<GrokConversationDetail>(`/api/v1/chat/conversations/${id}`);
+  },
   patchChatConversation: (
     id: string,
     payload: { title?: string; model?: string; reasoning?: string; recap_question?: boolean; saved_note_id?: string | null },
-  ) =>
-    request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
+  ) => {
+    if (!isConversationId(id)) return Promise.reject(new ApiError(422, INVALID_CHAT_TOAST));
+    return request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
-    }),
-  deleteChatConversation: (id: string) =>
-    request<{ ok: boolean }>(`/api/v1/chat/conversations/${id}`, { method: "DELETE" }),
+    });
+  },
+  deleteChatConversation: (id: string) => {
+    if (!isConversationId(id)) return Promise.reject(new ApiError(422, INVALID_CHAT_TOAST));
+    return request<{ ok: boolean }>(`/api/v1/chat/conversations/${id}`, { method: "DELETE" });
+  },
   streamChat: async (
     body: {
       message: string;
@@ -636,6 +680,14 @@ export const api = {
     signal?: AbortSignal,
     onOpen?: () => void,
   ) => {
+      const rawId = body.conversation_id;
+      if (rawId != null && String(rawId).trim() !== "" && !isConversationId(rawId)) {
+        throw new ApiError(422, INVALID_CHAT_TOAST);
+      }
+      const conversationId = conversationIdForRequest(rawId);
+      const payload: typeof body = { ...body };
+      if (conversationId) payload.conversation_id = conversationId;
+      else delete payload.conversation_id;
       const headerWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
       let tokenWatch: ReturnType<typeof startChatFirstByteWatchdog> | null = null;
       try {
@@ -646,7 +698,7 @@ export const api = {
             credentials: "include",
             cache: "no-store",
             headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-            body: JSON.stringify(body),
+            body: JSON.stringify(payload),
             signal: headerWatch.signal,
           });
         } catch (error) {

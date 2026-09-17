@@ -37,6 +37,22 @@ test("isFeedId accepts list-API UUIDs only", () => {
   assert.equal(isFeedId(""), false);
 });
 
+test("parseErrorPayload maps conversation UUID dumps to Invalid chat", () => {
+  assert.equal(
+    parseErrorPayload({
+      detail: [
+        {
+          type: "uuid_parsing",
+          loc: ["path", "conversation_id"],
+          msg: "Input should be a valid UUID, invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1",
+          input: "new",
+        },
+      ],
+    }),
+    "Invalid chat",
+  );
+});
+
 test("parseErrorPayload reads nested FastAPI detail.message", () => {
   const message = shrinkConfirmMessage(15000, 239);
   assert.equal(

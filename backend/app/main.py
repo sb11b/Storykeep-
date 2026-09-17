@@ -309,6 +309,19 @@ def _invalid_feed_uuid(exc: RequestValidationError) -> bool:
     return False
 
 
+def _invalid_conversation_uuid(path: str, exc: RequestValidationError) -> bool:
+    for err in exc.errors():
+        loc = tuple(err.get("loc") or ())
+        kind = str(err.get("type") or "")
+        if not kind.startswith("uuid"):
+            continue
+        if "conversation_id" in loc:
+            return True
+        if "id" in loc and path.rstrip("/").endswith("/chat/conversations"):
+            return True
+    return False
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     path = request.url.path.rstrip("/")
@@ -319,6 +332,8 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
         )
     if _invalid_feed_uuid(exc):
         return JSONResponse(status_code=422, content={"detail": "Invalid feed"})
+    if _invalid_conversation_uuid(path, exc):
+        return JSONResponse(status_code=422, content={"detail": "Invalid chat"})
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 

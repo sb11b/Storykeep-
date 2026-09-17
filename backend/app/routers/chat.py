@@ -76,6 +76,13 @@ class ChatIn(BaseModel):
         return self
 
 
+class ConversationCreateIn(BaseModel):
+    id: UUID | None = None
+    model: str | None = Field(default=None, max_length=64)
+    reasoning: str | None = Field(default=None, max_length=16)
+    pane: str | None = Field(default=None, max_length=80)
+
+
 class SearchIn(BaseModel):
     query: str = Field(min_length=1, max_length=search_tool.QUERY_CHAR_CAP)
 
@@ -183,6 +190,39 @@ def list_conversations(
         return []
     rows = grok_store.list_conversations(db, user)
     return [_conversation_out(row) for row in rows]
+
+
+@router.post("/chat/conversations", response_model=GrokConversationOut, status_code=201)
+def create_conversation(
+    payload: ConversationCreateIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> GrokConversationOut:
+    reject_locked(user)
+    if not grok_store.should_persist(user):
+        raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
+    body = payload or ConversationCreateIn()
+    model_choice = chat_service.normalize_model_choice(body.model) if body.model else chat_service.MODEL_AUTO
+    reasoning_choice = (
+        chat_service.normalize_reasoning_effort(body.reasoning)
+        if body.reasoning is not None
+        else chat_service.REASONING_AUTO
+    )
+    stored_reasoning = (
+        chat_service.REASONING_AUTO if model_choice == chat_service.MODEL_AUTO else reasoning_choice
+    )
+    row = grok_store.create_conversation(
+        db,
+        user,
+        pane=body.pane,
+        model=model_choice,
+        reasoning=stored_reasoning,
+        conversation_id=body.id,
+    )
+    db.commit()
+    db.refresh(row)
+    logger.info("chat conversation created user=%s id=%s", user.id, row.id)
+    return _conversation_out(row)
 
 
 @router.get("/chat/conversations/{conversation_id}", response_model=GrokConversationDetailOut)

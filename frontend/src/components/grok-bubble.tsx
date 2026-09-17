@@ -10,8 +10,10 @@ import { JuniorMemoryPanel } from "@/components/junior-memory-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { toast } from "sonner";
 import { toastActionError } from "@/lib/toast-message";
+import { INVALID_CHAT_TOAST, isConversationId } from "@/lib/chat-conversation";
 import { grokModelLabel, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import type { GrokConversation, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
@@ -180,6 +182,7 @@ export function GrokBubble({
                 includeMode: "auto",
                 includeHeading: null,
                 conversationId: null,
+                createNonce: null,
                 messages: [],
                 draft: "",
                 savedNoteId: noteId,
@@ -431,6 +434,10 @@ export function GrokBubble({
   const restoredConversationsRef = useRef<Set<string>>(new Set());
 
   const loadConversationInto = useCallback(async (paneId: string, conversationId: string) => {
+    if (!isConversationId(conversationId)) {
+      toast.error(INVALID_CHAT_TOAST);
+      return;
+    }
     try {
       const detail = await api.chatConversation(conversationId);
       setPanes((current) =>
@@ -440,6 +447,7 @@ export function GrokBubble({
             : {
                 ...pane,
                 conversationId: detail.id,
+                createNonce: detail.id,
                 modelChoice: detail.model || "auto",
                 lastResolvedModel: detail.last_model ?? null,
                 reasoningEffort: isGrokReasoningEffort(detail.reasoning) ? detail.reasoning : "low",
@@ -466,10 +474,15 @@ export function GrokBubble({
               },
         ),
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 422 || error.status === 400)) {
+        toast.error(INVALID_CHAT_TOAST);
+      }
       setPanes((current) =>
         current.map((pane) =>
-          pane.id === paneId && pane.conversationId === conversationId ? { ...pane, conversationId: null } : pane,
+          pane.id === paneId && pane.conversationId === conversationId
+            ? { ...pane, conversationId: null, createNonce: null }
+            : pane,
         ),
       );
     }
@@ -489,6 +502,7 @@ export function GrokBubble({
     updatePane(focusedPaneId, (pane) => ({
       ...pane,
       conversationId: null,
+      createNonce: null,
       messages: [],
       recapQuestion: false,
       pendingAttachments: [],
@@ -498,6 +512,10 @@ export function GrokBubble({
   }
 
   async function loadConversation(conversationId: string) {
+    if (!isConversationId(conversationId)) {
+      toast.error(INVALID_CHAT_TOAST);
+      return;
+    }
     restoredConversationsRef.current.add(conversationId);
     await loadConversationInto(focusedPaneId, conversationId);
     updatePane(focusedPaneId, (pane) => ({ ...pane, draft: "", pendingAttachments: [] }));
@@ -512,7 +530,7 @@ export function GrokBubble({
       setPanes((current) =>
         current.map((pane) =>
           pane.conversationId === row.id
-            ? { ...pane, conversationId: null, messages: [], draft: "", recapQuestion: false, pendingAttachments: [], savedNoteId: null, conversationTitle: null }
+            ? { ...pane, conversationId: null, createNonce: null, messages: [], draft: "", recapQuestion: false, pendingAttachments: [], savedNoteId: null, conversationTitle: null }
             : pane,
         ),
       );
@@ -539,6 +557,10 @@ export function GrokBubble({
 
   async function commitRename(conversationId: string) {
     if (!persist) return;
+    if (!isConversationId(conversationId)) {
+      toast.error(INVALID_CHAT_TOAST);
+      return;
+    }
     const draft = renameDraft;
     setRenamingId(null);
     setRenameDraft("");

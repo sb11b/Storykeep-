@@ -29,6 +29,11 @@ import {
   withAssistantName,
 } from "@/lib/grok-chat-error";
 import {
+  INVALID_CHAT_TOAST,
+  chatCreateErrorToast,
+  conversationIdForRequest,
+} from "@/lib/chat-conversation";
+import {
   attachmentMarkdown,
   formatFileSize,
   LARRY_ATTACH_ACCEPT,
@@ -96,6 +101,7 @@ export type GrokPaneState = {
   id: string;
   displayName: string;
   conversationId: string | null;
+  createNonce: string | null;
   modelChoice: string;
   lastResolvedModel: string | null;
   reasoningEffort: string;
@@ -129,6 +135,7 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     id: crypto.randomUUID(),
     displayName: defaultGrokPaneName(paneIndex),
     conversationId: null,
+    createNonce: null,
     modelChoice: "auto",
     lastResolvedModel: null,
     reasoningEffort: "low",
@@ -277,6 +284,15 @@ export function GrokPane({
   const pendingFromHereRef = useRef<number | null>(null);
   const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
   const listenTargetRef = useRef<ListenTarget | null>(null);
+  const createInFlightRef = useRef<Promise<string> | null>(null);
+  const createNonceRef = useRef<string | null>(pane.createNonce);
+  createNonceRef.current = pane.createNonce;
+
+  useEffect(() => {
+    if (!pane.createNonce && !pane.conversationId) {
+      createInFlightRef.current = null;
+    }
+  }, [pane.createNonce, pane.conversationId]);
   const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const messagesRef = useRef(pane.messages);
   listenTargetRef.current = listenTarget;
@@ -601,6 +617,47 @@ export function GrokPane({
     setListenTarget({ id: target.id, trigger: null, script: resolved.text });
   }
 
+  async function ensureOwnedConversation(): Promise<string> {
+    const existing =
+      conversationIdForRequest(pane.conversationId) ||
+      conversationIdForRequest(pane.createNonce) ||
+      conversationIdForRequest(createNonceRef.current);
+    if (conversationIdForRequest(pane.conversationId)) {
+      return pane.conversationId as string;
+    }
+    if (createInFlightRef.current) {
+      return createInFlightRef.current;
+    }
+    const id = existing || crypto.randomUUID();
+    createNonceRef.current = id;
+    onUpdate((current) => (current.createNonce === id ? current : { ...current, createNonce: id }));
+    const job = api
+      .createChatConversation({
+        id,
+        model: pane.modelChoice,
+        reasoning: pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort,
+      })
+      .then((row) => {
+        const created = conversationIdForRequest(row.id);
+        if (!created) throw new ApiError(422, INVALID_CHAT_TOAST);
+        onUpdate((current) => {
+          if (current.createNonce !== id && current.conversationId !== created) return current;
+          return {
+            ...current,
+            createNonce: created,
+            conversationId: created,
+          };
+        });
+        return created;
+      });
+    createInFlightRef.current = job;
+    try {
+      return await job;
+    } finally {
+      if (createInFlightRef.current === job) createInFlightRef.current = null;
+    }
+  }
+
   async function runStream(options: {
     message: string;
     retry?: boolean;
@@ -632,11 +689,18 @@ export function GrokPane({
 
     setBusy(true);
     try {
+      let conversationId = conversationIdForRequest(pane.conversationId);
+      if (persist && !retry) {
+        conversationId = await ensureOwnedConversation();
+      }
+      if (persist && !conversationId) {
+        throw new ApiError(422, INVALID_CHAT_TOAST);
+      }
       await api.streamChat(
         {
           message,
           retry,
-          conversation_id: pane.conversationId,
+          conversation_id: conversationId,
           model: pane.modelChoice,
           reasoning_effort: pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort,
           article_id: articleId,
@@ -827,10 +891,13 @@ export function GrokPane({
       setStreamStatus(null);
       const status = error instanceof ApiError ? error.status : 502;
       const detail = error instanceof ApiError ? error.message : `${label} did not reply`;
-      const formatted = detail.startsWith("Chat failed (HTTP")
-        ? withAssistantName(detail, label)
-        : formatChatError(status, detail, label);
-      const timeoutToast = chatTimeoutToast(status, formatted);
+      const createToast = error instanceof ApiError ? chatCreateErrorToast(status, detail) : null;
+      const formatted = createToast
+        ? createToast
+        : detail.startsWith("Chat failed (HTTP")
+          ? withAssistantName(detail, label)
+          : formatChatError(status, detail, label);
+      const timeoutToast = createToast || chatTimeoutToast(status, formatted);
       const oversizedPaste = isOversizedPasteHttp(status, detail);
       if (oversizedPaste) {
         offerPasteSplit(userLine?.content || message);

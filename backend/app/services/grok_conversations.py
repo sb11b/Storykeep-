@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import GrokConversation, GrokMessage, User
@@ -80,6 +81,15 @@ def owned_assistant_message(db: Session, user: User, message_id: UUID) -> GrokMe
     return row
 
 
+def lookup_owned_conversation(db: Session, user: User, conversation_id: UUID) -> GrokConversation | None:
+    return db.scalar(
+        select(GrokConversation).where(
+            GrokConversation.id == conversation_id,
+            GrokConversation.user_id == user.id,
+        )
+    )
+
+
 def create_conversation(
     db: Session,
     user: User,
@@ -87,10 +97,31 @@ def create_conversation(
     pane: str | None = None,
     model: str = "auto",
     reasoning: str = "auto",
+    conversation_id: UUID | None = None,
 ) -> GrokConversation:
-    row = GrokConversation(user_id=user.id, title="New chat", pane=pane, model=model, reasoning=reasoning)
-    db.add(row)
-    db.flush()
+    if conversation_id is not None:
+        existing = lookup_owned_conversation(db, user, conversation_id)
+        if existing:
+            return existing
+    kwargs: dict = {
+        "user_id": user.id,
+        "title": "New chat",
+        "pane": pane,
+        "model": model,
+        "reasoning": reasoning,
+    }
+    if conversation_id is not None:
+        kwargs["id"] = conversation_id
+    row = GrokConversation(**kwargs)
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        raced = lookup_owned_conversation(db, user, conversation_id) if conversation_id is not None else None
+        if raced:
+            return raced
+        raise
     return row
 
 
