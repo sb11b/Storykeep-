@@ -34,7 +34,7 @@ import type {
   MailStatus,
 } from "./types";
 
-import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
+import { httpErrorFallback, isFeedId, parseErrorPayload } from "@/lib/api-errors";
 import { fetchSpeechChunk } from "@/lib/tts-speech-client";
 import { formatChatError } from "@/lib/grok-chat-error";
 import {
@@ -398,8 +398,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ into_tag_id }),
     }),
-  refreshFeed: (id: string) =>
-    request<Feed>(`/api/v1/feeds/${id}/refresh`, { method: "POST" }),
+  refreshFeed: (id: string) => {
+    if (!isFeedId(id)) return Promise.reject(new ApiError(400, "Invalid feed"));
+    return request<{ created: number }>("/api/v1/feeds/refresh", {
+      method: "POST",
+      body: JSON.stringify({ feed_id: id.trim() }),
+    });
+  },
   refreshAll: () => request<{ created: number }>("/api/v1/feeds/refresh", { method: "POST" }),
   deleteFeed: (id: string, force = false) =>
     request<{ ok: boolean }>(`/api/v1/feeds/${encodeURIComponent(id)}?force=${force ? "true" : "false"}`, {

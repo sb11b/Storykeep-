@@ -300,6 +300,15 @@ def _chat_message_too_long(exc: RequestValidationError) -> bool:
     return False
 
 
+def _invalid_feed_uuid(exc: RequestValidationError) -> bool:
+    for err in exc.errors():
+        loc = tuple(err.get("loc") or ())
+        kind = str(err.get("type") or "")
+        if "feed_id" in loc and kind.startswith("uuid"):
+            return True
+    return False
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     path = request.url.path.rstrip("/")
@@ -308,6 +317,8 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
             status_code=413,
             content={"detail": PAYLOAD_TOO_LARGE, "code": "payload_too_large"},
         )
+    if _invalid_feed_uuid(exc):
+        return JSONResponse(status_code=422, content={"detail": "Invalid feed"})
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 

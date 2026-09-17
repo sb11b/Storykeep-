@@ -12,7 +12,7 @@ from app.deps import get_current_user
 from app.models import Article, Category, Feed, User
 from app.services import rss_shelves as rss_shelf_service
 from app.presenters import feed_out
-from app.schemas import DiscoverOut, FeedCandidate, FeedCreate, FeedDeleteIn, FeedOut, FeedUpdate, OpmlImportOut
+from app.schemas import DiscoverOut, FeedCandidate, FeedCreate, FeedDeleteIn, FeedOut, FeedRefreshIn, FeedUpdate, OpmlImportOut
 from app.services import changelog, rss
 from app.services import feed_delete
 from app.services import opml as opml_service
@@ -240,6 +240,24 @@ def delete_feed(
     return feed_delete.remove_feed(db, user, feed_id, force=force)
 
 
+@router.post("/feeds/refresh")
+def refresh_feeds(
+    payload: FeedRefreshIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, int]:
+    feed_id = payload.feed_id if payload else None
+    if feed_id is not None:
+        feed = db.get(Feed, feed_id)
+        if not feed or feed.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Feed not found")
+        created = rss.refresh_feed(db, feed, extract=settings.extract_on_import)
+        db.refresh(feed)
+        return {"created": created}
+    created = rss.refresh_user_feeds(db, user.id, extract=settings.extract_on_import)
+    return {"created": created}
+
+
 @router.post("/feeds/{feed_id}")
 def delete_feed_post(
     feed_id: UUID,
@@ -284,9 +302,3 @@ def refresh_one(
     rss.refresh_feed(db, feed, extract=settings.extract_on_import)
     db.refresh(feed)
     return feed_out(feed, *_counts(db, feed.id))
-
-
-@router.post("/feeds/refresh")
-def refresh_all(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, int]:
-    created = rss.refresh_user_feeds(db, user.id, extract=settings.extract_on_import)
-    return {"created": created}

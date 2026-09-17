@@ -143,7 +143,7 @@ import type {
 import { showExtractCaughtError, showExtractFailed, showExtractSuccess } from "@/lib/extract-toast";
 import { initialListDebug, listRangeLabel } from "@/lib/list-range";
 import { toastErrorFromUnknown } from "@/lib/toast-message";
-import { isNoteShrinkMessage } from "@/lib/api-errors";
+import { isFeedId, isNoteShrinkMessage } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 function isStoryKeepNote(article: Article): boolean {
@@ -1201,11 +1201,27 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
   async function onRefresh() {
     setRefreshing(true);
     try {
-      const result = await api.refreshAll();
-      toast.success(result.created ? `${result.created} new articles` : "Feeds are up to date");
+      let created = 0;
+      if (shelf.kind === "feed") {
+        if (!isFeedId(shelf.id)) {
+          toast.error("Invalid feed");
+          return;
+        }
+        const result = await api.refreshFeed(shelf.id);
+        created = result.created;
+      } else {
+        const result = await api.refreshAll();
+        created = result.created;
+      }
+      toast.success(created ? `${created} new articles` : "Feeds are up to date");
       await Promise.all([loadNav(), loadList()]);
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Refresh failed");
+      const message = error instanceof ApiError ? error.message : "Refresh failed";
+      if (error instanceof ApiError && (error.status === 400 || error.status === 422)) {
+        toast.error(/invalid feed|valid uuid/i.test(message) ? "Invalid feed" : "Refresh failed");
+      } else {
+        toast.error(message);
+      }
     } finally {
       setRefreshing(false);
     }

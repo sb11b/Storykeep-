@@ -209,6 +209,10 @@ class FeedDeleteIn(BaseModel):
     force: bool = False
 
 
+class FeedRefreshIn(BaseModel):
+    feed_id: uuid.UUID | None = None
+
+
 class FeedOut(BaseModel):
     id: uuid.UUID
     url: str
