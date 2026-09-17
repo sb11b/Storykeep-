@@ -4,13 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { appendSpoken } from "@/lib/stt-buffer";
-import {
-  MAX_CLIP_MS,
-  MIN_CLIP_BYTES,
-  startMicClip,
-  sttFailToast,
-  type MicClipSession,
-} from "@/lib/junior-stt";
+import { MIN_CLIP_BYTES, startMicClip, sttFailToast, type MicClipSession } from "@/lib/junior-stt";
 import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, micDeniedMessage } from "@/lib/stt-ui";
 
 export function JuniorMicButton({
@@ -24,25 +18,27 @@ export function JuniorMicButton({
   getDraft: () => string;
   onTranscript: (next: string) => void;
 }) {
-  const [phase, setPhase] = useState<"idle" | "recording" | "uploading">("idle");
+  const [listening, setListening] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const sessionRef = useRef<MicClipSession | null>(null);
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
+  const listeningRef = useRef(false);
+  listeningRef.current = listening;
 
   const upload = useCallback(
     async (blob: Blob) => {
       if (blob.size < MIN_CLIP_BYTES) {
         toast.error(sttFailToast(400, "empty blob"));
-        setPhase("idle");
+        setUploading(false);
+        setListening(false);
         return;
       }
-      setPhase("uploading");
+      setUploading(true);
+      setListening(false);
       try {
         const result = await api.transcribeStt(blob);
         const piece = (result.text || "").trim();
         if (!piece) {
           toast.error("STT failed (empty transcript)");
-          setPhase("idle");
           return;
         }
         onTranscript(appendSpoken(getDraft(), piece));
@@ -53,7 +49,8 @@ export function JuniorMicButton({
           toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
         }
       } finally {
-        setPhase("idle");
+        setUploading(false);
+        setListening(false);
       }
     },
     [getDraft, onTranscript],
@@ -62,8 +59,10 @@ export function JuniorMicButton({
   const stopAndSend = useCallback(async () => {
     const session = sessionRef.current;
     sessionRef.current = null;
+    listeningRef.current = false;
+    setListening(false);
     if (!session) {
-      setPhase("idle");
+      setUploading(false);
       return;
     }
     try {
@@ -71,37 +70,50 @@ export function JuniorMicButton({
       await upload(blob);
     } catch (error) {
       toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
-      setPhase("idle");
+      setUploading(false);
+      setListening(false);
     }
   }, [upload]);
 
   const abort = useCallback(() => {
     sessionRef.current?.abort();
     sessionRef.current = null;
-    setPhase("idle");
+    listeningRef.current = false;
+    setListening(false);
+    setUploading(false);
   }, []);
 
   const start = useCallback(async () => {
+    if (listeningRef.current || sessionRef.current) return;
+    listeningRef.current = true;
+    setListening(true);
     try {
       const session = await startMicClip({
-        maxMs: MAX_CLIP_MS,
-        onAutoStop: () => {
-          void stopAndSend();
+        onPermissionRevoked: () => {
+          sessionRef.current = null;
+          listeningRef.current = false;
+          setListening(false);
+          setUploading(false);
+          toast.error(MIC_DENIED_TOAST);
         },
       });
+      if (!listeningRef.current) {
+        session.abort();
+        return;
+      }
       sessionRef.current = session;
-      setPhase("recording");
     } catch (error) {
       sessionRef.current = null;
-      setPhase("idle");
+      listeningRef.current = false;
+      setListening(false);
       toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
     }
-  }, [stopAndSend]);
+  }, []);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
-      if (phaseRef.current !== "recording") return;
+      if (!listeningRef.current) return;
       event.preventDefault();
       abort();
     }
@@ -113,22 +125,20 @@ export function JuniorMicButton({
 
   if (locked || !enabled) return null;
 
-  const recording = phase === "recording";
-  const uploading = phase === "uploading";
   return (
     <Button
       type="button"
       size="icon"
-      variant={recording ? "destructive" : "outline"}
+      variant={listening ? "destructive" : "outline"}
       className="relative z-10 size-9 shrink-0"
       disabled={uploading}
-      aria-label={recording ? MIC_LIVE : uploading ? "Transcribing" : MIC_IDLE}
-      data-mic-state={recording ? "live" : uploading ? "uploading" : "idle"}
-      title={recording ? `${MIC_LIVE} — tap to stop` : `${MIC_IDLE} — tap to talk, tap again to insert`}
+      aria-label={listening ? MIC_LIVE : uploading ? "Transcribing" : MIC_IDLE}
+      data-mic-state={listening ? "live" : uploading ? "uploading" : "idle"}
+      title={listening ? `${MIC_LIVE} — tap to stop` : `${MIC_IDLE} — tap to talk, tap again to insert`}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => {
         if (uploading) return;
-        if (recording) {
+        if (listening) {
           void stopAndSend();
           return;
         }

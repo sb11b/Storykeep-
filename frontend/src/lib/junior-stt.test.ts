@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   clipFilename,
   encodeWavPcm16,
+  MIC_RESTART_MAX_MS,
+  nextMicRestartDelay,
   pickRecorderMime,
+  shouldRestartMic,
   sttFailToast,
 } from "./junior-stt";
 
@@ -33,4 +36,34 @@ test("encodeWavPcm16 writes a RIFF header", () => {
   const blob = encodeWavPcm16(pcm, 16000);
   assert.equal(blob.type, "audio/wav");
   assert.equal(blob.size, 44 + 320);
+});
+
+test("composer mic restarts only while listening and the engine dropped", () => {
+  assert.equal(shouldRestartMic(true, "engine"), true);
+  assert.equal(shouldRestartMic(true, "user"), false);
+  assert.equal(shouldRestartMic(true, "permission"), false);
+  assert.equal(shouldRestartMic(false, "engine"), false);
+});
+
+test("mic restart backoffs on error and tight onend loops, not on a quiet restart", () => {
+  assert.equal(
+    nextMicRestartDelay({ fromError: false, prevDelayMs: 0, elapsedSinceRestartMs: 5_000 }),
+    0,
+  );
+  assert.equal(
+    nextMicRestartDelay({ fromError: true, prevDelayMs: 0, elapsedSinceRestartMs: 5_000 }),
+    400,
+  );
+  assert.equal(
+    nextMicRestartDelay({ fromError: false, prevDelayMs: 0, elapsedSinceRestartMs: 50 }),
+    400,
+  );
+  assert.equal(
+    nextMicRestartDelay({ fromError: true, prevDelayMs: 4_000, elapsedSinceRestartMs: 10 }),
+    8_000,
+  );
+  assert.equal(
+    nextMicRestartDelay({ fromError: true, prevDelayMs: 8_000, elapsedSinceRestartMs: 10 }),
+    MIC_RESTART_MAX_MS,
+  );
 });

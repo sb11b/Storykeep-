@@ -1,7 +1,29 @@
 /** Junior composer clip STT. Record → POST /api/v1/stt. Never log audio. */
 
-export const MAX_CLIP_MS = 60_000;
 export const MIN_CLIP_BYTES = 64;
+/** Tight-loop guard when MediaRecorder / SpeechRecognition ends on its own. */
+export const MIC_RESTART_MIN_GAP_MS = 400;
+export const MIC_RESTART_MAX_MS = 8_000;
+export const MIC_RESTART_ERROR_MS = 200;
+
+export type MicEndReason = "user" | "permission" | "engine";
+
+/** Restart the same session only while the user still has listening latched on. */
+export function shouldRestartMic(listening: boolean, reason: MicEndReason): boolean {
+  return listening && reason === "engine";
+}
+
+export function nextMicRestartDelay(input: {
+  fromError: boolean;
+  prevDelayMs: number;
+  elapsedSinceRestartMs: number;
+}): number {
+  if (input.fromError || input.elapsedSinceRestartMs < MIC_RESTART_MIN_GAP_MS) {
+    const base = input.prevDelayMs > 0 ? input.prevDelayMs : MIC_RESTART_ERROR_MS;
+    return Math.min(base * 2, MIC_RESTART_MAX_MS);
+  }
+  return 0;
+}
 
 const RECORDER_TYPES = [
   "audio/webm;codecs=opus",
@@ -97,7 +119,7 @@ export type MicClipSession = {
   abort: () => void;
 };
 
-export async function startMicClip(opts?: { maxMs?: number; onAutoStop?: () => void }): Promise<MicClipSession> {
+export async function startMicClip(opts?: { onPermissionRevoked?: () => void }): Promise<MicClipSession> {
   requireSecureMic();
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("Microphone is not available");
@@ -106,17 +128,28 @@ export async function startMicClip(opts?: { maxMs?: number; onAutoStop?: () => v
   const mime = pickRecorderMime();
   const chunks: BlobPart[] = [];
   let recorder: MediaRecorder | null = null;
+  const canRecord = typeof MediaRecorder !== "undefined";
   const AudioCtx =
     window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  let context: AudioContext | null = AudioCtx ? new AudioCtx() : null;
+  let context: AudioContext | null = !canRecord && AudioCtx ? new AudioCtx() : null;
   const pcmChunks: ArrayBuffer[] = [];
   let processor: ScriptProcessorNode | null = null;
   let stopped = false;
-  let timer = 0;
+  let listening = true;
+  let restartTimer = 0;
+  let lastRestartAt = 0;
+  let restartDelay = 0;
+  let finishResolve: ((blob: Blob) => void) | null = null;
+
+  const clearRestart = () => {
+    if (restartTimer) window.clearTimeout(restartTimer);
+    restartTimer = 0;
+  };
+
+  const streamLive = () => stream.getTracks().some((track) => track.readyState === "live");
 
   const cleanup = () => {
-    if (timer) window.clearTimeout(timer);
-    timer = 0;
+    clearRestart();
     try {
       processor?.disconnect();
     } catch {
@@ -126,6 +159,42 @@ export async function startMicClip(opts?: { maxMs?: number; onAutoStop?: () => v
     stream.getTracks().forEach((track) => track.stop());
     if (context) void context.close();
     context = null;
+  };
+
+  const blobFromChunks = () => new Blob(chunks, { type: recorder?.mimeType || mime || "audio/webm" });
+
+  const pcmBlob = () => {
+    if (!pcmChunks.length) return null;
+    const total = pcmChunks.reduce((sum, part) => sum + part.byteLength, 0);
+    const pcm = new Uint8Array(total);
+    let offset = 0;
+    for (const part of pcmChunks) {
+      pcm.set(new Uint8Array(part), offset);
+      offset += part.byteLength;
+    }
+    if (pcm.byteLength < MIN_CLIP_BYTES) return null;
+    const copy = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
+    return encodeWavPcm16(copy, 16000);
+  };
+
+  const settle = (aborted: boolean) => {
+    cleanup();
+    if (!finishResolve) return;
+    const resolve = finishResolve;
+    finishResolve = null;
+    if (aborted) {
+      resolve(new Blob());
+      return;
+    }
+    resolve(pcmBlob() || blobFromChunks());
+  };
+
+  const revoke = () => {
+    if (stopped) return;
+    stopped = true;
+    listening = false;
+    settle(true);
+    opts?.onPermissionRevoked?.();
   };
 
   if (context) {
@@ -143,60 +212,103 @@ export async function startMicClip(opts?: { maxMs?: number; onAutoStop?: () => v
     mute.connect(context.destination);
   }
 
-  if (typeof MediaRecorder !== "undefined") {
-    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  function scheduleRestart(fromError: boolean) {
+    if (stopped || !shouldRestartMic(listening, "engine")) return;
+    if (!streamLive()) {
+      revoke();
+      return;
+    }
+    const now = Date.now();
+    restartDelay = nextMicRestartDelay({
+      fromError,
+      prevDelayMs: restartDelay,
+      elapsedSinceRestartMs: lastRestartAt ? now - lastRestartAt : MIC_RESTART_MIN_GAP_MS,
+    });
+    lastRestartAt = now;
+    clearRestart();
+    restartTimer = window.setTimeout(() => {
+      restartTimer = 0;
+      if (stopped) return;
+      bindRecorder();
+    }, restartDelay);
+  }
+
+  function bindRecorder() {
+    if (stopped || !canRecord || !streamLive()) return;
+    try {
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch {
+      scheduleRestart(true);
+      return;
+    }
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) chunks.push(event.data);
     };
-    recorder.start(250);
+    recorder.onstart = () => {
+      restartDelay = 0;
+    };
+    recorder.onerror = () => {
+      if (stopped) return;
+      scheduleRestart(true);
+    };
+    recorder.onstop = () => {
+      if (stopped) {
+        settle(false);
+        return;
+      }
+      if (!shouldRestartMic(listening, "engine") || !streamLive()) {
+        revoke();
+        return;
+      }
+      scheduleRestart(false);
+    };
+    try {
+      recorder.start(250);
+    } catch {
+      scheduleRestart(true);
+    }
   }
+
+  stream.getTracks().forEach((track) => {
+    track.addEventListener("ended", () => {
+      if (stopped) return;
+      revoke();
+    });
+  });
+
+  if (canRecord) bindRecorder();
 
   let result: Promise<Blob> | null = null;
   const finish = (aborted: boolean) => {
     if (result) return result;
+    listening = false;
+    stopped = true;
+    clearRestart();
     result = new Promise<Blob>((resolve) => {
-      stopped = true;
-      const done = () => {
-        cleanup();
-        if (aborted) {
-          resolve(new Blob());
-          return;
-        }
-        const recorded = new Blob(chunks, { type: recorder?.mimeType || mime || "audio/webm" });
-        if (pcmChunks.length) {
-          const total = pcmChunks.reduce((sum, part) => sum + part.byteLength, 0);
-          const pcm = new Uint8Array(total);
-          let offset = 0;
-          for (const part of pcmChunks) {
-            pcm.set(new Uint8Array(part), offset);
-            offset += part.byteLength;
-          }
-          if (pcm.byteLength >= MIN_CLIP_BYTES) {
-            const copy = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
-            resolve(encodeWavPcm16(copy, 16000));
-            return;
+      finishResolve = (blob) => resolve(blob);
+      if (aborted) {
+        if (recorder && recorder.state !== "inactive") {
+          try {
+            recorder.stop();
+          } catch {
+            /* ignore */
           }
         }
-        resolve(recorded);
-      };
+        settle(true);
+        return;
+      }
       if (recorder && recorder.state !== "inactive") {
-        recorder.onstop = () => done();
         try {
           recorder.stop();
         } catch {
-          done();
+          settle(false);
         }
-      } else {
-        done();
+        return;
       }
+      settle(false);
     });
     return result;
   };
-
-  timer = window.setTimeout(() => {
-    if (opts?.onAutoStop) opts.onAutoStop();
-    else void finish(false);
-  }, opts?.maxMs ?? MAX_CLIP_MS);
 
   return {
     stop: () => finish(false),
