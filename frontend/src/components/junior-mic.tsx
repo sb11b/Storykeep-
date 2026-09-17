@@ -116,28 +116,26 @@ export function JuniorMicButton({
   const recording = phase === "recording";
   const uploading = phase === "uploading";
   return (
-    <div className="flex shrink-0 flex-col gap-1">
-      <Button
-        type="button"
-        size="icon"
-        variant={recording ? "destructive" : "outline"}
-        className="size-9"
-        disabled={uploading}
-        aria-label={recording ? MIC_LIVE : uploading ? "Transcribing" : MIC_IDLE}
-        data-mic-state={recording ? "live" : uploading ? "uploading" : "idle"}
-        title={recording ? `${MIC_LIVE} — tap to stop` : `${MIC_IDLE} — tap to talk, tap again to insert`}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => {
-          if (uploading) return;
-          if (recording) {
-            void stopAndSend();
-            return;
-          }
-          void start();
-        }}
-      >
-        {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}
-      </Button>
-    </div>
+    <Button
+      type="button"
+      size="icon"
+      variant={recording ? "destructive" : "outline"}
+      className="relative z-10 size-9 shrink-0"
+      disabled={uploading}
+      aria-label={recording ? MIC_LIVE : uploading ? "Transcribing" : MIC_IDLE}
+      data-mic-state={recording ? "live" : uploading ? "uploading" : "idle"}
+      title={recording ? `${MIC_LIVE} — tap to stop` : `${MIC_IDLE} — tap to talk, tap again to insert`}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => {
+        if (uploading) return;
+        if (recording) {
+          void stopAndSend();
+          return;
+        }
+        void start();
+      }}
+    >
+      {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}
+    </Button>
   );
 }

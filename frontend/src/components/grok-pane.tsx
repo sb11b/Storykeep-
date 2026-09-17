@@ -2321,12 +2321,12 @@ export function GrokPane({
             ) : null}
           </ul>
         ) : null}
-        <div className="flex gap-2">
+        <div className="flex min-w-0 flex-nowrap items-center gap-2">
           <Textarea
             ref={draftRef}
             dictate={false}
             maxLength={JUNIOR_TEXTAREA_MAX_LENGTH}
-            className="min-h-12 max-h-[min(60vh,28rem)] flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
+            className="min-h-12 max-h-[min(60vh,28rem)] min-w-0 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
             value={pane.draft}
             onChange={(event) => patch({ draft: event.target.value })}
             placeholder={
@@ -2375,7 +2375,7 @@ export function GrokPane({
             type="button"
             size="icon"
             variant="outline"
-            className="relative z-10 size-9 shrink-0 self-end"
+            className="relative z-10 size-9 shrink-0"
             disabled={!enabled || locked || uploadingFiles || (pane.pendingAttachments ?? []).length >= LARRY_ATTACH_MAX_FILES}
             aria-label="Attach files"
             title="Attach PDF, text, or an image"
@@ -2387,7 +2387,7 @@ export function GrokPane({
             type="button"
             size="icon"
             variant="outline"
-            className="relative z-10 size-9 shrink-0 self-end"
+            className="relative z-10 size-9 shrink-0"
             disabled={!enabled || locked || uploadingFiles || (pane.pendingAttachments ?? []).length >= LARRY_ATTACH_MAX_FILES}
             aria-label="Upload image"
             title="Upload a photo (jpg, png, webp, gif)"
@@ -2399,7 +2399,7 @@ export function GrokPane({
             type="button"
             size="icon"
             variant="outline"
-            className="relative z-10 size-9 shrink-0 self-end"
+            className="relative z-10 size-9 shrink-0"
             disabled={!enabled || locked || busy || uploadingFiles}
             aria-label="Imagine"
             title="Imagine — generate an image from this prompt"
@@ -2434,7 +2434,7 @@ export function GrokPane({
               type="button"
               size="icon"
               variant="destructive"
-              className="size-9 shrink-0 self-end"
+              className="relative z-10 size-9 shrink-0"
               aria-label="Stop"
               title="Stop generating"
               onClick={() => stopGeneration()}
@@ -2445,7 +2445,7 @@ export function GrokPane({
             <Button
               type="submit"
               size="icon"
-              className="size-9 shrink-0 self-end"
+              className="relative z-10 size-9 shrink-0"
               disabled={!enabled || aborting || (!pane.draft.trim() && !(pane.pendingAttachments ?? []).length)}
               aria-label="Send"
             >
