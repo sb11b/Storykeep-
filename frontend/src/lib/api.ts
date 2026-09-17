@@ -742,7 +742,19 @@ export const api = {
               tokenWatch?.disarm();
               onDelta(text);
             },
-            onMeta,
+            onMeta: (meta) => {
+              if (
+                meta.stream_status === "thinking" ||
+                meta.stream_status === "working" ||
+                meta.stream_status === "queued" ||
+                meta.stream_status === "writing" ||
+                meta.stream_status === "generating" ||
+                meta.stream_status === "searching"
+              ) {
+                tokenWatch?.disarm();
+              }
+              onMeta?.(meta);
+            },
           },
           tokenWatch.signal,
           { firstByteMs: GROK_STREAM_FIRST_BYTE_MS },

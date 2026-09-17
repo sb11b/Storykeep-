@@ -14,7 +14,7 @@ import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { wordIndexFromSelection } from "@/lib/tts-words";
-import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, type ChatStatusKind } from "@/lib/grok-pane-name";
+import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -23,7 +23,6 @@ import { folderById } from "@/lib/folders";
 import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
   formatChatError,
-  chatTimeoutToast,
   isOversizedPasteHttp,
   readableXaiToast,
   withAssistantName,
@@ -85,6 +84,7 @@ export type ChatLine = {
   error?: string | null;
   failed?: boolean;
   waiting?: boolean;
+  turnStatus?: ChatTurnStatus | null;
   routeLabel?: string | null;
   includeChip?: string | null;
   includeHasMore?: boolean;
@@ -315,24 +315,38 @@ export function GrokPane({
       if (kind === "working" && (gotDeltaRef.current || generatingRef.current)) return;
       if (
         kind === "working" &&
-        (streamStatusRef.current === "thinking" || streamStatusRef.current === "writing")
+        (streamStatusRef.current === "thinking" || streamStatusRef.current === "writing" || streamStatusRef.current === "queued")
       ) {
         return;
       }
       if (kind === "working" && streamStatusRef.current === "searching") {
         return;
       }
-      if (kind === "writing" || kind === "generating" || kind === "searching" || kind == null) {
+      const mapped: ChatStatusKind | null =
+        kind === "working" ? "thinking" : kind;
+      if (mapped === "writing" || mapped === "generating" || mapped === "searching" || mapped === "error" || mapped === "done" || mapped == null) {
         if (thinkingTimerRef.current != null) {
           window.clearTimeout(thinkingTimerRef.current);
           thinkingTimerRef.current = null;
         }
       }
-      generatingRef.current = kind === "generating";
-      if (kind === "working") gotDeltaRef.current = false;
-      if (kind === "writing") gotDeltaRef.current = true;
-      setStreamStatus(kind);
-      onUpdate((current) => (current.streamStatus === kind ? current : { ...current, streamStatus: kind }));
+      generatingRef.current = mapped === "generating";
+      if (mapped === "queued" || mapped === "thinking") gotDeltaRef.current = false;
+      if (mapped === "writing") gotDeltaRef.current = true;
+      setStreamStatus(mapped);
+      const turn = normalizeTurnStatus(mapped);
+      onUpdate((current) => ({
+        ...current,
+        streamStatus: mapped,
+        messages:
+          turn && turn !== "done"
+            ? current.messages.map((item) =>
+                item.waiting && item.role === "assistant"
+                  ? { ...item, turnStatus: turn }
+                  : item,
+              )
+            : current.messages,
+      }));
     },
     [onUpdate],
   );
@@ -347,23 +361,34 @@ export function GrokPane({
     onUpdate((current) => (current.streamStatus == null ? current : { ...current, streamStatus: null }));
   }, [onUpdate]);
 
-  const clearWorkingKeepPartial = useCallback(
-    (assistantId?: string) => {
-      setStreamStatus(null);
+  const failOpenTurn = useCallback(
+    (assistantId?: string, aborted = false) => {
       setBusy(false);
       setAborting(false);
       abortingRef.current = false;
-      onUpdate((current) => ({
-        ...current,
-        streamStatus: null,
-        messages: current.messages.map((item) => {
-          if (!item.waiting) return item;
-          if (assistantId && item.id !== assistantId && item.role !== "assistant") return item;
-          return { ...item, waiting: false };
-        }),
-      }));
+      onUpdate((current) => {
+        const messages = current.messages.map((item) => {
+          if (item.role !== "assistant") return item;
+          const target = item.waiting || (assistantId && item.id === assistantId);
+          if (!target) return item;
+          const closed = closeAssistantTurn(item.content, {
+            fileCount: item.files?.length,
+            aborted,
+          });
+          return { ...item, ...closed };
+        });
+        const failed = messages.some(
+          (item) => item.role === "assistant" && (item.waiting === false && item.failed) && (assistantId ? item.id === assistantId : true),
+        );
+        return {
+          ...current,
+          streamStatus: failed ? "error" : "done",
+          messages,
+        };
+      });
+      applyStreamStatus("error");
     },
-    [onUpdate],
+    [applyStreamStatus, onUpdate],
   );
 
   const stopGeneration = useCallback(() => {
@@ -372,8 +397,9 @@ export function GrokPane({
     inFlightRef.current = false;
     abortRef.current?.abort();
     abortRef.current = null;
-    clearWorkingKeepPartial();
-  }, [clearWorkingKeepPartial, dictation]);
+    failOpenTurn(undefined, true);
+    toast.error(NO_REPLY_TOAST);
+  }, [dictation, failOpenTurn]);
 
   const markWriting = useCallback(() => {
     applyStreamStatus("writing");
@@ -688,6 +714,7 @@ export function GrokPane({
     }));
 
     setBusy(true);
+    let streamFailed = false;
     try {
       let conversationId = conversationIdForRequest(pane.conversationId);
       if (persist && !retry) {
@@ -725,7 +752,8 @@ export function GrokPane({
               item.id === assistantId
                 ? {
                     ...item,
-                    waiting: false,
+                    waiting: true,
+                    turnStatus: generating ? "writing" : "writing",
                     content: MEDIA_MARKDOWN.test(delta) ? delta : item.content + delta,
                     failed: false,
                     error: null,
@@ -738,12 +766,24 @@ export function GrokPane({
           if (turnId !== turnIdRef.current) return;
           if (
             meta.stream_status === "working" ||
+            meta.stream_status === "queued" ||
             meta.stream_status === "thinking" ||
             meta.stream_status === "writing" ||
             meta.stream_status === "generating" ||
             meta.stream_status === "searching"
           ) {
             applyStreamStatus(meta.stream_status);
+            const turn = normalizeTurnStatus(meta.stream_status);
+            if (turn && turn !== "done") {
+              onUpdate((current) => ({
+                ...current,
+                messages: current.messages.map((item) =>
+                  item.id === assistantId && !item.content
+                    ? { ...item, waiting: true, turnStatus: turn, failed: false }
+                    : item,
+                ),
+              }));
+            }
           }
           if (meta.toast) {
             if (meta.toast_kind === "error") toast.error(meta.toast);
@@ -774,10 +814,9 @@ export function GrokPane({
                   item.id === assistantId
                     ? {
                         ...item,
-                        waiting: false,
                         id: meta.assistant_message_id!,
-                        failed: meta.partial ? item.failed : false,
-                        error: meta.partial ? item.error : null,
+                        failed: meta.partial ? item.failed : item.failed,
+                        error: meta.partial ? item.error : item.error,
                       }
                     : item,
                 ),
@@ -880,15 +919,20 @@ export function GrokPane({
           if (meta.conversation_id || meta.assistant_message_id) onHistoryChanged?.();
         },
         controller.signal,
+        () => {
+          if (turnId !== turnIdRef.current) return;
+          if (!gotDeltaRef.current) applyStreamStatus("thinking");
+        },
       );
     } catch (error) {
       if (turnId !== turnIdRef.current) return;
+      streamFailed = true;
       const aborted = controller.signal.aborted && !(error instanceof ApiError);
       if (aborted) {
-        clearWorkingKeepPartial(assistantId);
+        failOpenTurn(assistantId, true);
+        toast.error(NO_REPLY_TOAST);
         return;
       }
-      setStreamStatus(null);
       const status = error instanceof ApiError ? error.status : 502;
       const detail = error instanceof ApiError ? error.message : `${label} did not reply`;
       const createToast = error instanceof ApiError ? chatCreateErrorToast(status, detail) : null;
@@ -897,7 +941,6 @@ export function GrokPane({
         : detail.startsWith("Chat failed (HTTP")
           ? withAssistantName(detail, label)
           : formatChatError(status, detail, label);
-      const timeoutToast = createToast || chatTimeoutToast(status, formatted);
       const oversizedPaste = isOversizedPasteHttp(status, detail);
       if (oversizedPaste) {
         offerPasteSplit(userLine?.content || message);
@@ -908,10 +951,10 @@ export function GrokPane({
         ? (shortImage.length > 180 ? "Could not generate that image." : shortImage)
         : oversizedPaste
           ? pasteSplitToast((userLine?.content || message).length)
-          : timeoutToast || formatted;
+          : NO_REPLY_TOAST;
       onUpdate((current) => ({
         ...current,
-        streamStatus: null,
+        streamStatus: "error",
         draft: oversizedPaste && (userLine?.content || message) ? userLine?.content || message : current.draft,
         messages: current.messages.map((item) => {
           const target = item.role === "assistant" && (item.waiting || item.id === assistantId);
@@ -921,15 +964,22 @@ export function GrokPane({
             !hasMediaImage(item.content) &&
             !/\/api\/v1\/media\//.test(item.content) &&
             /Generating the image|Here's the image|implemented and passing/i.test(item.content);
+          const empty = wipePlaceholder || !kept;
           return {
             ...item,
             waiting: false,
-            failed: wipePlaceholder || !kept,
-            error: wipePlaceholder || !kept ? (imageFail ? shortImage || "Could not generate that image." : formatted) : item.error,
+            turnStatus: "error" as const,
+            failed: true,
+            error: empty
+              ? imageFail
+                ? shortImage || "Could not generate that image."
+                : NO_REPLY_TOAST
+              : formatted,
             content: wipePlaceholder ? "" : item.content,
           };
         }),
       }));
+      applyStreamStatus("error");
       if (!oversizedPaste) {
         toast.error(toastText);
       }
@@ -939,14 +989,22 @@ export function GrokPane({
       abortingRef.current = false;
       setAborting(false);
       setBusy(false);
-      clearStreamStatus();
-      onUpdate((current) => ({
-        ...current,
-        streamStatus: null,
-        messages: current.messages.map((item) =>
-          item.waiting ? { ...item, waiting: false } : item,
-        ),
-      }));
+      if (streamFailed) return;
+      if (gotDeltaRef.current) {
+        clearStreamStatus();
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: null,
+          messages: current.messages.map((item) =>
+            item.id === assistantId || item.waiting
+              ? { ...item, waiting: false, turnStatus: "done" as const, failed: false, error: null }
+              : item,
+          ),
+        }));
+        return;
+      }
+      failOpenTurn(assistantId, false);
+      toast.error(NO_REPLY_TOAST);
     }
   }
 
@@ -1248,14 +1306,14 @@ export function GrokPane({
       ...current,
       draft: opts?.keepDraft ?? "",
       pendingAttachments: [],
-      streamStatus: wantsImage ? "generating" : "working",
+      streamStatus: wantsImage ? "generating" : "queued",
       messages: [
         ...current.messages,
         userLine,
-        { id: assistantId, role: "assistant", content: "", waiting: true },
+        { id: assistantId, role: "assistant", content: "", waiting: true, turnStatus: wantsImage ? "writing" : "queued" },
       ],
     }));
-    setStreamStatus(wantsImage ? "generating" : "working");
+    setStreamStatus(wantsImage ? "generating" : "queued");
     await runStream({
       message: content || (files[0] ? `Please look at ${files.map((item) => item.name).join(", ")}.` : ""),
       userLine,
@@ -1465,14 +1523,14 @@ export function GrokPane({
     const retryWantsImage = retryIntent === "generate" || (retryIntent === "edit" && retryImages.length > 0);
     onUpdate((current) => ({
       ...current,
-      streamStatus: retryWantsImage ? "generating" : "working",
+      streamStatus: retryWantsImage ? "generating" : "queued",
       messages: current.messages.map((item) =>
         item.id === assistantId
-          ? { ...item, content: "", failed: false, error: null, waiting: true }
+          ? { ...item, content: "", failed: false, error: null, waiting: true, turnStatus: retryWantsImage ? "writing" : "queued" }
           : item,
       ),
     }));
-    setStreamStatus(retryWantsImage ? "generating" : "working");
+    setStreamStatus(retryWantsImage ? "generating" : "queued");
     await runStream({
       message: userLine.content,
       retry: true,
@@ -1951,7 +2009,7 @@ export function GrokPane({
         </Button>
       </div>
 
-      {visibleStatus ? (
+      {visibleStatus && visibleStatus !== "done" && visibleStatus !== "error" ? (
         <p
           data-junior-status={visibleStatus}
           role="status"
@@ -2048,10 +2106,21 @@ export function GrokPane({
                     : undefined
                 }
                 statusLine={
-                  item.role === "assistant" &&
-                  (item.waiting || (visibleStatus === "writing" && item.id === lastAssistantId))
-                    ? chatStatusLine(label, visibleStatus || (item.waiting ? "working" : "writing"))
-                    : null
+                  item.role !== "assistant"
+                    ? null
+                    : item.failed || item.turnStatus === "error"
+                      ? chatStatusLine(label, "error")
+                      : item.turnStatus && item.turnStatus !== "done"
+                        ? chatStatusLine(label, item.turnStatus)
+                        : item.waiting ||
+                            (Boolean(visibleStatus) &&
+                              visibleStatus !== "done" &&
+                              item.id === lastAssistantId)
+                          ? chatStatusLine(
+                              label,
+                              visibleStatus || item.turnStatus || (item.waiting ? "thinking" : "writing"),
+                            )
+                          : null
                 }
                 onRegisterBody={registerBody}
                 onListen={requestListen}

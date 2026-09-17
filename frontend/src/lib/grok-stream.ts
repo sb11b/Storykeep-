@@ -81,6 +81,7 @@ function parseSsePart(
   handlers: GrokStreamHandlers,
   receivedDelta: { value: boolean },
   idle?: { ms: number },
+  receivedActivity?: { value: boolean },
 ) {
   const line = part.split("\n").find((item) => item.startsWith("data:"));
   if (!line) return;
@@ -92,7 +93,17 @@ function parseSsePart(
   }
   if (parsed.stream_status === "searching") {
     receivedDelta.value = true;
+    receivedActivity && (receivedActivity.value = true);
     if (idle) idle.ms = GROK_STREAM_SEARCH_IDLE_MS;
+  }
+  if (
+    parsed.stream_status === "thinking" ||
+    parsed.stream_status === "working" ||
+    parsed.stream_status === "queued" ||
+    parsed.stream_status === "writing" ||
+    parsed.stream_status === "generating"
+  ) {
+    receivedActivity && (receivedActivity.value = true);
   }
   if (parsed.error) {
     const status = typeof parsed.status === "number" ? parsed.status : 502;
@@ -230,6 +241,7 @@ export async function readGrokChatStream(
   const decoder = new TextDecoder();
   let buffer = "";
   const receivedDelta = { value: false };
+  const receivedActivity = { value: false };
   const startedAt = Date.now();
   let lastActivityAt = Date.now();
   let firstDeltaAt: number | null = null;
@@ -262,6 +274,13 @@ export async function readGrokChatStream(
   const throwIfTimedOut = () => {
     const now = Date.now();
     if (!receivedDelta.value) {
+      if (receivedActivity.value) {
+        if (now - lastActivityAt >= idle.ms) {
+          xaiStatus = 504;
+          throw new ApiError(504, formatChatError(504, "xAI silent"));
+        }
+        return;
+      }
       const budget = preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs;
       if (now - startedAt >= budget) {
         xaiStatus = 504;
@@ -283,7 +302,7 @@ export async function readGrokChatStream(
       throwIfTimedOut();
       throwIfAborted();
       const now = Date.now();
-      const remaining = receivedDelta.value
+      const remaining = receivedDelta.value || receivedActivity.value
         ? idle.ms - (now - lastActivityAt)
         : (preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs) - (now - startedAt);
       const waitMs = Math.max(250, Math.min(remaining, 2000));
@@ -313,7 +332,7 @@ export async function readGrokChatStream(
       for (const part of parts) {
         if (!part.trim()) continue;
         try {
-          const outcome = parseSsePart(part, wrapped, receivedDelta, idle);
+          const outcome = parseSsePart(part, wrapped, receivedDelta, idle, receivedActivity);
           if (receivedDelta.value) {
             lastActivityAt = Date.now();
             if (firstDeltaAt == null) firstDeltaAt = lastActivityAt;
@@ -336,7 +355,7 @@ export async function readGrokChatStream(
     }
     if (buffer.trim()) {
       try {
-        parseSsePart(buffer, wrapped, receivedDelta, idle);
+        parseSsePart(buffer, wrapped, receivedDelta, idle, receivedActivity);
         if (receivedDelta.value && firstDeltaAt == null) firstDeltaAt = Date.now();
       } catch (error) {
         if (error instanceof ApiError) throw error;

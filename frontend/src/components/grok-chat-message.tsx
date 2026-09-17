@@ -277,7 +277,7 @@ export function GrokChatMessage({
       )}
     >
       <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-        {role === "user" ? "You" : content || failed ? `${assistantName} replied` : assistantName}
+        {role === "user" ? "You" : failed || waiting || !content ? assistantName : `${assistantName} replied`}
       </p>
       {role === "assistant" && routeLabel ? (
         <p className="mb-1 text-[11px] text-muted-foreground" data-junior-route="" data-junior-spend="">
@@ -290,8 +290,8 @@ export function GrokChatMessage({
         </p>
       ) : null}
       {statusLine ? (
-        <p className="mb-1 flex items-center gap-2 text-sm font-medium" role="status">
-          {waiting && !content ? <LoaderCircle className="size-4 animate-spin shrink-0" /> : null}
+        <p className="mb-1 flex items-center gap-2 text-sm font-medium" role="status" data-junior-turn-status="">
+          {waiting && !content && !failed ? <LoaderCircle className="size-4 animate-spin shrink-0" /> : null}
           <span>{statusLine}</span>
         </p>
       ) : null}

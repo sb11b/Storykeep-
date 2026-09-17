@@ -314,3 +314,47 @@ test("heartbeat does not count as the first token", async () => {
     },
   );
 });
+
+test("thinking SSE is not a token and keeps the stream open past the first-byte cut", async () => {
+  const encoder = new TextEncoder();
+  let step = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (step === 0) {
+        controller.enqueue(encoder.encode('data: {"stream_status":"thinking"}\n\n'));
+        step = 1;
+        return;
+      }
+      if (step === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        controller.enqueue(encoder.encode('data: {"delta":"hello"}\n\n data: [DONE]\n\n'));
+        step = 2;
+        return;
+      }
+      controller.close();
+    },
+  });
+  const parts: string[] = [];
+  await readGrokChatStream(new Response(stream), { onDelta: (text) => parts.push(text) }, undefined, {
+    firstByteMs: 50,
+    idleAfterMs: 5_000,
+  });
+  assert.deepEqual(parts, ["hello"]);
+});
+
+test("DONE with no text is an empty close, not a finished reply", async () => {
+  await assert.rejects(
+    () =>
+      readGrokChatStream(
+        sseResponse(['data: {"stream_status":"thinking"}\n\n', "data: [DONE]\n\n"]),
+        { onDelta: () => {} },
+        undefined,
+        { firstByteMs: 5_000, idleAfterMs: 5_000 },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 504);
+      return true;
+    },
+  );
+});
