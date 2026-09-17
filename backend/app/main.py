@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import settings
+from app.https_redirect import HttpsRedirectMiddleware
 from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
@@ -381,6 +382,8 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-TTS-Chunk", "X-TTS-Chunks"],
 )
+if settings.env == "production":
+    app.add_middleware(HttpsRedirectMiddleware, enabled=True)
 
 API = "/api/v1"
 app.include_router(auth.router, prefix=API)

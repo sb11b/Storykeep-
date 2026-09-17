@@ -63,7 +63,7 @@ Create your own account from the same screen if you prefer. Feeds keep importing
 
 ## 5. Custom domain
 
-Settings → Networking → Custom domain. HTTPS is automatic. Session cookies are marked `Secure` when Railway sets `RAILWAY_ENVIRONMENT`.
+Settings → Networking → Custom domain. HTTPS is automatic. In production the app trusts Railway `X-Forwarded-Proto` and redirects leftover `http` to `https` (health checks on `/health` stay plain HTTP). Session cookies are marked `Secure` when `ENV` or `RAILWAY_ENVIRONMENT` is `production`.
 
 ## 6. Backups on Railway
 

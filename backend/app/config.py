@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production-storykeep"
     access_token_minutes: int = 60 * 24 * 14
     cors_origins: str = "http://127.0.0.1:43123,http://localhost:43123"
+    env: str = "local"
     seed_demo: bool = False
     # Railway: volume on the storykeep service at /app/var, env DATA_DIR=/app/var.
     data_dir: Path = Path(__file__).resolve().parents[1] / "var"
@@ -61,6 +62,15 @@ class Settings(BaseSettings):
     fastmail_token: str = ""
     fastmail_jmap_session_url: str = "https://api.fastmail.com/jmap/session"
 
+    @field_validator("env", mode="before")
+    @classmethod
+    def normalize_env(cls, value: object) -> str:
+        raw = str(value or "").strip().lower()
+        railway = (os.getenv("RAILWAY_ENVIRONMENT") or "").strip().lower()
+        if railway and (not raw or raw == "local"):
+            return railway
+        return raw or "local"
+
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:
@@ -88,7 +98,7 @@ class Settings(BaseSettings):
 
     @property
     def cookie_secure(self) -> bool:
-        return self.secure_cookies or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+        return self.secure_cookies or self.env == "production"
 
     @property
     def object_bucket(self) -> str | None:
