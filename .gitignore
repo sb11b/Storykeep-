@@ -1,4 +1,5 @@
 agent-tools/
+.junior/
 __pycache__/
 *.py[cod]
 .venv/
