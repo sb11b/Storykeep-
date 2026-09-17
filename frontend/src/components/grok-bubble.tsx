@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { Brain, CalendarClock, ChevronLeft, ChevronRight, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronLeft, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { JuniorJobsPanel } from "@/components/junior-jobs-panel";
@@ -33,7 +33,12 @@ import {
   type ResizeEdge,
 } from "@/lib/grok-panel-resize";
 import { cn } from "@/lib/utils";
-import { loadJuniorRailHidden, saveJuniorRailHidden } from "@/lib/junior-rail";
+import {
+  loadJuniorRailFlags,
+  patchJuniorRailFlags,
+  saveJuniorRailFlags,
+  type JuniorRailFlags,
+} from "@/lib/junior-rail";
 import { WORK_IN_JUNIOR_EVENT, type WorkInJuniorDetail } from "@/lib/work-in-junior";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
@@ -140,7 +145,7 @@ export function GrokBubble({
   const paneLabelsLoadedRef = useRef(false);
   const [customShelves, setCustomShelves] = useState<CustomNoteShelf[]>([]);
   const [listening, setListening] = useState(false);
-  const [railHidden, setRailHidden] = useState(() => loadJuniorRailHidden());
+  const [rail, setRail] = useState<JuniorRailFlags>(() => loadJuniorRailFlags());
   const historyListRef = useRef<HTMLDivElement>(null);
   const jobsRailRef = useRef<HTMLElement | null>(null);
   const memoryRailRef = useRef<HTMLElement | null>(null);
@@ -296,8 +301,8 @@ export function GrokBubble({
 
   useEffect(() => {
     if (!mounted) return;
-    saveJuniorRailHidden(railHidden);
-  }, [mounted, railHidden]);
+    saveJuniorRailFlags(rail);
+  }, [mounted, rail]);
 
   useEffect(() => {
     function onWindowResize() {
@@ -616,90 +621,98 @@ export function GrokBubble({
     };
   }
 
+  function setRailFlag(patch: Partial<JuniorRailFlags>) {
+    setRail((current) => patchJuniorRailFlags(current, patch));
+  }
+
   function showHistoryList() {
-    setRailHidden(false);
+    setRailFlag({ showChats: true });
     window.setTimeout(() => historyListRef.current?.scrollIntoView({ block: "nearest" }), 50);
   }
 
   function showJobsList() {
-    setRailHidden(false);
+    setRailFlag({ showJobs: true });
     window.setTimeout(() => jobsRailRef.current?.scrollIntoView({ block: "nearest" }), 50);
   }
 
   function showMemoryList() {
-    setRailHidden(false);
+    setRailFlag({ showMemory: true });
     window.setTimeout(() => memoryRailRef.current?.scrollIntoView({ block: "nearest" }), 50);
   }
 
-  const showJobsRail = Boolean(fullscreen && persist && !locked);
+  const ownerRails = Boolean(fullscreen && persist && !locked);
+  const showJobsPanel = Boolean(ownerRails && rail.showJobs);
+  const showMemoryPanel = Boolean(ownerRails && rail.showMemory);
+  const showChatsPanel = Boolean(persist && rail.showChats);
+  const showHiddenStrip = Boolean(
+    persist &&
+      (!rail.showChats || (ownerRails && !rail.showJobs) || (ownerRails && !rail.showMemory)),
+  );
 
   const collapsedIconBtn =
     "h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground";
 
-  const historySidebar = persist ? (
-    railHidden ? (
-      <aside className="flex w-11 shrink-0 flex-col items-center gap-1 border-r bg-muted/15 py-1">
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className={collapsedIconBtn}
-          aria-label="Show panels"
-          title="Show panels"
-          onClick={() => setRailHidden(false)}
-        >
-          <ChevronRight className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className={collapsedIconBtn}
-          aria-label="New chat"
-          title="New chat"
-          onClick={startNewChat}
-        >
-          <MessageSquarePlus className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className={collapsedIconBtn}
-          aria-label="History"
-          title="History"
-          onClick={showHistoryList}
-        >
-          <History className="size-3.5" />
-        </Button>
-        {showJobsRail ? (
+  const hiddenStrip = showHiddenStrip ? (
+    <aside className="flex w-11 shrink-0 flex-col items-center gap-1 border-r bg-muted/15 py-1">
+      {!rail.showChats ? (
+        <>
           <Button
             type="button"
             size="icon-xs"
             variant="ghost"
             className={collapsedIconBtn}
-            aria-label="Jobs"
-            title="Jobs"
-            onClick={showJobsList}
+            aria-label="New chat"
+            title="New chat"
+            onClick={startNewChat}
           >
-            <CalendarClock className="size-3.5" />
+            <MessageSquarePlus className="size-3.5" />
           </Button>
-        ) : null}
-        {showJobsRail ? (
           <Button
             type="button"
             size="icon-xs"
             variant="ghost"
             className={collapsedIconBtn}
-            aria-label="Memory"
-            title="Memory"
-            onClick={showMemoryList}
+            aria-label="Show Chats"
+            aria-expanded={false}
+            title="Show Chats"
+            onClick={showHistoryList}
           >
-            <Brain className="size-3.5" />
+            <History className="size-3.5" />
           </Button>
-        ) : null}
-      </aside>
-    ) : (
+        </>
+      ) : null}
+      {ownerRails && !rail.showJobs ? (
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={collapsedIconBtn}
+          aria-label="Show Jobs"
+          aria-expanded={false}
+          title="Show Jobs"
+          onClick={showJobsList}
+        >
+          <CalendarClock className="size-3.5" />
+        </Button>
+      ) : null}
+      {ownerRails && !rail.showMemory ? (
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={collapsedIconBtn}
+          aria-label="Show Memory"
+          aria-expanded={false}
+          title="Show Memory"
+          onClick={showMemoryList}
+        >
+          <Brain className="size-3.5" />
+        </Button>
+      ) : null}
+    </aside>
+  ) : null;
+
+  const chatsSidebar = showChatsPanel ? (
     <aside className="flex w-44 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
       <div className="flex shrink-0 items-center gap-1 border-b p-1.5">
         <Button
@@ -707,9 +720,10 @@ export function GrokBubble({
           size="sm"
           variant="ghost"
           className="h-7 shrink-0 gap-0.5 px-1.5 text-[11px]"
-          aria-label="Hide panels"
-          title="Hide panels"
-          onClick={() => setRailHidden(true)}
+          aria-label="Hide Chats"
+          aria-expanded={true}
+          title="Hide Chats"
+          onClick={() => setRailFlag({ showChats: false })}
         >
           <ChevronLeft className="size-3.5" />
           Hide
@@ -799,7 +813,6 @@ export function GrokBubble({
         )}
       </div>
     </aside>
-    )
   ) : null;
 
   const onPointerMove = useCallback(
@@ -1000,21 +1013,23 @@ export function GrokBubble({
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {historySidebar}
-        {!railHidden && fullscreen && persist && !locked ? (
+        {hiddenStrip}
+        {chatsSidebar}
+        {showJobsPanel ? (
           <JuniorJobsPanel
             conversationId={focusedPane.conversationId}
             articleId={articleId}
             customShelves={customShelves}
             railRef={jobsRailRef}
+            onHide={() => setRailFlag({ showJobs: false })}
             onRanConversation={(id) => {
               void loadConversation(id);
               void refreshHistory();
             }}
           />
         ) : null}
-        {!railHidden && fullscreen && persist && !locked ? (
-          <JuniorMemoryPanel railRef={memoryRailRef} />
+        {showMemoryPanel ? (
+          <JuniorMemoryPanel railRef={memoryRailRef} onHide={() => setRailFlag({ showMemory: false })} />
         ) : null}
         {fullscreen ? (
           <div className="grid min-h-0 min-w-0 flex-1 gap-px overflow-hidden bg-border" style={paneGridStyle(panes.length)}>

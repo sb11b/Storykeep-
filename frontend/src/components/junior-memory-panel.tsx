@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type Ref } from "react";
-import { LoaderCircle } from "lucide-react";
+import { ChevronLeft, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,7 +10,13 @@ import { toastActionError } from "@/lib/toast-message";
 
 const SAVE_CHARS = 100_000;
 
-export function JuniorMemoryPanel({ railRef }: { railRef?: Ref<HTMLElement | null> }) {
+export function JuniorMemoryPanel({
+  railRef,
+  onHide,
+}: {
+  railRef?: Ref<HTMLElement | null>;
+  onHide?: () => void;
+}) {
   const [markdown, setMarkdown] = useState("");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,10 +73,25 @@ export function JuniorMemoryPanel({ railRef }: { railRef?: Ref<HTMLElement | nul
     <aside ref={railRef} className="flex w-64 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
       <div className="flex shrink-0 items-center justify-between gap-1 border-b p-2">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Memory</p>
-        <Button size="xs" variant="outline" disabled={saving || loading} onClick={() => void save()}>
-          {saving ? <LoaderCircle className="size-3 animate-spin" /> : null}
-          Save
-        </Button>
+        <div className="flex items-center gap-1">
+          {onHide ? (
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Hide Memory"
+              aria-expanded={true}
+              title="Hide Memory"
+              onClick={onHide}
+            >
+              <ChevronLeft className="size-3.5" />
+            </Button>
+          ) : null}
+          <Button size="xs" variant="outline" disabled={saving || loading} onClick={() => void save()}>
+            {saving ? <LoaderCircle className="size-3 animate-spin" /> : null}
+            Save
+          </Button>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
         {loading ? (

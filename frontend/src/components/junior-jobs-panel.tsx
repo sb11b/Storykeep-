@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type Ref } from "react";
-import { LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -172,12 +172,14 @@ export function JuniorJobsPanel({
   customShelves,
   onRanConversation,
   railRef,
+  onHide,
 }: {
   conversationId: string | null;
   articleId: string | null;
   customShelves: CustomNoteShelf[];
   onRanConversation: (conversationId: string) => void;
   railRef?: Ref<HTMLElement | null>;
+  onHide?: () => void;
 }) {
   const [jobs, setJobs] = useState<JuniorJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -302,10 +304,25 @@ export function JuniorJobsPanel({
     <aside ref={railRef} className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-muted/15">
       <div className="flex shrink-0 items-center justify-between gap-1 border-b p-2">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Jobs</p>
-        <Button size="xs" variant="outline" onClick={openCreate}>
-          <Plus className="size-3" />
-          New
-        </Button>
+        <div className="flex items-center gap-1">
+          {onHide ? (
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Hide Jobs"
+              aria-expanded={true}
+              title="Hide Jobs"
+              onClick={onHide}
+            >
+              <ChevronLeft className="size-3.5" />
+            </Button>
+          ) : null}
+          <Button size="xs" variant="outline" onClick={openCreate}>
+            <Plus className="size-3" />
+            New
+          </Button>
+        </div>
       </div>
       {creating ? (
         <div className="shrink-0 space-y-2 border-b p-2">
