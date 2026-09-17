@@ -34,7 +34,7 @@ import type {
   MailStatus,
 } from "./types";
 
-import { httpErrorFallback, isFeedId, parseErrorPayload } from "@/lib/api-errors";
+import { httpErrorFallback, INVALID_ID_TOAST, isFeedId, isUuid, parseErrorPayload } from "@/lib/api-errors";
 import {
   CHAT_CREATE_TIMEOUT_TOAST,
   INVALID_CHAT_TOAST,
@@ -112,20 +112,32 @@ export const api = {
     birthdate?: string | null;
     avatar_media_id?: string | null;
     appearance?: Record<string, unknown>;
-  }) =>
-    request<Profile>("/api/v1/me", {
+  }) => {
+    if (payload.avatar_media_id != null && payload.avatar_media_id !== "" && !isUuid(payload.avatar_media_id)) {
+      return Promise.reject(new ApiError(422, INVALID_ID_TOAST));
+    }
+    const body = { ...payload };
+    if (payload.avatar_media_id != null && payload.avatar_media_id !== "") {
+      body.avatar_media_id = payload.avatar_media_id.trim();
+    }
+    return request<Profile>("/api/v1/me", {
       method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
   updateProfile: (payload: {
     display_name?: string | null;
     birthdate?: string | null;
     avatar_media_id?: string | null;
-  }) =>
-    request<Profile>("/api/v1/auth/profile", {
+  }) => {
+    if (payload.avatar_media_id != null && payload.avatar_media_id !== "" && !isUuid(payload.avatar_media_id)) {
+      return Promise.reject(new ApiError(422, INVALID_ID_TOAST));
+    }
+    return request<Profile>("/api/v1/auth/profile", {
       method: "PATCH",
       body: JSON.stringify(payload),
-    }),
+    });
+  },
   getPreferences: () => request<Record<string, unknown>>("/api/v1/preferences"),
   updatePreferences: (payload: Record<string, unknown>) =>
     request<Record<string, unknown>>("/api/v1/preferences", {

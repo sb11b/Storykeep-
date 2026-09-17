@@ -322,6 +322,26 @@ def _invalid_conversation_uuid(path: str, exc: RequestValidationError) -> bool:
     return False
 
 
+def _invalid_profile_uuid(path: str, exc: RequestValidationError) -> bool:
+    normalized = path.rstrip("/")
+    profile_path = (
+        normalized.endswith("/me")
+        or normalized.endswith("/auth/profile")
+        or "/media/" in normalized
+        or normalized.endswith("/media")
+    )
+    for err in exc.errors():
+        loc = tuple(err.get("loc") or ())
+        kind = str(err.get("type") or "")
+        if not kind.startswith("uuid"):
+            continue
+        if "avatar_media_id" in loc or "media_id" in loc:
+            return True
+        if profile_path:
+            return True
+    return False
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     path = request.url.path.rstrip("/")
@@ -334,6 +354,8 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
         return JSONResponse(status_code=422, content={"detail": "Invalid feed"})
     if _invalid_conversation_uuid(path, exc):
         return JSONResponse(status_code=422, content={"detail": "Invalid chat"})
+    if _invalid_profile_uuid(path, exc):
+        return JSONResponse(status_code=422, content={"detail": "Invalid id"})
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 

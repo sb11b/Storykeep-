@@ -77,6 +77,25 @@ test("mergeUserProfile derives avatar_url from avatar_media_id", () => {
   assert.equal(next.avatar_url, `/api/v1/media/${mediaId}?v=${mediaId}`);
 });
 
+test("avatarMediaUrl skips reserved non-UUID ids so Profile never GETs /media/refresh", () => {
+  assert.equal(avatarMediaUrl("refresh"), null);
+  assert.equal(avatarMediaUrl("profile"), null);
+  assert.equal(avatarMediaUrl(""), null);
+  assert.equal(avatarMediaUrl(null), null);
+  const mediaId = "22222222-2222-2222-2222-222222222222";
+  assert.equal(avatarMediaUrl(mediaId), `/api/v1/media/${mediaId}?v=${mediaId}`);
+});
+
+test("normalizeUserProfile drops refresh as an avatar media id", () => {
+  const profile = normalizeUserProfile({
+    ...base,
+    avatar_media_id: "refresh",
+    avatar_url: "/api/v1/media/refresh?v=refresh",
+  });
+  assert.equal(profile.avatar_media_id, null);
+  assert.equal(profile.avatar_url, null);
+});
+
 test("mergeUserProfile replaces preferences when patch includes them", () => {
   const next = mergeUserProfile(base, {
     preferences: { appearance: { rail_preset: "forest" } },

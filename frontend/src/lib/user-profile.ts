@@ -1,3 +1,4 @@
+import { isUuid } from "@/lib/api-errors";
 import type { Profile, User } from "./types";
 
 /**
@@ -5,9 +6,16 @@ import type { Profile, User } from "./types";
  * which dies on reload. The id doubles as the cache-bust token so a new upload
  * bypasses any cached response for the previous photo.
  */
+export function avatarMediaId(mediaId: string | null | undefined): string | null {
+  const trimmed = mediaId?.trim() || "";
+  if (!isUuid(trimmed)) return null;
+  return trimmed;
+}
+
 export function avatarMediaUrl(mediaId: string | null | undefined): string | null {
-  if (!mediaId) return null;
-  return `/api/v1/media/${mediaId}?v=${mediaId}`;
+  const id = avatarMediaId(mediaId);
+  if (!id) return null;
+  return `/api/v1/media/${id}?v=${id}`;
 }
 
 /** Initials for the fallback shown when there is no avatar, or it fails to load. */
@@ -23,27 +31,31 @@ export function avatarInitials(displayName?: string | null, email?: string | nul
   return "?";
 }
 
+function reusableAvatarUrl(existing: string | null | undefined): string | null {
+  if (!existing || existing.startsWith("blob:")) return null;
+  const match = existing.match(/\/api\/v1\/media\/([^/?#]+)/i);
+  if (match && !isUuid(decodeURIComponent(match[1]))) return null;
+  return existing;
+}
+
 /** Ensure avatar fields always use the persisted media id, never a stale blob URL. */
 export function normalizeUserProfile<T extends Pick<Profile, "avatar_media_id" | "avatar_url">>(
   profile: T,
 ): T {
-  const avatar_media_id = profile.avatar_media_id ?? null;
-  const existing = profile.avatar_url;
-  const reusable = existing && !existing.startsWith("blob:") ? existing : null;
+  const avatar_media_id = avatarMediaId(profile.avatar_media_id);
   return {
     ...profile,
     avatar_media_id,
-    avatar_url: avatarMediaUrl(avatar_media_id) ?? reusable,
+    avatar_url: avatarMediaUrl(avatar_media_id) ?? reusableAvatarUrl(profile.avatar_url),
   };
 }
 
 /** Merge a partial profile/me response into the library user without dropping preferences or avatar. */
 export function mergeUserProfile(base: User, patch: Partial<Profile>): User {
   const avatar_media_id =
-    patch.avatar_media_id !== undefined ? patch.avatar_media_id : (base.avatar_media_id ?? null);
+    patch.avatar_media_id !== undefined ? avatarMediaId(patch.avatar_media_id) : avatarMediaId(base.avatar_media_id);
   const inherited = patch.avatar_url ?? base.avatar_url ?? null;
-  const avatar_url =
-    avatarMediaUrl(avatar_media_id) ?? (inherited && !inherited.startsWith("blob:") ? inherited : null);
+  const avatar_url = avatarMediaUrl(avatar_media_id) ?? reusableAvatarUrl(inherited);
   return normalizeUserProfile({
     ...base,
     ...patch,

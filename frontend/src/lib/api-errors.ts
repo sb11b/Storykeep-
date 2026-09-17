@@ -30,6 +30,21 @@ function locHasConversationId(item: unknown): boolean {
   return locHas(item, "conversation_id");
 }
 
+function locHasProfileId(item: unknown): boolean {
+  return locHas(item, "avatar_media_id") || locHas(item, "media_id");
+}
+
+export const INVALID_ID_TOAST = "Invalid id";
+
+export function profileUuidToast(status: number, message: string): string | null {
+  if (status !== 422 && status !== 400) return null;
+  const text = message.trim();
+  if (!text || /invalid id|valid uuid|invalid request|invalid feed|found `/i.test(text)) {
+    return INVALID_ID_TOAST;
+  }
+  return null;
+}
+
 function messageFromUnknown(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) {
     const text = value.trim();
@@ -41,6 +56,7 @@ function messageFromUnknown(value: unknown): string | null {
       Boolean(item && typeof item === "object" && String((item as { type?: unknown }).type || "").startsWith("uuid"));
     if (value.some((item) => locHasFeedId(item) && uuidType(item))) return "Invalid feed";
     if (value.some((item) => locHasConversationId(item) && uuidType(item))) return "Invalid chat";
+    if (value.some((item) => locHasProfileId(item) && uuidType(item))) return "Invalid id";
     const parts = value
       .map((item) => {
         if (typeof item === "string" && item.trim()) return item.trim();

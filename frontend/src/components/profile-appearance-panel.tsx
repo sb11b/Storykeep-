@@ -15,6 +15,7 @@ import {
   type AppearanceSettings,
 } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import { profileUuidToast } from "@/lib/api-errors";
 import type { Profile } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -83,7 +84,8 @@ export function ProfileAppearancePanel({ appearance, readOnly, onChange, onSaved
       onSaved(updated);
       toast.success("Appearance saved");
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not save appearance");
+      const mapped = error instanceof ApiError ? profileUuidToast(error.status, error.message) : null;
+      toast.error(mapped || (error instanceof ApiError ? error.message : "Could not save appearance"));
     }
   }
 

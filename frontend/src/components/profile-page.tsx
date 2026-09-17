@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Camera, Loader2 } from "lucide-react";
 import { appearanceFromPreferences, type AppearanceSettings } from "@/lib/appearance";
 import { ApiError, api } from "@/lib/api";
+import { profileUuidToast } from "@/lib/api-errors";
 import { normalizeUserProfile } from "@/lib/user-profile";
 import { UserAvatar } from "@/components/user-avatar";
 import type { Profile, TotpSetup } from "@/lib/types";
@@ -65,7 +66,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
         router.replace("/login");
         return;
       }
-      toast.error(error instanceof ApiError ? error.message : "Could not load profile");
+      const mapped = error instanceof ApiError ? profileUuidToast(error.status, error.message) : null;
+      toast.error(mapped || (error instanceof ApiError ? error.message : "Could not load profile"));
     } finally {
       setLoading(false);
     }
@@ -89,7 +91,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
       onUpdated?.(updated);
       toast.success("Profile updated");
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not save profile");
+      const mapped = error instanceof ApiError ? profileUuidToast(error.status, error.message) : null;
+      toast.error(mapped || (error instanceof ApiError ? error.message : "Could not save profile"));
     } finally {
       setSavingProfile(false);
     }
@@ -105,7 +108,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
       onUpdated?.(updated);
       toast.success("Profile photo updated");
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not upload photo");
+      const mapped = error instanceof ApiError ? profileUuidToast(error.status, error.message) : null;
+      toast.error(mapped || (error instanceof ApiError ? error.message : "Could not upload photo"));
     } finally {
       setUploadingPhoto(false);
       if (fileRef.current) fileRef.current.value = "";
