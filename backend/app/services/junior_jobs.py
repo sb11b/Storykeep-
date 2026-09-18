@@ -440,13 +440,16 @@ def _complete_job_turn(
     model: str,
     reasoning: str,
     tools: list[dict] | None,
+    log_chat_id: UUID | None = None,
 ) -> dict[str, str]:
+    log_kwargs = {"log_chat_id": log_chat_id}
     if not tools:
         return chat_service.complete_once(
             messages,
             model=model,
             reasoning_effort=reasoning,
             max_tokens=900,
+            **log_kwargs,
         )
     try:
         return chat_service.complete_with_web_search(
@@ -455,6 +458,7 @@ def _complete_job_turn(
             reasoning_effort=reasoning,
             max_tokens=900,
             timeout_sec=90.0,
+            **log_kwargs,
         )
     except HTTPException as exc:
         if str(exc.detail) == SEARCH_FAILED or _search_tool_rejected(exc):
@@ -544,6 +548,7 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
             model=model,
             reasoning=reasoning,
             tools=tools,
+            log_chat_id=conversation.id,
         )
         output = result["text"]
         model = result["model"]

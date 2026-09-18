@@ -32,6 +32,21 @@ def log_chat_exception(context: str, **extra: object) -> None:
     logger.error("%s %s\n%s", context, bits, tb)
 
 
+def log_model_call(
+    *,
+    chat_id: object | None = None,
+    slice_id: str | None = None,
+    n_chars: int = 0,
+) -> None:
+    """Structured metadata for xAI turns. Never log message bodies or prompts."""
+    logger.info(
+        "model_call chat_id=%s slice=%s n_chars=%s",
+        chat_id,
+        slice_id or "-",
+        n_chars,
+    )
+
+
 def _is_chat_post(scope: Scope) -> bool:
     if scope.get("type") != "http":
         return False

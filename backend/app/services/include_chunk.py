@@ -212,6 +212,11 @@ def format_excerpt(title: str, slice: IncludeSlice) -> str:
     return f"{header}\n\n{slice.text}"
 
 
+def slice_id_from_meta(meta: dict[str, object]) -> str | None:
+    chip = meta.get("include_chip")
+    return str(chip) if chip else None
+
+
 def slice_meta(slice: IncludeSlice) -> dict[str, object]:
     payload: dict[str, object] = {
         "include_chip": slice.chip,

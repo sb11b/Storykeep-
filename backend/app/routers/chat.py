@@ -42,6 +42,7 @@ from app.services.demo_lock import is_locked, reject_locked
 from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
 from app.services.include_chunk import format_excerpt as format_include_excerpt
 from app.services.include_chunk import resolve_include_slice
+from app.services.include_chunk import slice_id_from_meta
 from app.services.include_chunk import slice_meta as include_slice_meta
 from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
@@ -959,6 +960,8 @@ def _chat(
     step("stream_open")
     cancelled = asyncio.Event()
 
+    log_slice_id = slice_id_from_meta(include_meta) if include_meta else None
+
     def _open_stream(extra: str | None, stream_tools: list[dict] | None):
         return chat_service.stream_completion(
             history_for_xai,
@@ -977,6 +980,8 @@ def _chat(
             cancelled=cancelled,
             tools=stream_tools,
             tool_calls_out=tool_calls_out,
+            log_chat_id=conversation_id,
+            log_slice_id=log_slice_id,
         )
 
     async def watch_disconnect() -> None:

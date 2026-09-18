@@ -15,6 +15,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import settings
+from app.http_limits import log_model_call
 from app.models import Article
 from app.services.include_chunk import (
     INCLUDE_TURN_CHAR_CAP,
@@ -742,6 +743,10 @@ def _content_text(content: Any) -> str:
     return ""
 
 
+def messages_char_count(messages: list[dict]) -> int:
+    return sum(len(_content_text(item.get("content"))) for item in messages)
+
+
 def validate_payload(messages: list[dict]) -> list[dict]:
     if not messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
@@ -923,6 +928,8 @@ async def stream_completion(
     cancelled: asyncio.Event | None = None,
     tools: list[dict] | None = None,
     tool_calls_out: list[dict] | None = None,
+    log_chat_id: UUID | str | None = None,
+    log_slice_id: str | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
@@ -943,24 +950,30 @@ async def stream_completion(
         attach_tools = [
             item for item in (tools or []) if is_web_search_tool(item) or is_chat_index_tool(item)
         ] or None
+    xai_messages = build_xai_messages(
+        history,
+        excerpt,
+        include_article=include_article,
+        recap_question=recap_question,
+        has_attachments=has_attachments,
+        include_note=include_note,
+        note_excerpt=note_excerpt,
+        working_excerpt=working_excerpt,
+        extra_system=extra_system,
+    )
     payload = build_chat_completions_payload(
-        messages=build_xai_messages(
-            history,
-            excerpt,
-            include_article=include_article,
-            recap_question=recap_question,
-            has_attachments=has_attachments,
-            include_note=include_note,
-            note_excerpt=note_excerpt,
-            working_excerpt=working_excerpt,
-            extra_system=extra_system,
-        ),
+        messages=xai_messages,
         model=model,
         reasoning_effort=reasoning_effort,
         max_tokens=max_tokens,
         stream=True,
         temperature=0.6,
         tools=attach_tools,
+    )
+    log_model_call(
+        chat_id=log_chat_id,
+        slice_id=log_slice_id,
+        n_chars=messages_char_count(xai_messages),
     )
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -995,6 +1008,8 @@ async def stream_completion(
                             cancelled=cancelled,
                             tools=None,
                             tool_calls_out=tool_calls_out,
+                            log_chat_id=log_chat_id,
+                            log_slice_id=log_slice_id,
                         ):
                             yield piece
                         return
@@ -1232,6 +1247,8 @@ def complete_once(
     max_tokens: int = 1200,
     timeout_sec: float = 45.0,
     tools: list[dict] | None = None,
+    log_chat_id: UUID | str | None = None,
+    log_slice_id: str | None = None,
 ) -> dict[str, str]:
     """One-shot chat for Junior jobs. Never POST code_interpreter on Completions."""
     if wants_responses_search(tools):
@@ -1241,6 +1258,8 @@ def complete_once(
             reasoning_effort=reasoning_effort,
             max_tokens=max_tokens,
             timeout_sec=timeout_sec,
+            log_chat_id=log_chat_id,
+            log_slice_id=log_slice_id,
         )
     key = require_key()
     resolved_model = rewrite_xai_model(model or default_full_model())
@@ -1253,6 +1272,11 @@ def complete_once(
         stream=False,
         temperature=0.4,
         tools=tools,
+    )
+    log_model_call(
+        chat_id=log_chat_id,
+        slice_id=log_slice_id,
+        n_chars=messages_char_count(messages),
     )
     try:
         with httpx.Client(
@@ -1332,6 +1356,8 @@ def complete_with_server_tools(
     timeout_sec: float = 90.0,
     fail_detail: str = "search failed",
     require_search: bool = False,
+    log_chat_id: UUID | str | None = None,
+    log_slice_id: str | None = None,
 ) -> dict[str, str]:
     """POST /v1/responses with a server tool. Never send code_interpreter."""
     kinds = tuple(kind for kind in tool_types if kind and kind != "code_interpreter")
@@ -1348,6 +1374,11 @@ def complete_with_server_tools(
     }
     if model_uses_reasoning(resolved_model):
         payload["reasoning"] = {"effort": effort}
+    log_model_call(
+        chat_id=log_chat_id,
+        slice_id=log_slice_id,
+        n_chars=messages_char_count(messages),
+    )
     last_detail = fail_detail
     for tool_type in kinds:
         payload["tools"] = [{"type": tool_type}]
@@ -1391,6 +1422,8 @@ def complete_with_web_search(
     reasoning_effort: str | None = None,
     max_tokens: int = 1200,
     timeout_sec: float = 90.0,
+    log_chat_id: UUID | str | None = None,
+    log_slice_id: str | None = None,
 ) -> dict[str, str]:
     """Junior job search via Responses live_search. Completions 422s code_interpreter."""
     return complete_with_server_tools(
@@ -1402,6 +1435,8 @@ def complete_with_web_search(
         timeout_sec=timeout_sec,
         fail_detail="search failed",
         require_search=True,
+        log_chat_id=log_chat_id,
+        log_slice_id=log_slice_id,
     )
 
 
