@@ -18,7 +18,8 @@ LIST_NAME = "list_chats"
 READ_NAME = "read_chat"
 INDEX_CAP = 40
 SUMMARY_CHAR = 180
-READ_MESSAGE_CAP = 8
+READ_MESSAGE_CAP = 20
+SLICE_MESSAGE_WINDOW = 20
 READ_CHAR_CAP = 8_000
 QUERY_CHAR_CAP = 80
 
@@ -214,6 +215,25 @@ def build_index(
     return out
 
 
+def model_payload(
+    *,
+    user_text: str,
+    slice: dict[str, Any],
+    standing_memory: str,
+) -> list[dict[str, str]]:
+    """Standing memory, last slice messages, then Steve's line — never dump full threads."""
+    rows = slice.get("messages") or slice.get("turns") or []
+    window = rows[-SLICE_MESSAGE_WINDOW:]
+    messages: list[dict[str, str]] = [{"role": "system", "content": standing_memory}]
+    for item in window:
+        role = str(item.get("role") or "user")
+        if role not in {"user", "assistant"}:
+            role = "user"
+        messages.append({"role": role, "content": str(item.get("content") or "")})
+    messages.append({"role": "user", "content": user_text})
+    return messages
+
+
 def format_index(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return f"{INDEX_HEADER}\nNone."
@@ -268,6 +288,7 @@ def read_slice(
         "next_offset": next_offset if next_offset < total else None,
         "total": total,
         "turns": turns,
+        "messages": turns,
     }
 
 

@@ -832,8 +832,7 @@ def article_excerpt(article: Article, limit: int = INCLUDE_TURN_CHAR_CAP) -> str
     return format_include_excerpt((article.title or "Untitled").strip(), slice)
 
 
-def build_xai_messages(
-    history: list[dict],
+def build_system_content(
     excerpt: str | None,
     *,
     include_article: bool,
@@ -843,7 +842,7 @@ def build_xai_messages(
     note_excerpt: str | None = None,
     working_excerpt: str | None = None,
     extra_system: str | None = None,
-) -> list[dict]:
+) -> str:
     system = SYSTEM_PROMPT
     grounded = False
     if include_article and excerpt:
@@ -863,6 +862,31 @@ def build_xai_messages(
         system += RECAP_MODE_APPEND
     if has_attachments:
         system += ATTACHMENT_MODE_APPEND
+    return system
+
+
+def build_xai_messages(
+    history: list[dict],
+    excerpt: str | None,
+    *,
+    include_article: bool,
+    recap_question: bool = False,
+    has_attachments: bool = False,
+    include_note: bool = False,
+    note_excerpt: str | None = None,
+    working_excerpt: str | None = None,
+    extra_system: str | None = None,
+) -> list[dict]:
+    system = build_system_content(
+        excerpt,
+        include_article=include_article,
+        recap_question=recap_question,
+        has_attachments=has_attachments,
+        include_note=include_note,
+        note_excerpt=note_excerpt,
+        working_excerpt=working_excerpt,
+        extra_system=extra_system,
+    )
     windowed = thread_window(history)
     return [{"role": "system", "content": system}, *windowed]
 
@@ -930,6 +954,7 @@ async def stream_completion(
     tool_calls_out: list[dict] | None = None,
     log_chat_id: UUID | str | None = None,
     log_slice_id: str | None = None,
+    messages_override: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
@@ -950,17 +975,20 @@ async def stream_completion(
         attach_tools = [
             item for item in (tools or []) if is_web_search_tool(item) or is_chat_index_tool(item)
         ] or None
-    xai_messages = build_xai_messages(
-        history,
-        excerpt,
-        include_article=include_article,
-        recap_question=recap_question,
-        has_attachments=has_attachments,
-        include_note=include_note,
-        note_excerpt=note_excerpt,
-        working_excerpt=working_excerpt,
-        extra_system=extra_system,
-    )
+    if messages_override is not None:
+        xai_messages = messages_override
+    else:
+        xai_messages = build_xai_messages(
+            history,
+            excerpt,
+            include_article=include_article,
+            recap_question=recap_question,
+            has_attachments=has_attachments,
+            include_note=include_note,
+            note_excerpt=note_excerpt,
+            working_excerpt=working_excerpt,
+            extra_system=extra_system,
+        )
     payload = build_chat_completions_payload(
         messages=xai_messages,
         model=model,
@@ -1010,6 +1038,7 @@ async def stream_completion(
                             tool_calls_out=tool_calls_out,
                             log_chat_id=log_chat_id,
                             log_slice_id=log_slice_id,
+                            messages_override=messages_override,
                         ):
                             yield piece
                         return

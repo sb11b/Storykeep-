@@ -881,6 +881,7 @@ def _chat(
     chats_enabled = chat_index.can_use(user)
     already_indexed = False
     already_read = False
+    read_slice_payload: dict[str, object] | None = None
     if chats_enabled:
         extras.append(chat_index.CHATS_ON_APPEND)
         if chat_index.wants_index(user_text):
@@ -890,8 +891,16 @@ def _chat(
             chat_id = chat_index.extract_conversation_id(user_text)
             if chat_id:
                 try:
-                    extras.append(chat_index.format_slice(chat_index.read_slice(db, user, chat_id)))
+                    read_slice_payload = chat_index.read_slice(db, user, chat_id)
                     already_read = True
+                    turns = read_slice_payload.get("messages") or read_slice_payload.get("turns") or []
+                    start = int(read_slice_payload.get("offset") or 0)
+                    total = int(read_slice_payload.get("total") or 0)
+                    extras.append(
+                        f"Opened Junior chat slice: {read_slice_payload.get('title')} · "
+                        f"id={read_slice_payload.get('id')} · "
+                        f"messages {start + 1}–{start + len(turns)} of {total}."
+                    )
                 except HTTPException:
                     extras.append("No chat with that id. Use the index. Do not invent a thread.")
             else:
@@ -961,8 +970,34 @@ def _chat(
     cancelled = asyncio.Event()
 
     log_slice_id = slice_id_from_meta(include_meta) if include_meta else None
+    if read_slice_payload:
+        log_slice_id = str(read_slice_payload.get("id") or log_slice_id or "-")
+
+    def _read_chat_messages(extra: str | None) -> list[dict[str, str]] | None:
+        if not read_slice_payload:
+            return None
+        standing = chat_service.build_system_content(
+            excerpt,
+            include_article=include_article,
+            recap_question=recap_question,
+            has_attachments=has_attachments,
+            include_note=include_note,
+            note_excerpt=note_excerpt,
+            working_excerpt=working_excerpt,
+            extra_system=extra,
+        )
+        return chat_index.model_payload(
+            user_text=user_text,
+            slice=read_slice_payload,
+            standing_memory=standing,
+        )
+
+    read_payload_first_stream = bool(read_slice_payload)
 
     def _open_stream(extra: str | None, stream_tools: list[dict] | None):
+        nonlocal read_payload_first_stream
+        override = _read_chat_messages(extra) if read_payload_first_stream else None
+        read_payload_first_stream = False
         return chat_service.stream_completion(
             history_for_xai,
             excerpt,
@@ -982,6 +1017,7 @@ def _chat(
             tool_calls_out=tool_calls_out,
             log_chat_id=conversation_id,
             log_slice_id=log_slice_id,
+            messages_override=override,
         )
 
     async def watch_disconnect() -> None:

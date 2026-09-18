@@ -88,6 +88,34 @@ class ChatIndexUnitTests(unittest.TestCase):
         self.assertIn("note=none", text)
         self.assertNotIn("invent", text.lower().split("do not invent")[0][-20:])
 
+    def test_model_payload_standing_memory_slice_and_user(self):
+        cid = str(uuid.uuid4())
+        payload = chat_index.model_payload(
+            user_text="summarize this thread",
+            slice={
+                "id": cid,
+                "messages": [
+                    {"role": "user", "content": "Explain lists"},
+                    {"role": "assistant", "content": "Lists hold items."},
+                ],
+            },
+            standing_memory="STANDING_MEMORY",
+        )
+        self.assertEqual(payload[0], {"role": "system", "content": "STANDING_MEMORY"})
+        self.assertEqual(payload[-1], {"role": "user", "content": "summarize this thread"})
+        self.assertEqual(len(payload), 4)
+
+    def test_model_payload_keeps_last_twenty(self):
+        rows = [{"role": "user", "content": f"m{index}"} for index in range(25)]
+        payload = chat_index.model_payload(
+            user_text="next",
+            slice={"messages": rows},
+            standing_memory="mem",
+        )
+        self.assertEqual(len(payload), 22)
+        self.assertEqual(payload[1]["content"], "m5")
+        self.assertEqual(payload[-2]["content"], "m24")
+
     def test_format_slice_marks_truncation(self):
         cid = str(uuid.uuid4())
         text = chat_index.format_slice(
@@ -227,6 +255,7 @@ class ChatIndexRouteTests(unittest.TestCase):
                     "next_offset": None,
                     "total": 1,
                     "turns": [{"role": "user", "content": "Explain lists"}],
+                    "messages": [{"role": "user", "content": "Explain lists"}],
                 },
             ),
         ):
@@ -237,9 +266,11 @@ class ChatIndexRouteTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         extra = captured.get("extra_system") or ""
-        self.assertIn("Junior chat slice", extra)
-        self.assertIn("Explain lists", extra)
+        self.assertIn("Opened Junior chat slice", extra)
         self.assertIn(str(cid), extra)
+        override = captured.get("messages_override") or []
+        bodies = [row.get("content") for row in override if isinstance(row, dict)]
+        self.assertIn("Explain lists", bodies)
 
 
 class ChatIndexKeepOnShortTurnTests(unittest.TestCase):
