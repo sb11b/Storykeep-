@@ -185,12 +185,8 @@ export function applyAppearance(settings: AppearanceSettings) {
   root.style.setProperty("--storykeep-rail", rail);
   root.style.setProperty("--storykeep-page-fg", pageFg);
   root.style.setProperty("--storykeep-page-muted", pageMuted);
-  root.style.setProperty("--foreground", pageFg);
-  root.style.setProperty("--muted-foreground", pageMuted);
-  root.style.setProperty("--background", page);
-  root.style.setProperty("--sidebar", rail);
-  root.style.setProperty("--card", topbar);
-  root.style.setProperty("--popover", topbar);
+  // Reader surfaces use --storykeep-* via .sk-page-surface. Leave global shadcn
+  // tokens (--popover, --background, …) to light/dark CSS so Junior follows the OS.
   root.style.setProperty("--storykeep-body-font", font);
   root.style.fontSize = size;
   root.dataset.pageTheme = darkPage ? "dark" : "light";

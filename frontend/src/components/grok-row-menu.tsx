@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSystemColorScheme } from "@/lib/system-theme";
 
 export type GrokMenuItem = {
   key: string;
@@ -28,6 +29,7 @@ export function GrokRowMenu({
   items: GrokMenuItem[];
   className?: string;
 }) {
+  const systemScheme = useSystemColorScheme();
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -108,7 +110,10 @@ export function GrokRowMenu({
               ref={popupRef}
               role="menu"
               aria-label={label}
-              className="fixed z-[200] min-w-44 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg"
+              className={cn(
+                systemScheme === "dark" && "dark",
+                "fixed z-[200] min-w-44 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg",
+              )}
               style={{ left: coords.left, top: coords.top }}
             >
               {items.map((item) => (

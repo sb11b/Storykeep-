@@ -43,6 +43,7 @@ import {
   type JuniorRailFlags,
 } from "@/lib/junior-rail";
 import { WORK_IN_JUNIOR_EVENT, type WorkInJuniorDetail } from "@/lib/work-in-junior";
+import { useSystemColorScheme } from "@/lib/system-theme";
 
 const BUBBLE_KEY = "storykeep-grok-bubble";
 const PANEL_KEY = "storykeep-grok-panel";
@@ -153,6 +154,7 @@ export function GrokBubble({
   const [customShelves, setCustomShelves] = useState<CustomNoteShelf[]>([]);
   const [listening, setListening] = useState(false);
   const [rail, setRail] = useState<JuniorRailFlags>(() => loadJuniorRailFlags());
+  const systemScheme = useSystemColorScheme();
   const historyListRef = useRef<HTMLDivElement>(null);
   const jobsRailRef = useRef<HTMLElement | null>(null);
   const memoryRailRef = useRef<HTMLElement | null>(null);
@@ -899,6 +901,7 @@ export function GrokBubble({
   if (!mounted) return null;
 
   const bubbleLabel = focusedPane.displayName;
+  const juniorThemeClass = systemScheme === "dark" ? "dark" : "";
 
   const bubble = (
     <button
@@ -938,6 +941,7 @@ export function GrokBubble({
     <div
       ref={panelRef}
       className={cn(
+        juniorThemeClass,
         "fixed flex flex-col overflow-hidden border bg-popover text-popover-foreground shadow-xl",
         fullscreen ? "inset-0 z-[90] h-[100dvh] w-[100vw] rounded-none" : "z-[80] rounded-xl",
       )}

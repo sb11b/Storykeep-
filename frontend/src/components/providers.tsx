@@ -7,7 +7,7 @@ import { DictationProvider } from "@/components/dictation";
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <DictationProvider>
         <div className="flex h-full min-h-full min-w-0 flex-col">{children}</div>
         <Toaster position="bottom-left" />

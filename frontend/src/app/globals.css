@@ -147,6 +147,13 @@
   border-color: color-mix(in oklab, currentColor 22%, transparent) !important;
 }
 
+.dark .cn-toast {
+  background: oklch(0.24 0.018 55) !important;
+  color: oklch(0.95 0.015 88) !important;
+  border: 1px solid oklch(1 0 0 / 12%) !important;
+  box-shadow: 0 10px 30px oklch(0 0 0 / 35%);
+}
+
 .sk-chat-image {
   margin: 0.5rem 0 0;
   max-width: 100%;
