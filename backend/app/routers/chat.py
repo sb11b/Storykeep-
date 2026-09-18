@@ -1355,12 +1355,15 @@ def _chat(
             await asyncio.sleep(0)
             extra = extra_system
             already_searched = False
+            output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
                 "stream_status": "searching" if will_search else "working",
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
                 "first_byte_timeout_ms": int(first_byte_timeout * 1000),
+                "idle_after_ms": int(chat_service.chat_idle_after_token_sec(output_tokens) * 1000),
+                "max_output_tokens": output_tokens,
                 **include_meta,
             }
             if persist and conversation_id:

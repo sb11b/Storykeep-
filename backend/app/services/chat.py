@@ -36,11 +36,11 @@ CHAT_CONNECT_TIMEOUT_SEC = 8.0
 CHAT_FIRST_BYTE_TIMEOUT_SEC = 20.0
 CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC = 60.0
 CHAT_FIRST_BYTE_TIMEOUT_MAX_SEC = 90.0
-CHAT_IDLE_AFTER_TOKEN_SEC = 60.0
+CHAT_IDLE_AFTER_TOKEN_MIN_SEC = 120.0
+CHAT_IDLE_AFTER_TOKEN_MAX_SEC = 7200.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
 XAI_SILENT_DETAIL = "xAI silent"
 XAI_EMPTY_DETAIL = "Junior returned no text for this turn."
-CHAT_IDLE_TIMEOUT_DETAIL = "Timed out after 60s."
 SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
 # Railway env can still hold retired aliases. Invalid ids hang the stream until a proxy 504.
 _DEAD_MODEL_ALIASES = {
@@ -103,7 +103,30 @@ SEND_THREAD_TOO_LARGE = "This thread slice is too long. Shorten your message or 
 _THREAD_TRIM_ASSISTANT = 1_200
 _THREAD_TRIM_USER = 800
 _SYSTEM_OVERHEAD_RESERVE = 12_000
-MAX_TOKENS_CAP = 2048
+JUNIOR_MAX_RESPONSE_WORDS = 100_000
+_CHARS_PER_WORD_EST = 5
+MAX_TOKENS_CAP = (JUNIOR_MAX_RESPONSE_WORDS * _CHARS_PER_WORD_EST + 3) // 4
+
+
+def resolved_max_output_tokens() -> int:
+    """~100k words at ~1.25 tokens/word. Override with XAI_CHAT_MAX_TOKENS."""
+    return min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
+
+
+def chat_idle_after_token_sec(max_tokens: int | None = None) -> float:
+    """Scale idle window for long completions so streams are not cut at 60s."""
+    budget = max(64, int(max_tokens or resolved_max_output_tokens()))
+    return min(
+        CHAT_IDLE_AFTER_TOKEN_MAX_SEC,
+        max(CHAT_IDLE_AFTER_TOKEN_MIN_SEC, budget / 40.0),
+    )
+
+
+def chat_idle_timeout_detail(max_tokens: int | None = None) -> str:
+    secs = int(chat_idle_after_token_sec(max_tokens))
+    if secs >= 3600:
+        return f"Timed out after {secs // 60} minutes waiting for the next token."
+    return f"Timed out after {secs}s waiting for the next token."
 
 SYSTEM_PROMPT = """You are StoryKeep's school coding assistant for Steve — a personal RSS reader and student workspace.
 
@@ -1165,7 +1188,8 @@ async def stream_completion(
     key = require_key()
     model = rewrite_xai_model(model)
     reasoning_effort = clamp_reasoning_effort(model, reasoning_effort)
-    max_tokens = min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
+    max_tokens = resolved_max_output_tokens()
+    idle_after_token_sec = chat_idle_after_token_sec(max_tokens)
     last_user = ""
     for item in reversed(history or []):
         if (item.get("role") or "") == "user":
@@ -1288,7 +1312,7 @@ async def stream_completion(
                             )
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL)
                     else:
-                        wait = CHAT_IDLE_AFTER_TOKEN_SEC
+                        wait = idle_after_token_sec
                     line: str | None = None
                     try:
                         # One wait_for for the whole window. Sliced 0.15s waits cancel
@@ -1306,7 +1330,7 @@ async def stream_completion(
                             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
                         raise HTTPException(
                             status_code=504,
-                            detail=CHAT_IDLE_TIMEOUT_DETAIL,
+                            detail=chat_idle_timeout_detail(max_tokens),
                         ) from exc
                     if cancelled is not None and cancelled.is_set():
                         return
@@ -1368,7 +1392,7 @@ async def stream_completion(
             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
         raise HTTPException(
             status_code=504,
-            detail=CHAT_IDLE_TIMEOUT_DETAIL,
+            detail=chat_idle_timeout_detail(max_tokens),
         ) from exc
     except Exception as exc:
         if isinstance(exc, HTTPException):
@@ -1384,7 +1408,7 @@ async def stream_completion(
             raise HTTPException(status_code=504, detail=XAI_SILENT_DETAIL) from exc
         raise HTTPException(
             status_code=504,
-            detail=CHAT_IDLE_TIMEOUT_DETAIL,
+            detail=chat_idle_timeout_detail(max_tokens),
         ) from exc
 
 

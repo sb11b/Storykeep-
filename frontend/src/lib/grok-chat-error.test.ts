@@ -52,12 +52,12 @@ test("oversized paste HTTP is not a blank 422", () => {
   assert.equal(isOversizedPasteHttp(422, "unknown variant `code_interpreter`"), false);
 });
 
-test("idle timeout toast stays Timed out after 60s", () => {
+test("idle timeout toast forwards server detail for long replies", () => {
   assert.equal(
-    chatTimeoutToast(504, "Chat failed (HTTP 504): Chat timed out after 60s."),
-    CHAT_IDLE_TIMEOUT_TOAST,
+    chatTimeoutToast(504, "Timed out after 52 minutes waiting for the next token."),
+    "Timed out after 52 minutes waiting for the next token.",
   );
-  assert.equal(chatTimeoutToast(504, "Timed out after 60s."), CHAT_IDLE_TIMEOUT_TOAST);
+  assert.equal(chatTimeoutToast(504, "Timed out after 60s."), "Timed out after 60s.");
   assert.equal(chatTimeoutToast(504, "Chat failed (HTTP 504): xAI silent"), "xAI silent");
   assert.equal(chatTimeoutToast(502, "Chat timed out after 60s."), "HTTP 502");
 });

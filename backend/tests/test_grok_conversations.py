@@ -165,13 +165,23 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(rewrite_xai_model("grok-4.6"), CURRENT_CHAT_MODEL)
         self.assertEqual(rewrite_xai_model("grok-4.20-0309-non-reasoning"), CURRENT_FAST_MODEL)
 
-    def test_idle_timeout_copy_is_sixty_seconds(self):
-        from app.services.chat import CHAT_FIRST_BYTE_TIMEOUT_SEC, CHAT_IDLE_AFTER_TOKEN_SEC, CHAT_IDLE_TIMEOUT_DETAIL
-        from app.services.chat import posted_spend_label
+    def test_long_reply_output_and_idle_budget(self):
+        from app.services.chat import (
+            CHAT_FIRST_BYTE_TIMEOUT_SEC,
+            JUNIOR_MAX_RESPONSE_WORDS,
+            MAX_TOKENS_CAP,
+            chat_idle_after_token_sec,
+            chat_idle_timeout_detail,
+            posted_spend_label,
+            resolved_max_output_tokens,
+        )
 
         self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 20.0)
-        self.assertEqual(CHAT_IDLE_AFTER_TOKEN_SEC, 60.0)
-        self.assertEqual(CHAT_IDLE_TIMEOUT_DETAIL, "Timed out after 60s.")
+        self.assertEqual(JUNIOR_MAX_RESPONSE_WORDS, 100_000)
+        self.assertEqual(MAX_TOKENS_CAP, 125_000)
+        self.assertEqual(resolved_max_output_tokens(), 125_000)
+        self.assertGreaterEqual(chat_idle_after_token_sec(), 120.0)
+        self.assertIn("waiting for the next token", chat_idle_timeout_detail())
         self.assertEqual(posted_spend_label("grok-4.6", "low"), "4.6 · low")
 
     def test_chat_error_message_includes_http_status(self):

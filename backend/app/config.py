@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     xai_chat_model: str = "grok-4.6"
     xai_chat_models: str = "grok-4.6,grok-4.3"
     xai_chat_fast_model: str = "grok-4.3"
-    xai_chat_max_tokens: int = 2048
+    xai_chat_max_tokens: int = 125_000
     chat_requests_per_hour: int = 120
     junior_cron_secret: str = ""
     xai_image_url: str = "https://api.x.ai/v1/images/generations"

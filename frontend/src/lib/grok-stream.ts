@@ -6,8 +6,8 @@ import { spendChipLabel } from "@/lib/grok-model";
 export const GROK_STREAM_HEADER_MS = 25_000;
 /** Default first-token window; heavy turns extend via first_byte_timeout_ms from the server. */
 export const GROK_STREAM_FIRST_BYTE_MS = 60_000;
-/** After tokens started, abort only if the stream goes idle this long. */
-export const GROK_STREAM_IDLE_AFTER_MS = 60_000;
+/** After tokens started, abort only if the stream goes idle this long (server may extend). */
+export const GROK_STREAM_IDLE_AFTER_MS = 120_000;
 /** Imagine edits/generations regularly take longer than the text-chat idle window. */
 export const GROK_STREAM_IMAGE_IDLE_MS = 180_000;
 /** Live web_search can sit on Searching… longer than the 8s first-token cut. */
@@ -41,6 +41,8 @@ export type GrokStreamMeta = {
   toast_kind?: string;
   search_status?: number;
   first_byte_timeout_ms?: number;
+  idle_after_ms?: number;
+  max_output_tokens?: number;
 };
 
 export type GrokStreamHandlers = {
@@ -78,6 +80,8 @@ type StreamPayload = {
   toast_kind?: string;
   search_status?: number;
   first_byte_timeout_ms?: number;
+  idle_after_ms?: number;
+  max_output_tokens?: number;
 };
 
 function parseSsePart(
@@ -92,8 +96,11 @@ function parseSsePart(
   const data = line.slice(5).trim();
   if (data === "[DONE]") return "done" as const;
   const parsed = JSON.parse(data) as StreamPayload;
+  if (typeof parsed.idle_after_ms === "number" && idle && parsed.idle_after_ms > idle.ms) {
+    idle.ms = parsed.idle_after_ms;
+  }
   if (parsed.stream_status === "generating" && idle) {
-    idle.ms = GROK_STREAM_IMAGE_IDLE_MS;
+    idle.ms = Math.max(idle.ms, GROK_STREAM_IMAGE_IDLE_MS);
   }
   if (parsed.stream_status === "searching") {
     receivedDelta.value = true;
@@ -134,7 +141,10 @@ function parseSsePart(
     parsed.include_chip ||
     parsed.calendar_proposal ||
     parsed.mail_proposal ||
-    parsed.toast
+    parsed.toast ||
+    parsed.first_byte_timeout_ms ||
+    parsed.idle_after_ms ||
+    parsed.max_output_tokens
   ) {
     handlers.onMeta?.({
       conversation_id: parsed.conversation_id,
@@ -159,6 +169,9 @@ function parseSsePart(
       toast: parsed.toast,
       toast_kind: parsed.toast_kind,
       search_status: parsed.search_status,
+      first_byte_timeout_ms: parsed.first_byte_timeout_ms,
+      idle_after_ms: parsed.idle_after_ms,
+      max_output_tokens: parsed.max_output_tokens,
     });
   }
   return "continue" as const;
@@ -293,7 +306,12 @@ export async function readGrokChatStream(
       return;
     }
     if (now - lastActivityAt >= idle.ms) {
-      const detail = idle.ms > GROK_STREAM_IDLE_AFTER_MS ? "Timed out waiting for the image." : "Timed out after 60s.";
+      const detail =
+        idle.ms > GROK_STREAM_IMAGE_IDLE_MS
+          ? "Timed out waiting for the image."
+          : idle.ms > GROK_STREAM_IDLE_AFTER_MS
+            ? `Timed out after ${Math.round(idle.ms / 1000)}s waiting for the next token.`
+            : "Timed out after 60s.";
       xaiStatus = 504;
       throw new ApiError(504, formatChatError(504, detail), {
         partial: true,
