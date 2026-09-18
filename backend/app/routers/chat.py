@@ -1159,7 +1159,9 @@ def _chat(
     )
     search_tools = (
         [search_tool.WEB_SEARCH_TOOL]
-        if search_enabled and not chat_service.is_small_talk_turn(user_text)
+        if search_enabled
+        and not chat_service.is_small_talk_turn(user_text)
+        and not junior_model.is_cursor_task_turn(user_text)
         else None
     )
     chat_tools = (

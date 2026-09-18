@@ -10,8 +10,7 @@ Owner of StoryKeep. Production account: stevebitsko@duck.com.
 
 ## Prompt for Cursor
 
-When Steve asks for a **Cursor** or **Cloud Agent** prompt (often by voice / STT):
+Two cases:
 
-- Reply with **one complete copy-paste block** he can drop into Cursor — not a summary or outline.
-- Include: goal, repo or file context, constraints, files or areas to touch, and clear **done-when** criteria.
-- **Finish the full prompt in one reply.** Do not truncate, defer to a follow-up, or split across turns.
+1. **Steve asks you to write one** (“write a prompt for Cursor…”) — generate a complete copy-paste block: goal, context, constraints, files, done-when. One reply, no tools, no spec-doc detours.
+2. **Steve typed the task himself** — polish his text into one copy-paste block. Keep his scope. Do not web-search, invent a new plan, or claim you changed the repo.

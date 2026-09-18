@@ -60,14 +60,30 @@ class JuniorModelTests(unittest.TestCase):
         self.assertIn("finish in one reply", filtered)
         self.assertIn("keep me", filtered)
 
-    def test_wants_cursor_workflow_matches_voice_phrasing(self):
-        self.assertTrue(junior_model.wants_cursor_workflow("write a prompt for cursor to fix login"))
-        self.assertTrue(junior_model.wants_cursor_workflow("give me a cursor agent prompt"))
-        self.assertFalse(junior_model.wants_cursor_workflow("what is a database cursor"))
+    def test_asks_for_cursor_prompt_matches_short_requests(self):
+        self.assertTrue(junior_model.asks_for_cursor_prompt("write a prompt for cursor to fix login"))
+        self.assertTrue(junior_model.asks_for_cursor_prompt("give me a cursor agent prompt"))
+        self.assertFalse(junior_model.asks_for_cursor_prompt("what is a database cursor"))
 
-    def test_build_turn_extras_adds_cursor_append(self):
-        extras = junior_model.build_turn_extras(
-            "prompt for cursor to add tests",
+    def test_brings_cursor_task_when_steve_typed_the_prompt(self):
+        typed = (
+            "Fix the STT draft race in grok-pane.\n"
+            "- Use draftValueRef on send\n"
+            "- Add tests\n"
+            "Done when: send includes mic transcript immediately."
+        )
+        self.assertTrue(junior_model.brings_cursor_task(typed))
+        self.assertFalse(junior_model.asks_for_cursor_prompt(typed))
+
+    def test_filter_does_not_dump_spec_on_cursor_ask(self):
+        body = "# TIMELINE\nphase 1\n# Prompt for Cursor\nfinish in one reply"
+        filtered = junior_model.filter_standing_memory(body, user_text="write a prompt for cursor to fix login")
+        self.assertNotIn("TIMELINE", filtered)
+        self.assertIn("Prompt for Cursor", filtered)
+
+    def test_build_turn_extras_generate_vs_follow(self):
+        generate = junior_model.build_turn_extras(
+            "write a prompt for cursor to add tests",
             memory_block=None,
             chats_enabled=False,
             index_block=None,
@@ -78,12 +94,32 @@ class JuniorModelTests(unittest.TestCase):
             mail_connected=False,
             mail_unread=False,
             unread_mail_md=None,
-            search_enabled=False,
+            search_enabled=True,
             will_search=False,
         )
-        joined = "\n".join(extras)
-        self.assertIn("copy-paste block", joined.lower())
-        self.assertIn("done-when", joined.lower())
+        self.assertIn("asked you to write", "\n".join(generate).lower())
+        self.assertNotIn("SEARCH_ON", "\n".join(generate))
+
+        typed = "Fix login in auth.py\n- add tests\n- deploy\n" + ("ensure session persists.\n" * 12)
+        follow = junior_model.build_turn_extras(
+            typed,
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=True,
+            will_search=False,
+        )
+        joined = "\n".join(follow)
+        self.assertIn("typed the cursor", joined.lower())
+        self.assertNotIn("asked you to write", joined.lower())
+        self.assertNotIn("SEARCH_ON", joined)
 
     def test_model_payload_marks_truncated(self):
         payload = junior_model.model_payload(

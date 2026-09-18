@@ -21,15 +21,28 @@ _SPEC_SECTION_RE = re.compile(
     r"(?im)^#+\s*(?:TIMELINE|UI[_ ]NOTES|ARCHITECTURE|DATA[_ ]MODEL|PHASE\s*[12]|MERIDIAN).*$"
 )
 _CURSOR_SECTION_RE = re.compile(r"(?im)^#+\s*.*\bCURSOR\b.*$")
-_CURSOR_WORKFLOW_RE = re.compile(
-    r"\b(?:prompt for cursor|cursor prompt|cursor agent|cloud agent)\b|\bcursor\b.*\bprompt\b|\bprompt\b.*\bcursor\b",
+_ASK_CURSOR_PROMPT_RE = re.compile(
+    r"\b(?:write|draft|generate|create|give me|need|make)\s+(?:me\s+)?(?:a\s+)?"
+    r"(?:prompt for cursor|cursor prompt|cursor agent prompt|cloud agent prompt)\b|"
+    r"\b(?:prompt for cursor|cursor agent prompt|cloud agent prompt)\s+(?:for|to)\b",
+    re.I,
+)
+_TASK_VERB_RE = re.compile(
+    r"\b(?:fix|implement|add|ensure|update|refactor|investigate|debug|deploy|complete)\b",
     re.I,
 )
 
 CURSOR_PROMPT_APPEND = """
-Steve asked for a Cursor / Cloud Agent prompt (often via voice). Reply with ONE complete copy-paste block he can drop into Cursor.
+Steve asked you to write a Cursor / Cloud Agent prompt. Reply with ONE complete copy-paste block he can drop into Cursor.
 Include: goal, repo or file context, constraints, files or areas to touch, and clear done-when criteria.
-Do not truncate, defer to a follow-up, or split the prompt across turns. Finish the full prompt in this reply.
+Do not web-search, list chats, or wander into spec docs. Do not truncate or split across turns.
+"""
+
+CURSOR_FOLLOW_APPEND = """
+Steve typed the Cursor / Cloud Agent task himself. Stay on his scope.
+Reply with ONE polished copy-paste prompt block derived from his text — not a new plan or investigation.
+Do not web-search, list chats, read spec docs, or claim you changed the repo unless he asked.
+Do not execute the task in this reply. Finish in one reply.
 """
 
 
@@ -41,14 +54,41 @@ def wants_spec_docs(message: str) -> bool:
     return bool(_SPEC_DOC_RE.search(message or ""))
 
 
-def wants_cursor_workflow(message: str) -> bool:
-    return bool(_CURSOR_WORKFLOW_RE.search(message or ""))
+def asks_for_cursor_prompt(message: str) -> bool:
+    """Steve wants Junior to generate a Cursor agent prompt."""
+    text = (message or "").strip()
+    if not text:
+        return False
+    if _ASK_CURSOR_PROMPT_RE.search(text):
+        return True
+    if len(text) >= 220:
+        return False
+    asks = bool(re.search(r"\b(?:write|draft|generate|give|need|make|create)\b", text, re.I))
+    cursor = bool(re.search(r"\b(?:prompt for cursor|cursor prompt|cloud agent)\b", text, re.I))
+    return asks and cursor
+
+
+def brings_cursor_task(message: str) -> bool:
+    """Steve pasted the agent task — polish/follow it, do not invent a new one."""
+    text = (message or "").strip()
+    if asks_for_cursor_prompt(text):
+        return False
+    if not _TASK_VERB_RE.search(text):
+        return False
+    structured = bool(re.search(r"(?:^|\n)(?:#+\s+|[-*]\s+|\d+\.)", text, re.M))
+    if structured and len(text) >= 120:
+        return True
+    return len(text) >= 200
+
+
+def is_cursor_task_turn(message: str) -> bool:
+    return asks_for_cursor_prompt(message) or brings_cursor_task(message)
 
 
 def filter_standing_memory(body: str, *, user_text: str) -> str:
     """Drop spec-doc sections from memory unless Steve's turn is about them."""
     text = (body or "").strip()
-    if not text or wants_spec_docs(user_text) or wants_cursor_workflow(user_text):
+    if not text or wants_spec_docs(user_text):
         return text
     lines = text.splitlines()
     kept: list[str] = []
@@ -186,7 +226,8 @@ def build_turn_extras(
     from app.services import web_search as search_tool
     from app.services.calendar_tool import CALENDAR_OFF_APPEND, CALENDAR_ON_APPEND
 
-    chat_tools = chats_enabled and chats_turn_active(
+    cursor_task = is_cursor_task_turn(user_text)
+    chat_tools = chats_enabled and not cursor_task and chats_turn_active(
         user_text,
         indexed=bool(index_block),
         read=bool(read_meta),
@@ -210,11 +251,13 @@ def build_turn_extras(
             extras.append(unread_mail_md)
     elif mail_connected and mail_tool.wants_send_mail(user_text):
         extras.append(mail_tool.MAIL_ON_APPEND)
-    if search_enabled:
+    if search_enabled and not cursor_task:
         from app.services import chat as chat_service
 
         if will_search or not chat_service.is_small_talk_turn(user_text):
             extras.append(search_tool.SEARCH_ON_APPEND)
-    if wants_cursor_workflow(user_text):
+    if asks_for_cursor_prompt(user_text):
         extras.append(CURSOR_PROMPT_APPEND)
+    elif brings_cursor_task(user_text):
+        extras.append(CURSOR_FOLLOW_APPEND)
     return extras

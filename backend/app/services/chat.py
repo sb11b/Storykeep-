@@ -328,6 +328,10 @@ def should_attach_working_note(message: str) -> bool:
 
 def should_attach_chat_tools(message: str) -> bool:
     """Calendar function tools delay first token; skip them on short chat."""
+    from app.services import junior_model
+
+    if junior_model.is_cursor_task_turn(message):
+        return False
     return not is_short_chat(message) and not is_small_talk_turn(message)
 
 
@@ -339,7 +343,7 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
         return False
     from app.services import junior_model
 
-    if junior_model.wants_cursor_workflow(text):
+    if junior_model.asks_for_cursor_prompt(text):
         return True
     if is_short_chat(text):
         return False
