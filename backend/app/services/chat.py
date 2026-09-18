@@ -90,8 +90,9 @@ MERGED_MESSAGE_CHAR_CAP = MESSAGE_CHAR_CAP + ATTACHMENT_CHAR_CAP
 MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
 TOTAL_CHAR_CAP = 48_000
-SEND_CONTEXT_CHAR_CAP = 24_000
+SEND_CONTEXT_CHAR_CAP = 40_000
 SEND_CONTEXT_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
+SEND_THREAD_TOO_LARGE = "Recent messages are too long. Shorten your message or start a new chat."
 MAX_TOKENS_CAP = 2048
 
 SYSTEM_PROMPT = """You are StoryKeep's school coding assistant for Steve — a personal RSS reader and student workspace.
@@ -797,9 +798,13 @@ def send_context_chars(
     *,
     article_body: str | None = None,
     note_body: str | None = None,
+    thread_limit: int | None = None,
 ) -> int:
+    from app.services import junior_model
+
+    limit = thread_limit if thread_limit is not None else junior_model.JUNIOR_THREAD_WINDOW
     total = 0
-    for item in thread_window(history):
+    for item in thread_window(history, limit=limit):
         total += len(_content_text(item.get("content")))
         for file in item.get("files") or []:
             if isinstance(file, dict):
@@ -817,8 +822,10 @@ def reject_oversized_send(
     article_body: str | None = None,
     note_body: str | None = None,
 ) -> None:
-    if send_context_chars(history, article_body=article_body, note_body=note_body) > SEND_CONTEXT_CHAR_CAP:
-        raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
+    total = send_context_chars(history, article_body=article_body, note_body=note_body)
+    if total > SEND_CONTEXT_CHAR_CAP:
+        detail = SEND_CONTEXT_TOO_LARGE if (article_body or note_body) else SEND_THREAD_TOO_LARGE
+        raise HTTPException(status_code=413, detail=detail)
 
 
 def article_excerpt(article: Article, limit: int = INCLUDE_TURN_CHAR_CAP) -> str:
@@ -901,17 +908,48 @@ def messages_for_xai(
     db: Any = None,
     user: Any = None,
 ) -> list[dict]:
+    from app.services import junior_model
     from app.services.chat_attachments import merge_attachment_text, model_supports_vision, vision_parts
 
-    windowed = thread_window(drop_trailing_assistants(history))
+    windowed = thread_window(
+        drop_trailing_assistants(history),
+        limit=junior_model.JUNIOR_THREAD_WINDOW,
+    )
     vision = model_supports_vision(model) and db is not None and user is not None
     last = len(windowed) - 1
+    thread_files: list[dict] = []
+    seen_files: set[str] = set()
+    for item in windowed:
+        if item.get("role") != "user":
+            continue
+        for file in item.get("files") or []:
+            if not isinstance(file, dict):
+                continue
+            key = str(file.get("media_id") or file.get("filename") or "")
+            if not key or key in seen_files:
+                continue
+            seen_files.add(key)
+            thread_files.append(file)
     prepared: list[dict] = []
     for index, item in enumerate(windowed):
         files = item.get("files") or []
         full = index == last and item.get("role") == "user"
-        source_files = list(files) if full else []
-        text = merge_attachment_text(item.get("content") or "", source_files if full else [], include_extracts=full)
+        if full:
+            source_files: list[dict] = []
+            own_seen: set[str] = set()
+            for file in [*files, *thread_files]:
+                if not isinstance(file, dict):
+                    continue
+                key = str(file.get("media_id") or file.get("filename") or "")
+                if not key or key in own_seen:
+                    continue
+                own_seen.add(key)
+                source_files.append(file)
+            include_extracts = True
+        else:
+            source_files = [file for file in files if isinstance(file, dict)]
+            include_extracts = False
+        text = merge_attachment_text(item.get("content") or "", source_files, include_extracts=include_extracts)
         if full and vision and source_files:
             parts = vision_parts(db, user, source_files)
             if parts:

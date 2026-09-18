@@ -1,11 +1,13 @@
 import { INCLUDE_TURN_CHAR_MAX } from "@/lib/include-chunk";
 
-export const GROK_CONTEXT_CHAR_CAP = 24_000;
+export const GROK_CONTEXT_CHAR_CAP = 40_000;
 export const PASTE_FIRST_CHUNK_CHARS = 12_000;
 export const JUNIOR_TEXTAREA_MAX_LENGTH = 1_000_000;
 export const GROK_CONTEXT_TOAST =
   "This turn is over the cap. Include a heading, a selection, or the next chunk.";
-export const GROK_CONTEXT_THREAD_WINDOW = 12;
+export const GROK_THREAD_TOAST =
+  "Recent messages are too long. Shorten your message or start a new chat.";
+export const GROK_CONTEXT_THREAD_WINDOW = 8;
 
 export function pasteSplitToast(chars: number): string {
   return `This paste is ${chars.toLocaleString("en-US")} chars. Send first 12k or split.`;
@@ -83,4 +85,9 @@ export function estimateChatContextChars(input: ChatContextInput): number {
 
 export function chatContextOverCap(input: ChatContextInput): boolean {
   return estimateChatContextChars(input) > GROK_CONTEXT_CHAR_CAP;
+}
+
+export function threadContextToast(input: ChatContextInput): string {
+  if (input.includeArticle || input.includeNote) return GROK_CONTEXT_TOAST;
+  return GROK_THREAD_TOAST;
 }

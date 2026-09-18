@@ -144,7 +144,7 @@ class ChatGuardTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             reject_oversized_send(
                 [{"role": "user", "content": "summarize this"}],
-                article_body="x" * 24_001,
+                article_body="x" * 40_001,
             )
         self.assertEqual(caught.exception.status_code, 413)
         self.assertEqual(caught.exception.detail, SEND_CONTEXT_TOO_LARGE)
@@ -153,6 +153,21 @@ class ChatGuardTests(unittest.TestCase):
             [{"role": "user", "content": "summarize this heading"}],
             article_body="x" * 10_000,
         )
+
+    def test_reject_oversized_send_uses_recent_thread_only(self):
+        from app.services.chat import reject_oversized_send
+
+        long_thread = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": "x" * 5_000}
+            for index in range(40)
+        ]
+        reject_oversized_send(long_thread)
+        with self.assertRaises(HTTPException) as caught:
+            reject_oversized_send(
+                [{"role": "user", "content": "x" * 40_001}],
+            )
+        self.assertEqual(caught.exception.status_code, 413)
+        self.assertIn("too long", caught.exception.detail.lower())
 
     def test_drop_trailing_assistants_ends_on_user(self):
         from app.services.chat import drop_trailing_assistants

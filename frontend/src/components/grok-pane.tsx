@@ -51,7 +51,9 @@ import {
   chatContextOverCap,
   estimateChatContextChars,
   GROK_CONTEXT_CHAR_CAP,
+  GROK_CONTEXT_THREAD_WINDOW,
   GROK_CONTEXT_TOAST,
+  threadContextToast,
   JUNIOR_TEXTAREA_MAX_LENGTH,
   PASTE_FIRST_CHUNK_CHARS,
   pasteSplitToast,
@@ -727,13 +729,13 @@ export function GrokPane({
       if (persist && !conversationId) {
         throw new ApiError(422, INVALID_CHAT_TOAST);
       }
+      const threadRows = pane.messages.filter((item) => item.id !== assistantId && item.content?.trim());
+      const windowedRows = threadRows.slice(-GROK_CONTEXT_THREAD_WINDOW);
       const historyOverride = messageCryptoEnabled
         ? [
-            ...pane.messages
-              .filter((item) => item.id !== assistantId && item.content?.trim())
-              .map((item) => ({ role: item.role, content: item.content || "" })),
+            ...windowedRows.map((item) => ({ role: item.role, content: item.content || "" })),
             ...(retry || !userLine ? [] : [{ role: "user" as const, content: userLine.content || message }]),
-          ]
+          ].slice(-GROK_CONTEXT_THREAD_WINDOW)
         : undefined;
       const clientTitle =
         messageCryptoEnabled && !retry && !pane.conversationTitle && userLine?.content
@@ -979,16 +981,22 @@ export function GrokPane({
           ? withAssistantName(detail, label)
           : formatChatError(status, detail, label);
       const oversizedPaste = isOversizedPasteHttp(status, detail);
-      if (oversizedPaste) {
-        offerPasteSplit(userLine?.content || message);
+      const turnText = userLine?.content || message;
+      if (oversizedPaste && turnText.length >= PASTE_FIRST_CHUNK_CHARS) {
+        offerPasteSplit(turnText);
       }
       const imageFail = generatingRef.current || /did not return an image|could not generate that image/i.test(detail);
       const shortImage = readableXaiToast(detail);
+      const capDetail = /over the cap|too long|Recent messages are too long/i.test(detail) ? detail : null;
       const toastText = imageFail
         ? (shortImage.length > 180 ? "Could not generate that image." : shortImage)
-        : oversizedPaste
-          ? pasteSplitToast((userLine?.content || message).length)
-          : NO_REPLY_TOAST;
+        : capDetail
+          ? capDetail
+          : oversizedPaste && turnText.length >= PASTE_FIRST_CHUNK_CHARS
+            ? pasteSplitToast(turnText.length)
+            : status === 413 || status === 400
+              ? detail
+              : NO_REPLY_TOAST;
       onUpdate((current) => ({
         ...current,
         streamStatus: "error",
@@ -1287,11 +1295,12 @@ export function GrokPane({
     }
     if (contextTooLarge(content)) {
       const raw = opts?.message ?? pane.draft;
+      const capToast = threadContextToast(contextInput(content));
       if (!opts?.skipPasteSplit && raw.length >= PASTE_FIRST_CHUNK_CHARS) {
         offerPasteSplit(raw);
         return;
       }
-      toast.error(GROK_CONTEXT_TOAST);
+      toast.error(capToast);
       return;
     }
     inFlightRef.current = true;
