@@ -20,7 +20,7 @@ INDEX_CAP = 40
 SUMMARY_CHAR = 180
 READ_MESSAGE_CAP = 20
 SLICE_MESSAGE_WINDOW = 20
-READ_CHAR_CAP = 8_000
+READ_CHAR_CAP = 8_000  # legacy alias; slice cap uses junior_model token budget
 QUERY_CHAR_CAP = 80
 
 CHATS_ON_APPEND = """
@@ -215,40 +215,16 @@ def build_index(
     return out
 
 
-def model_payload(
-    *,
-    user_text: str,
-    slice: dict[str, Any],
-    standing_memory: str,
-) -> list[dict[str, str]]:
-    """Standing memory, last slice messages, then Steve's line — never dump full threads."""
-    rows = slice.get("messages") or slice.get("turns") or []
-    window = rows[-SLICE_MESSAGE_WINDOW:]
-    messages: list[dict[str, str]] = [{"role": "system", "content": standing_memory}]
-    for item in window:
-        role = str(item.get("role") or "user")
-        if role not in {"user", "assistant"}:
-            role = "user"
-        messages.append({"role": role, "content": str(item.get("content") or "")})
-    messages.append({"role": "user", "content": user_text})
-    return messages
+def model_payload(*args, **kwargs) -> list[dict[str, str]]:
+    from app.services import junior_model
+
+    return junior_model.model_payload(*args, **kwargs)
 
 
 def format_index(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return f"{INDEX_HEADER}\nNone."
-    lines = [INDEX_HEADER]
-    for row in rows:
-        note = row.get("note_id") or "none"
-        lines.append(
-            f"- {row.get('date') or 'unknown'} · {row.get('title') or 'New chat'} · "
-            f"id={row.get('id')} · note={note} · {int(row.get('messages') or 0)} messages"
-        )
-        summary = (row.get("summary") or "").strip()
-        if summary:
-            lines.append(f"  {summary}")
-    lines.append("Open one thread with read_chat and that id. Do not invent chats missing from this list.")
-    return "\n".join(lines)
+    from app.services import junior_model
+
+    return junior_model.format_index_for_model(rows)
 
 
 def read_slice(
@@ -258,35 +234,34 @@ def read_slice(
     *,
     offset: int = 0,
 ) -> dict[str, Any]:
-    start = max(0, int(offset or 0))
+    from app.services import junior_model
+
+    back = max(0, int(offset or 0))
     conversation = grok_store.get_conversation(db, user, conversation_id)
     history = grok_store.conversation_history(db, conversation.id)
     total = len(history)
-    window = history[start : start + READ_MESSAGE_CAP]
-    used = 0
-    turns: list[dict[str, str]] = []
-    for item in window:
+    end = max(0, total - back)
+    start = max(0, end - READ_MESSAGE_CAP)
+    raw: list[dict[str, Any]] = []
+    for item in history[start:end]:
         role = str(item.get("role") or "user")
-        body = clip(str(item.get("content") or ""), READ_CHAR_CAP)
+        body = str(item.get("content") or "")
         files = item.get("files") or []
         names = [str(file.get("filename") or "file") for file in files if isinstance(file, dict)]
         if names:
-            body = clip(f"{body} [files: {', '.join(names)}]", READ_CHAR_CAP)
-        next_used = used + len(body)
-        if turns and next_used > READ_CHAR_CAP:
-            break
-        turns.append({"role": role, "content": body[: max(0, READ_CHAR_CAP - used)]})
-        used += len(turns[-1]["content"])
-        if used >= READ_CHAR_CAP:
-            break
-    next_offset = start + len(turns)
+            body = f"{body} [files: {', '.join(names)}]".strip()
+        raw.append({"role": role, "content": body})
+    turns, token_truncated = junior_model.cap_slice_messages(raw)
+    truncated = bool(token_truncated or start > 0)
+    next_offset = back + len(turns) if start > 0 else None
     return {
         "id": str(conversation.id),
         "title": conversation.title,
         "note_id": str(conversation.saved_note_id) if conversation.saved_note_id else None,
-        "offset": start,
-        "next_offset": next_offset if next_offset < total else None,
+        "offset": back,
+        "next_offset": next_offset,
         "total": total,
+        "truncated": truncated,
         "turns": turns,
         "messages": turns,
     }
@@ -308,8 +283,10 @@ def format_slice(payload: dict[str, Any]) -> str:
     for item in turns:
         role = "Steve" if item.get("role") == "user" else "Junior"
         lines.append(f"- {role}: {item.get('content') or ''}")
+    if payload.get("truncated"):
+        lines.append("truncated=true.")
     if nxt is not None:
-        lines.append(f"Truncated. Next slice offset={nxt}. Summarize; do not paste everything.")
+        lines.append(f"Next slice offset={nxt}. Summarize; do not paste everything.")
     else:
         lines.append("End of this thread. Do not invent later messages.")
     return "\n".join(lines)

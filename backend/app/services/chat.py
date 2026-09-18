@@ -717,7 +717,9 @@ def enforce_rate_limit(user_id: UUID, now: float | None = None) -> None:
         hits.append(stamp)
 
 
-def thread_window(messages: list[dict], limit: int = XAI_CONTEXT_MESSAGES) -> list[dict]:
+def thread_window(messages: list[dict], limit: int | None = None) -> list[dict]:
+    if limit is None:
+        limit = XAI_CONTEXT_MESSAGES
     if len(messages) <= limit:
         return messages
     return messages[-limit:]
@@ -876,6 +878,7 @@ def build_xai_messages(
     note_excerpt: str | None = None,
     working_excerpt: str | None = None,
     extra_system: str | None = None,
+    thread_limit: int | None = None,
 ) -> list[dict]:
     system = build_system_content(
         excerpt,
@@ -887,7 +890,7 @@ def build_xai_messages(
         working_excerpt=working_excerpt,
         extra_system=extra_system,
     )
-    windowed = thread_window(history)
+    windowed = thread_window(history, limit=thread_limit if thread_limit is not None else XAI_CONTEXT_MESSAGES)
     return [{"role": "system", "content": system}, *windowed]
 
 
@@ -907,8 +910,8 @@ def messages_for_xai(
     for index, item in enumerate(windowed):
         files = item.get("files") or []
         full = index == last and item.get("role") == "user"
-        source_files = files if files else (latest_user_files(windowed) if full else [])
-        text = merge_attachment_text(item.get("content") or "", source_files if full else files, include_extracts=full)
+        source_files = list(files) if full else []
+        text = merge_attachment_text(item.get("content") or "", source_files if full else [], include_extracts=full)
         if full and vision and source_files:
             parts = vision_parts(db, user, source_files)
             if parts:
@@ -979,6 +982,8 @@ async def stream_completion(
     if messages_override is not None:
         xai_messages = messages_override
     else:
+        from app.services import junior_model
+
         xai_messages = build_xai_messages(
             history,
             excerpt,
@@ -989,6 +994,7 @@ async def stream_completion(
             note_excerpt=note_excerpt,
             working_excerpt=working_excerpt,
             extra_system=extra_system,
+            thread_limit=junior_model.JUNIOR_THREAD_WINDOW,
         )
     payload = build_chat_completions_payload(
         messages=xai_messages,

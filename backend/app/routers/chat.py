@@ -847,10 +847,6 @@ def _chat(
         history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
     step("calendar")
     calendar_connected = calendars.is_connected(db, user_id) and not is_locked(user)
-    extras = []
-    if unread_catalog:
-        extras.append(UNREAD_READER_SYSTEM)
-    extras.append(CALENDAR_ON_APPEND if calendar_connected else CALENDAR_OFF_APPEND)
     step("mail")
     mail_connected = mail_service.has_token(db, user)
     unread_mail_md = None
@@ -865,22 +861,17 @@ def _chat(
                 unread_mail_md = "Fastmail unread list was unavailable this turn."
         else:
             unread_mail_md = "Fastmail mail is not connected. Open Mail in StoryKeep."
-        extras.append(mail_tool.UNREAD_MAIL_SYSTEM)
-        if unread_mail_md:
-            extras.append(unread_mail_md)
-    extras.append(mail_tool.MAIL_ON_APPEND if mail_connected else mail_tool.MAIL_OFF_APPEND)
     step("memory")
     memory_block = junior_memory.system_section(db, user)
-    if memory_block:
-        extras.append(memory_block)
     chats_enabled = chat_index.can_use(user)
     already_indexed = False
     already_read = False
     read_slice_payload: dict[str, object] | None = None
+    index_block: str | None = None
+    read_meta: str | None = None
     if chats_enabled:
-        extras.append(chat_index.CHATS_ON_APPEND)
         if chat_index.wants_index(user_text):
-            extras.append(chat_index.format_index(chat_index.build_index(db, user)))
+            index_block = chat_index.format_index(chat_index.build_index(db, user))
             already_indexed = True
         elif chat_index.wants_read(user_text):
             chat_id = chat_index.extract_conversation_id(user_text)
@@ -888,23 +879,51 @@ def _chat(
                 try:
                     read_slice_payload = chat_index.read_slice(db, user, chat_id)
                     already_read = True
-                    turns = read_slice_payload.get("messages") or read_slice_payload.get("turns") or []
-                    start = int(read_slice_payload.get("offset") or 0)
-                    total = int(read_slice_payload.get("total") or 0)
-                    extras.append(
+                    read_meta = (
                         f"Opened Junior chat slice: {read_slice_payload.get('title')} · "
                         f"id={read_slice_payload.get('id')} · "
-                        f"messages {start + 1}–{start + len(turns)} of {total}."
+                        f"truncated={str(bool(read_slice_payload.get('truncated'))).lower()}."
                     )
                 except HTTPException:
-                    extras.append("No chat with that id. Use the index. Do not invent a thread.")
+                    read_meta = "No chat with that id. Use the index. Do not invent a thread."
             else:
-                extras.append(chat_index.NEED_ID_SYSTEM)
+                read_meta = chat_index.NEED_ID_SYSTEM
     search_enabled = search_tool.owner_can_search(user)
     will_search = search_enabled and search_tool.wants_web_search(user_text)
-    if search_enabled:
-        extras.append(search_tool.SEARCH_ON_APPEND)
-    extra_system = "\n".join(extras)
+    from app.services import junior_model
+
+    turn_extras = junior_model.build_turn_extras(
+        user_text,
+        memory_block=memory_block,
+        chats_enabled=chats_enabled,
+        index_block=index_block,
+        read_meta=read_meta,
+        unread_catalog=unread_catalog,
+        calendar_connected=calendar_connected,
+        calendar_tools=chat_service.should_attach_chat_tools(user_text),
+        mail_connected=mail_connected,
+        mail_unread=mail_unread,
+        unread_mail_md=unread_mail_md,
+        search_enabled=search_enabled,
+        will_search=will_search,
+    )
+    core_system = chat_service.build_system_content(
+        excerpt,
+        include_article=include_article,
+        recap_question=recap_question,
+        has_attachments=has_attachments,
+        include_note=include_note,
+        note_excerpt=note_excerpt,
+        working_excerpt=working_excerpt,
+        extra_system=None,
+    )
+    extra_system = junior_model.standing_system(
+        db,
+        user,
+        user_text=user_text,
+        core_prompt=core_system,
+        extras=turn_extras,
+    )
     calendar_tools = (
         [ADD_EVENT_TOOL]
         if calendar_connected and chat_service.should_attach_chat_tools(user_text)
@@ -971,20 +990,11 @@ def _chat(
     def _read_chat_messages(extra: str | None) -> list[dict[str, str]] | None:
         if not read_slice_payload:
             return None
-        standing = chat_service.build_system_content(
-            excerpt,
-            include_article=include_article,
-            recap_question=recap_question,
-            has_attachments=has_attachments,
-            include_note=include_note,
-            note_excerpt=note_excerpt,
-            working_excerpt=working_excerpt,
-            extra_system=extra,
-        )
+        del extra
         return chat_index.model_payload(
             user_text=user_text,
             slice=read_slice_payload,
-            standing_memory=standing,
+            standing_memory=extra_system,
         )
 
     read_payload_first_stream = bool(read_slice_payload)

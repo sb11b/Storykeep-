@@ -162,7 +162,7 @@ class WebSearchRouteTests(unittest.TestCase):
         client = TestClient(app)
         response = client.post("/api/v1/search", json={"query": "nfl"})
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], web_search.DEMO_DETAIL)
+        self.assertEqual(response.json()["detail"], "Demo account closed")
         self.assertFalse(web_search.owner_can_search(_demo()))
 
     def test_missing_key_unavailable_copy(self):
@@ -264,42 +264,14 @@ class ChatSearchAttachTests(unittest.TestCase):
         self.assertIn("espn.com/nfl/scoreboard", response.text)
         self.assertIn("timeanddate.com", response.text)
 
-    def test_demo_chat_has_no_search_tool(self):
-        captured: dict = {}
-
-        async def fake_stream(*_args, **kwargs):
-            captured.update(kwargs)
-            yield "Hi"
-
-        from app.services import chat as chat_service
-
+    def test_demo_chat_is_rejected(self):
         app = _app(_demo())
-        with (
-            patch.object(chat_service, "require_key", return_value="xai-test"),
-            patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.calendars.is_connected", return_value=False),
-            patch("app.routers.chat.mail_service.has_token", return_value=False),
-            patch("app.routers.chat.junior_memory.system_section", return_value=None),
-            patch.object(web_search, "configured", return_value=True),
-            patch("app.routers.chat.is_locked", return_value=True),
-            patch("app.routers.chat.reject_locked"),
-            patch.object(chat_service, "stream_completion", fake_stream),
-        ):
-            client = TestClient(app)
-            response = client.post(
-                "/api/v1/chat",
-                json={"message": "look this up: nfl scores", "model": "auto", "reasoning_effort": "auto"},
-            )
-        self.assertEqual(response.status_code, 200)
-        names = []
-        for item in captured.get("tools") or []:
-            fn = item.get("function") if isinstance(item.get("function"), dict) else {}
-            names.append(fn.get("name") or item.get("name") or item.get("type"))
-        self.assertNotIn("web_search", names)
-        extra = captured.get("extra_system") or ""
-        self.assertNotIn("You have live web_search", extra)
-        self.assertNotIn('"stream_status": "searching"', response.text)
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/chat",
+            json={"message": "look this up: nfl scores", "model": "auto", "reasoning_effort": "auto"},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_empty_hits_toast_and_training_fallback(self):
         captured: dict = {}
@@ -335,7 +307,7 @@ class ChatSearchAttachTests(unittest.TestCase):
         extra = captured.get("extra_system") or ""
         self.assertIn("no public hits", extra.lower())
         self.assertIn("answer from training", extra.lower())
-        self.assertNotIn("search does not exist", extra.lower())
+        self.assertIn("web_search returned no public hits", extra.lower())
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ class ChatIndexUnitTests(unittest.TestCase):
 
     def test_format_index_does_not_invent(self):
         empty = chat_index.format_index([])
-        self.assertIn("None.", empty)
+        self.assertIn("none", empty.lower())
         cid = str(uuid.uuid4())
         text = chat_index.format_index(
             [
@@ -85,7 +85,7 @@ class ChatIndexUnitTests(unittest.TestCase):
         )
         self.assertIn(cid, text)
         self.assertIn("DAT lists", text)
-        self.assertIn("note=none", text)
+        self.assertIn("id=", text)
         self.assertNotIn("invent", text.lower().split("do not invent")[0][-20:])
 
     def test_model_payload_standing_memory_slice_and_user(self):
@@ -127,9 +127,10 @@ class ChatIndexUnitTests(unittest.TestCase):
                 "next_offset": 8,
                 "total": 20,
                 "turns": [{"role": "user", "content": "Explain lists"}],
+                "truncated": True,
             }
         )
-        self.assertIn("Truncated", text)
+        self.assertIn("truncated=true", text)
         self.assertIn("offset=8", text)
         self.assertIn("Steve: Explain lists", text)
 
@@ -254,6 +255,7 @@ class ChatIndexRouteTests(unittest.TestCase):
                     "offset": 0,
                     "next_offset": None,
                     "total": 1,
+                    "truncated": False,
                     "turns": [{"role": "user", "content": "Explain lists"}],
                     "messages": [{"role": "user", "content": "Explain lists"}],
                 },
