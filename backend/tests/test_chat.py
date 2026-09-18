@@ -144,7 +144,7 @@ class ChatGuardTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             reject_oversized_send(
                 [{"role": "user", "content": "summarize this"}],
-                article_body="x" * 96_001,
+                article_body="x" * 120_001,
             )
         self.assertEqual(caught.exception.status_code, 413)
         self.assertEqual(caught.exception.detail, SEND_CONTEXT_TOO_LARGE)
@@ -164,7 +164,7 @@ class ChatGuardTests(unittest.TestCase):
         reject_oversized_send(long_thread)
         with self.assertRaises(HTTPException) as caught:
             reject_oversized_send(
-                [{"role": "user", "content": "x" * 96_001}],
+                [{"role": "user", "content": "x" * 120_001}],
             )
         self.assertEqual(caught.exception.status_code, 413)
         self.assertIn("too long", caught.exception.detail.lower())

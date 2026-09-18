@@ -1,6 +1,6 @@
-import { INCLUDE_TURN_CHAR_MAX, WORKING_NOTE_CHAR_CAP } from "@/lib/include-chunk";
+import { INCLUDE_TURN_CHAR_MAX } from "@/lib/include-chunk";
 
-export const GROK_CONTEXT_CHAR_CAP = 96_000;
+export const GROK_CONTEXT_CHAR_CAP = 120_000;
 export const PASTE_FIRST_CHUNK_CHARS = 12_000;
 export const JUNIOR_TEXTAREA_MAX_LENGTH = 1_000_000;
 export const GROK_CONTEXT_TOAST =
@@ -82,24 +82,17 @@ export function estimateChatContextChars(input: ChatContextInput): number {
       total += note;
     }
   }
-  if (input.workingNoteSliceChars) {
-    total += Math.min(input.workingNoteSliceChars, WORKING_NOTE_CHAR_CAP);
-  }
   return total;
 }
 
+/** Only pre-check explicit article/note includes. Thread + attachments are trimmed server-side. */
 export function chatContextOverCap(input: ChatContextInput): boolean {
+  if (textLen(input.draft) > 100_000) return true;
+  if (!input.includeArticle && !input.includeNote) return false;
   return estimateChatContextChars(input) > GROK_CONTEXT_CHAR_CAP;
 }
 
 export function threadContextToast(input: ChatContextInput): string {
-  const hasInclude =
-    input.includeArticle ||
-    input.includeNote ||
-    Boolean(input.workingNoteSliceChars) ||
-    Boolean(input.pendingExtracts?.some((item) => textLen(item) > 0));
-  if (hasInclude) {
-    return GROK_CONTEXT_TOAST;
-  }
+  if (input.includeArticle || input.includeNote) return GROK_CONTEXT_TOAST;
   return GROK_THREAD_TOAST;
 }

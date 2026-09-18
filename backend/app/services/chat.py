@@ -89,8 +89,9 @@ MESSAGE_CHAR_CAP = 24_000
 MERGED_MESSAGE_CHAR_CAP = MESSAGE_CHAR_CAP + ATTACHMENT_CHAR_CAP
 MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
-TOTAL_CHAR_CAP = 96_000
-SEND_CONTEXT_CHAR_CAP = 96_000
+TOTAL_CHAR_CAP = 120_000
+SEND_CONTEXT_CHAR_CAP = 120_000
+_THREAD_TRIM_TARGET = 100_000
 SEND_CONTEXT_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
 SEND_THREAD_TOO_LARGE = "This thread slice is too long. Shorten your message or start a new chat."
 _THREAD_TRIM_ASSISTANT = 1_200
@@ -836,10 +837,19 @@ def reject_oversized_send(
     article_body: str | None = None,
     note_body: str | None = None,
 ) -> None:
-    total = send_context_chars(history, article_body=article_body, note_body=note_body)
-    if total > SEND_CONTEXT_CHAR_CAP:
-        detail = SEND_CONTEXT_TOO_LARGE if (article_body or note_body) else SEND_THREAD_TOO_LARGE
-        raise HTTPException(status_code=413, detail=detail)
+    prepared = messages_for_xai(history, model="grok-4.6")
+    thread_chars = messages_char_count(prepared)
+    include_chars = len(article_body or "")
+    if note_body and note_body != article_body:
+        include_chars += len(note_body)
+    if not article_body and not note_body:
+        if thread_chars > TOTAL_CHAR_CAP:
+            raise HTTPException(status_code=413, detail=SEND_THREAD_TOO_LARGE)
+        return
+    if include_chars > INCLUDE_TURN_CHAR_CAP:
+        raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
+    if thread_chars + include_chars > SEND_CONTEXT_CHAR_CAP:
+        raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
 
 
 def article_excerpt(article: Article, limit: int = INCLUDE_TURN_CHAR_CAP) -> str:
@@ -978,7 +988,7 @@ def messages_for_xai(
                 )
                 continue
         prepared.append({"role": item.get("role") or "user", "content": text})
-    return _trim_prepared_for_cap(prepared, TOTAL_CHAR_CAP)
+    return _trim_prepared_for_cap(prepared, _THREAD_TRIM_TARGET)
 
 
 def latest_user_files(history: list[dict]) -> list:

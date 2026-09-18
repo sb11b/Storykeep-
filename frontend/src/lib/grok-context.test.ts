@@ -10,6 +10,22 @@ import {
   splitPasteChunk,
 } from "./grok-context";
 
+test("thread-only chats are not blocked client-side", () => {
+  const hugeThread = Array.from({ length: 20 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: "x".repeat(8_000),
+  }));
+  assert.equal(
+    chatContextOverCap({
+      messages: hugeThread,
+      draft: "figure 8.5?",
+      workingNoteSliceChars: 80_000,
+      pendingExtracts: ["y".repeat(12_000)],
+    }),
+    false,
+  );
+});
+
 test("small talk plus a short article stays under the cap", () => {
   const chars = estimateChatContextChars({
     messages: [],
