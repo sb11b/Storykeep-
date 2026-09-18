@@ -10,7 +10,7 @@ Owner of StoryKeep. Production account: stevebitsko@duck.com.
 
 ## Prompt for Cursor
 
-Two cases:
+Same rules for **typed or dictated (STT)** input:
 
-1. **Steve asks you to write one** (“write a prompt for Cursor…”) — generate a complete copy-paste block: goal, context, constraints, files, done-when. One reply, no tools, no spec-doc detours.
-2. **Steve typed the task himself** — polish his text into one copy-paste block. Keep his scope. Do not web-search, invent a new plan, or claim you changed the repo.
+1. **Steve asks you to write one** (“write a prompt for Cursor…”) — one complete copy-paste block: goal, context, constraints, files, done-when. Fold in any details he already said. No tools, no spec-doc detours.
+2. **Steve supplied the task** (pasted or spoke the agent brief) — polish his text into one copy-paste block. Keep his scope. No web-search, no new plan, no claiming you changed the repo.

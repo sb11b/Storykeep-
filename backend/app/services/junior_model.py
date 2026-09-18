@@ -22,15 +22,21 @@ _SPEC_SECTION_RE = re.compile(
 )
 _CURSOR_SECTION_RE = re.compile(r"(?im)^#+\s*.*\bCURSOR\b.*$")
 _ASK_CURSOR_PROMPT_RE = re.compile(
-    r"\b(?:write|draft|generate|create|give me|need|make)\s+(?:me\s+)?(?:a\s+)?"
-    r"(?:prompt for cursor|cursor prompt|cursor agent prompt|cloud agent prompt)\b|"
-    r"\b(?:prompt for cursor|cursor agent prompt|cloud agent prompt)\s+(?:for|to)\b",
+    r"\b(?:write|draft|generate|create|give me|need|make|want)\s+(?:me\s+)?(?:a\s+)?"
+    r"(?:prompt for (?:the\s+)?cursor|cursor prompt|cursor agent prompt|cloud agent prompt)\b|"
+    r"\b(?:prompt for (?:the\s+)?cursor|cursor agent prompt|cloud agent prompt)\s+(?:for|to)\b",
     re.I,
 )
 _TASK_VERB_RE = re.compile(
-    r"\b(?:fix|implement|add|ensure|update|refactor|investigate|debug|deploy|complete)\b",
+    r"\b(?:fix|implement|add|ensure|update|refactor|investigate|debug|deploy|complete|remove|change)\b",
     re.I,
 )
+_CURSOR_TASK_MARKERS_RE = re.compile(
+    r"\b(?:done when|acceptance criteria|success criteria|files? to touch|repo context)\b|"
+    r"(?:frontend|backend)/[\w./-]+|\b[\w-]+\.(?:tsx?|py|md)\b",
+    re.I,
+)
+_DATABASE_CURSOR_RE = re.compile(r"\b(?:database|sql|postgres|mysql|sqlite)\s+cursor\b", re.I)
 
 CURSOR_PROMPT_APPEND = """
 Steve asked you to write a Cursor / Cloud Agent prompt. Reply with ONE complete copy-paste block he can drop into Cursor.
@@ -38,8 +44,12 @@ Include: goal, repo or file context, constraints, files or areas to touch, and c
 Do not web-search, list chats, or wander into spec docs. Do not truncate or split across turns.
 """
 
+CURSOR_PROMPT_DETAILS_APPEND = """
+Steve already gave task details (typed or dictated). Fold every detail into the copy-paste block — do not replace or narrow his scope.
+"""
+
 CURSOR_FOLLOW_APPEND = """
-Steve typed the Cursor / Cloud Agent task himself. Stay on his scope.
+Steve supplied the Cursor / Cloud Agent task himself (typed or dictated). Stay on his scope.
 Reply with ONE polished copy-paste prompt block derived from his text — not a new plan or investigation.
 Do not web-search, list chats, read spec docs, or claim you changed the repo unless he asked.
 Do not execute the task in this reply. Finish in one reply.
@@ -57,32 +67,59 @@ def wants_spec_docs(message: str) -> bool:
 def asks_for_cursor_prompt(message: str) -> bool:
     """Steve wants Junior to generate a Cursor agent prompt."""
     text = (message or "").strip()
-    if not text:
+    if not text or _DATABASE_CURSOR_RE.search(text):
         return False
     if _ASK_CURSOR_PROMPT_RE.search(text):
         return True
-    if len(text) >= 220:
+    if len(text) >= 260:
         return False
-    asks = bool(re.search(r"\b(?:write|draft|generate|give|need|make|create)\b", text, re.I))
-    cursor = bool(re.search(r"\b(?:prompt for cursor|cursor prompt|cloud agent)\b", text, re.I))
+    asks = bool(re.search(r"\b(?:write|draft|generate|give|need|make|create|want)\b", text, re.I))
+    cursor = bool(
+        re.search(r"\b(?:prompt for (?:the\s+)?cursor|cursor prompt|cloud agent)\b", text, re.I)
+    )
     return asks and cursor
 
 
-def brings_cursor_task(message: str) -> bool:
-    """Steve pasted the agent task — polish/follow it, do not invent a new one."""
+def cursor_prompt_has_task_details(message: str) -> bool:
+    """Generate request already embeds the task (common after STT)."""
     text = (message or "").strip()
-    if asks_for_cursor_prompt(text):
+    if not asks_for_cursor_prompt(text):
         return False
-    if not _TASK_VERB_RE.search(text):
+    if ":" in text:
+        head, tail = text.split(":", 1)
+        if len(head) < 120 and len(tail.strip()) >= 24:
+            return True
+    return bool(_TASK_VERB_RE.search(text) and len(text) >= 80)
+
+
+def brings_cursor_task(message: str) -> bool:
+    """Steve supplied the agent task — polish/follow it, do not invent a new one."""
+    text = (message or "").strip()
+    if not text or asks_for_cursor_prompt(text):
+        return False
+    if len(text) < 100 or not _TASK_VERB_RE.search(text):
         return False
     structured = bool(re.search(r"(?:^|\n)(?:#+\s+|[-*]\s+|\d+\.)", text, re.M))
-    if structured and len(text) >= 120:
+    if structured:
         return True
-    return len(text) >= 200
+    if _CURSOR_TASK_MARKERS_RE.search(text):
+        return True
+    if len(_TASK_VERB_RE.findall(text)) >= 2 and len(text) >= 100:
+        return True
+    return len(text) >= 220
+
+
+def cursor_turn_mode(message: str) -> str | None:
+    """generate | follow | None"""
+    if asks_for_cursor_prompt(message):
+        return "generate"
+    if brings_cursor_task(message):
+        return "follow"
+    return None
 
 
 def is_cursor_task_turn(message: str) -> bool:
-    return asks_for_cursor_prompt(message) or brings_cursor_task(message)
+    return cursor_turn_mode(message) is not None
 
 
 def filter_standing_memory(body: str, *, user_text: str) -> str:
@@ -256,8 +293,11 @@ def build_turn_extras(
 
         if will_search or not chat_service.is_small_talk_turn(user_text):
             extras.append(search_tool.SEARCH_ON_APPEND)
-    if asks_for_cursor_prompt(user_text):
+    mode = cursor_turn_mode(user_text)
+    if mode == "generate":
         extras.append(CURSOR_PROMPT_APPEND)
-    elif brings_cursor_task(user_text):
+        if cursor_prompt_has_task_details(user_text):
+            extras.append(CURSOR_PROMPT_DETAILS_APPEND)
+    elif mode == "follow":
         extras.append(CURSOR_FOLLOW_APPEND)
     return extras

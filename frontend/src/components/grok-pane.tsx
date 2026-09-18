@@ -177,6 +177,13 @@ function noteMarkdown(reply: string, articleTitle: string | null, sourceRef: str
   return `# ${heading}\n\nAbout: ${source}${sourceRef ? `\nPath: ${sourceRef}` : ""}\n\n${reply.trim()}`;
 }
 
+/** Keep controlled textarea in sync when STT inserts before React re-renders. */
+function setNativeTextareaValue(el: HTMLTextAreaElement, value: string) {
+  const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+  desc?.set?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 export function GrokPane({
   pane,
   label,
@@ -263,8 +270,10 @@ export function GrokPane({
   const turnIdRef = useRef(0);
   const dictation = useDictation();
   const draftValueRef = useRef(pane.draft);
-  draftValueRef.current = pane.draft;
   const draftNow = () => draftValueRef.current;
+  useEffect(() => {
+    draftValueRef.current = pane.draft;
+  }, [pane.draft]);
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
@@ -2635,6 +2644,7 @@ export function GrokPane({
                 onUpdate((current) => (current.draft === next ? current : { ...current, draft: next }));
                 const el = draftRef.current;
                 if (el) {
+                  setNativeTextareaValue(el, next);
                   el.style.height = "auto";
                   const cap = Math.round(window.innerHeight * 0.6);
                   el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;

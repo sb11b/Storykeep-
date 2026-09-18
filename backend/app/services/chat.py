@@ -343,7 +343,7 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
         return False
     from app.services import junior_model
 
-    if junior_model.asks_for_cursor_prompt(text):
+    if junior_model.is_cursor_task_turn(text):
         return True
     if is_short_chat(text):
         return False

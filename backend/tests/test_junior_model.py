@@ -117,7 +117,7 @@ class JuniorModelTests(unittest.TestCase):
             will_search=False,
         )
         joined = "\n".join(follow)
-        self.assertIn("typed the cursor", joined.lower())
+        self.assertIn("supplied the cursor", joined.lower())
         self.assertNotIn("asked you to write", joined.lower())
         self.assertNotIn("SEARCH_ON", joined)
 
