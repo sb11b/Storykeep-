@@ -89,10 +89,11 @@ MESSAGE_CHAR_CAP = 24_000
 MERGED_MESSAGE_CHAR_CAP = MESSAGE_CHAR_CAP + ATTACHMENT_CHAR_CAP
 MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
-TOTAL_CHAR_CAP = 48_000
-SEND_CONTEXT_CHAR_CAP = 40_000
+TOTAL_CHAR_CAP = 96_000
+SEND_CONTEXT_CHAR_CAP = 96_000
 SEND_CONTEXT_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
-SEND_THREAD_TOO_LARGE = "Recent messages are too long. Shorten your message or start a new chat."
+SEND_THREAD_TOO_LARGE = "This thread slice is too long. Shorten your message or start a new chat."
+_THREAD_TRIM_ASSISTANT = 1_200
 MAX_TOKENS_CAP = 2048
 
 SYSTEM_PROMPT = """You are StoryKeep's school coding assistant for Steve — a personal RSS reader and student workspace.
@@ -778,7 +779,7 @@ def validate_payload(messages: list[dict]) -> list[dict]:
         total += len(text)
         cleaned.append({"role": role, "content": text})
     if total > TOTAL_CHAR_CAP:
-        raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
+        raise HTTPException(status_code=413, detail=SEND_THREAD_TOO_LARGE)
     if cleaned[-1]["role"] != "user":
         raise HTTPException(status_code=400, detail="The last message must come from you.")
     return cleaned
@@ -793,22 +794,35 @@ def article_body_text(article: Article) -> str:
     return body
 
 
+def _trim_prepared_for_cap(prepared: list[dict], cap: int) -> list[dict]:
+    """Drop chars from oldest assistant turns before rejecting a long thread."""
+    trimmed = [dict(item) for item in prepared]
+    while messages_char_count(trimmed) > cap and len(trimmed) > 2:
+        cut = False
+        for index in range(len(trimmed) - 1):
+            item = trimmed[index]
+            if item.get("role") != "assistant":
+                continue
+            text = _content_text(item.get("content"))
+            if len(text) <= _THREAD_TRIM_ASSISTANT:
+                continue
+            trimmed[index] = {**item, "content": text[:_THREAD_TRIM_ASSISTANT].rstrip() + "…"}
+            cut = True
+            break
+        if not cut:
+            break
+    return trimmed
+
+
 def send_context_chars(
     history: list[dict],
     *,
     article_body: str | None = None,
     note_body: str | None = None,
-    thread_limit: int | None = None,
+    model: str = "grok-4.6",
 ) -> int:
-    from app.services import junior_model
-
-    limit = thread_limit if thread_limit is not None else junior_model.JUNIOR_THREAD_WINDOW
-    total = 0
-    for item in thread_window(history, limit=limit):
-        total += len(_content_text(item.get("content")))
-        for file in item.get("files") or []:
-            if isinstance(file, dict):
-                total += len(str(file.get("extract_text") or ""))
+    prepared = messages_for_xai(history, model=model)
+    total = messages_char_count(prepared)
     if article_body:
         total += len(article_body)
     if note_body and note_body != article_body:
@@ -964,7 +978,7 @@ def messages_for_xai(
                 )
                 continue
         prepared.append({"role": item.get("role") or "user", "content": text})
-    return prepared
+    return _trim_prepared_for_cap(prepared, TOTAL_CHAR_CAP)
 
 
 def latest_user_files(history: list[dict]) -> list:

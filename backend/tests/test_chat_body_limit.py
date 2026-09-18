@@ -45,7 +45,7 @@ class ChatBodyLimitTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             reject_oversized_send(
                 [{"role": "user", "content": "summarize this"}],
-                article_body="x" * 40_001,
+                article_body="x" * 96_001,
             )
         self.assertEqual(caught.exception.status_code, 413)
         self.assertEqual(caught.exception.detail, SEND_CONTEXT_TOO_LARGE)

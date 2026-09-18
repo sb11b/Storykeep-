@@ -1,6 +1,6 @@
-import { INCLUDE_TURN_CHAR_MAX } from "@/lib/include-chunk";
+import { INCLUDE_TURN_CHAR_MAX, WORKING_NOTE_CHAR_CAP } from "@/lib/include-chunk";
 
-export const GROK_CONTEXT_CHAR_CAP = 40_000;
+export const GROK_CONTEXT_CHAR_CAP = 96_000;
 export const PASTE_FIRST_CHUNK_CHARS = 12_000;
 export const JUNIOR_TEXTAREA_MAX_LENGTH = 1_000_000;
 export const GROK_CONTEXT_TOAST =
@@ -49,6 +49,7 @@ export type ChatContextInput = {
   includeNote?: boolean;
   noteBody?: string | null;
   includeSliceChars?: number;
+  workingNoteSliceChars?: number;
   pendingExtracts?: Array<string | null | undefined>;
 };
 
@@ -63,9 +64,10 @@ export function estimateChatContextChars(input: ChatContextInput): number {
   let total = 0;
   for (const row of windowed) {
     total += textLen(row.content);
-    for (const file of row.files || []) {
-      total += textLen(file?.extract_text);
-    }
+  }
+  const lastUser = [...windowed].reverse().find((row) => row.role === "user");
+  for (const file of lastUser?.files || []) {
+    total += textLen(file?.extract_text);
   }
   total += textLen(input.draft);
   for (const extract of input.pendingExtracts || []) {
@@ -80,6 +82,9 @@ export function estimateChatContextChars(input: ChatContextInput): number {
       total += note;
     }
   }
+  if (input.workingNoteSliceChars) {
+    total += Math.min(input.workingNoteSliceChars, WORKING_NOTE_CHAR_CAP);
+  }
   return total;
 }
 
@@ -88,6 +93,13 @@ export function chatContextOverCap(input: ChatContextInput): boolean {
 }
 
 export function threadContextToast(input: ChatContextInput): string {
-  if (input.includeArticle || input.includeNote) return GROK_CONTEXT_TOAST;
+  const hasInclude =
+    input.includeArticle ||
+    input.includeNote ||
+    Boolean(input.workingNoteSliceChars) ||
+    Boolean(input.pendingExtracts?.some((item) => textLen(item) > 0));
+  if (hasInclude) {
+    return GROK_CONTEXT_TOAST;
+  }
   return GROK_THREAD_TOAST;
 }

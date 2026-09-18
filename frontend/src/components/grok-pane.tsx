@@ -1168,6 +1168,7 @@ export function GrokPane({
     const noteBody =
       pane.includeNoteId && articleId && pane.includeNoteId === articleId ? articleBody : null;
     const slice = plannedIncludeSlice();
+    const workingSlice = plannedWorkingSlice();
     return {
       messages: extraMessages,
       draft,
@@ -1176,6 +1177,7 @@ export function GrokPane({
       includeNote: Boolean(pane.includeNoteId),
       noteBody,
       includeSliceChars: slice?.chars,
+      workingNoteSliceChars: workingSlice?.chars,
       pendingExtracts: (pane.pendingAttachments ?? []).map((item) => item.extract_text),
     };
   }
@@ -1570,7 +1572,7 @@ export function GrokPane({
     const userLine = messages[assistantIndex - 1];
     if (!userLine || userLine.role !== "user") return;
     if (contextTooLarge("")) {
-      toast.error(GROK_CONTEXT_TOAST);
+      toast.error(threadContextToast(contextInput("")));
       return;
     }
     inFlightRef.current = true;
