@@ -714,7 +714,10 @@ class GrokMessageFileOut(BaseModel):
 class GrokMessageOut(BaseModel):
     id: uuid.UUID
     role: str
-    content: str
+    content: str | None = None
+    iv: str | None = None
+    ct: str | None = None
+    encrypted: bool = False
     created_at: datetime
     files: list[GrokMessageFileOut] = Field(default_factory=list)
 

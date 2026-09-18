@@ -260,6 +260,12 @@ export type TtsWord = {
   end: number;
 };
 
+export type MessageCryptoStatus = {
+  enabled: boolean;
+  salt: string | null;
+  plaintext_count: number;
+};
+
 export type ChatStatus = {
   enabled: boolean;
   locked?: boolean;
@@ -272,6 +278,7 @@ export type ChatStatus = {
   requests_per_hour: number;
   persist?: boolean;
   imagine_requests_per_hour?: number;
+  message_crypto?: MessageCryptoStatus;
 };
 
 export type GrokConversation = {
@@ -301,7 +308,10 @@ export type GrokMessageFile = {
 export type GrokMessage = {
   id: string;
   role: "user" | "assistant";
-  content: string;
+  content?: string | null;
+  iv?: string | null;
+  ct?: string | null;
+  encrypted?: boolean;
   created_at: string;
   files?: GrokMessageFile[];
 };

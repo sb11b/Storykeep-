@@ -34,7 +34,7 @@ def _app(user=None):
 
 
 def _owner():
-    return SimpleNamespace(id=uuid.uuid4(), email="stevebitsko@duck.com", is_demo_locked=False)
+    return SimpleNamespace(id=uuid.uuid4(), email="stevebitsko@duck.com", is_demo_locked=False, preferences={})
 
 
 def _demo():

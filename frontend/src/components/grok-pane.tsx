@@ -18,6 +18,7 @@ import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantT
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
+import { encryptMessageBody } from "@/lib/message-crypto";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { folderById } from "@/lib/folders";
 import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
@@ -197,6 +198,7 @@ export function GrokPane({
   onHistoryChanged,
   chatModels,
   persist,
+  messageCryptoEnabled = false,
   panelOpen = true,
   ttsVoices = [],
   renamingLabel = false,
@@ -236,6 +238,7 @@ export function GrokPane({
   locked: boolean;
   chatModels: string[];
   persist: boolean;
+  messageCryptoEnabled?: boolean;
   onFocus: () => void;
   onUpdate: (updater: (pane: GrokPaneState) => GrokPaneState) => void;
   onRemove?: () => void;
@@ -715,13 +718,45 @@ export function GrokPane({
 
     setBusy(true);
     let streamFailed = false;
+    let conversationId: string | null = conversationIdForRequest(pane.conversationId);
     try {
-      let conversationId = conversationIdForRequest(pane.conversationId);
+      conversationId = conversationIdForRequest(pane.conversationId);
       if (persist && !retry) {
         conversationId = await ensureOwnedConversation();
       }
       if (persist && !conversationId) {
         throw new ApiError(422, INVALID_CHAT_TOAST);
+      }
+      const historyOverride = messageCryptoEnabled
+        ? [
+            ...pane.messages
+              .filter((item) => item.id !== assistantId && item.content?.trim())
+              .map((item) => ({ role: item.role, content: item.content || "" })),
+            ...(retry || !userLine ? [] : [{ role: "user" as const, content: userLine.content || message }]),
+          ]
+        : undefined;
+      const clientTitle =
+        messageCryptoEnabled && !retry && !pane.conversationTitle && userLine?.content
+          ? userLine.content.trim().split("\n", 1)[0]?.slice(0, 80)
+          : undefined;
+      if (messageCryptoEnabled && conversationId && userLine && !retry) {
+        const blob = await encryptMessageBody(userLine.content || message);
+        const saved = await api.postEncryptedMessage(conversationId, {
+          role: "user",
+          iv: blob.iv,
+          ct: blob.ct,
+          id: userLine.id,
+          title: clientTitle,
+          media_ids: options.mediaIds,
+        });
+        if (saved.id !== userLine.id) {
+          onUpdate((current) => ({
+            ...current,
+            messages: current.messages.map((item) =>
+              item.id === userLine.id ? { ...item, id: saved.id } : item,
+            ),
+          }));
+        }
       }
       await api.streamChat(
         {
@@ -740,6 +775,8 @@ export function GrokPane({
           include_offset: options.includeOffset ?? pane.includeOffset ?? 0,
           recap_question: pane.recapQuestion,
           media_ids: retry ? undefined : options.mediaIds,
+          history_override: historyOverride,
+          client_title: clientTitle,
         },
         (delta) => {
           if (turnId !== turnIdRef.current) return;
@@ -992,15 +1029,32 @@ export function GrokPane({
       if (streamFailed) return;
       if (gotDeltaRef.current) {
         clearStreamStatus();
-        onUpdate((current) => ({
-          ...current,
-          streamStatus: null,
-          messages: current.messages.map((item) =>
-            item.id === assistantId || item.waiting
-              ? { ...item, waiting: false, turnStatus: "done" as const, failed: false, error: null }
-              : item,
-          ),
-        }));
+        let assistantText = "";
+        onUpdate((current) => {
+          assistantText = current.messages.find((item) => item.id === assistantId)?.content || "";
+          return {
+            ...current,
+            streamStatus: null,
+            messages: current.messages.map((item) =>
+              item.id === assistantId || item.waiting
+                ? { ...item, waiting: false, turnStatus: "done" as const, failed: false, error: null }
+                : item,
+            ),
+          };
+        });
+        if (messageCryptoEnabled && conversationId && assistantText.trim()) {
+          try {
+            const blob = await encryptMessageBody(assistantText);
+            await api.postEncryptedMessage(conversationId, {
+              role: "assistant",
+              iv: blob.iv,
+              ct: blob.ct,
+              id: assistantId,
+            });
+          } catch (error) {
+            toastActionError(error, "save encrypted reply", "Could not save the encrypted reply.");
+          }
+        }
         return;
       }
       failOpenTurn(assistantId, false);
@@ -1373,7 +1427,7 @@ export function GrokPane({
             return {
               id: result.user_message.id,
               role: "user" as const,
-              content: result.user_message.content,
+              content: result.user_message.content || "",
               files: result.user_message.files,
             };
           }
@@ -1381,7 +1435,7 @@ export function GrokPane({
             return {
               id: result.assistant_message.id,
               role: "assistant" as const,
-              content: result.assistant_message.content,
+              content: result.assistant_message.content || "",
               files: result.assistant_message.files,
               waiting: false,
               failed: false,
@@ -1467,13 +1521,13 @@ export function GrokPane({
           {
             id: result.user_message.id,
             role: "user",
-            content: result.user_message.content,
+            content: result.user_message.content || "",
             files: result.user_message.files,
           },
           {
             id: result.assistant_message.id,
             role: "assistant",
-            content: result.assistant_message.content,
+            content: result.assistant_message.content || "",
             files: result.assistant_message.files,
           },
         ],
@@ -1555,11 +1609,11 @@ export function GrokPane({
       const result = await api.runChatSnippet(messageId, snippet);
       onUpdate((current) => {
         const extra: ChatLine[] = [
-          { id: result.user_message.id, role: "user", content: result.user_message.content },
+          { id: result.user_message.id, role: "user", content: result.user_message.content || "" },
           {
             id: result.assistant_message.id,
             role: "assistant",
-            content: result.assistant_message.content,
+            content: result.assistant_message.content || "",
             routeLabel: spendChipLabel(current.lastResolvedModel, "low"),
           },
         ];
@@ -2084,7 +2138,7 @@ export function GrokPane({
                       conversationId: current.conversationId,
                       messages: [
                         ...current.messages,
-                        { id: message.id, role: "assistant", content: message.content, files: message.files },
+                        { id: message.id, role: "assistant", content: message.content || "", files: message.files },
                       ],
                     };
                   });

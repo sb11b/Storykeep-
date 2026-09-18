@@ -22,6 +22,7 @@ import type {
   TotpSetup,
   VaultImportResult,
   ChatStatus,
+  MessageCryptoStatus,
   GrokConversation,
   GrokConversationDetail,
   GrokMessage,
@@ -602,6 +603,58 @@ export const api = {
     );
   },
   chatStatus: () => request<ChatStatus>("/api/v1/chat"),
+  messageCryptoStatus: () => request<MessageCryptoStatus>("/api/v1/chat/crypto"),
+  enableMessageCrypto: (salt?: string) =>
+    request<MessageCryptoStatus>("/api/v1/chat/crypto/enable", {
+      method: "POST",
+      body: JSON.stringify(salt ? { salt } : {}),
+    }),
+  migrateMessageCrypto: (messages: { id: string; iv: string; ct: string }[]) =>
+    request<MessageCryptoStatus & { migrated: number }>("/api/v1/chat/crypto/migrate", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+    }),
+  postEncryptedMessage: (
+    conversationId: string,
+    body: {
+      role: "user" | "assistant";
+      iv: string;
+      ct: string;
+      id?: string;
+      title?: string;
+      media_ids?: string[];
+    },
+  ) => {
+    if (!isConversationId(conversationId)) return Promise.reject(new ApiError(422, INVALID_CHAT_TOAST));
+    return request<GrokMessage>(`/api/v1/chat/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  async migratePlaintextMessages(
+    encryptBatch: (messages: { id: string; content: string }[]) => Promise<{ id: string; iv: string; ct: string }[]>,
+  ) {
+    const status = await api.messageCryptoStatus();
+    if (!status.enabled || status.plaintext_count <= 0) return status;
+    const conversations = await api.chatConversations();
+    const pending: { id: string; content: string }[] = [];
+    for (const row of conversations) {
+      const detail = await api.chatConversation(row.id);
+      for (const message of detail.messages) {
+        if (message.encrypted) continue;
+        if (message.content == null || message.content === "") continue;
+        pending.push({ id: message.id, content: message.content });
+      }
+    }
+    if (!pending.length) return status;
+    const batchSize = 100;
+    for (let offset = 0; offset < pending.length; offset += batchSize) {
+      const slice = pending.slice(offset, offset + batchSize);
+      const encrypted = await encryptBatch(slice);
+      await api.migrateMessageCrypto(encrypted);
+    }
+    return api.messageCryptoStatus();
+  },
   chatHealth: () =>
     request<{
       ok: boolean;
@@ -686,6 +739,8 @@ export const api = {
       recap_question?: boolean;
       retry?: boolean;
       media_ids?: string[];
+      history_override?: { role: "user" | "assistant"; content: string }[];
+      client_title?: string;
     },
     onDelta: (text: string) => void,
     onMeta?: (meta: GrokStreamMeta) => void,

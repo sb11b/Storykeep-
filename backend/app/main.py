@@ -217,6 +217,12 @@ def _create_schema() -> None:
     _try_sql(
         "ALTER TABLE junior_jobs ADD COLUMN IF NOT EXISTS web_search BOOLEAN NOT NULL DEFAULT false"
     )
+    _try_sql("ALTER TABLE grok_messages ADD COLUMN IF NOT EXISTS body_iv TEXT")
+    _try_sql("ALTER TABLE grok_messages ADD COLUMN IF NOT EXISTS body_ct TEXT")
+    _try_sql(
+        "ALTER TABLE grok_messages ADD COLUMN IF NOT EXISTS encrypted BOOLEAN NOT NULL DEFAULT false"
+    )
+    _try_sql("ALTER TABLE grok_messages ALTER COLUMN content DROP NOT NULL")
 
 
 def _seed_in_background() -> None:

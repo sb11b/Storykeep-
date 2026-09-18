@@ -48,8 +48,14 @@ from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
 from app.services import web_search as search_tool
 from app.services import chat_index
+from app.services import message_crypto
 
 router = APIRouter(tags=["chat"])
+
+
+class HistoryTurn(BaseModel):
+    role: str = Field(max_length=16)
+    content: str = Field(max_length=100_000)
 
 
 class ChatIn(BaseModel):
@@ -68,6 +74,8 @@ class ChatIn(BaseModel):
     recap_question: bool = False
     retry: bool = False
     media_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    history_override: list[HistoryTurn] | None = None
+    client_title: str | None = Field(default=None, max_length=80)
 
     @model_validator(mode="after")
     def require_text_or_files(self) -> "ChatIn":
@@ -116,11 +124,15 @@ def _file_out(row) -> GrokMessageFileOut:
     )
 
 
-def _message_out(row) -> GrokMessageOut:
+def _message_out(row, *, crypto_enabled: bool = False) -> GrokMessageOut:
+    body = message_crypto.message_body_out(row, crypto_enabled=crypto_enabled)
     return GrokMessageOut(
         id=row.id,
         role=row.role,
-        content=row.content,
+        content=body.get("content"),
+        iv=body.get("iv"),
+        ct=body.get("ct"),
+        encrypted=bool(body.get("encrypted")),
         created_at=row.created_at,
         files=[_file_out(item) for item in (row.files or [])],
     )
@@ -130,7 +142,7 @@ def _conversation_out(row) -> GrokConversationOut:
     return GrokConversationOut.model_validate(row)
 
 
-def _conversation_detail(row) -> GrokConversationDetailOut:
+def _conversation_detail(row, *, crypto_enabled: bool = False) -> GrokConversationDetailOut:
     return GrokConversationDetailOut(
         id=row.id,
         title=row.title,
@@ -143,12 +155,15 @@ def _conversation_detail(row) -> GrokConversationDetailOut:
         saved_note_id=getattr(row, "saved_note_id", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
-        messages=[_message_out(item) for item in row.messages],
+        messages=[_message_out(item, crypto_enabled=crypto_enabled) for item in row.messages],
     )
 
 
 @router.get("/chat")
-def chat_status(user: User = Depends(require_user)) -> dict:
+def chat_status(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> dict:
     locked = is_locked(user)
     models = chat_service.available_models()
     return {
@@ -165,6 +180,7 @@ def chat_status(user: User = Depends(require_user)) -> dict:
         "persist": grok_store.should_persist(user),
         "key_configured": chat_service.key_configured(),
         "key_format_ok": chat_service.key_format_ok(),
+        "message_crypto": message_crypto.status(db, user),
     }
 
 
@@ -235,7 +251,105 @@ def get_conversation(
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     row = grok_store.get_conversation(db, user, conversation_id)
-    return _conversation_detail(row)
+    return _conversation_detail(row, crypto_enabled=message_crypto.is_enabled(user))
+
+
+class MessageCryptoEnableIn(BaseModel):
+    salt: str | None = Field(default=None, max_length=64)
+
+
+class EncryptedMessageIn(BaseModel):
+    role: str = Field(max_length=16)
+    iv: str = Field(min_length=8, max_length=32)
+    ct: str = Field(min_length=8, max_length=500_000)
+    id: UUID | None = None
+    title: str | None = Field(default=None, max_length=80)
+    media_ids: list[UUID] = Field(default_factory=list, max_length=5)
+
+
+class CryptoMigrateIn(BaseModel):
+    messages: list[dict] = Field(min_length=1, max_length=200)
+
+
+@router.get("/chat/crypto")
+def get_message_crypto(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> dict:
+    if not grok_store.should_persist(user):
+        raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
+    return message_crypto.status(db, user)
+
+
+@router.post("/chat/crypto/enable")
+def enable_message_crypto(
+    payload: MessageCryptoEnableIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> dict:
+    if not grok_store.should_persist(user):
+        raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
+    body = payload or MessageCryptoEnableIn()
+    result = message_crypto.enable(db, user, salt_b64_value=body.salt)
+    db.commit()
+    return result
+
+
+@router.post("/chat/crypto/migrate")
+def migrate_message_crypto(
+    payload: CryptoMigrateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> dict:
+    if not grok_store.should_persist(user):
+        raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
+    if not message_crypto.is_enabled(user):
+        raise HTTPException(status_code=400, detail="Message encryption is not enabled.")
+    migrated = 0
+    for item in payload.messages:
+        message_id = item.get("id")
+        iv = item.get("iv")
+        ct = item.get("ct")
+        if not message_id or not iv or not ct:
+            raise HTTPException(status_code=400, detail="Each item needs id, iv, and ct.")
+        try:
+            mid = UUID(str(message_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid message id.") from exc
+        grok_store.migrate_message_to_encrypted(db, user.id, mid, iv=str(iv), ct=str(ct))
+        migrated += 1
+    db.commit()
+    return {"migrated": migrated, **message_crypto.status(db, user)}
+
+
+@router.post("/chat/conversations/{conversation_id}/messages", response_model=GrokMessageOut, status_code=201)
+def post_encrypted_message(
+    conversation_id: UUID,
+    payload: EncryptedMessageIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> GrokMessageOut:
+    if not grok_store.should_persist(user):
+        raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
+    if not message_crypto.is_enabled(user):
+        raise HTTPException(status_code=400, detail="Message encryption is not enabled.")
+    if payload.role not in {"user", "assistant"}:
+        raise HTTPException(status_code=400, detail="role must be user or assistant.")
+    conversation = grok_store.owned_conversation(db, user, conversation_id)
+    row = grok_store.append_encrypted_message(
+        db,
+        conversation,
+        role=payload.role,
+        iv=payload.iv,
+        ct=payload.ct,
+        message_id=payload.id,
+        title=payload.title if payload.role == "user" else None,
+    )
+    if payload.media_ids:
+        chat_attachments.attach_to_message(db, user, row, payload.media_ids)
+    db.commit()
+    db.refresh(row)
+    return _message_out(row, crypto_enabled=True)
 
 
 @router.patch("/chat/conversations/{conversation_id}", response_model=GrokConversationOut)
@@ -299,6 +413,8 @@ def download_message_docx(
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     row = grok_store.owned_assistant_message(db, user, message_id)
+    if row.encrypted or row.content is None:
+        raise HTTPException(status_code=400, detail="Encrypted messages must be exported in the browser.")
     content = row.content
     if clean:
         from app.services.school_tools import strip_marks
@@ -348,6 +464,8 @@ def imagine_image(
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ) -> dict:
+    if message_crypto.is_enabled(user):
+        raise HTTPException(status_code=400, detail="Imagine is unavailable while message encryption is on.")
     imagine_service.require_imagine_key()
     prompt = imagine_service.normalize_prompt(payload.prompt)
     if not prompt:
@@ -593,10 +711,84 @@ def _chat(
     user_text = payload.message.strip()
     media_ids = list(payload.media_ids or [])
     current_files: list[dict] = []
+    crypto_on = message_crypto.is_enabled(user)
+
+    def _history_from_override() -> list[dict]:
+        if not payload.history_override:
+            raise HTTPException(
+                status_code=400,
+                detail="history_override is required when message encryption is enabled.",
+            )
+        built = [{"role": turn.role, "content": turn.content, "files": []} for turn in payload.history_override]
+        if current_files and built:
+            built[-1]["files"] = current_files
+        return built
 
     step("history")
     if persist:
-        if payload.retry:
+        if crypto_on:
+            if payload.retry:
+                if not conversation_id:
+                    raise HTTPException(status_code=400, detail="Open the thread you want to retry.")
+                conversation = grok_store.owned_conversation(db, user, conversation_id)
+                pending = grok_store.pending_user_turn(db, conversation_id)
+                if not pending:
+                    raise HTTPException(status_code=400, detail="Nothing to retry on this thread.")
+                grok_store.trim_trailing_assistants(db, conversation_id)
+                if not user_text:
+                    raise HTTPException(status_code=400, detail="Include the user line when retrying encrypted threads.")
+                user_message_id = pending.id
+                current_files = [
+                    {
+                        "media_id": item.media_id,
+                        "filename": item.filename,
+                        "content_type": item.content_type,
+                        "kind": item.kind,
+                        "extract_text": item.extract_text or "",
+                        "byte_size": item.byte_size,
+                        "url": f"/api/v1/media/{item.media_id}",
+                    }
+                    for item in (pending.files or [])
+                ]
+            elif conversation_id:
+                conversation = grok_store.owned_conversation(db, user, conversation_id)
+            else:
+                if incoming_model is not None:
+                    model_choice = incoming_model
+                if incoming_reasoning is not None:
+                    reasoning_choice = incoming_reasoning
+                stored_reasoning = (
+                    chat_service.REASONING_AUTO
+                    if model_choice == chat_service.MODEL_AUTO
+                    else reasoning_choice
+                )
+                conversation = grok_store.create_conversation(
+                    db, user, model=model_choice, reasoning=stored_reasoning
+                )
+                conversation_id = conversation.id
+            model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
+            reasoning_choice = chat_service.normalize_reasoning_effort(
+                getattr(conversation, "reasoning", None) or chat_service.REASONING_AUTO
+            )
+            if incoming_model is not None:
+                model_choice = incoming_model
+                conversation.model = model_choice
+            if incoming_reasoning is not None:
+                reasoning_choice = incoming_reasoning
+            conversation.reasoning = (
+                chat_service.REASONING_AUTO
+                if model_choice == chat_service.MODEL_AUTO
+                else reasoning_choice
+            )
+            conversation.recap_question = recap_question
+            if payload.client_title and payload.client_title.strip():
+                conversation.title = payload.client_title.strip()[:80]
+            db.add(conversation)
+            if media_ids:
+                current_files = chat_attachments.preview_files(db, user, media_ids)
+            db.commit()
+            history = _history_from_override()
+        elif payload.retry:
             if not conversation_id:
                 raise HTTPException(status_code=400, detail="Open the thread you want to retry.")
             conversation = grok_store.owned_conversation(db, user, conversation_id)
@@ -604,6 +796,8 @@ def _chat(
             if not pending:
                 raise HTTPException(status_code=400, detail="Nothing to retry on this thread.")
             grok_store.trim_trailing_assistants(db, conversation_id)
+            if pending.encrypted or pending.content is None:
+                raise HTTPException(status_code=400, detail="Retry with the message in the request when encryption is on.")
             user_text = pending.content.strip()
             user_message_id = pending.id
             current_files = [
@@ -956,7 +1150,7 @@ def _chat(
 
     def _persist_assistant(text: str) -> str | None:
         cleaned = chat_docx.strip_keep_notes_cta((text or "").strip())
-        if not persist or not conversation_id or not cleaned:
+        if crypto_on or not persist or not conversation_id or not cleaned:
             return None
         try:
             with SessionLocal() as stream_db:

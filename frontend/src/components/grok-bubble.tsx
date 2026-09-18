@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
-import { Brain, CalendarClock, ChevronLeft, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronLeft, History, LoaderCircle, Lock, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { JuniorJobsPanel } from "@/components/junior-jobs-panel";
@@ -11,12 +11,14 @@ import { JuniorMemoryPanel } from "@/components/junior-memory-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDictation } from "@/components/dictation";
+import { CryptoUnlockGate } from "@/components/crypto-unlock-gate";
 import { api, ApiError } from "@/lib/api";
+import { CRYPTO_UNLOCKED, decryptStoredMessage, isCryptoUnlocked } from "@/lib/message-crypto";
 import { toast } from "sonner";
 import { toastActionError } from "@/lib/toast-message";
 import { INVALID_CHAT_TOAST, isConversationId } from "@/lib/chat-conversation";
 import { grokModelLabel, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
-import type { GrokConversation, TtsVoice } from "@/lib/types";
+import type { GrokConversation, MessageCryptoStatus, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import {
   labelsFromPanes,
@@ -135,6 +137,9 @@ export function GrokBubble({
   const [locked, setLocked] = useState(false);
   const dictation = useDictation();
   const [persist, setPersist] = useState(false);
+  const [cryptoStatus, setCryptoStatus] = useState<MessageCryptoStatus | null>(null);
+  const [cryptoReady, setCryptoReady] = useState(() => isCryptoUnlocked());
+  const [showCryptoSetup, setShowCryptoSetup] = useState(false);
   const [chatModels, setChatModels] = useState<string[]>(["grok-4.6", "grok-4.3"]);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -271,7 +276,9 @@ export function GrokBubble({
         setEnabled(row.enabled);
         setLocked(Boolean(row.locked));
         setPersist(Boolean(row.persist ?? !row.locked));
+        if (row.message_crypto) setCryptoStatus(row.message_crypto);
         if (row.models?.length) setChatModels(row.models);
+        if (row.message_crypto?.enabled && isCryptoUnlocked()) setCryptoReady(true);
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
@@ -449,8 +456,29 @@ export function GrokBubble({
       toast.error(INVALID_CHAT_TOAST);
       return;
     }
+    if (cryptoStatus?.enabled && !CRYPTO_UNLOCKED.value) {
+      return;
+    }
     try {
       const detail = await api.chatConversation(conversationId);
+      const messages = await Promise.all(
+        detail.messages.map(async (item) => ({
+          id: item.id,
+          role: item.role as "user" | "assistant",
+          content: await decryptStoredMessage(item),
+          files: item.files?.map((file) => ({
+            media_id: file.media_id,
+            filename: file.filename,
+            content_type: file.content_type,
+            kind: file.kind,
+            url: file.url,
+            byte_size: file.byte_size,
+            extract_text: file.extract_text,
+          })),
+          routeLabel:
+            item.role === "assistant" ? spendChipLabel(detail.last_model, detail.last_reasoning) : null,
+        })),
+      );
       setPanes((current) =>
         current.map((pane) =>
           pane.id !== paneId
@@ -465,22 +493,7 @@ export function GrokBubble({
                 lastResolvedReasoning: detail.last_reasoning ?? null,
                 savedNoteId: detail.saved_note_id ?? null,
                 conversationTitle: detail.title || null,
-                messages: detail.messages.map((item) => ({
-                  id: item.id,
-                  role: item.role,
-                  content: item.content,
-                  files: item.files?.map((file) => ({
-                    media_id: file.media_id,
-                    filename: file.filename,
-                    content_type: file.content_type,
-                    kind: file.kind,
-                    url: file.url,
-                    byte_size: file.byte_size,
-                    extract_text: file.extract_text,
-                  })),
-                  routeLabel:
-                    item.role === "assistant" ? spendChipLabel(detail.last_model, detail.last_reasoning) : null,
-                })),
+                messages,
                 recapQuestion: Boolean(detail.recap_question),
               },
         ),
@@ -497,7 +510,11 @@ export function GrokBubble({
         ),
       );
     }
-  }, []);
+  }, [cryptoStatus?.enabled]);
+
+  const messageCryptoEnabled = Boolean(cryptoStatus?.enabled);
+  const needsCryptoUnlock = messageCryptoEnabled && !cryptoReady;
+  const showCryptoGate = needsCryptoUnlock || showCryptoSetup;
 
   useEffect(() => {
     if (!persist) return;
@@ -995,6 +1012,16 @@ export function GrokBubble({
                 icon: <Pencil className="size-3.5" />,
                 onSelect: () => startPaneRename(focusedPaneId),
               },
+              ...(persist && !messageCryptoEnabled
+                ? [
+                    {
+                      key: "encrypt-at-rest",
+                      label: "Encrypt messages at rest",
+                      icon: <Lock className="size-3.5" />,
+                      onSelect: () => setShowCryptoSetup(true),
+                    },
+                  ]
+                : []),
             ]}
           />
         ) : null}
@@ -1037,7 +1064,19 @@ export function GrokBubble({
         {showMemoryPanel ? (
           <JuniorMemoryPanel railRef={memoryRailRef} onHide={() => setRailFlag({ showMemory: false })} />
         ) : null}
-        {fullscreen ? (
+        {showCryptoGate ? (
+          <CryptoUnlockGate
+            enabled={messageCryptoEnabled}
+            salt={cryptoStatus?.salt ?? null}
+            onUnlocked={() => {
+              setCryptoReady(true);
+              setShowCryptoSetup(false);
+              void api.chatStatus().then((row) => {
+                if (row.message_crypto) setCryptoStatus(row.message_crypto);
+              });
+            }}
+          />
+        ) : fullscreen ? (
           <div className="grid min-h-0 min-w-0 flex-1 gap-px overflow-hidden bg-border" style={paneGridStyle(panes.length)}>
             {panes.map((pane, index) => (
               <div
@@ -1070,6 +1109,7 @@ export function GrokBubble({
                   onHistoryChanged={() => void refreshHistory()}
                   chatModels={chatModels}
                   persist={persist}
+                  messageCryptoEnabled={messageCryptoEnabled}
                   panelOpen={open}
                   ttsVoices={ttsVoices}
                   customShelves={customShelves}
@@ -1104,6 +1144,7 @@ export function GrokBubble({
             onHistoryChanged={() => void refreshHistory()}
             chatModels={chatModels}
             persist={persist}
+            messageCryptoEnabled={messageCryptoEnabled}
             panelOpen={open}
             ttsVoices={ttsVoices}
             customShelves={customShelves}

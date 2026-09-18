@@ -104,7 +104,13 @@ TOOLS = [LIST_CHATS_TOOL, READ_CHAT_TOOL]
 
 
 def can_use(user: object | None) -> bool:
-    return user is not None and not is_locked(user)
+    if user is None or is_locked(user):
+        return False
+    from app.services import message_crypto
+
+    if message_crypto.is_enabled(user):
+        return False
+    return True
 
 
 def wants_index(message: str) -> bool:

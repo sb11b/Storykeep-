@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import GrokConversation, GrokMessage, User
 from app.services.demo_lock import is_locked
+from app.services import message_crypto
 
 TITLE_MAX = 80
 
@@ -140,6 +141,7 @@ def append_message(
         conversation_id=conversation.id,
         role=role,
         content=content,
+        encrypted=False,
         created_at=stamp,
     )
     db.add(message)
@@ -151,6 +153,72 @@ def append_message(
     return message
 
 
+def append_encrypted_message(
+    db: Session,
+    conversation: GrokConversation,
+    *,
+    role: str,
+    iv: str,
+    ct: str,
+    message_id: UUID | None = None,
+    title: str | None = None,
+    created_at: datetime | None = None,
+) -> GrokMessage:
+    message_crypto.validate_ciphertext(iv, ct)
+    stamp = created_at or datetime.now(timezone.utc)
+    kwargs: dict = {
+        "conversation_id": conversation.id,
+        "role": role,
+        "content": None,
+        "body_iv": iv.strip(),
+        "body_ct": ct.strip(),
+        "encrypted": True,
+        "created_at": stamp,
+    }
+    if message_id is not None:
+        kwargs["id"] = message_id
+    message = GrokMessage(**kwargs)
+    db.add(message)
+    conversation.updated_at = stamp
+    if title and role == "user":
+        cleaned = (title or "").strip()[:TITLE_MAX]
+        if cleaned:
+            conversation.title = cleaned
+    db.add(conversation)
+    db.flush()
+    return message
+
+
+def migrate_message_to_encrypted(
+    db: Session,
+    user_id: UUID,
+    message_id: UUID,
+    *,
+    iv: str,
+    ct: str,
+) -> GrokMessage:
+    row = db.scalar(
+        select(GrokMessage)
+        .join(GrokConversation, GrokMessage.conversation_id == GrokConversation.id)
+        .where(
+            GrokMessage.id == message_id,
+            GrokConversation.user_id == user_id,
+        )
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if row.encrypted:
+        return row
+    message_crypto.validate_ciphertext(iv, ct)
+    row.content = None
+    row.body_iv = iv.strip()
+    row.body_ct = ct.strip()
+    row.encrypted = True
+    db.add(row)
+    db.flush()
+    return row
+
+
 def last_message_content(db: Session, conversation_id: UUID) -> str | None:
     row = db.scalar(
         select(GrokMessage)
@@ -159,6 +227,8 @@ def last_message_content(db: Session, conversation_id: UUID) -> str | None:
         .limit(1)
     )
     if not row:
+        return None
+    if row.encrypted:
         return None
     return row.content
 
@@ -178,6 +248,8 @@ def first_user_message_content(db: Session, conversation_id: UUID) -> str | None
         .limit(1)
     )
     if not row:
+        return None
+    if row.encrypted:
         return None
     return row.content
 
@@ -286,25 +358,29 @@ def conversation_history(db: Session, conversation_id: UUID) -> list[dict]:
             .order_by(GrokMessage.created_at.asc(), GrokMessage.id.asc())
         ).all()
     )
-    return [
-        {
-            "role": row.role,
-            "content": row.content,
-            "files": [
-                {
-                    "media_id": item.media_id,
-                    "filename": item.filename,
-                    "content_type": item.content_type,
-                    "kind": item.kind,
-                    "extract_text": item.extract_text or "",
-                    "byte_size": item.byte_size,
-                    "url": f"/api/v1/media/{item.media_id}",
-                }
-                for item in (row.files or [])
-            ],
-        }
-        for row in rows
-    ]
+    out: list[dict] = []
+    for row in rows:
+        if row.encrypted:
+            continue
+        out.append(
+            {
+                "role": row.role,
+                "content": row.content or "",
+                "files": [
+                    {
+                        "media_id": item.media_id,
+                        "filename": item.filename,
+                        "content_type": item.content_type,
+                        "kind": item.kind,
+                        "extract_text": item.extract_text or "",
+                        "byte_size": item.byte_size,
+                        "url": f"/api/v1/media/{item.media_id}",
+                    }
+                    for item in (row.files or [])
+                ],
+            }
+        )
+    return out
 
 
 def pending_user_turn(db: Session, conversation_id: UUID) -> GrokMessage | None:
