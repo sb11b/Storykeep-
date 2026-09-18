@@ -108,9 +108,16 @@ _CHARS_PER_WORD_EST = 5
 MAX_TOKENS_CAP = (JUNIOR_MAX_RESPONSE_WORDS * _CHARS_PER_WORD_EST + 3) // 4
 
 
+_LEGACY_MAX_TOKEN_PINS = frozenset({700, 900, 1200, 2048, 4096, 8192})
+
+
 def resolved_max_output_tokens() -> int:
     """~100k words at ~1.25 tokens/word. Override with XAI_CHAT_MAX_TOKENS."""
-    return min(MAX_TOKENS_CAP, max(64, int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)))
+    raw = int(settings.xai_chat_max_tokens or MAX_TOKENS_CAP)
+    # Railway/env pins from older deploys (2048) must not block the word cap.
+    if raw in _LEGACY_MAX_TOKEN_PINS or raw < 16_000:
+        raw = MAX_TOKENS_CAP
+    return min(MAX_TOKENS_CAP, max(64, raw))
 
 
 def chat_idle_after_token_sec(max_tokens: int | None = None) -> float:
@@ -1495,11 +1502,13 @@ def build_chat_completions_payload(
 ) -> dict[str, object]:
     resolved_model = rewrite_xai_model(model)
     effort = clamp_reasoning_effort(resolved_model, reasoning_effort)
+    capped = min(MAX_TOKENS_CAP, max(64, int(max_tokens)))
     payload: dict[str, object] = {
         "model": resolved_model,
         "messages": messages,
         "stream": stream,
-        "max_tokens": min(MAX_TOKENS_CAP, max(64, int(max_tokens))),
+        "max_tokens": capped,
+        "max_completion_tokens": capped,
         "temperature": temperature,
     }
     allowed = filter_completions_tools(tools)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -180,6 +181,9 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(JUNIOR_MAX_RESPONSE_WORDS, 100_000)
         self.assertEqual(MAX_TOKENS_CAP, 125_000)
         self.assertEqual(resolved_max_output_tokens(), 125_000)
+        with mock.patch("app.services.chat.settings") as mocked:
+            mocked.xai_chat_max_tokens = 2048
+            self.assertEqual(resolved_max_output_tokens(), 125_000)
         self.assertGreaterEqual(chat_idle_after_token_sec(), 120.0)
         self.assertIn("waiting for the next token", chat_idle_timeout_detail())
         self.assertEqual(posted_spend_label("grok-4.6", "low"), "4.6 · low")

@@ -439,7 +439,14 @@ def _build_info() -> dict[str, str]:
 
 
 def health_payload() -> dict[str, str]:
-    body = {"status": "ok", **_build_info()}
+    from app.services import chat as chat_service
+
+    body = {
+        "status": "ok",
+        **_build_info(),
+        "junior_max_response_words": str(chat_service.JUNIOR_MAX_RESPONSE_WORDS),
+        "junior_max_output_tokens": str(chat_service.resolved_max_output_tokens()),
+    }
     snap = rss.last_fetch_snapshot()
     if snap:
         if snap.get("status") is not None:
