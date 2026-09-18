@@ -4,7 +4,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from app.http_limits import CHAT_BODY_MAX_BYTES, PAYLOAD_TOO_LARGE, redact_secrets
+from app.http_limits import CHAT_BODY_MAX_BYTES, PAYLOAD_THREAD_TOO_LARGE, PAYLOAD_TOO_LARGE, redact_secrets
 from app.main import app, health_payload
 
 
@@ -34,7 +34,7 @@ class ChatBodyLimitTests(unittest.TestCase):
         client = TestClient(app)
         response = client.post("/api/v1/chat", json={"message": "x" * 100_001})
         self.assertEqual(response.status_code, 413)
-        self.assertIn("over the cap", response.json()["detail"])
+        self.assertEqual(response.json()["detail"], PAYLOAD_THREAD_TOO_LARGE)
         health = client.get("/health")
         self.assertEqual(health.status_code, 200)
 

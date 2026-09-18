@@ -85,11 +85,30 @@ export function estimateChatContextChars(input: ChatContextInput): number {
   return total;
 }
 
+/** Pre-check only this turn's draft, pending files, and include slices — not the thread window. */
+export function estimateIncludeTurnChars(input: ChatContextInput): number {
+  let total = textLen(input.draft);
+  for (const extract of input.pendingExtracts || []) {
+    total += textLen(extract);
+  }
+  const sliceCap = input.includeSliceChars ?? INCLUDE_TURN_CHAR_MAX;
+  if (input.includeArticle) {
+    total += Math.min(textLen(input.articleBody), sliceCap);
+  }
+  if (input.includeNote) {
+    const note = Math.min(textLen(input.noteBody), sliceCap);
+    if (note && !(input.includeArticle && input.noteBody === input.articleBody)) {
+      total += note;
+    }
+  }
+  return total;
+}
+
 /** Only pre-check explicit article/note includes. Thread + attachments are trimmed server-side. */
 export function chatContextOverCap(input: ChatContextInput): boolean {
   if (textLen(input.draft) > 100_000) return true;
   if (!input.includeArticle && !input.includeNote) return false;
-  return estimateChatContextChars(input) > GROK_CONTEXT_CHAR_CAP;
+  return estimateIncludeTurnChars(input) > GROK_CONTEXT_CHAR_CAP;
 }
 
 export function threadContextToast(input: ChatContextInput): string {

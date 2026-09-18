@@ -15,6 +15,7 @@ CHAT_BODY_MAX_BYTES = 420_000
 CHAT_MESSAGE_MAX_CHARS = 100_000
 CHAT_PATHS = frozenset({"/api/v1/chat"})
 PAYLOAD_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
+PAYLOAD_THREAD_TOO_LARGE = "This thread slice is too long. Shorten your message or start a new chat."
 
 _SECRET_RE = re.compile(
     r"(?i)(?:"
@@ -84,10 +85,11 @@ async def _send_json(send: Send, status: int, body: bytes) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def payload_too_large_body() -> bytes:
+def payload_too_large_body(detail: str | None = None) -> bytes:
+    message = detail or PAYLOAD_TOO_LARGE
     return (
         b'{"detail":"'
-        + PAYLOAD_TOO_LARGE.replace('"', '\\"').encode()
+        + message.replace('"', '\\"').encode()
         + b'","code":"payload_too_large"}'
     )
 
@@ -155,7 +157,7 @@ class LimitChatBodyMiddleware:
                     len(msg),
                     CHAT_MESSAGE_MAX_CHARS,
                 )
-                await _send_json(send, 413, payload_too_large_body())
+                await _send_json(send, 413, payload_too_large_body(PAYLOAD_THREAD_TOO_LARGE))
                 return
 
         sent = False

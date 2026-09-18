@@ -17,8 +17,10 @@ class ChatGuardTests(unittest.TestCase):
             validate_payload([])
         with self.assertRaises(HTTPException):
             validate_payload([{"role": "assistant", "content": "hi"}])
-        with self.assertRaises(HTTPException):
-            validate_payload([{"role": "user", "content": "x" * 40_000}])
+        clipped = validate_payload([{"role": "user", "content": "x" * 40_000}])
+        from app.services.chat import MERGED_MESSAGE_CHAR_CAP
+
+        self.assertLessEqual(len(clipped[0]["content"]), MERGED_MESSAGE_CHAR_CAP)
         cleaned = validate_payload([{"role": "user", "content": "What is this about?"}])
         self.assertEqual(cleaned[0]["role"], "user")
         twelve_k = validate_payload([{"role": "user", "content": "x" * 12_000}])
@@ -168,6 +170,45 @@ class ChatGuardTests(unittest.TestCase):
             )
         self.assertEqual(caught.exception.status_code, 413)
         self.assertIn("too long", caught.exception.detail.lower())
+
+    def test_long_thread_with_attachment_survives_validate(self):
+        from app.services.chat import MERGED_MESSAGE_CHAR_CAP, messages_for_xai, messages_char_count
+
+        spec_extract = "Figure 8.5 network diagram " + ("detail " * 1500)
+        history: list[dict] = []
+        history.append(
+            {
+                "role": "user",
+                "content": "Summarize this spec",
+                "files": [
+                    {
+                        "filename": "PHASE1_SPEC.md",
+                        "kind": "file",
+                        "extract_text": spec_extract[:12_000],
+                    }
+                ],
+            }
+        )
+        history.append({"role": "assistant", "content": "Overview of phase one architecture."})
+        for index in range(2, 24):
+            if index % 2 == 0:
+                history.append({"role": "user", "content": f"What about section {index}? Figure 8.5?"})
+            else:
+                history.append({"role": "assistant", "content": f"Section {index} covers layers and routing." * 40})
+        prepared = messages_for_xai(history, model="grok-4.6")
+        cleaned = validate_payload(prepared)
+        self.assertEqual(cleaned[-1]["role"], "user")
+        self.assertIn("Figure 8.5", cleaned[-1]["content"])
+        self.assertLessEqual(len(cleaned[-1]["content"]), MERGED_MESSAGE_CHAR_CAP)
+        self.assertLessEqual(messages_char_count(cleaned), 120_000)
+
+    def test_thread_trim_cap_shrinks_when_working_note_attached(self):
+        from app.services.chat import thread_trim_cap
+
+        bare = thread_trim_cap()
+        with_work = thread_trim_cap(system_overhead=80_000)
+        self.assertLess(with_work, bare)
+        self.assertGreaterEqual(with_work, 12_000)
 
     def test_trim_prepared_shortens_old_assistant_turns(self):
         from app.services.chat import _trim_prepared_for_cap, messages_char_count

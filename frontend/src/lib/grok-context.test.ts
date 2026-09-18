@@ -82,6 +82,23 @@ test("thread plus extracts plus include all count", () => {
   assert.equal(chars, 4 * 7);
 });
 
+test("include mode ignores a long thread when checking the cap", () => {
+  const hugeThread = Array.from({ length: 20 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: "x".repeat(8_000),
+  }));
+  assert.equal(
+    chatContextOverCap({
+      messages: hugeThread,
+      draft: "summarize this heading",
+      includeArticle: true,
+      articleBody: "y".repeat(12_000),
+      includeSliceChars: 12_000,
+    }),
+    false,
+  );
+});
+
 test("the same article-as-note is not counted twice", () => {
   const body = "same-note-body";
   assert.equal(

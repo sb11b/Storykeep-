@@ -15,7 +15,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import settings
 from app.https_redirect import HttpsRedirectMiddleware
-from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
+from app.http_limits import PAYLOAD_THREAD_TOO_LARGE, PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
 from app.request_logging import JuniorRequestLogMiddleware
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
@@ -356,7 +356,7 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
     if request.method == "POST" and path == "/api/v1/chat" and _chat_message_too_long(exc):
         return JSONResponse(
             status_code=413,
-            content={"detail": PAYLOAD_TOO_LARGE, "code": "payload_too_large"},
+            content={"detail": PAYLOAD_THREAD_TOO_LARGE, "code": "payload_too_large"},
         )
     if _invalid_feed_uuid(exc):
         return JSONResponse(status_code=422, content={"detail": "Invalid feed"})

@@ -676,7 +676,7 @@ async def chat(
         raise
     except MemoryError:
         log_chat_exception("chat memory error", user=getattr(user, "id", None))
-        raise HTTPException(status_code=413, detail=chat_service.SEND_CONTEXT_TOO_LARGE) from None
+        raise HTTPException(status_code=413, detail=chat_service.SEND_THREAD_TOO_LARGE) from None
     except Exception:
         log_chat_exception("chat failed", user=getattr(user, "id", None))
         raise HTTPException(status_code=500, detail="Chat failed.") from None
@@ -954,8 +954,6 @@ def _chat(
         resolved_reasoning = "low"
         resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     step("prepare")
-    prepared = chat_service.messages_for_xai(history, model=resolved_model, db=db, user=user)
-    history_for_xai = chat_service.validate_payload(prepared)
     excerpt = None
     note_excerpt = None
     article_body = None
@@ -1033,12 +1031,29 @@ def _chat(
         working_excerpt = format_include_excerpt((working.title or "Untitled").strip(), working_slice)
         working_excerpt = f"working_note_id: {working.id}\n{working_excerpt}"
         include_meta = include_slice_meta(working_slice)
-    chat_service.reject_oversized_send(history, article_body=article_body, note_body=note_body)
+    system_overhead = len(excerpt or "") + len(note_excerpt or "") + len(working_excerpt or "")
+    prepared = chat_service.messages_for_xai(
+        history,
+        model=resolved_model,
+        db=db,
+        user=user,
+        trim_cap=chat_service.thread_trim_cap(system_overhead=system_overhead),
+    )
+    history_for_xai = chat_service.validate_payload(prepared)
+    chat_service.reject_oversized_send(
+        history,
+        article_body=article_body,
+        note_body=note_body,
+        working_excerpt=working_excerpt,
+        system_overhead=system_overhead,
+    )
     has_attachments = any(item.get("files") for item in history)
     step("unread")
     unread_catalog = None if mail_unread else unread_news_block(db, user.id, user_text)
     if unread_catalog:
-        history_for_xai = attach_unread_catalog(history_for_xai, unread_catalog)
+        history_for_xai = chat_service.validate_payload(
+            attach_unread_catalog(history_for_xai, unread_catalog)
+        )
     step("calendar")
     calendar_connected = calendars.is_connected(db, user_id) and not is_locked(user)
     step("mail")
