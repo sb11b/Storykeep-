@@ -166,7 +166,8 @@ class ChatGuardTests(unittest.TestCase):
         reject_oversized_send(long_thread)
         with self.assertRaises(HTTPException) as caught:
             reject_oversized_send(
-                [{"role": "user", "content": "x" * 120_001}],
+                [{"role": "user", "content": "x" * 150_000}],
+                working_excerpt="y" * 60_000,
             )
         self.assertEqual(caught.exception.status_code, 413)
         self.assertIn("too long", caught.exception.detail.lower())
@@ -203,12 +204,29 @@ class ChatGuardTests(unittest.TestCase):
         self.assertLessEqual(messages_char_count(cleaned), 120_000)
 
     def test_thread_trim_cap_shrinks_when_working_note_attached(self):
-        from app.services.chat import thread_trim_cap
+        from app.services.chat import _THREAD_TRIM_MIN, thread_trim_cap
 
         bare = thread_trim_cap()
         with_work = thread_trim_cap(system_overhead=80_000)
         self.assertLess(with_work, bare)
-        self.assertGreaterEqual(with_work, 12_000)
+        self.assertGreaterEqual(with_work, _THREAD_TRIM_MIN)
+
+    def test_cap_working_excerpt_keeps_thread_room(self):
+        from app.services.chat import cap_working_excerpt
+
+        huge = "w" * 80_000
+        capped = cap_working_excerpt(huge, thread_chars=170_000)
+        self.assertIsNotNone(capped)
+        assert capped is not None
+        self.assertLess(len(capped), len(huge))
+        self.assertGreaterEqual(len(capped), 8_000)
+
+    def test_map_xai_context_length_maps_to_thread_error(self):
+        from app.services.chat import SEND_THREAD_TOO_LARGE, map_xai_http_error
+
+        mapped = map_xai_http_error(400, "context length exceeded", "grok-4.6")
+        self.assertEqual(mapped.status_code, 413)
+        self.assertEqual(mapped.detail, SEND_THREAD_TOO_LARGE)
 
     def test_trim_prepared_shortens_old_assistant_turns(self):
         from app.services.chat import _trim_prepared_for_cap, messages_char_count

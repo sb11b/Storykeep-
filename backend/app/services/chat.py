@@ -37,6 +37,7 @@ CHAT_FIRST_BYTE_TIMEOUT_SEC = 8.0
 CHAT_IDLE_AFTER_TOKEN_SEC = 60.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
 XAI_SILENT_DETAIL = "xAI silent"
+XAI_EMPTY_DETAIL = "Junior returned no text for this turn."
 CHAT_IDLE_TIMEOUT_DETAIL = "Timed out after 60s."
 SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
 # Railway env can still hold retired aliases. Invalid ids hang the stream until a proxy 504.
@@ -91,8 +92,10 @@ MAX_MESSAGES = 24
 XAI_CONTEXT_MESSAGES = 12
 TOTAL_CHAR_CAP = 120_000
 SEND_CONTEXT_CHAR_CAP = 120_000
+_XAI_COMBINED_CHAR_CAP = 200_000
 _THREAD_TRIM_TARGET = 100_000
-_THREAD_TRIM_MIN = 12_000
+_THREAD_TRIM_MIN = 32_000
+_WORKING_NOTE_STREAM_MIN = 8_000
 SEND_CONTEXT_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
 SEND_THREAD_TOO_LARGE = "This thread slice is too long. Shorten your message or start a new chat."
 _THREAD_TRIM_ASSISTANT = 1_200
@@ -529,10 +532,13 @@ def _transport_error_detail(exc: httpx.HTTPError) -> str:
 
 def map_xai_http_error(status_code: int, detail: str, model: str) -> HTTPException:
     cleaned = (detail or "").strip() or f"xAI returned HTTP {status_code}."
+    lowered = cleaned.lower()
     if status_code == 401:
         return HTTPException(status_code=401, detail="xAI auth failed")
     if status_code == 404:
         return HTTPException(status_code=400, detail=f"Invalid xAI model: {model}")
+    if status_code == 413 or "context length" in lowered or "payload too large" in lowered:
+        return HTTPException(status_code=413, detail=SEND_THREAD_TOO_LARGE)
     if status_code in {400, 422}:
         return HTTPException(status_code=502, detail=cleaned)
     return HTTPException(status_code=502, detail=f"xAI HTTP {status_code}: {cleaned}")
@@ -836,8 +842,26 @@ def article_body_text(article: Article) -> str:
 
 def thread_trim_cap(*, system_overhead: int = 0) -> int:
     """Reserve room in the xAI window for system prompt slices and memory."""
-    reserve = max(0, int(system_overhead)) + _SYSTEM_OVERHEAD_RESERVE
-    return max(_THREAD_TRIM_MIN, _THREAD_TRIM_TARGET - reserve)
+    overhead = min(max(0, int(system_overhead)), 80_000)
+    shaved = _SYSTEM_OVERHEAD_RESERVE + overhead // 4
+    return max(_THREAD_TRIM_MIN, _THREAD_TRIM_TARGET - shaved)
+
+
+def cap_working_excerpt(
+    working_excerpt: str | None,
+    *,
+    thread_chars: int,
+    include_chars: int = 0,
+) -> str | None:
+    """Keep thread + attachment context; shrink the working-note slice if needed."""
+    text = (working_excerpt or "").strip()
+    if not text:
+        return None
+    budget = _XAI_COMBINED_CHAR_CAP - max(0, int(thread_chars)) - max(0, int(include_chars)) - _SYSTEM_OVERHEAD_RESERVE
+    limit = max(_WORKING_NOTE_STREAM_MIN, budget)
+    if len(text) <= limit:
+        return text
+    return _clip_text(text, limit)
 
 
 def _trim_prepared_for_cap(prepared: list[dict], cap: int) -> list[dict]:
@@ -914,13 +938,14 @@ def reject_oversized_send(
     if note_body and note_body != article_body:
         include_chars += len(note_body)
     working_chars = len(working_excerpt or "")
+    combined = thread_chars + include_chars + working_chars
     if not article_body and not note_body:
-        if thread_chars + working_chars > TOTAL_CHAR_CAP:
+        if combined > _XAI_COMBINED_CHAR_CAP:
             raise HTTPException(status_code=413, detail=SEND_THREAD_TOO_LARGE)
         return
     if include_chars > INCLUDE_TURN_CHAR_CAP:
         raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
-    if thread_chars + include_chars + working_chars > SEND_CONTEXT_CHAR_CAP:
+    if combined > _XAI_COMBINED_CHAR_CAP:
         raise HTTPException(status_code=413, detail=SEND_CONTEXT_TOO_LARGE)
 
 

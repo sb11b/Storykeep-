@@ -1031,6 +1031,20 @@ def _chat(
         working_excerpt = format_include_excerpt((working.title or "Untitled").strip(), working_slice)
         working_excerpt = f"working_note_id: {working.id}\n{working_excerpt}"
         include_meta = include_slice_meta(working_slice)
+    include_chars = len(article_body or "")
+    if note_body and note_body != article_body:
+        include_chars += len(note_body)
+    rough_thread = chat_service.messages_for_xai(
+        history,
+        model=resolved_model,
+        db=db,
+        user=user,
+    )
+    working_excerpt = chat_service.cap_working_excerpt(
+        working_excerpt,
+        thread_chars=chat_service.messages_char_count(rough_thread),
+        include_chars=include_chars,
+    )
     system_overhead = len(excerpt or "") + len(note_excerpt or "") + len(working_excerpt or "")
     prepared = chat_service.messages_for_xai(
         history,
@@ -1401,8 +1415,13 @@ def _chat(
                 note = "I can send this Fastmail message after you confirm."
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+            if not saw_text:
+                yield chat_service.encode_sse(
+                    chat_service.stream_error_event(504, chat_service.XAI_EMPTY_DETAIL)
+                )
+                return
             if persist and conversation_id:
-                assistant_text = "".join(assistant_parts).strip() or "No reply came back."
+                assistant_text = "".join(assistant_parts).strip()
                 assistant_message_id = _persist_assistant(assistant_text)
                 if assistant_message_id:
                     yield chat_service.encode_sse(

@@ -234,6 +234,27 @@ class ChatSilentGateTests(unittest.TestCase):
         tools = captured.get("tools")
         self.assertTrue(tools is None or all((t.get("function") or {}).get("name") != "propose_send_mail" for t in tools))
 
+    def test_empty_xai_stream_emits_error_not_done(self):
+        async def empty(*_args, **_kwargs):
+            if False:
+                yield ""  # pragma: no cover
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch.object(chat_service, "stream_completion", empty),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "hello", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("returned no text", response.text)
+        self.assertNotIn("data: [DONE]", response.text)
+
     def test_empty_piece_after_connect_is_thinking(self):
         async def fake_stream(*_args, **kwargs):
             yield ""

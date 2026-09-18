@@ -23,6 +23,7 @@ import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "
 import { folderById } from "@/lib/folders";
 import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
+  chatTimeoutToast,
   formatChatError,
   isOversizedPasteHttp,
   readableXaiToast,
@@ -720,6 +721,7 @@ export function GrokPane({
 
     setBusy(true);
     let streamFailed = false;
+    let streamedText = "";
     let conversationId: string | null = conversationIdForRequest(pane.conversationId);
     try {
       conversationId = conversationIdForRequest(pane.conversationId);
@@ -782,23 +784,25 @@ export function GrokPane({
         },
         (delta) => {
           if (turnId !== turnIdRef.current) return;
+          if ((delta || "").trim()) gotDeltaRef.current = true;
           const generating = generatingRef.current;
           if (!generating) markWriting();
           onUpdate((current) => ({
             ...current,
             streamStatus: generating ? "generating" : "writing",
-            messages: current.messages.map((item) =>
-              item.id === assistantId
-                ? {
-                    ...item,
-                    waiting: true,
-                    turnStatus: generating ? "writing" : "writing",
-                    content: MEDIA_MARKDOWN.test(delta) ? delta : item.content + delta,
-                    failed: false,
-                    error: null,
-                  }
-                : item,
-            ),
+            messages: current.messages.map((item) => {
+              if (item.id !== assistantId) return item;
+              const nextContent = MEDIA_MARKDOWN.test(delta) ? delta : item.content + delta;
+              streamedText = nextContent;
+              return {
+                ...item,
+                waiting: true,
+                turnStatus: generating ? "writing" : "writing",
+                content: nextContent,
+                failed: false,
+                error: null,
+              };
+            }),
           }));
         },
         (meta) => {
@@ -988,15 +992,23 @@ export function GrokPane({
       const imageFail = generatingRef.current || /did not return an image|could not generate that image/i.test(detail);
       const shortImage = readableXaiToast(detail);
       const capDetail = /over the cap|too long|Recent messages are too long/i.test(detail) ? detail : null;
+      const timeoutDetail = chatTimeoutToast(status, detail);
+      const emptyDetail = /returned no text|xai silent/i.test(detail) ? readableXaiToast(detail) : null;
       const toastText = imageFail
         ? (shortImage.length > 180 ? "Could not generate that image." : shortImage)
         : capDetail
           ? capDetail
-          : oversizedPaste && turnText.length >= PASTE_FIRST_CHUNK_CHARS
-            ? pasteSplitToast(turnText.length)
-            : status === 413 || status === 400
-              ? detail
-              : NO_REPLY_TOAST;
+          : emptyDetail
+            ? emptyDetail
+            : timeoutDetail && status === 504
+              ? timeoutDetail
+              : oversizedPaste && turnText.length >= PASTE_FIRST_CHUNK_CHARS
+                ? pasteSplitToast(turnText.length)
+                : status === 413 || status === 400
+                  ? detail
+                  : status === 502
+                    ? readableXaiToast(detail)
+                    : NO_REPLY_TOAST;
       onUpdate((current) => ({
         ...current,
         streamStatus: "error",
@@ -1035,24 +1047,25 @@ export function GrokPane({
       setAborting(false);
       setBusy(false);
       if (streamFailed) return;
-      if (gotDeltaRef.current) {
+      const hasReply =
+        gotDeltaRef.current ||
+        Boolean(streamedText.trim()) ||
+        hasMediaImage(streamedText) ||
+        /\/api\/v1\/media\//.test(streamedText);
+      if (hasReply) {
         clearStreamStatus();
-        let assistantText = "";
-        onUpdate((current) => {
-          assistantText = current.messages.find((item) => item.id === assistantId)?.content || "";
-          return {
-            ...current,
-            streamStatus: null,
-            messages: current.messages.map((item) =>
-              item.id === assistantId || item.waiting
-                ? { ...item, waiting: false, turnStatus: "done" as const, failed: false, error: null }
-                : item,
-            ),
-          };
-        });
-        if (messageCryptoEnabled && conversationId && assistantText.trim()) {
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: null,
+          messages: current.messages.map((item) =>
+            item.id === assistantId || item.waiting
+              ? { ...item, waiting: false, turnStatus: "done" as const, failed: false, error: null }
+              : item,
+          ),
+        }));
+        if (messageCryptoEnabled && conversationId && streamedText.trim()) {
           try {
-            const blob = await encryptMessageBody(assistantText);
+            const blob = await encryptMessageBody(streamedText);
             await api.postEncryptedMessage(conversationId, {
               role: "assistant",
               iv: blob.iv,
