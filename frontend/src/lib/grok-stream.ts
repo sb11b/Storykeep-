@@ -2,8 +2,10 @@ import { ApiError } from "@/lib/api";
 import { formatChatError } from "@/lib/grok-chat-error";
 import { spendChipLabel } from "@/lib/grok-model";
 
-/** Match the server's 8s first-token cut, including a hung /chat fetch. */
-export const GROK_STREAM_FIRST_BYTE_MS = 8_000;
+/** Wait for /chat response headers through heavy setup (attachments, working notes). */
+export const GROK_STREAM_HEADER_MS = 25_000;
+/** Default first-token window; heavy turns extend via first_byte_timeout_ms from the server. */
+export const GROK_STREAM_FIRST_BYTE_MS = 60_000;
 /** After tokens started, abort only if the stream goes idle this long. */
 export const GROK_STREAM_IDLE_AFTER_MS = 60_000;
 /** Imagine edits/generations regularly take longer than the text-chat idle window. */
@@ -38,6 +40,7 @@ export type GrokStreamMeta = {
   toast?: string;
   toast_kind?: string;
   search_status?: number;
+  first_byte_timeout_ms?: number;
 };
 
 export type GrokStreamHandlers = {
@@ -74,6 +77,7 @@ type StreamPayload = {
   toast?: string;
   toast_kind?: string;
   search_status?: number;
+  first_byte_timeout_ms?: number;
 };
 
 function parseSsePart(

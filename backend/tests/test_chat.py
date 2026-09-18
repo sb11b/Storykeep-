@@ -221,6 +221,20 @@ class ChatGuardTests(unittest.TestCase):
         self.assertLess(len(capped), len(huge))
         self.assertGreaterEqual(len(capped), 8_000)
 
+    def test_first_byte_timeout_scales_with_attachments(self):
+        from app.services.chat import first_byte_timeout_sec
+
+        hello = first_byte_timeout_sec(message_chars=200)
+        heavy = first_byte_timeout_sec(
+            message_chars=70_000,
+            has_attachments=True,
+            has_working_note=True,
+            reasoning_effort="xhigh",
+        )
+        self.assertLess(hello, heavy)
+        self.assertGreaterEqual(heavy, 60.0)
+        self.assertLessEqual(heavy, 90.0)
+
     def test_map_xai_context_length_maps_to_thread_error(self):
         from app.services.chat import SEND_THREAD_TOO_LARGE, map_xai_http_error
 

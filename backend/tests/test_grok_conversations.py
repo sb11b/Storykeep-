@@ -165,7 +165,7 @@ class GrokConversationTests(unittest.TestCase):
         from app.services.chat import CHAT_FIRST_BYTE_TIMEOUT_SEC, CHAT_IDLE_AFTER_TOKEN_SEC, CHAT_IDLE_TIMEOUT_DETAIL
         from app.services.chat import posted_spend_label
 
-        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 8.0)
+        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 20.0)
         self.assertEqual(CHAT_IDLE_AFTER_TOKEN_SEC, 60.0)
         self.assertEqual(CHAT_IDLE_TIMEOUT_DETAIL, "Timed out after 60s.")
         self.assertEqual(posted_spend_label("grok-4.6", "low"), "4.6 · low")
@@ -214,7 +214,7 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(event["message"], "Grok timed out after 45s.")
 
     def test_first_byte_timeout_is_eight_seconds_xai_silent(self):
-        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 8.0)
+        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 20.0)
         self.assertEqual(XAI_SILENT_DETAIL, "xAI silent")
         event = stream_error_event(504, XAI_SILENT_DETAIL)
         self.assertEqual(event["message"], "xAI silent")

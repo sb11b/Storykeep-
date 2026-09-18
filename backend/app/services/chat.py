@@ -33,7 +33,9 @@ REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_REASONING_EFFORT = "low"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
-CHAT_FIRST_BYTE_TIMEOUT_SEC = 8.0
+CHAT_FIRST_BYTE_TIMEOUT_SEC = 20.0
+CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC = 60.0
+CHAT_FIRST_BYTE_TIMEOUT_MAX_SEC = 90.0
 CHAT_IDLE_AFTER_TOKEN_SEC = 60.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
 XAI_SILENT_DETAIL = "xAI silent"
@@ -467,10 +469,33 @@ def require_key() -> str:
     return key
 
 
+def first_byte_timeout_sec(
+    *,
+    message_chars: int,
+    has_attachments: bool = False,
+    has_tools: bool = False,
+    will_search: bool = False,
+    has_working_note: bool = False,
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
+) -> float:
+    """Heavy turns (files, working notes, tools) need a longer first-token window."""
+    timeout = float(CHAT_FIRST_BYTE_TIMEOUT_SEC)
+    if has_attachments or has_working_note:
+        timeout = max(timeout, 45.0)
+    if has_tools or will_search:
+        timeout = max(timeout, 45.0)
+    if message_chars > 60_000:
+        timeout = max(timeout, CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC)
+    elif message_chars > 30_000:
+        timeout = max(timeout, 35.0)
+    if (reasoning_effort or "").strip().lower() in {"high", "xhigh"}:
+        timeout = max(timeout, CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC)
+    return min(timeout, CHAT_FIRST_BYTE_TIMEOUT_MAX_SEC)
+
+
 def _chat_timeout(*, streaming: bool) -> httpx.Timeout:
     if streaming:
-        # Read idle is owned by asyncio.wait_for so we can fail "xAI silent" at 8s
-        # without httpx buffering the whole completion.
+        # Read idle is owned by asyncio.wait_for; httpx must not buffer the whole completion.
         return httpx.Timeout(
             None,
             connect=CHAT_CONNECT_TIMEOUT_SEC,
@@ -903,6 +928,11 @@ def _trim_prepared_for_cap(prepared: list[dict], cap: int) -> list[dict]:
     return trimmed
 
 
+def slim_history_for_retry(history: list[dict]) -> list[dict]:
+    """Second-chance payload: keep the latest user turn, drop older bulk."""
+    return _trim_prepared_for_cap(history, _THREAD_TRIM_MIN)
+
+
 def send_context_chars(
     history: list[dict],
     *,
@@ -1120,6 +1150,7 @@ async def stream_completion(
     log_slice_id: str | None = None,
     log_message_id: UUID | str | None = None,
     messages_override: list[dict] | None = None,
+    first_byte_timeout: float | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
     model = rewrite_xai_model(model)
@@ -1177,6 +1208,11 @@ async def stream_completion(
     started = time.perf_counter()
     first_token_at: float | None = None
     xai_status: int | str | None = None
+    fb_timeout = (
+        float(first_byte_timeout)
+        if first_byte_timeout is not None
+        else float(CHAT_FIRST_BYTE_TIMEOUT_SEC)
+    )
     try:
         async with httpx.AsyncClient(timeout=_chat_timeout(streaming=True)) as client:
             async with client.stream(
@@ -1211,6 +1247,7 @@ async def stream_completion(
                             log_slice_id=log_slice_id,
                             log_message_id=log_message_id,
                             messages_override=messages_override,
+                            first_byte_timeout=fb_timeout,
                         ):
                             yield piece
                         return
@@ -1230,7 +1267,7 @@ async def stream_completion(
                         return
                     elapsed = time.perf_counter() - started
                     if first_token_at is None:
-                        wait = CHAT_FIRST_BYTE_TIMEOUT_SEC - elapsed
+                        wait = fb_timeout - elapsed
                         if wait <= 0:
                             _xai_ttft_log(
                                 ok=False,

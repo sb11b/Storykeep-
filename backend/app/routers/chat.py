@@ -517,8 +517,8 @@ def imagine_image(
     }
 
 
-# First byte must land well inside the client's 8s watchdog.
-CHAT_SETUP_BUDGET_SEC = 6.0
+# Heavy turns (attachments, working notes) can spend several seconds in setup.
+CHAT_SETUP_BUDGET_SEC = 20.0
 CHAT_SETUP_TIMEOUT_DETAIL = "Chat stalled before xAI. Try again."
 
 
@@ -1176,6 +1176,27 @@ def _chat(
     )
     tools = (*(calendar_tools or []), *(mail_tools or []), *(search_tools or []), *(chat_tools or [])) or None
     tool_calls_out: list[dict] = []
+    payload_chars = chat_service.messages_char_count(
+        chat_service.build_xai_messages(
+            history_for_xai,
+            excerpt,
+            include_article=include_article,
+            recap_question=recap_question,
+            has_attachments=has_attachments,
+            include_note=include_note,
+            note_excerpt=note_excerpt,
+            working_excerpt=working_excerpt,
+            extra_system=extra_system,
+        )
+    )
+    first_byte_timeout = chat_service.first_byte_timeout_sec(
+        message_chars=payload_chars,
+        has_attachments=has_attachments,
+        has_tools=bool(tools),
+        will_search=will_search,
+        has_working_note=bool(working_excerpt),
+        reasoning_effort=resolved_reasoning,
+    )
 
     def _persist_assistant(text: str) -> str | None:
         cleaned = chat_docx.strip_keep_notes_cta((text or "").strip())
@@ -1222,23 +1243,31 @@ def _chat(
 
     read_payload_first_stream = bool(read_slice_payload)
 
-    def _open_stream(extra: str | None, stream_tools: list[dict] | None):
+    def _open_stream(
+        extra: str | None,
+        stream_tools: list[dict] | None,
+        *,
+        history: list[dict] | None = None,
+        working: str | None = None,
+        reasoning: str | None = None,
+        fb_timeout: float | None = None,
+    ):
         nonlocal read_payload_first_stream
         override = _read_chat_messages(extra) if read_payload_first_stream else None
         read_payload_first_stream = False
         return chat_service.stream_completion(
-            history_for_xai,
+            history if history is not None else history_for_xai,
             excerpt,
             include_article=include_article,
             recap_question=recap_question,
             model=resolved_model,
             model_choice=model_choice,
-            reasoning_effort=resolved_reasoning,
+            reasoning_effort=reasoning if reasoning is not None else resolved_reasoning,
             user_id=user_id,
             has_attachments=has_attachments,
             include_note=include_note,
             note_excerpt=note_excerpt,
-            working_excerpt=working_excerpt,
+            working_excerpt=working if working is not None else working_excerpt,
             extra_system=extra,
             cancelled=cancelled,
             tools=stream_tools,
@@ -1247,7 +1276,49 @@ def _chat(
             log_slice_id=log_slice_id,
             log_message_id=user_message_id,
             messages_override=override,
+            first_byte_timeout=fb_timeout if fb_timeout is not None else first_byte_timeout,
         )
+
+    async def _stream_xai(extra: str | None, stream_tools: list[dict] | None):
+        slim_history = chat_service.slim_history_for_retry(history_for_xai)
+        slim_reasoning = chat_service.clamp_reasoning_effort(resolved_model, "low")
+        slim_timeout = chat_service.first_byte_timeout_sec(
+            message_chars=min(payload_chars, chat_service.messages_char_count(slim_history) + 8_000),
+            has_attachments=has_attachments,
+            has_tools=bool(stream_tools),
+            will_search=False,
+            has_working_note=False,
+            reasoning_effort=slim_reasoning,
+        )
+        tried_slim = False
+        while True:
+            try:
+                async for piece in _open_stream(
+                    extra,
+                    stream_tools,
+                    history=slim_history if tried_slim else None,
+                    working="" if tried_slim else None,
+                    reasoning=slim_reasoning if tried_slim else None,
+                    fb_timeout=slim_timeout if tried_slim else None,
+                ):
+                    yield piece
+                return
+            except HTTPException as exc:
+                status_code, detail = chat_service.http_exception_detail(exc)
+                if (
+                    tried_slim
+                    or status_code != 504
+                    or detail != chat_service.XAI_SILENT_DETAIL
+                ):
+                    raise
+                tried_slim = True
+                tool_calls_out.clear()
+                logger.warning(
+                    "xAI silent on full context — retrying slim user=%s conversation=%s chars=%s",
+                    user_id,
+                    conversation_id,
+                    payload_chars,
+                )
 
     async def watch_disconnect() -> None:
         try:
@@ -1287,6 +1358,7 @@ def _chat(
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
+                "first_byte_timeout_ms": int(first_byte_timeout * 1000),
                 **include_meta,
             }
             if persist and conversation_id:
@@ -1317,7 +1389,7 @@ def _chat(
                 else:
                     block = search_tool.format_hits_for_model(outcome.hits)
                     extra = f"{extra}\n{block}" if extra else block
-            stream = _open_stream(extra, tools)
+            stream = _stream_xai(extra, tools)
             async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():
                     cancelled.set()
@@ -1381,7 +1453,7 @@ def _chat(
                 extra = extra_system
                 for block in follow_blocks:
                     extra = f"{extra}\n{block}" if extra else block
-                async for piece in _open_stream(extra, None):
+                async for piece in _stream_xai(extra, None):
                     if cancelled.is_set() or await request.is_disconnected():
                         cancelled.set()
                         if piece:

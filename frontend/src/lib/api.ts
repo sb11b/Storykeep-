@@ -46,6 +46,7 @@ import { fetchSpeechChunk } from "@/lib/tts-speech-client";
 import { formatChatError } from "@/lib/grok-chat-error";
 import {
   GROK_STREAM_FIRST_BYTE_MS,
+  GROK_STREAM_HEADER_MS,
   readGrokChatStream,
   startChatFirstByteWatchdog,
   type GrokStreamMeta,
@@ -755,7 +756,7 @@ export const api = {
       const payload: typeof body = { ...body };
       if (conversationId) payload.conversation_id = conversationId;
       else delete payload.conversation_id;
-      const headerWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
+      const headerWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_HEADER_MS);
       let tokenWatch: ReturnType<typeof startChatFirstByteWatchdog> | null = null;
       try {
         let response: Response | undefined;
@@ -789,7 +790,8 @@ export const api = {
           throw new ApiError(response.status, formatChatError(response.status, detail));
         }
         onOpen?.();
-        tokenWatch = startChatFirstByteWatchdog(signal, GROK_STREAM_FIRST_BYTE_MS);
+        let firstByteMs = GROK_STREAM_FIRST_BYTE_MS;
+        tokenWatch = startChatFirstByteWatchdog(signal, firstByteMs);
         await readGrokChatStream(
           response,
           {
@@ -798,6 +800,14 @@ export const api = {
               onDelta(text);
             },
             onMeta: (meta) => {
+              if (
+                typeof meta.first_byte_timeout_ms === "number" &&
+                meta.first_byte_timeout_ms > firstByteMs
+              ) {
+                firstByteMs = meta.first_byte_timeout_ms;
+                tokenWatch?.disarm();
+                tokenWatch = startChatFirstByteWatchdog(signal, firstByteMs);
+              }
               if (
                 meta.stream_status === "thinking" ||
                 meta.stream_status === "working" ||
@@ -812,7 +822,7 @@ export const api = {
             },
           },
           tokenWatch.signal,
-          { firstByteMs: GROK_STREAM_FIRST_BYTE_MS },
+          { firstByteMs },
         );
       } catch (error) {
         (tokenWatch ?? headerWatch).throwIfSilent(error);

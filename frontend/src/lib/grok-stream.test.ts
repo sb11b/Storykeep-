@@ -24,8 +24,8 @@ function sseResponse(chunks: string[]): Response {
   return new Response(stream);
 }
 
-test("first-byte budget is 8 seconds", () => {
-  assert.equal(GROK_STREAM_FIRST_BYTE_MS, 8_000);
+test("first-byte budget allows heavy attachment turns", () => {
+  assert.equal(GROK_STREAM_FIRST_BYTE_MS, 60_000);
 });
 
 test("first-byte watchdog becomes xAI silent", async () => {
