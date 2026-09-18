@@ -72,7 +72,7 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | --- | --- |
 | `DATABASE_URL` | Postgres URL. Parsed into host/user/password. Public Railway hosts use TLS without verifying the proxy cert. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`. |
 | `SECRET_KEY` | JWT signing key |
-| `SEED_DEMO` | Create the demo user and sample feeds (`1` by default) |
+| `SEED_DEMO` | Local only. May lock a legacy demo row; never creates a login. Off in production. |
 | `S3_BUCKET` | Optional backup destination |
 | `BACKUP_INTERVAL_HOURS` | Scheduled S3/B2 database dump interval (default 24; `0` disables) |
 | `S3_PREFIX` | Object prefix, default `storykeep` |
@@ -90,6 +90,14 @@ S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 ## Android later
 
 `POST /api/v1/sync/delta` and `POST /api/v1/sync/push` are the contract for an offline reader. Saved articles include `content_html` so a phone can keep the text without hitting the original site.
+
+## Security (Junior lockdown)
+
+- Junior API routes require an authenticated owner session (`require_user`). Unauthenticated requests get 401; closed demo accounts get 401/403. No public Junior surface.
+- Session cookie `sk_access`: HttpOnly, Secure in production, SameSite=Lax.
+- Production trusts Railway `X-Forwarded-Proto` and redirects HTTP to HTTPS (`/health` stays plain HTTP for probes).
+- Application logs never include request bodies, chat text, `Authorization`, or cookies — only ids, status, latency, and char counts.
+- **Postgres:** use Railway private networking (`*.railway.internal`) when possible; grant the app a non-superuser DB role; encrypt database dumps at rest with a key stored separately from the dump file (e.g. B2 credentials in Railway vars, not beside the `.sql` on disk).
 
 ## Deploy on Railway
 

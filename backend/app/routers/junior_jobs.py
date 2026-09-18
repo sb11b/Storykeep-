@@ -9,13 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import require_user
 from app.models import JuniorJob, User
 from app.routers.articles import _owned_article
 from app.schemas import GrokMessageOut
 from app.services import grok_conversations as grok_store
 from app.services import junior_jobs as jobs
-from app.services.demo_lock import reject_locked
 from app.services.destination import normalize_destination
 from app.services.folders import resolve_folder_id
 
@@ -116,15 +115,13 @@ def _apply_fields(db: Session, user: User, row: JuniorJob, data: dict) -> None:
 
 
 @router.get("")
-def list_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
+def list_jobs(db: Session = Depends(get_db), user: User = Depends(require_user)) -> dict:
     rows = db.scalars(select(JuniorJob).where(JuniorJob.user_id == user.id).order_by(JuniorJob.updated_at.desc())).all()
     return {"items": [_job_out(row) for row in rows]}
 
 
 @router.post("")
-def create_job(payload: JobIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
+def create_job(payload: JobIn, db: Session = Depends(get_db), user: User = Depends(require_user)) -> dict:
     jobs.parse_cron(payload.cron)
     row = JuniorJob(
         user_id=user.id,
@@ -154,9 +151,8 @@ def patch_job(
     job_id: UUID,
     payload: JobPatch,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     row = jobs.owned_job(db, user, job_id)
     data = payload.model_dump(exclude_unset=True)
     _apply_fields(db, user, row, data)
@@ -167,8 +163,7 @@ def patch_job(
 
 
 @router.delete("/{job_id}")
-def delete_job(job_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
+def delete_job(job_id: UUID, db: Session = Depends(get_db), user: User = Depends(require_user)) -> dict:
     row = jobs.owned_job(db, user, job_id)
     db.delete(row)
     db.commit()
@@ -183,8 +178,7 @@ def cron_run_due(request: Request, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/{job_id}/run")
-def run_now(job_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
+def run_now(job_id: UUID, db: Session = Depends(get_db), user: User = Depends(require_user)) -> dict:
     row = jobs.owned_job(db, user, job_id)
     result = jobs.execute_job(db, row, trigger="manual")
     assistant = result["assistant_message"]

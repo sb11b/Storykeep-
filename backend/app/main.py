@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.config import settings
 from app.https_redirect import HttpsRedirectMiddleware
 from app.http_limits import PAYLOAD_TOO_LARGE, LimitChatBodyMiddleware, log_chat_exception
+from app.request_logging import JuniorRequestLogMiddleware
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
 from app.routers import articles, auth, backups, calendar, chat, feeds, junior_chats, junior_jobs, junior_memory, library, mail, overlay, school, stt, sync, tts
@@ -372,6 +373,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 app.add_middleware(NormalizeApiPathMiddleware)
+app.add_middleware(JuniorRequestLogMiddleware)
 app.add_middleware(LimitChatBodyMiddleware)
 
 app.add_middleware(

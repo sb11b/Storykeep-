@@ -40,7 +40,7 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | From the Postgres plugin |
 | `SECRET_KEY` | Recommended | Any long random string. If you skip it, a stable key is derived from the database URL. |
-| `SEED_DEMO` | No | Defaults on. May create a locked internal demo user and sample feeds. Password login for `steve@storykeep.local` is closed. |
+| `SEED_DEMO` | No | Local/dev only. Off in production. Never creates a demo login; `steve@storykeep.local` stays closed. |
 | `S3_BUCKET` | No | Optional AWS S3 bucket if you are not using Backblaze |
 | `B2_KEY_ID` | No | Backblaze application key ID |
 | `B2_APPLICATION_KEY` | No | Backblaze application key (never put this in git or the browser) |
@@ -65,6 +65,12 @@ Create your own account from the same screen if you prefer. Feeds keep importing
 
 Settings → Networking → Custom domain. HTTPS is automatic. In production the app trusts Railway `X-Forwarded-Proto` and redirects leftover `http` to `https` (health checks on `/health` stay plain HTTP). Session cookies are marked `Secure` when `ENV` or `RAILWAY_ENVIRONMENT` is `production`.
 
-## 6. Backups on Railway
+## 6. Database security
+
+- Prefer the Postgres **private** URL (`*.railway.internal`) for the app service when both run in the same Railway project.
+- Use a dedicated application DB user — not the Postgres superuser — with only the privileges StoryKeep needs.
+- Scheduled `pg_dump` uploads go to B2/S3; **encrypt dumps at rest** and keep encryption keys in Railway variables, not in the same folder as the dump artifact.
+
+## 7. Backups on Railway
 
 Chat photos live on the **storykeep** volume at `/app/var` (`DATA_DIR=/app/var`). Pre-volume media ids 404 if the file was never on that volume — do not migrate ghosts. Use **Export JSON**, S3/B2, or that volume for other app data.

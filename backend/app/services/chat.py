@@ -954,6 +954,7 @@ async def stream_completion(
     tool_calls_out: list[dict] | None = None,
     log_chat_id: UUID | str | None = None,
     log_slice_id: str | None = None,
+    log_message_id: UUID | str | None = None,
     messages_override: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     key = require_key()
@@ -999,9 +1000,12 @@ async def stream_completion(
         tools=attach_tools,
     )
     log_model_call(
+        user_id=user_id,
         chat_id=log_chat_id,
+        message_id=log_message_id,
         slice_id=log_slice_id,
         n_chars=messages_char_count(xai_messages),
+        status="stream",
     )
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -1038,6 +1042,7 @@ async def stream_completion(
                             tool_calls_out=tool_calls_out,
                             log_chat_id=log_chat_id,
                             log_slice_id=log_slice_id,
+                            log_message_id=log_message_id,
                             messages_override=messages_override,
                         ):
                             yield piece

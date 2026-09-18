@@ -17,7 +17,14 @@ CHAT_PATHS = frozenset({"/api/v1/chat"})
 PAYLOAD_TOO_LARGE = "This turn is over the cap. Include a heading, a selection, or the next chunk."
 
 _SECRET_RE = re.compile(
-    r"(?i)(?:xai-[A-Za-z0-9_-]{8,}|fmu1-[A-Za-z0-9_-]+|bearer\s+[A-Za-z0-9._\-+/=]+|authorization:\s*\S+)"
+    r"(?i)(?:"
+    r"xai-[A-Za-z0-9_-]{8,}|"
+    r"fmu1-[A-Za-z0-9_-]+|"
+    r"bearer\s+[A-Za-z0-9._\-+/=]+|"
+    r"authorization:\s*\S+|"
+    r"sk_access=[^;\s]+|"
+    r"cookie:\s*\S+"
+    r")"
 )
 
 
@@ -34,16 +41,22 @@ def log_chat_exception(context: str, **extra: object) -> None:
 
 def log_model_call(
     *,
+    user_id: object | None = None,
     chat_id: object | None = None,
+    message_id: object | None = None,
     slice_id: str | None = None,
     n_chars: int = 0,
+    status: object | None = None,
 ) -> None:
     """Structured metadata for xAI turns. Never log message bodies or prompts."""
     logger.info(
-        "model_call chat_id=%s slice=%s n_chars=%s",
-        chat_id,
+        "model_call user_id=%s chat_id=%s message_id=%s slice=%s n_chars=%s status=%s",
+        user_id or "-",
+        chat_id or "-",
+        message_id or "-",
         slice_id or "-",
         n_chars,
+        status or "-",
     )
 
 

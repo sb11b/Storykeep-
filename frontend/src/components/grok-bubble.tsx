@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Brain, CalendarClock, ChevronLeft, History, LoaderCircle, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
@@ -118,6 +119,7 @@ export function GrokBubble({
   onStopArticleListen?: () => void;
   onOpenArticle?: (id: string) => void;
 }) {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -271,7 +273,11 @@ export function GrokBubble({
         setPersist(Boolean(row.persist ?? !row.locked));
         if (row.models?.length) setChatModels(row.models);
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace("/login");
+          return;
+        }
         setEnabled(false);
         setLocked(false);
         setPersist(false);

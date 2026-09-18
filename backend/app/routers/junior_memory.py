@@ -5,10 +5,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import require_user
 from app.models import User
 from app.services import junior_memory as memory
-from app.services.demo_lock import reject_locked
 
 router = APIRouter(prefix="/junior", tags=["junior-memory"])
 
@@ -18,8 +17,7 @@ class MemoryIn(BaseModel):
 
 
 @router.get("/memory")
-def get_memory(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    reject_locked(user)
+def get_memory(db: Session = Depends(get_db), user: User = Depends(require_user)) -> dict:
     row = memory.get_row(db, user.id)
     return {
         "markdown": (row.markdown if row else "") or "",
@@ -31,9 +29,8 @@ def get_memory(db: Session = Depends(get_db), user: User = Depends(get_current_u
 def put_memory(
     payload: MemoryIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     row = memory.save_markdown(db, user, payload.markdown)
     db.commit()
     return {

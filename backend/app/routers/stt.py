@@ -13,9 +13,9 @@ from sqlalchemy.orm import Session
 from app.auth import decode_access_token
 from app.config import settings
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_user
 from app.models import User
-from app.services.demo_lock import is_locked
+from app.services.demo_lock import is_locked, reject_authentication
 from app.services.stt_clip import key_configured, transcribe_clip
 from app.services.stt_limits import enforce_stt_rate_limit
 
@@ -40,11 +40,12 @@ def _user_from_socket(websocket: WebSocket, db: Session) -> User:
     user = db.get(User, decode_access_token(token))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    reject_authentication(user)
     return user
 
 
 @router.get("/stt")
-def stt_status(user: User = Depends(get_current_user)) -> dict:
+def stt_status(user: User = Depends(require_user)) -> dict:
     locked = is_locked(user)
     return {
         "enabled": key_configured() and not locked,
@@ -59,7 +60,7 @@ def stt_status(user: User = Depends(get_current_user)) -> dict:
 @router.post("/stt")
 async def stt_clip(
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict[str, str]:
     payload = await file.read()
     return transcribe_clip(

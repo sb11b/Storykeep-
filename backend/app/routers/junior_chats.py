@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import require_user
 from app.models import User
 from app.schemas import JuniorChatOut
 from app.services import chat_index
@@ -30,6 +30,6 @@ def _row_out(row: dict) -> JuniorChatOut:
 @router.get("/chats", response_model=list[JuniorChatOut])
 def list_chats(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> list[JuniorChatOut]:
     return [_row_out(row) for row in chat_index.chats_for(db, user)]

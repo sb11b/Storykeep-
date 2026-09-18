@@ -9,6 +9,8 @@ DEMO_EMAIL = "steve@storykeep.local"
 
 def seed_demo(db: Session) -> User | None:
     """Keep any legacy demo row locked; never create or enable demo login."""
+    if settings.env == "production":
+        return None
     if not settings.seed_demo:
         return None
     user = db.scalar(select(User).where(User.email == DEMO_EMAIL))

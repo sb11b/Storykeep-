@@ -637,7 +637,7 @@ def run_due_jobs() -> None:
                 if exc.status_code == 429:
                     skipped.add(job.user_id)
                     continue
-                logger.warning("Due Junior job skipped id=%s detail=%s", job.id, exc.detail)
+                logger.warning("Due Junior job skipped id=%s status=%s", job.id, exc.status_code)
             except Exception:
                 logger.exception("Due Junior job failed id=%s", job.id)
     finally:

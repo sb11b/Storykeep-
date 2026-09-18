@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
-from app.deps import get_current_user
+from app.deps import require_user
 from app.models import User
 from app.routers.articles import _owned_article
 from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConversationPatchIn, GrokMessageFileOut, GrokMessageOut
@@ -38,7 +38,7 @@ from app.services import junior_memory
 from app.services import mail as mail_service
 from app.services import mail_tool
 from app.services import fastmail_jmap as jmap
-from app.services.demo_lock import is_locked, reject_locked
+from app.services.demo_lock import is_locked
 from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
 from app.services.include_chunk import format_excerpt as format_include_excerpt
 from app.services.include_chunk import resolve_include_slice
@@ -90,7 +90,7 @@ class SearchIn(BaseModel):
 
 
 @router.post("/search")
-def junior_web_search(payload: SearchIn, user: User = Depends(get_current_user)) -> dict:
+def junior_web_search(payload: SearchIn, user: User = Depends(require_user)) -> dict:
     search_tool.reject_demo(user)
     outcome = search_tool.search(payload.query)
     if outcome.fatal:
@@ -148,7 +148,7 @@ def _conversation_detail(row) -> GrokConversationDetailOut:
 
 
 @router.get("/chat")
-def chat_status(user: User = Depends(get_current_user)) -> dict:
+def chat_status(user: User = Depends(require_user)) -> dict:
     locked = is_locked(user)
     models = chat_service.available_models()
     return {
@@ -169,7 +169,7 @@ def chat_status(user: User = Depends(get_current_user)) -> dict:
 
 
 @router.get("/chat/health")
-def chat_health(user: User = Depends(get_current_user)) -> dict:
+def chat_health(user: User = Depends(require_user)) -> dict:
     """Ping xAI with a 1-token request. Auth required; does not consume chat quota."""
     if not chat_service.key_configured():
         return {
@@ -186,7 +186,7 @@ def chat_health(user: User = Depends(get_current_user)) -> dict:
 @router.get("/chat/conversations", response_model=list[GrokConversationOut])
 def list_conversations(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> list[GrokConversationOut]:
     if not grok_store.should_persist(user):
         return []
@@ -198,9 +198,8 @@ def list_conversations(
 def create_conversation(
     payload: ConversationCreateIn | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> GrokConversationOut:
-    reject_locked(user)
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     body = payload or ConversationCreateIn()
@@ -231,7 +230,7 @@ def create_conversation(
 def get_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> GrokConversationDetailOut:
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
@@ -244,7 +243,7 @@ def patch_conversation(
     conversation_id: UUID,
     payload: GrokConversationPatchIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> GrokConversationOut:
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
@@ -277,7 +276,7 @@ def patch_conversation(
 def delete_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict[str, bool]:
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
@@ -294,10 +293,9 @@ class SnippetIn(BaseModel):
 def download_message_docx(
     message_id: UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
     clean: bool = Query(default=False),
 ) -> Response:
-    reject_locked(user)
     if not grok_store.should_persist(user):
         raise HTTPException(status_code=403, detail="Chat history is not stored for demo accounts.")
     row = grok_store.owned_assistant_message(db, user, message_id)
@@ -332,9 +330,8 @@ def run_message_snippet(
     message_id: UUID,
     payload: SnippetIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     from app.services import junior_jobs as jobs
 
     result = jobs.run_snippet(db, user, message_id, payload.code)
@@ -349,9 +346,8 @@ def run_message_snippet(
 def imagine_image(
     payload: ImagineIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     imagine_service.require_imagine_key()
     prompt = imagine_service.normalize_prompt(payload.prompt)
     if not prompt:
@@ -536,7 +532,7 @@ async def chat(
     payload: ChatIn,
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> StreamingResponse:
     stage = _SetupStage()
     try:
@@ -577,7 +573,6 @@ def _chat(
 ) -> StreamingResponse:
     step = (stage or _SetupStage()).mark
     step("auth")
-    reject_locked(user)
     chat_service.require_key()
     user_id = user.id
     chat_service.enforce_rate_limit(user_id)
@@ -1017,6 +1012,7 @@ def _chat(
             tool_calls_out=tool_calls_out,
             log_chat_id=conversation_id,
             log_slice_id=log_slice_id,
+            log_message_id=user_message_id,
             messages_override=override,
         )
 

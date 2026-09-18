@@ -61,13 +61,11 @@ class JuniorChatsRouteTests(unittest.TestCase):
         self.assertEqual(body[0]["note_id"], note_id)
         self.assertEqual(body[0]["messages"], 4)
 
-    def test_demo_gets_empty_list(self):
+    def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
-        with patch("app.routers.junior_chats.chat_index.chats_for", return_value=[]):
-            client = TestClient(app)
-            response = client.get("/api/v1/junior/chats")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), [])
+        client = TestClient(app)
+        response = client.get("/api/v1/junior/chats")
+        self.assertEqual(response.status_code, 403)
 
 
 if __name__ == "__main__":

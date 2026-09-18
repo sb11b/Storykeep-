@@ -46,6 +46,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _set_cookie(response: Response, token: str) -> None:
+    # Session cookie: HttpOnly + Secure (production) + SameSite=Lax. Fail closed.
     response.set_cookie(
         "sk_access",
         token,

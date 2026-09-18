@@ -27,4 +27,4 @@ def send_email(to: str, subject: str, body: str) -> None:
         if settings.smtp_user.strip():
             client.login(settings.smtp_user.strip(), settings.smtp_password)
         client.send_message(message)
-    logger.info("sent email to %s subject=%s", to, subject)
+    logger.info("sent email to_host=%s", (to or "").rsplit("@", 1)[-1])

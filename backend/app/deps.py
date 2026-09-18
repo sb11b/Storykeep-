@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.auth import decode_access_token
 from app.database import get_db
 from app.models import User
-from app.services.demo_lock import reject_authentication
+from app.services.demo_lock import reject_authentication, reject_locked
 
 
 def get_current_user(
@@ -23,4 +23,10 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     reject_authentication(user)
+    return user
+
+
+def require_user(user: User = Depends(get_current_user)) -> User:
+    """Authenticated owner session for Junior. Fail closed — no demo, no anonymous."""
+    reject_locked(user)
     return user

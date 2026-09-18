@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import require_user
 from app.models import User
 from app.routers.articles import _owned_article
 from app.routers.chat import _message_out
@@ -17,7 +17,6 @@ from app.presenters import article_out
 from app.services import chat_docx
 from app.services import grok_conversations as grok_store
 from app.services import school_tools
-from app.services.demo_lock import reject_locked
 from app.services.vault_import import create_composed_note
 
 router = APIRouter(tags=["school"])
@@ -83,9 +82,8 @@ def _out(result: dict, assistant=None) -> dict:
 def school_quiz(
     payload: SchoolSourceIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     source = _source_text(db, user, payload)
     result = school_tools.run_quiz(source)
     assistant = _maybe_persist(db, user, payload, result["questions_md"])
@@ -96,9 +94,8 @@ def school_quiz(
 def school_apa(
     payload: SchoolSourceIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     source = _source_text(db, user, payload)
     result = school_tools.run_apa(source)
     assistant = _maybe_persist(db, user, payload, result["markdown"])
@@ -109,9 +106,8 @@ def school_apa(
 def school_trim(
     payload: TrimIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     source = _source_text(db, user, payload)
     result = school_tools.run_trim(source, payload.target)
     assistant = _maybe_persist(db, user, payload, result["markdown"])
@@ -122,9 +118,8 @@ def school_trim(
 def school_grammar(
     payload: SchoolSourceIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> dict:
-    reject_locked(user)
     source = _source_text(db, user, payload)
     result = school_tools.run_grammar(source)
     assistant = _maybe_persist(db, user, payload, result["markdown"])
@@ -135,9 +130,8 @@ def school_grammar(
 def school_quiz_save(
     payload: QuizSaveIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
 ) -> ArticleOut:
-    reject_locked(user)
     parent_id = None
     dest = payload.destination or "schoolwork"
     folder_id = payload.folder_id
@@ -169,10 +163,9 @@ def school_quiz_save(
 def school_docx(
     payload: dict,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_user),
     clean: bool = Query(default=True),
 ) -> Response:
-    reject_locked(user)
     del db
     markdown = str((payload or {}).get("markdown") or "").strip()
     if not markdown:
