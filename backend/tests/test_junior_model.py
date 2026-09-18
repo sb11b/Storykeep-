@@ -52,6 +52,39 @@ class JuniorModelTests(unittest.TestCase):
         kept = junior_model.filter_standing_memory(body, user_text="read TIMELINE")
         self.assertIn("TIMELINE", kept)
 
+    def test_filter_standing_memory_always_keeps_cursor_section(self):
+        body = "# TIMELINE\nphase 1\n# Prompt for Cursor\nfinish in one reply\n# Notes\nkeep me"
+        filtered = junior_model.filter_standing_memory(body, user_text="hello")
+        self.assertNotIn("TIMELINE", filtered)
+        self.assertIn("Prompt for Cursor", filtered)
+        self.assertIn("finish in one reply", filtered)
+        self.assertIn("keep me", filtered)
+
+    def test_wants_cursor_workflow_matches_voice_phrasing(self):
+        self.assertTrue(junior_model.wants_cursor_workflow("write a prompt for cursor to fix login"))
+        self.assertTrue(junior_model.wants_cursor_workflow("give me a cursor agent prompt"))
+        self.assertFalse(junior_model.wants_cursor_workflow("what is a database cursor"))
+
+    def test_build_turn_extras_adds_cursor_append(self):
+        extras = junior_model.build_turn_extras(
+            "prompt for cursor to add tests",
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+        )
+        joined = "\n".join(extras)
+        self.assertIn("copy-paste block", joined.lower())
+        self.assertIn("done-when", joined.lower())
+
     def test_model_payload_marks_truncated(self):
         payload = junior_model.model_payload(
             user_text="summarize",

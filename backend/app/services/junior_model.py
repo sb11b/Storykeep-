@@ -20,6 +20,17 @@ _SPEC_DOC_RE = re.compile(
 _SPEC_SECTION_RE = re.compile(
     r"(?im)^#+\s*(?:TIMELINE|UI[_ ]NOTES|ARCHITECTURE|DATA[_ ]MODEL|PHASE\s*[12]|MERIDIAN).*$"
 )
+_CURSOR_SECTION_RE = re.compile(r"(?im)^#+\s*.*\bCURSOR\b.*$")
+_CURSOR_WORKFLOW_RE = re.compile(
+    r"\b(?:prompt for cursor|cursor prompt|cursor agent|cloud agent)\b|\bcursor\b.*\bprompt\b|\bprompt\b.*\bcursor\b",
+    re.I,
+)
+
+CURSOR_PROMPT_APPEND = """
+Steve asked for a Cursor / Cloud Agent prompt (often via voice). Reply with ONE complete copy-paste block he can drop into Cursor.
+Include: goal, repo or file context, constraints, files or areas to touch, and clear done-when criteria.
+Do not truncate, defer to a follow-up, or split the prompt across turns. Finish the full prompt in this reply.
+"""
 
 
 def estimate_tokens(text: str) -> int:
@@ -30,16 +41,25 @@ def wants_spec_docs(message: str) -> bool:
     return bool(_SPEC_DOC_RE.search(message or ""))
 
 
+def wants_cursor_workflow(message: str) -> bool:
+    return bool(_CURSOR_WORKFLOW_RE.search(message or ""))
+
+
 def filter_standing_memory(body: str, *, user_text: str) -> str:
     """Drop spec-doc sections from memory unless Steve's turn is about them."""
     text = (body or "").strip()
-    if not text or wants_spec_docs(user_text):
+    if not text or wants_spec_docs(user_text) or wants_cursor_workflow(user_text):
         return text
     lines = text.splitlines()
     kept: list[str] = []
     skip = False
     for line in lines:
-        if _SPEC_SECTION_RE.match(line.strip()):
+        stripped = line.strip()
+        if _CURSOR_SECTION_RE.match(stripped):
+            skip = False
+            kept.append(line)
+            continue
+        if _SPEC_SECTION_RE.match(stripped):
             skip = True
             continue
         if skip and line.startswith("#"):
@@ -195,4 +215,6 @@ def build_turn_extras(
 
         if will_search or not chat_service.is_small_talk_turn(user_text):
             extras.append(search_tool.SEARCH_ON_APPEND)
+    if wants_cursor_workflow(user_text):
+        extras.append(CURSOR_PROMPT_APPEND)
     return extras

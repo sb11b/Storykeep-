@@ -117,6 +117,10 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", dat_plan, []), "xhigh")
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "please analyze this", []), "low")
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", "what is photo metadata", []), "low")
+        self.assertEqual(
+            resolve_reasoning_for_request(MODEL_AUTO, "auto", "write a prompt for cursor to fix the login bug", []),
+            "xhigh",
+        )
         ramble = "Hey, just checking in. " * 40
         self.assertGreaterEqual(len(ramble), AUTO_LOW_MAX_CHARS)
         self.assertEqual(resolve_reasoning_for_request(MODEL_AUTO, "auto", ramble, []), "low")

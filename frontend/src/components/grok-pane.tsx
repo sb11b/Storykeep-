@@ -264,6 +264,7 @@ export function GrokPane({
   const dictation = useDictation();
   const draftValueRef = useRef(pane.draft);
   draftValueRef.current = pane.draft;
+  const draftNow = () => draftValueRef.current;
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
@@ -1287,7 +1288,7 @@ export function GrokPane({
     includeOffset?: number;
   }) {
     dictation?.abort();
-    const content = (opts?.message ?? pane.draft).trim();
+    const content = (opts?.message ?? draftNow()).trim();
     const pending = pane.pendingAttachments ?? [];
     if (pending.some((item) => !item.id)) {
       toast.error("Wait for the file to finish uploading.");
@@ -1309,7 +1310,7 @@ export function GrokPane({
       }
     }
     if (contextTooLarge(content)) {
-      const raw = opts?.message ?? pane.draft;
+      const raw = opts?.message ?? draftNow();
       const capToast = threadContextToast(contextInput(content));
       if (!opts?.skipPasteSplit && raw.length >= PASTE_FIRST_CHUNK_CHARS) {
         offerPasteSplit(raw);
@@ -1505,7 +1506,7 @@ export function GrokPane({
   }
 
   async function imagine() {
-    const prompt = pane.draft.trim();
+    const prompt = draftNow().trim();
     if (!prompt) {
       toast.error("Type a prompt for the image.");
       return;
@@ -2542,7 +2543,10 @@ export function GrokPane({
             maxLength={JUNIOR_TEXTAREA_MAX_LENGTH}
             className="min-h-12 max-h-[min(60vh,28rem)] min-w-0 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
             value={pane.draft}
-            onChange={(event) => patch({ draft: event.target.value })}
+            onChange={(event) => {
+              draftValueRef.current = event.target.value;
+              patch({ draft: event.target.value });
+            }}
             placeholder={
               pane.workingNoteId
                 ? "Instructions only — the note is already on the server…"
@@ -2660,7 +2664,7 @@ export function GrokPane({
               type="submit"
               size="icon"
               className="relative z-10 size-9 shrink-0"
-              disabled={!enabled || aborting || (!pane.draft.trim() && !(pane.pendingAttachments ?? []).length)}
+              disabled={!enabled || aborting || (!draftNow().trim() && !(pane.pendingAttachments ?? []).length)}
               aria-label="Send"
             >
               <Send className="size-4" />

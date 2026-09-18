@@ -335,7 +335,13 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
     """True only for school/code, or a long analyze turn. Short chat stays low."""
     del history  # prior replies must not force xhigh on "hello"
     text = (message or "").strip()
-    if not text or is_short_chat(text) or is_small_talk_turn(text):
+    if not text or is_small_talk_turn(text):
+        return False
+    from app.services import junior_model
+
+    if junior_model.wants_cursor_workflow(text):
+        return True
+    if is_short_chat(text):
         return False
     if _SCHOOL_CODE_RE.search(text):
         return True
