@@ -27,11 +27,11 @@ test("legacy Grok and Larry labels count as defaults", () => {
   assert.equal(isDefaultPaneName("Study buddy", 0), false);
 });
 
-test("status lines use Queued / Thinking / Writing / Error", () => {
-  assert.equal(chatStatusLine("Junior", "queued"), "Queued…");
-  assert.equal(chatStatusLine("Junior", "working"), "Thinking…");
-  assert.equal(chatStatusLine("Junior", "thinking"), "Thinking…");
-  assert.equal(chatStatusLine("Junior", "writing"), "Writing…");
+test("status lines name Junior while thinking or writing", () => {
+  assert.equal(chatStatusLine("Junior", "queued"), "Junior is thinking…");
+  assert.equal(chatStatusLine("Junior", "working"), "Junior is working…");
+  assert.equal(chatStatusLine("Junior", "thinking"), "Junior is thinking…");
+  assert.equal(chatStatusLine("Junior", "writing"), "Junior is writing…");
   assert.equal(chatStatusLine("Junior", "generating"), "Junior is generating…");
   assert.equal(chatStatusLine("Junior", "searching"), "Searching…");
   assert.equal(chatStatusLine("Junior", "error"), "Error");

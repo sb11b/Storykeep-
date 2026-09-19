@@ -39,12 +39,12 @@ export function normalizeTurnStatus(kind: string | null | undefined): ChatTurnSt
 export function chatStatusLine(name: string, kind: ChatStatusKind): string {
   const who = name.trim() || DEFAULT_PANE_NAME;
   const turn = normalizeTurnStatus(kind);
-  if (turn === "queued") return "Queued…";
-  if (kind === "searching") return "Searching…";
-  if (turn === "thinking" || kind === "working") return "Thinking…";
-  if (kind === "generating") return `${who} is generating…`;
-  if (turn === "writing") return "Writing…";
   if (turn === "error") return "Error";
+  if (kind === "searching") return "Searching…";
+  if (kind === "generating") return `${who} is generating…`;
+  if (kind === "working") return `${who} is working…`;
+  if (turn === "queued" || turn === "thinking") return `${who} is thinking…`;
+  if (turn === "writing") return `${who} is writing…`;
   return "";
 }
 
