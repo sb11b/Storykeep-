@@ -300,6 +300,42 @@
   background-color: var(--storykeep-top-bar);
   border-color: color-mix(in oklch, var(--storykeep-top-bar-fg) 20%, var(--storykeep-top-bar) 80%);
 }
+/* Archive header actions — hard ink fallbacks so OS theme can never wash these out */
+.archive-toolbar [data-slot="button"][data-variant="toolbar"],
+.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"] {
+  color: var(--storykeep-top-bar-fg, #3f3a32) !important;
+  opacity: 1 !important;
+}
+.archive-toolbar [data-slot="button"][data-variant="toolbar"] {
+  background-color: color-mix(
+    in oklch,
+    var(--storykeep-top-bar) 86%,
+    var(--storykeep-top-bar-fg, #3f3a32) 14%
+  ) !important;
+  border-color: color-mix(
+    in oklch,
+    var(--storykeep-top-bar-fg, #3f3a32) 24%,
+    var(--storykeep-top-bar) 76%
+  ) !important;
+}
+.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"] {
+  background-color: transparent !important;
+  border-color: transparent !important;
+}
+.archive-toolbar [data-slot="button"][data-variant="toolbar"]:hover:not(:disabled),
+.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"]:hover:not(:disabled) {
+  background-color: var(--storykeep-top-bar-hover, #f3efe6) !important;
+  color: var(--storykeep-top-bar-fg, #3f3a32) !important;
+}
+.archive-toolbar [data-slot="button"][data-variant="toolbar"]:disabled,
+.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"]:disabled {
+  color: var(--storykeep-top-bar-fg-muted, #6f6a62) !important;
+  opacity: 1 !important;
+}
+.archive-toolbar [data-slot="button"][data-variant="toolbar"] svg,
+.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"] svg {
+  color: currentColor !important;
+}
 /* The pages stack in the article column's own scroller, so the pane must never
    become a bounded flex box that a tall toolbar can crush to zero height. */
 .pdf-host {
