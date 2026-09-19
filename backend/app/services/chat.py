@@ -1207,10 +1207,17 @@ async def stream_completion(
         attach_tools = tools
     else:
         from app.services.chat_index import is_chat_index_tool
+        from app.services.github_tool import is_github_tool
+        from app.services.railway_tool import is_railway_tool
         from app.services.web_search import is_web_search_tool
 
         attach_tools = [
-            item for item in (tools or []) if is_web_search_tool(item) or is_chat_index_tool(item)
+            item
+            for item in (tools or [])
+            if is_web_search_tool(item)
+            or is_chat_index_tool(item)
+            or is_railway_tool(item)
+            or is_github_tool(item)
         ] or None
     if messages_override is not None:
         xai_messages = messages_override

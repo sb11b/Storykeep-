@@ -121,6 +121,30 @@ class JuniorModelTests(unittest.TestCase):
         self.assertNotIn("asked you to write", joined.lower())
         self.assertNotIn("SEARCH_ON", joined)
 
+    def test_build_turn_extras_includes_railway_and_github(self):
+        extras = junior_model.build_turn_extras(
+            "deploy storykeep and show github commits",
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+            railway_enabled=True,
+            railway_tools=True,
+            github_enabled=True,
+            github_tools=True,
+        )
+        joined = "\n".join(extras)
+        self.assertIn("Railway access", joined)
+        self.assertIn("GitHub access", joined)
+
     def test_model_payload_marks_truncated(self):
         payload = junior_model.model_payload(
             user_text="summarize",

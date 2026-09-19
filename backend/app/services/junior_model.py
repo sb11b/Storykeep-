@@ -254,12 +254,18 @@ def build_turn_extras(
     unread_mail_md: str | None,
     search_enabled: bool,
     will_search: bool,
+    railway_enabled: bool = False,
+    railway_tools: bool = False,
+    github_enabled: bool = False,
+    github_tools: bool = False,
 ) -> list[str]:
     """Attach only what this turn needs. Never dump spec docs or full chat bodies."""
     del memory_block  # standing memory lives in standing_system(), not extras
     extras: list[str] = []
     from app.services import chat_index
+    from app.services import github_tool
     from app.services import mail_tool
+    from app.services import railway_tool
     from app.services import web_search as search_tool
     from app.services.calendar_tool import CALENDAR_OFF_APPEND, CALENDAR_ON_APPEND
 
@@ -268,7 +274,7 @@ def build_turn_extras(
         user_text,
         indexed=bool(index_block),
         read=bool(read_meta),
-        tools=calendar_tools or mail_unread or will_search,
+        tools=calendar_tools or mail_unread or will_search or railway_tools or github_tools,
     )
     if chat_tools:
         extras.append(chat_index.CHATS_ON_APPEND)
@@ -293,6 +299,10 @@ def build_turn_extras(
 
         if will_search or not chat_service.is_small_talk_turn(user_text):
             extras.append(search_tool.SEARCH_ON_APPEND)
+    if railway_tools and not cursor_task:
+        extras.append(railway_tool.RAILWAY_ON_APPEND if railway_enabled else railway_tool.RAILWAY_OFF_APPEND)
+    if github_tools and not cursor_task:
+        extras.append(github_tool.GITHUB_ON_APPEND if github_enabled else github_tool.GITHUB_OFF_APPEND)
     mode = cursor_turn_mode(user_text)
     if mode == "generate":
         extras.append(CURSOR_PROMPT_APPEND)

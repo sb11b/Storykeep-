@@ -52,6 +52,11 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 | `FASTMAIL_CALDAV_URL` | No | Optional CalDAV origin. Defaults to `https://caldav.fastmail.com`. Missing `FASTMAIL_*` still shows Connect — tokens are per user. |
 | `FASTMAIL_TOKEN` | No | Fastmail JMAP API token for owner Mail. Server only. Missing token returns 401 “Connect Fastmail”, not 500. |
+| `RAILWAY_API_TOKEN` | No | Railway account/project token so Junior can read deploy status and trigger Storykeep deploys. Create at Railway → Account → Tokens. Server only. |
+| `GITHUB_TOKEN` | No | GitHub fine-grained PAT (repo + Actions read) so Junior can report commits, PRs, and CI. Server only. |
+| `GITHUB_REPO` | No | Repo slug for Junior GitHub tools. Default `sb11b/Storykeep-`. |
+
+Railway injects `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_PUBLIC_DOMAIN` on the storykeep service — Junior uses those automatically when the API token is set.
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 

@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     fastmail_caldav_url: str = ""
     fastmail_token: str = ""
     fastmail_jmap_session_url: str = "https://api.fastmail.com/jmap/session"
+    railway_api_token: str = ""
+    railway_token: str = ""
+    railway_project_id: str = ""
+    railway_project_name: str = "Storykeep"
+    railway_service_id: str = ""
+    railway_service_name: str = "storykeep"
+    railway_environment_id: str = ""
+    railway_environment_name: str = "production"
+    railway_public_domain: str = ""
+    github_token: str = ""
+    github_repo: str = "sb11b/Storykeep-"
 
     @field_validator("env", mode="before")
     @classmethod
@@ -141,6 +152,14 @@ class Settings(BaseSettings):
     def fastmail_calendar_configured(self) -> bool:
         """Per-user tokens. Missing FASTMAIL_* env still offers Connect (public CalDAV host)."""
         return True
+
+    @property
+    def railway_configured(self) -> bool:
+        return bool((self.railway_api_token or self.railway_token or "").strip())
+
+    @property
+    def github_configured(self) -> bool:
+        return bool((self.github_token or "").strip())
 
 
 settings = Settings()
