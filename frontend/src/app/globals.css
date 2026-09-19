@@ -238,52 +238,67 @@
   flex: none;
 }
 
-/* StoryKeep archive header — colors follow the top bar, not Meridian or OS dark mode */
-.archive-toolbar {
+/* StoryKeep top bar — isolate shadcn tokens from OS dark mode (mirrors .sk-page-surface) */
+.archive-toolbar,
+.storykeep-top-bar-surface {
   color: var(--storykeep-top-bar-fg);
-}
-.archive-toolbar [data-slot="button"],
-.archive-toolbar a,
-.archive-toolbar [role="button"] {
-  color: var(--storykeep-top-bar-fg);
-  opacity: 1;
-}
-.archive-toolbar [data-slot="button"] svg {
-  color: inherit;
+  --background: var(--storykeep-top-bar);
+  --foreground: var(--storykeep-top-bar-fg);
+  --muted-foreground: var(--storykeep-top-bar-fg-muted);
+  --card: var(--storykeep-top-bar);
+  --card-foreground: var(--storykeep-top-bar-fg);
+  --border: color-mix(in oklch, var(--storykeep-top-bar-fg) 18%, var(--storykeep-top-bar) 82%);
+  --input: color-mix(in oklch, var(--storykeep-top-bar-fg) 14%, var(--storykeep-top-bar) 86%);
+  --accent: var(--storykeep-top-bar-hover);
+  --accent-foreground: var(--storykeep-top-bar-fg);
+  --muted: color-mix(in oklch, var(--storykeep-top-bar-fg) 10%, var(--storykeep-top-bar) 90%);
+  --secondary: color-mix(in oklch, var(--storykeep-top-bar-fg) 8%, var(--storykeep-top-bar) 92%);
+  --secondary-foreground: var(--storykeep-top-bar-fg);
 }
 .archive-toolbar kbd,
-.archive-toolbar .shortcut {
+.archive-toolbar .shortcut,
+.storykeep-top-bar-surface kbd,
+.storykeep-top-bar-surface .shortcut {
   color: var(--storykeep-top-bar-fg);
   opacity: 0.75;
 }
-.archive-toolbar [data-slot="button"]:disabled,
+.archive-toolbar .text-muted-foreground,
+.storykeep-top-bar-surface .text-muted-foreground {
+  color: var(--storykeep-top-bar-fg-muted);
+}
+/* Legacy outline/ghost buttons inside the top bar (ListenControls, etc.) */
+.storykeep-top-bar-surface [data-slot="button"]:not(.bg-primary),
+.archive-toolbar [data-slot="button"]:not(.bg-primary) {
+  color: var(--storykeep-top-bar-fg) !important;
+  opacity: 1 !important;
+}
+.storykeep-top-bar-surface [data-slot="button"] svg,
+.archive-toolbar [data-slot="button"] svg {
+  color: inherit !important;
+}
+.storykeep-top-bar-surface [data-slot="button"].border-border,
+.archive-toolbar [data-slot="button"].border-border {
+  background-color: color-mix(in oklch, var(--storykeep-top-bar) 88%, var(--storykeep-top-bar-fg) 12%) !important;
+  border-color: color-mix(in oklch, var(--storykeep-top-bar-fg) 24%, var(--storykeep-top-bar) 76%) !important;
+}
+.storykeep-top-bar-surface [data-slot="button"]:not(.bg-primary):hover:not(:disabled),
+.archive-toolbar [data-slot="button"]:not(.bg-primary):hover:not(:disabled) {
+  background: var(--storykeep-top-bar-hover) !important;
+  color: var(--storykeep-top-bar-fg) !important;
+}
+.storykeep-top-bar-surface [data-slot="button"]:disabled:not(.bg-primary),
+.archive-toolbar [data-slot="button"]:disabled:not(.bg-primary),
+.storykeep-top-bar-surface [aria-disabled="true"],
 .archive-toolbar [aria-disabled="true"] {
-  color: var(--storykeep-top-bar-fg-muted);
-  opacity: 1;
+  color: var(--storykeep-top-bar-fg-muted) !important;
+  opacity: 1 !important;
 }
-.archive-toolbar [data-slot="button"]:hover:not(:disabled):not(.bg-primary) {
-  background: var(--storykeep-top-bar-hover);
+.storykeep-top-bar-surface select,
+.storykeep-top-bar-surface input,
+.storykeep-top-bar-surface textarea {
   color: var(--storykeep-top-bar-fg);
-}
-.archive-toolbar .text-muted-foreground {
-  color: var(--storykeep-top-bar-fg-muted);
-}
-/* OS dark mode must not paint light text / dark chips on a light StoryKeep top bar */
-.dark .archive-toolbar [data-slot="button"]:not(.bg-primary) {
-  color: var(--storykeep-top-bar-fg);
-}
-.dark .archive-toolbar [data-slot="button"].bg-background {
-  background-color: color-mix(in oklch, var(--storykeep-top-bar) 88%, var(--storykeep-top-bar-fg) 12%);
-  border-color: color-mix(in oklch, var(--storykeep-top-bar-fg) 24%, var(--storykeep-top-bar) 76%);
-  color: var(--storykeep-top-bar-fg);
-}
-.dark .archive-toolbar [data-slot="button"]:not(.bg-primary):hover:not(:disabled) {
-  background: var(--storykeep-top-bar-hover);
-  color: var(--storykeep-top-bar-fg);
-}
-.dark .archive-toolbar [data-slot="button"]:disabled:not(.bg-primary) {
-  color: var(--storykeep-top-bar-fg-muted);
-  opacity: 1;
+  background-color: var(--storykeep-top-bar);
+  border-color: color-mix(in oklch, var(--storykeep-top-bar-fg) 20%, var(--storykeep-top-bar) 80%);
 }
 /* The pages stack in the article column's own scroller, so the pane must never
    become a bounded flex box that a tall toolbar can crush to zero height. */

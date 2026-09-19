@@ -17,6 +17,10 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
+        toolbar:
+          "border-[color-mix(in_oklch,var(--storykeep-top-bar-fg)_22%,var(--storykeep-top-bar)_78%)] bg-[color-mix(in_oklch,var(--storykeep-top-bar)_86%,var(--storykeep-top-bar-fg)_14%)] text-[var(--storykeep-top-bar-fg)] hover:bg-[var(--storykeep-top-bar-hover)] hover:text-[var(--storykeep-top-bar-fg)] disabled:text-[var(--storykeep-top-bar-fg-muted)] disabled:opacity-100 aria-expanded:bg-[var(--storykeep-top-bar-hover)] aria-expanded:text-[var(--storykeep-top-bar-fg)]",
+        "toolbar-ghost":
+          "text-[var(--storykeep-top-bar-fg)] hover:bg-[var(--storykeep-top-bar-hover)] hover:text-[var(--storykeep-top-bar-fg)] disabled:text-[var(--storykeep-top-bar-fg-muted)] disabled:opacity-100 aria-expanded:bg-[var(--storykeep-top-bar-hover)] aria-expanded:text-[var(--storykeep-top-bar-fg)]",
       },
       size: {
         default:

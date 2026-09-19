@@ -1542,7 +1542,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
         <header className="archive-toolbar flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
+          <Button variant="toolbar-ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
           </Button>
           <form
@@ -1567,14 +1567,14 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search the archive…  (/)"
-                className="pl-8 bg-card"
+                className="pl-8"
               />
             </div>
           </form>
           <div className="ml-auto flex flex-wrap items-center gap-1">
             <Button
               size="xs"
-              variant="outline"
+              variant="toolbar"
               disabled={!items.length}
               title="Previous article in this shelf"
               onClick={() => selectRelative(-1)}
@@ -1585,7 +1585,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant="outline"
+              variant="toolbar"
               disabled={!items.length}
               title="Next article in this shelf"
               onClick={() => selectRelative(1)}
@@ -1596,7 +1596,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant={article?.is_read ? "default" : "outline"}
+              variant={article?.is_read ? "default" : "toolbar"}
               disabled={!article}
               title="Mark this article read or unread"
               onClick={() => void patchSelected({ is_read: !article!.is_read })}
@@ -1607,7 +1607,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant={article?.is_saved ? "default" : "outline"}
+              variant={article?.is_saved ? "default" : "toolbar"}
               disabled={!article}
               title="Save this article in the archive"
               onClick={() => void patchSelected({ is_saved: !article!.is_saved })}
@@ -1618,7 +1618,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant="outline"
+              variant="toolbar"
               disabled={!article}
               title="Jump to notes on this article"
               onClick={() => noteFocusRef.current?.()}
@@ -1629,7 +1629,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant="outline"
+              variant="toolbar"
               disabled={!article}
               title="Listen to this article from the beginning"
               onClick={() => listenRef.current?.togglePlay()}
@@ -1640,7 +1640,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant="outline"
+              variant="toolbar"
               disabled={!article}
               title="Listen from the selected word"
               onClick={() => listenRef.current?.listenFromHere()}
@@ -1650,7 +1650,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant="outline"
+              variant="toolbar"
               title="Open the Calculator overlay"
               onClick={() => calculatorRef.current?.open()}
             >
@@ -1659,7 +1659,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant={calendarOpen ? "default" : "outline"}
+              variant={calendarOpen ? "default" : "toolbar"}
               title="Open StoryKeep Calendar"
               onClick={() => {
                 setMailOpen(false);
@@ -1672,7 +1672,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant={mailOpen ? "default" : "outline"}
+              variant={mailOpen ? "default" : "toolbar"}
               title="Open Fastmail Mail"
               onClick={() => {
                 setCalendarOpen(false);
@@ -1685,7 +1685,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             </Button>
             <Button
               size="xs"
-              variant={readerFull ? "default" : "outline"}
+              variant={readerFull ? "default" : "toolbar"}
               disabled={!article}
               title="Read this article full screen with every option still available"
               onClick={() => {
@@ -3201,7 +3201,7 @@ function Reader({
 
   return (
     <div className="reader-shell">
-      <div className="reader-chrome sticky top-0 z-30 border-b border-border bg-[var(--storykeep-top-bar)] px-5 py-2">
+      <div className="archive-toolbar storykeep-top-bar-surface reader-chrome sticky top-0 z-30 border-b border-border bg-[var(--storykeep-top-bar)] px-5 py-2">
         <ListenControls
           ref={listenRef}
           articleId={article.id}
