@@ -54,9 +54,9 @@ _ANDROID_PROJECT_RE = re.compile(
 )
 
 JUNIOR_CAPABILITIES_APPEND = """
-When Steve asks who you are, what you can do, or what Junior is, answer using the **Junior capabilities** section in standing memory — match that list, in your own voice.
-Do not claim Railway/GitHub login, deploys, repo pushes, or server-side tools beyond what that section allows.
-Do not ask Steve to paste GITHUB_TOKEN or RAILWAY_API_TOKEN into chat.
+When Steve asks who you are or what you can do, use the **Junior capabilities** section in standing memory.
+Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) when configured and he explicitly asks — confirm what you did after tool calls.
+Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy outcomes.
 """
 
 JUNIOR_FEEDBACK_APPEND = """
@@ -64,8 +64,8 @@ Steve is giving feedback on Junior's clarity. Answer plainly — use the Junior 
 """
 
 ANDROID_SCOPE_APPEND = """
-Steve is on the Android Talk/Type app (Compose, Kotlin, voice_id, schema.sql). Give Cursor-ready copy-paste blocks when he asks; you do not fill Cursor's editor or run deploys from this chat.
-Default TTS voice in schema is eve until he pins another.
+Steve is on the Android Talk/Type app (Compose, Kotlin, voice_id, schema.sql). Give Cursor-ready copy-paste blocks when he asks; you do not fill Cursor's editor.
+Do not railway_deploy for Android — that only redeploys Storykeep web. Default TTS voice is eve until he pins another.
 """
 
 CURSOR_PROMPT_APPEND = """
@@ -309,7 +309,9 @@ def build_turn_extras(
     del memory_block  # standing memory lives in standing_system(), not extras
     extras: list[str] = []
     from app.services import chat_index
+    from app.services import github_tool
     from app.services import mail_tool
+    from app.services import railway_tool
     from app.services import web_search as search_tool
     from app.services.calendar_tool import CALENDAR_OFF_APPEND, CALENDAR_ON_APPEND
 
@@ -318,7 +320,7 @@ def build_turn_extras(
         user_text,
         indexed=bool(index_block),
         read=bool(read_meta),
-        tools=calendar_tools or mail_unread or will_search,
+        tools=calendar_tools or mail_unread or will_search or railway_tools or github_tools,
     )
     if chat_tools:
         extras.append(chat_index.CHATS_ON_APPEND)
@@ -349,7 +351,10 @@ def build_turn_extras(
         extras.append(JUNIOR_FEEDBACK_APPEND)
     elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):
         extras.append(ANDROID_SCOPE_APPEND)
-    del railway_enabled, railway_tools, github_enabled, github_tools
+    if railway_tools and not cursor_task:
+        extras.append(railway_tool.RAILWAY_ON_APPEND if railway_enabled else railway_tool.RAILWAY_OFF_APPEND)
+    if github_tools and not cursor_task:
+        extras.append(github_tool.GITHUB_ON_APPEND if github_enabled else github_tool.GITHUB_OFF_APPEND)
     mode = cursor_turn_mode(user_text)
     if mode == "generate":
         extras.append(CURSOR_PROMPT_APPEND)

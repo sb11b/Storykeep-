@@ -160,7 +160,27 @@ class JuniorModelTests(unittest.TestCase):
         )
         joined = "\n".join(extras)
         self.assertIn("Junior capabilities", joined)
-        self.assertNotIn("Railway access", joined)
+
+    def test_build_turn_extras_includes_railway_when_owner_ops(self):
+        extras = junior_model.build_turn_extras(
+            "deploy storykeep to railway",
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+            railway_enabled=True,
+            railway_tools=True,
+        )
+        joined = "\n".join(extras)
+        self.assertIn("Storykeep web", joined)
 
     def test_model_payload_marks_truncated(self):
         payload = junior_model.model_payload(
