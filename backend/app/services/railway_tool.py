@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 GRAPHQL_URL = "https://backboard.railway.com/graphql/v2"
 TIMEOUT_SEC = 25.0
+DEPLOY_POLL_INTERVAL_SEC = 5.0
+DEPLOY_POLL_TIMEOUT_SEC = 180.0
+_TERMINAL_SUCCESS = frozenset({"SUCCESS"})
+_TERMINAL_FAILURE = frozenset({"FAILED", "CRASHED", "SKIPPED"})
 
 STATUS_TOOL_NAME = "railway_status"
 DEPLOY_TOOL_NAME = "railway_deploy"
@@ -29,7 +34,8 @@ You have live Railway access for the **Storykeep web** stack (FastAPI + Next) �
   • Cursor agent tasks, schema.sql, or Postgres setup (you cannot run SQL from chat)
   • Mentioning Railway tokens, GitHub, or Junior in general
 - Redeploying Storykeep web does **not** create, ship, or update the Android app.
-- Say plainly what you did: status read vs deploy triggered vs neither. Never invent deploys.
+- After deploy, the server polls Railway until SUCCESS, FAILED, or timeout — report the final status from the tool block only.
+- Say plainly what you did: status read vs deploy finished vs neither. Never invent deploys.
 - Tokens stay server-side; never echo API keys.
 """
 
@@ -379,6 +385,57 @@ def fetch_status() -> RailwayOutcome:
     return RailwayOutcome(True, "\n".join(lines), 200)
 
 
+def fetch_deployment(deployment_id: str) -> dict[str, Any] | None:
+    query = """
+    query DeploymentPoll($id: String!) {
+      deployment(id: $id) {
+        id
+        status
+        createdAt
+        staticUrl
+      }
+    }
+    """
+    body = _graphql(query, {"id": deployment_id})
+    errors = body.get("errors")
+    if errors:
+        logger.warning("Railway deployment poll failed: %s", redact_secrets(str(errors)))
+        return None
+    row = (body.get("data") or {}).get("deployment") if isinstance(body.get("data"), dict) else None
+    return row if isinstance(row, dict) else None
+
+
+def poll_deployment(deployment_id: str) -> tuple[str, str, bool]:
+    """Poll until SUCCESS, failure, or timeout. Returns status, detail lines, ok."""
+    deadline = time.monotonic() + DEPLOY_POLL_TIMEOUT_SEC
+    last_status = "UNKNOWN"
+    while time.monotonic() < deadline:
+        row = fetch_deployment(deployment_id)
+        if row:
+            last_status = str(row.get("status") or "UNKNOWN").upper()
+            if last_status in _TERMINAL_SUCCESS:
+                url = str(row.get("staticUrl") or "").strip()
+                detail = f"Final status: {last_status}"
+                if url:
+                    detail = f"{detail}\nURL: {url}"
+                return last_status, detail, True
+            if last_status in _TERMINAL_FAILURE:
+                return (
+                    last_status,
+                    f"Final status: {last_status} (deploy did not succeed).",
+                    False,
+                )
+        time.sleep(DEPLOY_POLL_INTERVAL_SEC)
+    return (
+        last_status,
+        (
+            f"Final status: {last_status} (still in progress after {int(DEPLOY_POLL_TIMEOUT_SEC)}s). "
+            "Check Railway dashboard or ask for status again."
+        ),
+        False,
+    )
+
+
 def deploy() -> RailwayOutcome:
     if not configured():
         return RailwayOutcome(False, RAILWAY_OFF_APPEND.strip(), 503)
@@ -401,15 +458,13 @@ def deploy() -> RailwayOutcome:
     deployment_id = ((body.get("data") or {}).get("serviceInstanceDeployV2")) if isinstance(body.get("data"), dict) else None
     if not deployment_id:
         return RailwayOutcome(False, "Railway deploy returned no deployment id.", 502)
-    return RailwayOutcome(
-        True,
-        (
-            f"Triggered Railway deploy for {target.service_name} in {target.environment_name}.\n"
-            f"Deployment id: {deployment_id}\n"
-            "Check Railway dashboard or ask for status in a minute."
-        ),
-        200,
-    )
+    final_status, poll_detail, ok = poll_deployment(str(deployment_id))
+    lines = [
+        f"Railway deploy for {target.service_name} in {target.environment_name}.",
+        f"Deployment id: {deployment_id}",
+        poll_detail,
+    ]
+    return RailwayOutcome(ok, "\n".join(lines), 200 if ok else 502)
 
 
 def format_status_for_model(outcome: RailwayOutcome) -> str:
@@ -418,8 +473,12 @@ def format_status_for_model(outcome: RailwayOutcome) -> str:
 
 
 def format_deploy_for_model(outcome: RailwayOutcome) -> str:
-    prefix = "Railway deploy executed server-side this turn (Storykeep web only):"
-    return f"{prefix}\n{outcome.text}\nReport this deployment id in your reply. Do not invent SUCCESS without this block."
+    prefix = "Railway deploy executed and polled server-side this turn (Storykeep web only):"
+    return (
+        f"{prefix}\n{outcome.text}\n"
+        "Report the deployment id and final status from this block only. "
+        "Do not claim SUCCESS unless Final status: SUCCESS appears above."
+    )
 
 
 def assemble_tool_call(fragments: list[dict] | None) -> dict[str, str] | None:

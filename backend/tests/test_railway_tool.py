@@ -50,5 +50,25 @@ class RailwayToolTests(unittest.TestCase):
         self.assertIn("line one", text)
 
 
+    def test_poll_deployment_success(self):
+        calls = iter(
+            [
+                {"id": "d1", "status": "BUILDING", "staticUrl": ""},
+                {"id": "d1", "status": "SUCCESS", "staticUrl": "https://storykeep-production.up.railway.app"},
+            ]
+        )
+
+        def fake_fetch(_deployment_id: str):
+            return next(calls)
+
+        with patch.object(railway_tool, "fetch_deployment", side_effect=fake_fetch):
+            with patch.object(railway_tool.time, "sleep"):
+                with patch.object(railway_tool.time, "monotonic", side_effect=[0.0, 1.0, 2.0]):
+                    status, detail, ok = railway_tool.poll_deployment("d1")
+        self.assertTrue(ok)
+        self.assertEqual(status, "SUCCESS")
+        self.assertIn("SUCCESS", detail)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -62,7 +62,7 @@ Do not git-push from chat, deploy Android, or ask for tokens in chat. Never inve
 OPS_TURN_APPEND = """
 Owner ops turn (GitHub read and/or Storykeep web deploy). Tools: github_status, railway_status, railway_deploy when attached.
 If a GitHub or Railway block is already attached this turn, cite only that data — do not invent SHAs, deployment ids, or SUCCESS.
-If deploy was executed server-side, say so with the deployment id from the block. If deploy tool is missing or failed, say you could not start a deploy — do not claim SUCCESS.
+If deploy was executed server-side, report the deployment id and **Final status** from the block (polled until SUCCESS, failure, or timeout). Do not claim SUCCESS unless the block says Final status: SUCCESS.
 Keep the reply short. No Add to notes footer. No recap of these instructions.
 """
 
