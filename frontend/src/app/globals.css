@@ -54,6 +54,9 @@
   --storykeep-page-fg: oklch(0.24 0.02 55);
   --storykeep-page-muted: oklch(0.5 0.03 55);
   --storykeep-top-bar: oklch(0.985 0.01 88);
+  --storykeep-top-bar-fg: #3f3a32;
+  --storykeep-top-bar-fg-muted: #6f6a62;
+  --storykeep-top-bar-hover: #f3efe6;
   --storykeep-rail: oklch(0.23 0.02 55);
   --background: var(--storykeep-page-bg);
   --foreground: oklch(0.24 0.02 55);
@@ -235,29 +238,52 @@
   flex: none;
 }
 
-/* StoryKeep archive header actions — not Meridian */
+/* StoryKeep archive header — colors follow the top bar, not Meridian or OS dark mode */
 .archive-toolbar {
-  color: #3f3a32;
+  color: var(--storykeep-top-bar-fg);
 }
-.archive-toolbar button,
+.archive-toolbar [data-slot="button"],
 .archive-toolbar a,
 .archive-toolbar [role="button"] {
-  color: inherit;
+  color: var(--storykeep-top-bar-fg);
   opacity: 1;
+}
+.archive-toolbar [data-slot="button"] svg {
+  color: inherit;
 }
 .archive-toolbar kbd,
 .archive-toolbar .shortcut {
-  color: inherit;
+  color: var(--storykeep-top-bar-fg);
   opacity: 0.75;
 }
-.archive-toolbar button:disabled,
+.archive-toolbar [data-slot="button"]:disabled,
 .archive-toolbar [aria-disabled="true"] {
-  color: #6f6a62;
+  color: var(--storykeep-top-bar-fg-muted);
   opacity: 1;
 }
-.archive-toolbar button:hover:not(:disabled) {
-  background: #f3efe6;
-  color: #1c1915;
+.archive-toolbar [data-slot="button"]:hover:not(:disabled):not(.bg-primary) {
+  background: var(--storykeep-top-bar-hover);
+  color: var(--storykeep-top-bar-fg);
+}
+.archive-toolbar .text-muted-foreground {
+  color: var(--storykeep-top-bar-fg-muted);
+}
+/* OS dark mode must not paint light text / dark chips on a light StoryKeep top bar */
+.dark .archive-toolbar [data-slot="button"]:not(.bg-primary) {
+  color: var(--storykeep-top-bar-fg);
+}
+.dark .archive-toolbar [data-slot="button"].bg-background {
+  background-color: color-mix(in oklch, var(--storykeep-top-bar) 88%, var(--storykeep-top-bar-fg) 12%);
+  border-color: color-mix(in oklch, var(--storykeep-top-bar-fg) 24%, var(--storykeep-top-bar) 76%);
+  color: var(--storykeep-top-bar-fg);
+}
+.dark .archive-toolbar [data-slot="button"]:not(.bg-primary):hover:not(:disabled) {
+  background: var(--storykeep-top-bar-hover);
+  color: var(--storykeep-top-bar-fg);
+}
+.dark .archive-toolbar [data-slot="button"]:disabled:not(.bg-primary) {
+  color: var(--storykeep-top-bar-fg-muted);
+  opacity: 1;
 }
 /* The pages stack in the article column's own scroller, so the pane must never
    become a bounded flex box that a tall toolbar can crush to zero height. */

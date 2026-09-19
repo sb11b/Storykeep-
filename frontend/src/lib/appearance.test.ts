@@ -101,6 +101,8 @@ test("applyAppearance sets CSS variables on document root", () => {
     assert.equal(props["--storykeep-page-fg"], "oklch(0.93 0.02 88)");
     assert.equal(props["--storykeep-page-muted"], "oklch(0.74 0.03 80)");
     assert.equal(props["--storykeep-top-bar"], "#334455");
+    assert.equal(props["--storykeep-top-bar-fg"], "oklch(0.93 0.02 88)");
+    assert.equal(props["--storykeep-top-bar-fg-muted"], "oklch(0.74 0.03 80)");
     assert.equal(props["--storykeep-rail"], "#445566");
     assert.equal(props["--foreground"], undefined);
     assert.equal(props["--background"], undefined);

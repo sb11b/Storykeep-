@@ -177,11 +177,18 @@ export function applyAppearance(settings: AppearanceSettings) {
   const size = BASE_FONT_SIZE_OPTIONS.find((row) => row.value === settings.base_font_size)?.px || "16px";
 
   const darkPage = surfaceIsDark(page);
+  const darkTopbar = surfaceIsDark(topbar);
   const pageFg = darkPage ? "oklch(0.93 0.02 88)" : "oklch(0.24 0.02 55)";
   const pageMuted = darkPage ? "oklch(0.74 0.03 80)" : "oklch(0.5 0.03 55)";
+  const topbarFg = darkTopbar ? "oklch(0.93 0.02 88)" : "#3f3a32";
+  const topbarFgMuted = darkTopbar ? "oklch(0.74 0.03 80)" : "#6f6a62";
+  const topbarHover = darkTopbar ? "oklch(1 0 0 / 10%)" : "#f3efe6";
 
   root.style.setProperty("--storykeep-page-bg", page);
   root.style.setProperty("--storykeep-top-bar", topbar);
+  root.style.setProperty("--storykeep-top-bar-fg", topbarFg);
+  root.style.setProperty("--storykeep-top-bar-fg-muted", topbarFgMuted);
+  root.style.setProperty("--storykeep-top-bar-hover", topbarHover);
   root.style.setProperty("--storykeep-rail", rail);
   root.style.setProperty("--storykeep-page-fg", pageFg);
   root.style.setProperty("--storykeep-page-muted", pageMuted);

@@ -1541,7 +1541,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       </Sheet>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--storykeep-page-bg)]">
-        <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
+        <header className="archive-toolbar flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--storykeep-top-bar)] px-3 py-1.5">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileNav(true)}>
             <Menu className="size-4" />
           </Button>
@@ -1571,7 +1571,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
               />
             </div>
           </form>
-          <div className="archive-toolbar ml-auto flex flex-wrap items-center gap-1">
+          <div className="ml-auto flex flex-wrap items-center gap-1">
             <Button
               size="xs"
               variant="outline"
