@@ -25,11 +25,19 @@ _TERMINAL_FAILURE = frozenset({"FAILED", "CRASHED", "SKIPPED"})
 
 STATUS_TOOL_NAME = "railway_status"
 DEPLOY_TOOL_NAME = "railway_deploy"
+LOGS_TOOL_NAME = "railway_logs"
+VARIABLES_TOOL_NAME = "railway_variables"
+RAILWAY_TOOL_NAMES = frozenset(
+    {STATUS_TOOL_NAME, DEPLOY_TOOL_NAME, LOGS_TOOL_NAME, VARIABLES_TOOL_NAME}
+)
 
 RAILWAY_ON_APPEND = """
-You have live Railway access for the **Storykeep web** stack (FastAPI + Next) — the site you are embedded in.
-- **railway_status** (read-only): production URL, latest deployment id/status/time. Use when Steve asks what is live on Railway.
-- **railway_deploy**: ONLY when Steve explicitly asks to **deploy or redeploy Storykeep web** (e.g. "deploy storykeep to railway"). Never call it for:
+You have live Railway ops for the **Storykeep web** stack (FastAPI + Next) — Steve's ops twin for ship, not a full IDE.
+- **railway_status**: production URL, latest deployment id/status/time.
+- **railway_deploy**: ONLY when Steve explicitly asks to deploy/redeploy Storykeep web — polls until SUCCESS or failure.
+- **railway_logs**: recent build/deploy log lines (latest deployment unless id given).
+- **railway_variables**: lists configured variable **names** on the service (never echo secret values).
+- **railway_deploy** never call for:
   • "build Junior" / Android Talk·Type / Compose / Kotlin work (that is Cursor + GitHub, not a new Railway service)
   • Cursor agent tasks, schema.sql, or Postgres setup (you cannot run SQL from chat)
   • Mentioning Railway tokens, GitHub, or Junior in general
@@ -67,7 +75,9 @@ _STATUS_RE = re.compile(
     r"what(?:'s|\s+is)\s+(?:on|in)\s+prod|"
     r"build(?:\s+stamp|\s+info)?|"
     r"latest(?:\s+deploy|\s+deployment)?|"
-    r"storykeep(?:\s+production|\s+deploy)?)\b",
+    r"storykeep(?:\s+production|\s+deploy)?|"
+    r"deploy(?:ment)?\s+logs?|build\s+logs?|"
+    r"railway\s+variables?|env\s+vars?)\b",
     re.I,
 )
 _SETUP_RE = re.compile(
@@ -100,6 +110,37 @@ RAILWAY_DEPLOY_TOOL = {
         "parameters": {"type": "object", "properties": {}},
     },
 }
+
+RAILWAY_LOGS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": LOGS_TOOL_NAME,
+        "description": "Fetch recent Railway build/deploy log lines for Storykeep (latest deployment if id omitted).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "deployment_id": {"type": "string", "description": "Optional deployment UUID"},
+                "limit": {"type": "integer", "description": "Max log lines (default 40, max 200)", "minimum": 1, "maximum": 200},
+            },
+        },
+    },
+}
+
+RAILWAY_VARIABLES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": VARIABLES_TOOL_NAME,
+        "description": "List Storykeep Railway service variable names (values redacted).",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+RAILWAY_TOOLS = [
+    RAILWAY_STATUS_TOOL,
+    RAILWAY_DEPLOY_TOOL,
+    RAILWAY_LOGS_TOOL,
+    RAILWAY_VARIABLES_TOOL,
+]
 
 
 @dataclass(frozen=True)
@@ -169,7 +210,7 @@ def is_railway_tool(item: object) -> bool:
         return False
     fn = item.get("function") if isinstance(item.get("function"), dict) else {}
     name = str(fn.get("name") or item.get("name") or "").strip()
-    return name in {STATUS_TOOL_NAME, DEPLOY_TOOL_NAME}
+    return name in RAILWAY_TOOL_NAMES
 
 
 def _graphql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -385,6 +426,95 @@ def fetch_status() -> RailwayOutcome:
     return RailwayOutcome(True, "\n".join(lines), 200)
 
 
+def _latest_deployment_id(target: RailwayTarget) -> str | None:
+    query = """
+    query LatestDeployment($serviceId: String!, $environmentId: String!) {
+      serviceInstance(serviceId: $serviceId, environmentId: $environmentId) {
+        latestDeployment { id }
+      }
+    }
+    """
+    body = _graphql(query, {"serviceId": target.service_id, "environmentId": target.environment_id})
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    instance = data.get("serviceInstance") if isinstance(data.get("serviceInstance"), dict) else {}
+    latest = instance.get("latestDeployment") if isinstance(instance.get("latestDeployment"), dict) else {}
+    dep_id = latest.get("id")
+    return str(dep_id) if dep_id else None
+
+
+def fetch_logs(*, deployment_id: str | None = None, limit: int = 40) -> RailwayOutcome:
+    if not configured():
+        return RailwayOutcome(False, RAILWAY_OFF_APPEND.strip(), 503)
+    target = resolve_target()
+    if target is None:
+        return RailwayOutcome(False, "Could not resolve Railway project/service/environment.", 502)
+    dep_id = (deployment_id or "").strip() or _latest_deployment_id(target)
+    if not dep_id:
+        return RailwayOutcome(False, "No deployment id for logs.", 502)
+    cap = max(1, min(int(limit or 40), 200))
+    query = """
+    query DeploymentLogs($deploymentId: String!, $limit: Int!) {
+      deploymentLogs(deploymentId: $deploymentId, limit: $limit) {
+        message
+        severity
+      }
+    }
+    """
+    body = _graphql(query, {"deploymentId": dep_id, "limit": cap})
+    errors = body.get("errors")
+    if errors:
+        return RailwayOutcome(False, f"Railway logs failed: {redact_secrets(str(errors))[:300]}", 502)
+    rows = (body.get("data") or {}).get("deploymentLogs") if isinstance(body.get("data"), dict) else []
+    lines = [f"Railway logs for deployment {dep_id} (last {cap} lines):"]
+    if isinstance(rows, list) and rows:
+        for row in rows[-cap:]:
+            if not isinstance(row, dict):
+                continue
+            msg = redact_secrets(str(row.get("message") or "").strip())
+            if not msg:
+                continue
+            sev = str(row.get("severity") or "").strip()
+            prefix = f"[{sev}] " if sev else ""
+            lines.append(f"  {prefix}{msg[:500]}")
+    else:
+        lines.append("  (no log lines returned)")
+    return RailwayOutcome(True, "\n".join(lines), 200)
+
+
+def fetch_variable_names() -> RailwayOutcome:
+    if not configured():
+        return RailwayOutcome(False, RAILWAY_OFF_APPEND.strip(), 503)
+    target = resolve_target()
+    if target is None:
+        return RailwayOutcome(False, "Could not resolve Railway project/service/environment.", 502)
+    query = """
+    query ServiceVariables($projectId: String!, $environmentId: String!, $serviceId: String!) {
+      variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
+    }
+    """
+    body = _graphql(
+        query,
+        {
+            "projectId": target.project_id,
+            "environmentId": target.environment_id,
+            "serviceId": target.service_id,
+        },
+    )
+    errors = body.get("errors")
+    if errors:
+        return RailwayOutcome(False, f"Railway variables failed: {redact_secrets(str(errors))[:300]}", 502)
+    raw = (body.get("data") or {}).get("variables") if isinstance(body.get("data"), dict) else None
+    names: list[str] = []
+    if isinstance(raw, dict):
+        names = sorted(str(k) for k in raw.keys())
+    lines = [
+        f"Railway variable names for {target.service_name} ({target.environment_name}):",
+        ", ".join(names) if names else "(none)",
+        "Values are redacted — never echo secrets in chat.",
+    ]
+    return RailwayOutcome(True, "\n".join(lines), 200)
+
+
 def fetch_deployment(deployment_id: str) -> dict[str, Any] | None:
     query = """
     query DeploymentPoll($id: String!) {
@@ -481,7 +611,15 @@ def format_deploy_for_model(outcome: RailwayOutcome) -> str:
     )
 
 
-def assemble_tool_call(fragments: list[dict] | None) -> dict[str, str] | None:
+def _parse_tool_args(arguments: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def assemble_tool_calls(fragments: list[dict] | None) -> list[dict[str, Any]]:
     buckets: dict[int, dict[str, str]] = {}
     for item in fragments or []:
         if not isinstance(item, dict):
@@ -495,19 +633,40 @@ def assemble_tool_call(fragments: list[dict] | None) -> dict[str, str] | None:
         name = fn.get("name") or item.get("name")
         if isinstance(name, str) and name:
             slot["name"] = name
+        args = fn.get("arguments") if isinstance(fn, dict) else item.get("arguments")
+        if isinstance(args, str):
+            slot["arguments"] += args
+    order = {DEPLOY_TOOL_NAME: 0, LOGS_TOOL_NAME: 1, STATUS_TOOL_NAME: 2, VARIABLES_TOOL_NAME: 3}
+    calls: list[dict[str, Any]] = []
     for slot in buckets.values():
         name = slot.get("name") or ""
-        if name in {STATUS_TOOL_NAME, DEPLOY_TOOL_NAME}:
-            return {"name": name}
-    return None
+        if name not in RAILWAY_TOOL_NAMES:
+            continue
+        call: dict[str, Any] = {"name": name, **_parse_tool_args(slot.get("arguments") or "")}
+        calls.append(call)
+    calls.sort(key=lambda row: order.get(str(row.get("name")), 9))
+    return calls
 
 
-def execute_tool_call(call: dict[str, str]) -> str:
+def assemble_tool_call(fragments: list[dict] | None) -> dict[str, Any] | None:
+    calls = assemble_tool_calls(fragments)
+    return calls[0] if calls else None
+
+
+def execute_tool_call(call: dict[str, Any]) -> str:
     name = call.get("name")
     if name == STATUS_TOOL_NAME:
         return format_status_for_model(fetch_status())
     if name == DEPLOY_TOOL_NAME:
         outcome = deploy()
-        prefix = "Railway deploy result:"
-        return f"{prefix}\n{outcome.text}"
+        return f"Railway deploy result:\n{outcome.text}"
+    if name == LOGS_TOOL_NAME:
+        outcome = fetch_logs(
+            deployment_id=str(call.get("deployment_id") or "") or None,
+            limit=int(call.get("limit") or 40),
+        )
+        return f"Railway logs:\n{outcome.text}"
+    if name == VARIABLES_TOOL_NAME:
+        outcome = fetch_variable_names()
+        return f"Railway variables:\n{outcome.text}"
     return "Unknown Railway tool."

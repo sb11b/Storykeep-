@@ -1197,13 +1197,13 @@ def _chat(
         )
         else None
     )
-    railway_tools = None
-    if railway_tools_on and (ops_turn or not junior_model.is_cursor_task_turn(user_text)):
-        railway_tools = [railway_tool.RAILWAY_STATUS_TOOL]
-        if will_deploy:
-            railway_tools = [*railway_tools, railway_tool.RAILWAY_DEPLOY_TOOL]
+    railway_tools = (
+        railway_tool.RAILWAY_TOOLS
+        if railway_tools_on and (ops_turn or not junior_model.is_cursor_task_turn(user_text))
+        else None
+    )
     github_tools = (
-        [github_tool.GITHUB_STATUS_TOOL]
+        github_tool.GITHUB_TOOLS
         if github_tools_on and (ops_turn or not junior_model.is_cursor_task_turn(user_text))
         else None
     )
@@ -1516,19 +1516,18 @@ def _chat(
                     )
                     if block:
                         follow_blocks.append(block)
-            railway_call = railway_tool.assemble_tool_call(tool_calls_out)
-            if railway_call and railway_enabled:
-                if railway_call.get("name") == railway_tool.DEPLOY_TOOL_NAME and already_deployed:
-                    pass
-                else:
+            if railway_enabled:
+                for railway_call in railway_tool.assemble_tool_calls(tool_calls_out):
+                    if railway_call.get("name") == railway_tool.DEPLOY_TOOL_NAME and already_deployed:
+                        continue
                     block = await asyncio.to_thread(railway_tool.execute_tool_call, railway_call)
                     if block:
                         follow_blocks.append(block)
-            github_call = github_tool.assemble_tool_call(tool_calls_out)
-            if github_call and github_enabled:
-                block = await asyncio.to_thread(github_tool.execute_tool_call, github_call)
-                if block:
-                    follow_blocks.append(block)
+            if github_enabled:
+                for github_call in github_tool.assemble_tool_calls(tool_calls_out):
+                    block = await asyncio.to_thread(github_tool.execute_tool_call, github_call)
+                    if block:
+                        follow_blocks.append(block)
             if follow_blocks:
                 extra = extra_system
                 for block in follow_blocks:

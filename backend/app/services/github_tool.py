@@ -19,12 +19,15 @@ logger = logging.getLogger(__name__)
 API_ROOT = "https://api.github.com"
 TIMEOUT_SEC = 25.0
 STATUS_TOOL_NAME = "github_status"
+DISPATCH_TOOL_NAME = "github_dispatch_workflow"
+GITHUB_TOOL_NAMES = frozenset({STATUS_TOOL_NAME, DISPATCH_TOOL_NAME})
 
 GITHUB_ON_APPEND = """
-You have live GitHub access for Storykeep's repo.
-- For commits, branches, open PRs, CI/workflow status, or "what's on GitHub", call github_status or use the attached snapshot.
-- Cite commit SHAs, PR numbers, and branch names from the tool output only — never invent them.
-- Tokens stay server-side; never echo API keys.
+You have live GitHub ops for Storykeep's repo (Steve's ship twin — read + trigger CI, not a git client).
+- **github_status**: commits, open PRs, workflow runs on sb11b/Storykeep-.
+- **github_dispatch_workflow**: trigger a GitHub Actions workflow on a branch (default main) when Steve asks to run CI/build workflow — requires Actions write on the token.
+- You cannot `git push` or edit files from chat; Steve pushes in Cursor, then deploy Railway or dispatch CI from here.
+- Cite SHAs and workflow results from tool output only. Tokens stay server-side.
 """
 
 GITHUB_OFF_APPEND = """
@@ -41,7 +44,9 @@ _STATUS_RE = re.compile(
     r"workflow|ci(?:\s+status)?|"
     r"what(?:'s|\s+is)\s+(?:on|in)\s+github|"
     r"latest(?:\s+push|\s+commit)?|"
-    r"storykeep(?:\s+repo|\s+github)?)\b",
+    r"storykeep(?:\s+repo|\s+github)?|"
+    r"dispatch(?:\s+workflow)?|run(?:\s+the)?\s+ci|trigger(?:\s+the)?\s+workflow|"
+    r"ship(?:\s+loop|\s+it)?)\b",
     re.I,
 )
 _SETUP_RE = re.compile(
@@ -61,6 +66,29 @@ GITHUB_STATUS_TOOL = {
         "parameters": {"type": "object", "properties": {}},
     },
 }
+
+GITHUB_DISPATCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": DISPATCH_TOOL_NAME,
+        "description": (
+            "Trigger a GitHub Actions workflow on sb11b/Storykeep-. Use when Steve asks to run CI or dispatch a workflow."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Workflow file name (e.g. deploy.yml) or workflow id",
+                },
+                "ref": {"type": "string", "description": "Git ref/branch to run on", "default": "main"},
+            },
+            "required": ["workflow_id"],
+        },
+    },
+}
+
+GITHUB_TOOLS = [GITHUB_STATUS_TOOL, GITHUB_DISPATCH_TOOL]
 
 
 @dataclass(frozen=True)
@@ -107,7 +135,7 @@ def is_github_tool(item: object) -> bool:
         return False
     fn = item.get("function") if isinstance(item.get("function"), dict) else {}
     name = str(fn.get("name") or item.get("name") or "").strip()
-    return name == STATUS_TOOL_NAME
+    return name in GITHUB_TOOL_NAMES
 
 
 def _headers() -> dict[str, str]:
@@ -117,6 +145,27 @@ def _headers() -> dict[str, str]:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def _post(path: str, payload: dict[str, Any]) -> tuple[int, Any]:
+    token = _token()
+    if not token:
+        return 503, {"message": "GitHub token not configured"}
+    url = f"{API_ROOT}{path}"
+    try:
+        with httpx.Client(timeout=TIMEOUT_SEC) as client:
+            response = client.post(url, headers=_headers(), json=payload)
+    except httpx.TimeoutException:
+        return 504, {"message": "GitHub API timeout"}
+    except httpx.HTTPError as exc:
+        return 502, {"message": f"GitHub transport error: {exc}"}
+    if response.status_code == 204:
+        return 204, {}
+    try:
+        body = response.json()
+    except json.JSONDecodeError:
+        body = {"message": response.text[:300]}
+    return response.status_code, body
 
 
 def _get(path: str) -> tuple[int, Any]:
@@ -221,7 +270,39 @@ def format_status_for_model(outcome: GitHubOutcome) -> str:
     return f"{prefix}\n{outcome.text}"
 
 
-def assemble_tool_call(fragments: list[dict] | None) -> dict[str, str] | None:
+def dispatch_workflow(workflow_id: str, *, ref: str = "main") -> GitHubOutcome:
+    if not configured():
+        return GitHubOutcome(False, GITHUB_OFF_APPEND.strip(), 503)
+    wf = (workflow_id or "").strip()
+    if not wf:
+        return GitHubOutcome(False, "workflow_id is required.", 400)
+    branch = (ref or "main").strip() or "main"
+    repo = _repo()
+    encoded = quote(repo, safe="/")
+    wf_encoded = quote(wf, safe="")
+    status_code, body = _post(
+        f"/repos/{encoded}/actions/workflows/{wf_encoded}/dispatches",
+        {"ref": branch},
+    )
+    if status_code == 204:
+        return GitHubOutcome(
+            True,
+            f"Dispatched workflow `{wf}` on `{branch}` for {repo}.",
+            204,
+        )
+    detail = redact_secrets(str(body))[:300]
+    return GitHubOutcome(False, f"GitHub workflow dispatch failed (HTTP {status_code}): {detail}", status_code)
+
+
+def _parse_tool_args(arguments: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def assemble_tool_calls(fragments: list[dict] | None) -> list[dict[str, Any]]:
     buckets: dict[int, dict[str, str]] = {}
     for item in fragments or []:
         if not isinstance(item, dict):
@@ -235,13 +316,32 @@ def assemble_tool_call(fragments: list[dict] | None) -> dict[str, str] | None:
         name = fn.get("name") or item.get("name")
         if isinstance(name, str) and name:
             slot["name"] = name
+        args = fn.get("arguments") if isinstance(fn, dict) else item.get("arguments")
+        if isinstance(args, str):
+            slot["arguments"] += args
+    calls: list[dict[str, Any]] = []
     for slot in buckets.values():
-        if slot.get("name") == STATUS_TOOL_NAME:
-            return {"name": STATUS_TOOL_NAME}
-    return None
+        name = slot.get("name") or ""
+        if name not in GITHUB_TOOL_NAMES:
+            continue
+        calls.append({"name": name, **_parse_tool_args(slot.get("arguments") or "")})
+    return calls
 
 
-def execute_tool_call(call: dict[str, str]) -> str:
-    if call.get("name") == STATUS_TOOL_NAME:
+def assemble_tool_call(fragments: list[dict] | None) -> dict[str, Any] | None:
+    calls = assemble_tool_calls(fragments)
+    return calls[0] if calls else None
+
+
+def execute_tool_call(call: dict[str, Any]) -> str:
+    name = call.get("name")
+    if name == STATUS_TOOL_NAME:
         return format_status_for_model(fetch_status())
+    if name == DISPATCH_TOOL_NAME:
+        outcome = dispatch_workflow(
+            str(call.get("workflow_id") or ""),
+            ref=str(call.get("ref") or "main"),
+        )
+        prefix = "GitHub workflow dispatch:"
+        return f"{prefix}\n{outcome.text}"
     return "Unknown GitHub tool."
