@@ -33,7 +33,7 @@ class OpsTurnTests(unittest.TestCase):
             ops_turn=True,
         )
         joined = "\n".join(extras)
-        self.assertIn("Owner ops turn", joined)
+        self.assertIn("Owner ops twin turn", joined)
         self.assertIn("Storykeep web", joined)
 
 

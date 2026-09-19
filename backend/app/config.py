@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     railway_public_domain: str = ""
     github_token: str = ""
     github_repo: str = "sb11b/Storykeep-"
+    cursor_api_key: str = ""
+    cursor_agent_repo: str = ""
+    cursor_agent_branch: str = "main"
+    cursor_api_url: str = "https://api.cursor.com"
+
+    @property
+    def cursor_configured(self) -> bool:
+        return bool((self.cursor_api_key or "").strip())
 
     @field_validator("env", mode="before")
     @classmethod

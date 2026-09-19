@@ -56,7 +56,8 @@ _ANDROID_PROJECT_RE = re.compile(
 JUNIOR_CAPABILITIES_APPEND = """
 When Steve asks who you are or what you can do, use the **Junior capabilities** section in standing memory.
 Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) when configured and he explicitly asks — confirm what you did after tool calls.
-Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy outcomes.
+Owner delegate: cursor_start_agent when configured and he explicitly asks to start/launch a Cursor Cloud Agent — return the agent URL.
+Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
 """
 
 OPS_TURN_APPEND = """
@@ -64,6 +65,12 @@ Owner ops twin turn (Storykeep ship loop from chat — not a full IDE; code edit
 Tools when attached: github_status, github_dispatch_workflow, railway_status, railway_deploy, railway_logs, railway_variables.
 If GitHub/Railway blocks are attached, cite only that data. Deploy blocks include **Final status** after polling — do not invent SUCCESS.
 Keep replies short. No Add to notes footer. No recap of these instructions.
+"""
+
+CURSOR_DELEGATE_APPEND = """
+Owner Cursor delegate turn — Steve asked you to **start a real Cloud Agent**, not just write a copy-paste prompt.
+Tool when attached: cursor_start_agent. If a live agent block is attached, give Steve the agent URL from it.
+Keep replies short. No Add to notes footer. Do not claim you edited the repo yourself.
 """
 
 JUNIOR_FEEDBACK_APPEND = """
@@ -147,10 +154,21 @@ def is_ops_turn(message: str) -> bool:
     return railway_tool.wants_railway(text) or github_tool.wants_github(text)
 
 
+def is_delegate_turn(message: str) -> bool:
+    from app.services import cursor_agent_tool
+
+    text = (message or "").strip()
+    if not text:
+        return False
+    return cursor_agent_tool.wants_start(text)
+
+
 def brings_cursor_task(message: str) -> bool:
     """Steve supplied the agent task — polish/follow it, do not invent a new one."""
     text = (message or "").strip()
     if not text or asks_for_cursor_prompt(text):
+        return False
+    if is_delegate_turn(text):
         return False
     if is_junior_feedback_turn(text):
         return False
@@ -173,6 +191,8 @@ def brings_cursor_task(message: str) -> bool:
 def cursor_turn_mode(message: str) -> str | None:
     """generate | follow | None"""
     if is_junior_feedback_turn(message):
+        return None
+    if is_delegate_turn(message):
         return None
     if asks_for_cursor_prompt(message):
         return "generate"
@@ -321,12 +341,16 @@ def build_turn_extras(
     railway_tools: bool = False,
     github_enabled: bool = False,
     github_tools: bool = False,
+    cursor_enabled: bool = False,
+    cursor_tools: bool = False,
     ops_turn: bool = False,
+    delegate_turn: bool = False,
 ) -> list[str]:
     """Attach only what this turn needs. Never dump spec docs or full chat bodies."""
     del memory_block  # standing memory lives in standing_system(), not extras
     extras: list[str] = []
     from app.services import chat_index
+    from app.services import cursor_agent_tool
     from app.services import github_tool
     from app.services import mail_tool
     from app.services import railway_tool
@@ -338,7 +362,7 @@ def build_turn_extras(
         user_text,
         indexed=bool(index_block),
         read=bool(read_meta),
-        tools=calendar_tools or mail_unread or will_search or railway_tools or github_tools,
+        tools=calendar_tools or mail_unread or will_search or railway_tools or github_tools or cursor_tools,
     )
     if chat_tools:
         extras.append(chat_index.CHATS_ON_APPEND)
@@ -369,12 +393,18 @@ def build_turn_extras(
         extras.append(JUNIOR_FEEDBACK_APPEND)
     elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):
         extras.append(ANDROID_SCOPE_APPEND)
-    if ops_turn and not cursor_task:
+    if ops_turn and not cursor_task and not delegate_turn:
         extras.append(OPS_TURN_APPEND)
+    if delegate_turn and not cursor_task:
+        extras.append(CURSOR_DELEGATE_APPEND)
     if railway_tools and not cursor_task:
         extras.append(railway_tool.RAILWAY_ON_APPEND if railway_enabled else railway_tool.RAILWAY_OFF_APPEND)
     if github_tools and not cursor_task:
         extras.append(github_tool.GITHUB_ON_APPEND if github_enabled else github_tool.GITHUB_OFF_APPEND)
+    if cursor_tools and not cursor_task:
+        extras.append(
+            cursor_agent_tool.CURSOR_ON_APPEND if cursor_enabled else cursor_agent_tool.CURSOR_OFF_APPEND
+        )
     mode = cursor_turn_mode(user_text)
     if mode == "generate":
         extras.append(CURSOR_PROMPT_APPEND)

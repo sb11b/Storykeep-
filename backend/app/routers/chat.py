@@ -49,6 +49,7 @@ from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog
 from app.services import web_search as search_tool
 from app.services import railway_tool
 from app.services import github_tool
+from app.services import cursor_agent_tool
 from app.services import chat_index
 from app.services import message_crypto
 
@@ -1123,13 +1124,19 @@ def _chat(
     will_railway = railway_tool.wants_railway(user_text)
     will_github = github_tool.wants_github(user_text)
     will_deploy = railway_tool.wants_railway_deploy(user_text)
+    will_cursor_start = cursor_agent_tool.wants_start(user_text)
     ops_turn = owner_ops and junior_model.is_ops_turn(user_text)
+    delegate_turn = owner_ops and junior_model.is_delegate_turn(user_text)
     railway_tools_on = owner_ops and (
         ops_turn or chat_service.should_attach_chat_tools(user_text)
     )
     github_tools_on = owner_ops and (
         ops_turn or chat_service.should_attach_chat_tools(user_text)
     )
+    cursor_tools_on = owner_ops and (
+        delegate_turn or chat_service.should_attach_chat_tools(user_text)
+    )
+    cursor_enabled = cursor_agent_tool.owner_can_use(user)
     turn_extras = junior_model.build_turn_extras(
         user_text,
         memory_block=memory_block,
@@ -1148,7 +1155,10 @@ def _chat(
         railway_tools=railway_tools_on,
         github_enabled=github_enabled,
         github_tools=github_tools_on,
+        cursor_enabled=cursor_enabled,
+        cursor_tools=cursor_tools_on,
         ops_turn=ops_turn,
+        delegate_turn=delegate_turn,
     )
     core_system = chat_service.build_system_content(
         excerpt,
@@ -1181,6 +1191,7 @@ def _chat(
         [search_tool.WEB_SEARCH_TOOL]
         if search_enabled
         and not ops_turn
+        and not delegate_turn
         and not chat_service.is_small_talk_turn(user_text)
         and not junior_model.is_cursor_task_turn(user_text)
         else None
@@ -1207,6 +1218,11 @@ def _chat(
         if github_tools_on and (ops_turn or not junior_model.is_cursor_task_turn(user_text))
         else None
     )
+    cursor_tools = (
+        cursor_agent_tool.CURSOR_TOOLS
+        if cursor_tools_on and (delegate_turn or not junior_model.is_cursor_task_turn(user_text))
+        else None
+    )
     tools = (
         *(
             calendar_tools or []),
@@ -1215,6 +1231,7 @@ def _chat(
         *(chat_tools or []),
         *(railway_tools or []),
         *(github_tools or []),
+        *(cursor_tools or []),
     ) or None
     tool_calls_out: list[dict] = []
     payload_chars = chat_service.messages_char_count(
@@ -1395,11 +1412,14 @@ def _chat(
             extra = extra_system
             already_searched = False
             already_deployed = False
+            already_started_agent = False
             output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
                 "stream_status": (
                     "searching"
                     if will_search
+                    else "starting_agent"
+                    if will_cursor_start and cursor_enabled
                     else "deploying"
                     if will_deploy and railway_enabled
                     else "working"
@@ -1455,6 +1475,20 @@ def _chat(
             elif will_railway and not will_deploy:
                 railway_outcome = await asyncio.to_thread(railway_tool.fetch_status)
                 block = railway_tool.format_status_for_model(railway_outcome)
+                extra = f"{extra}\n{block}" if extra else block
+            if will_cursor_start and cursor_enabled:
+                agent_outcome = await asyncio.to_thread(
+                    cursor_agent_tool.start_agent,
+                    "",
+                    source_message=user_text,
+                )
+                already_started_agent = agent_outcome.ok
+                block = cursor_agent_tool.format_start_for_model(agent_outcome)
+                extra = f"{extra}\n{block}" if extra else block
+            elif will_cursor_start:
+                block = cursor_agent_tool.format_start_for_model(
+                    cursor_agent_tool.start_agent("", source_message=user_text)
+                )
                 extra = f"{extra}\n{block}" if extra else block
             stream = _stream_xai(extra, tools)
             async for piece in stream:
@@ -1526,6 +1560,17 @@ def _chat(
             if github_enabled:
                 for github_call in github_tool.assemble_tool_calls(tool_calls_out):
                     block = await asyncio.to_thread(github_tool.execute_tool_call, github_call)
+                    if block:
+                        follow_blocks.append(block)
+            if cursor_enabled:
+                for cursor_call in cursor_agent_tool.assemble_tool_calls(tool_calls_out):
+                    if cursor_call.get("name") == cursor_agent_tool.START_TOOL_NAME and already_started_agent:
+                        continue
+                    block = await asyncio.to_thread(
+                        cursor_agent_tool.execute_tool_call,
+                        cursor_call,
+                        source_message=user_text,
+                    )
                     if block:
                         follow_blocks.append(block)
             if follow_blocks:
