@@ -234,6 +234,31 @@
 .reader-chrome {
   flex: none;
 }
+
+/* StoryKeep archive header actions — not Meridian */
+.archive-toolbar {
+  color: #3f3a32;
+}
+.archive-toolbar button,
+.archive-toolbar a,
+.archive-toolbar [role="button"] {
+  color: inherit;
+  opacity: 1;
+}
+.archive-toolbar kbd,
+.archive-toolbar .shortcut {
+  color: inherit;
+  opacity: 0.75;
+}
+.archive-toolbar button:disabled,
+.archive-toolbar [aria-disabled="true"] {
+  color: #6f6a62;
+  opacity: 1;
+}
+.archive-toolbar button:hover:not(:disabled) {
+  background: #f3efe6;
+  color: #1c1915;
+}
 /* The pages stack in the article column's own scroller, so the pane must never
    become a bounded flex box that a tall toolbar can crush to zero height. */
 .pdf-host {

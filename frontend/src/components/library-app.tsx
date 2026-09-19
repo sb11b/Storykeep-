@@ -1571,7 +1571,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
               />
             </div>
           </form>
-          <div className="ml-auto flex flex-wrap items-center gap-1">
+          <div className="archive-toolbar ml-auto flex flex-wrap items-center gap-1">
             <Button
               size="xs"
               variant="outline"
@@ -1581,7 +1581,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               <ChevronUp className="size-3" />
               Prev
-              <kbd className="text-[10px] text-muted-foreground">k</kbd>
+              <kbd className="text-[10px]">k</kbd>
             </Button>
             <Button
               size="xs"
@@ -1592,7 +1592,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               <ChevronDown className="size-3" />
               Next
-              <kbd className="text-[10px] text-muted-foreground">j</kbd>
+              <kbd className="text-[10px]">j</kbd>
             </Button>
             <Button
               size="xs"
@@ -1603,7 +1603,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               <Check className="size-3" />
               {article?.is_read ? "Unread" : "Read"}
-              <kbd className="text-[10px] opacity-70">m</kbd>
+              <kbd className="text-[10px]">m</kbd>
             </Button>
             <Button
               size="xs"
@@ -1614,7 +1614,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               {article?.is_saved ? <BookmarkCheck className="size-3" /> : <Bookmark className="size-3" />}
               Save
-              <kbd className="text-[10px] opacity-70">s</kbd>
+              <kbd className="text-[10px]">s</kbd>
             </Button>
             <Button
               size="xs"
@@ -1625,7 +1625,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               <NotebookPen className="size-3" />
               Note
-              <kbd className="text-[10px] text-muted-foreground">n</kbd>
+              <kbd className="text-[10px]">n</kbd>
             </Button>
             <Button
               size="xs"
@@ -1636,7 +1636,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               <Volume2 className="size-3" />
               Listen
-              <kbd className="text-[10px] text-muted-foreground">l</kbd>
+              <kbd className="text-[10px]">l</kbd>
             </Button>
             <Button
               size="xs"
@@ -1646,7 +1646,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
               onClick={() => listenRef.current?.listenFromHere()}
             >
               From here
-              <kbd className="text-[10px] text-muted-foreground">⇧L</kbd>
+              <kbd className="text-[10px]">⇧L</kbd>
             </Button>
             <Button
               size="xs"
@@ -1698,7 +1698,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
             >
               {readerFull ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
               {readerFull ? "Exit" : "Fullscreen"}
-              <kbd className="text-[10px] text-muted-foreground">f</kbd>
+              <kbd className="text-[10px]">f</kbd>
             </Button>
           </div>
         </header>
