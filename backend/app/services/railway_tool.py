@@ -292,23 +292,20 @@ def fetch_status() -> RailwayOutcome:
         return RailwayOutcome(False, "Could not resolve Railway project/service/environment.", 502)
     query = """
     query ServiceStatus($serviceId: String!, $environmentId: String!) {
-      service(id: $serviceId) {
+      serviceInstance(serviceId: $serviceId, environmentId: $environmentId) {
         id
-        name
-        serviceInstances {
-          edges {
-            node {
-              domains {
-                serviceDomain
-              }
-              latestDeployment {
-                id
-                status
-                createdAt
-                meta
-              }
-            }
+        serviceName
+        domains {
+          serviceDomains {
+            domain
           }
+        }
+        latestDeployment {
+          id
+          status
+          createdAt
+          meta
+          staticUrl
         }
       }
       environment(id: $environmentId) {
@@ -326,28 +323,23 @@ def fetch_status() -> RailwayOutcome:
         detail = redact_secrets(str(errors))[:300]
         return RailwayOutcome(False, f"Railway status failed: {detail}", 502)
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    service = data.get("service") if isinstance(data.get("service"), dict) else {}
+    instance = data.get("serviceInstance") if isinstance(data.get("serviceInstance"), dict) else {}
     environment = data.get("environment") if isinstance(data.get("environment"), dict) else {}
-    deployment: dict[str, Any] | None = None
+    deployment = instance.get("latestDeployment") if isinstance(instance.get("latestDeployment"), dict) else None
     domain = ""
-    for edge in ((service.get("serviceInstances") or {}).get("edges") or []):
-        node = edge.get("node") if isinstance(edge, dict) else None
-        if not isinstance(node, dict):
-            continue
-        domains = node.get("domains") or []
-        if isinstance(domains, list) and domains and isinstance(domains[0], dict):
-            domain = str(domains[0].get("serviceDomain") or "")
-        latest = node.get("latestDeployment")
-        if isinstance(latest, dict):
-            deployment = latest
+    domains = instance.get("domains") if isinstance(instance.get("domains"), dict) else {}
+    for item in domains.get("serviceDomains") or []:
+        if isinstance(item, dict) and item.get("domain"):
+            domain = str(item.get("domain") or "")
             break
-    public = f"https://{domain}" if domain else ""
+    static_url = str((deployment or {}).get("staticUrl") or "").strip()
+    public = static_url if static_url.startswith("http") else (f"https://{domain}" if domain else "")
     if not public and settings.railway_public_domain:
         public = f"https://{settings.railway_public_domain.strip()}"
     lines = [
         "Railway status snapshot (live):",
         f"- Project: {target.project_name} ({target.project_id})",
-        f"- Service: {target.service_name} ({target.service_id})",
+        f"- Service: {instance.get('serviceName') or target.service_name} ({target.service_id})",
         f"- Environment: {environment.get('name') or target.environment_name} ({target.environment_id})",
     ]
     if public:
