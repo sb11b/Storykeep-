@@ -1113,6 +1113,8 @@ def _chat(
                     read_meta = "No chat with that id. Use the index. Do not invent a thread."
             else:
                 read_meta = chat_index.NEED_ID_SYSTEM
+    from app.services import junior_model
+
     search_enabled = search_tool.owner_can_search(user)
     will_search = search_enabled and search_tool.wants_web_search(user_text)
     owner_ops = user is not None and not is_locked(user)
@@ -1120,14 +1122,14 @@ def _chat(
     github_enabled = github_tool.owner_can_use(user)
     will_railway = railway_tool.wants_railway(user_text)
     will_github = github_tool.wants_github(user_text)
+    will_deploy = railway_tool.wants_railway_deploy(user_text)
+    ops_turn = owner_ops and junior_model.is_ops_turn(user_text)
     railway_tools_on = owner_ops and (
-        will_railway or chat_service.should_attach_chat_tools(user_text)
+        ops_turn or chat_service.should_attach_chat_tools(user_text)
     )
     github_tools_on = owner_ops and (
-        will_github or chat_service.should_attach_chat_tools(user_text)
+        ops_turn or chat_service.should_attach_chat_tools(user_text)
     )
-    from app.services import junior_model
-
     turn_extras = junior_model.build_turn_extras(
         user_text,
         memory_block=memory_block,
@@ -1146,6 +1148,7 @@ def _chat(
         railway_tools=railway_tools_on,
         github_enabled=github_enabled,
         github_tools=github_tools_on,
+        ops_turn=ops_turn,
     )
     core_system = chat_service.build_system_content(
         excerpt,
@@ -1177,6 +1180,7 @@ def _chat(
     search_tools = (
         [search_tool.WEB_SEARCH_TOOL]
         if search_enabled
+        and not ops_turn
         and not chat_service.is_small_talk_turn(user_text)
         and not junior_model.is_cursor_task_turn(user_text)
         else None
@@ -1194,13 +1198,13 @@ def _chat(
         else None
     )
     railway_tools = None
-    if railway_tools_on and not junior_model.is_cursor_task_turn(user_text):
+    if railway_tools_on and (ops_turn or not junior_model.is_cursor_task_turn(user_text)):
         railway_tools = [railway_tool.RAILWAY_STATUS_TOOL]
-        if railway_tool.wants_railway_deploy(user_text):
+        if will_deploy:
             railway_tools = [*railway_tools, railway_tool.RAILWAY_DEPLOY_TOOL]
     github_tools = (
         [github_tool.GITHUB_STATUS_TOOL]
-        if github_tools_on and not junior_model.is_cursor_task_turn(user_text)
+        if github_tools_on and (ops_turn or not junior_model.is_cursor_task_turn(user_text))
         else None
     )
     tools = (
@@ -1390,9 +1394,16 @@ def _chat(
             await asyncio.sleep(0)
             extra = extra_system
             already_searched = False
+            already_deployed = False
             output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
-                "stream_status": "searching" if will_search else "working",
+                "stream_status": (
+                    "searching"
+                    if will_search
+                    else "deploying"
+                    if will_deploy and railway_enabled
+                    else "working"
+                ),
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
@@ -1429,13 +1440,21 @@ def _chat(
                 else:
                     block = search_tool.format_hits_for_model(outcome.hits)
                     extra = f"{extra}\n{block}" if extra else block
-            if will_railway and not railway_tool.wants_railway_deploy(user_text):
-                railway_outcome = await asyncio.to_thread(railway_tool.fetch_status)
-                block = railway_tool.format_status_for_model(railway_outcome)
-                extra = f"{extra}\n{block}" if extra else block
-            if will_github:
+            if will_github and github_enabled:
                 github_outcome = await asyncio.to_thread(github_tool.fetch_status)
                 block = github_tool.format_status_for_model(github_outcome)
+                extra = f"{extra}\n{block}" if extra else block
+            elif will_github:
+                block = github_tool.format_status_for_model(github_tool.fetch_status())
+                extra = f"{extra}\n{block}" if extra else block
+            if will_deploy and railway_enabled:
+                deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
+                already_deployed = deploy_outcome.ok
+                block = railway_tool.format_deploy_for_model(deploy_outcome)
+                extra = f"{extra}\n{block}" if extra else block
+            elif will_railway and not will_deploy:
+                railway_outcome = await asyncio.to_thread(railway_tool.fetch_status)
+                block = railway_tool.format_status_for_model(railway_outcome)
                 extra = f"{extra}\n{block}" if extra else block
             stream = _stream_xai(extra, tools)
             async for piece in stream:
@@ -1499,9 +1518,12 @@ def _chat(
                         follow_blocks.append(block)
             railway_call = railway_tool.assemble_tool_call(tool_calls_out)
             if railway_call and railway_enabled:
-                block = await asyncio.to_thread(railway_tool.execute_tool_call, railway_call)
-                if block:
-                    follow_blocks.append(block)
+                if railway_call.get("name") == railway_tool.DEPLOY_TOOL_NAME and already_deployed:
+                    pass
+                else:
+                    block = await asyncio.to_thread(railway_tool.execute_tool_call, railway_call)
+                    if block:
+                        follow_blocks.append(block)
             github_call = github_tool.assemble_tool_call(tool_calls_out)
             if github_call and github_enabled:
                 block = await asyncio.to_thread(github_tool.execute_tool_call, github_call)

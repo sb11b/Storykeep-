@@ -414,9 +414,12 @@ def deploy() -> RailwayOutcome:
 
 def format_status_for_model(outcome: RailwayOutcome) -> str:
     prefix = "Live Railway data for this turn:"
-    if outcome.ok:
-        return f"{prefix}\n{outcome.text}"
     return f"{prefix}\n{outcome.text}"
+
+
+def format_deploy_for_model(outcome: RailwayOutcome) -> str:
+    prefix = "Railway deploy executed server-side this turn (Storykeep web only):"
+    return f"{prefix}\n{outcome.text}\nReport this deployment id in your reply. Do not invent SUCCESS without this block."
 
 
 def assemble_tool_call(fragments: list[dict] | None) -> dict[str, str] | None:

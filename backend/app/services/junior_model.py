@@ -59,6 +59,13 @@ Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) whe
 Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy outcomes.
 """
 
+OPS_TURN_APPEND = """
+Owner ops turn (GitHub read and/or Storykeep web deploy). Tools: github_status, railway_status, railway_deploy when attached.
+If a GitHub or Railway block is already attached this turn, cite only that data — do not invent SHAs, deployment ids, or SUCCESS.
+If deploy was executed server-side, say so with the deployment id from the block. If deploy tool is missing or failed, say you could not start a deploy — do not claim SUCCESS.
+Keep the reply short. No Add to notes footer. No recap of these instructions.
+"""
+
 JUNIOR_FEEDBACK_APPEND = """
 Steve is giving feedback on Junior's clarity. Answer plainly — use the Junior capabilities section, not a Cursor copy-paste block unless he asked for one.
 """
@@ -128,6 +135,16 @@ def is_junior_feedback_turn(message: str) -> bool:
 
 def is_android_project_turn(message: str) -> bool:
     return bool(_ANDROID_PROJECT_RE.search(message or ""))
+
+
+def is_ops_turn(message: str) -> bool:
+    from app.services import github_tool
+    from app.services import railway_tool
+
+    text = (message or "").strip()
+    if not text:
+        return False
+    return railway_tool.wants_railway(text) or github_tool.wants_github(text)
 
 
 def brings_cursor_task(message: str) -> bool:
@@ -304,6 +321,7 @@ def build_turn_extras(
     railway_tools: bool = False,
     github_enabled: bool = False,
     github_tools: bool = False,
+    ops_turn: bool = False,
 ) -> list[str]:
     """Attach only what this turn needs. Never dump spec docs or full chat bodies."""
     del memory_block  # standing memory lives in standing_system(), not extras
@@ -351,6 +369,8 @@ def build_turn_extras(
         extras.append(JUNIOR_FEEDBACK_APPEND)
     elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):
         extras.append(ANDROID_SCOPE_APPEND)
+    if ops_turn and not cursor_task:
+        extras.append(OPS_TURN_APPEND)
     if railway_tools and not cursor_task:
         extras.append(railway_tool.RAILWAY_ON_APPEND if railway_enabled else railway_tool.RAILWAY_OFF_APPEND)
     if github_tools and not cursor_task:
