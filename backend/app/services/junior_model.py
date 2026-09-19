@@ -21,6 +21,7 @@ _SPEC_SECTION_RE = re.compile(
     r"(?im)^#+\s*(?:TIMELINE|UI[_ ]NOTES|ARCHITECTURE|DATA[_ ]MODEL|PHASE\s*[12]|MERIDIAN).*$"
 )
 _CURSOR_SECTION_RE = re.compile(r"(?im)^#+\s*.*\bCURSOR\b.*$")
+_CAPABILITIES_SECTION_RE = re.compile(r"(?im)^#+\s*.*Junior capabilities.*$")
 _ASK_CURSOR_PROMPT_RE = re.compile(
     r"\b(?:write|draft|generate|create|give me|need|make|want)\s+(?:me\s+)?(?:a\s+)?"
     r"(?:prompt for (?:the\s+)?cursor|cursor prompt|cursor agent prompt|cloud agent prompt)\b|"
@@ -52,22 +53,19 @@ _ANDROID_PROJECT_RE = re.compile(
     re.I,
 )
 
-JUNIOR_IDENTITY_APPEND = """
-You are Junior: the Grok chat bubble inside **Storykeep web** (FastAPI + Next on Railway). You are not a separate Railway service.
-The Android Talk/Type app is different work in sb11b/Storykeep- (Cursor + GitHub). Redeploying Storykeep web does not build or ship Android.
-When Steve asks what you can do, list only tools attached this turn — do not claim deploys or repo changes you did not perform.
+JUNIOR_CAPABILITIES_APPEND = """
+When Steve asks who you are, what you can do, or what Junior is, answer using the **Junior capabilities** section in standing memory — match that list, in your own voice.
+Do not claim Railway/GitHub login, deploys, repo pushes, or server-side tools beyond what that section allows.
+Do not ask Steve to paste GITHUB_TOKEN or RAILWAY_API_TOKEN into chat.
 """
 
 JUNIOR_FEEDBACK_APPEND = """
-Steve is giving feedback on Junior's clarity. Answer plainly in your own voice — not as a Cursor copy-paste block.
-State who you are (Storykeep web chat assistant), what is live on Railway (Storykeep web URL + status if known), and what you did **not** do (no Android deploy, no new Railway service, no SQL run unless he explicitly asked and you have a tool for it).
-Do not trigger railway_deploy unless he explicitly asks to redeploy Storykeep web.
+Steve is giving feedback on Junior's clarity. Answer plainly — use the Junior capabilities section, not a Cursor copy-paste block unless he asked for one.
 """
 
 ANDROID_SCOPE_APPEND = """
-Steve is on the Android Talk/Type Junior app track (Compose, Kotlin, voice_id, Postgres schema.sql). That work is in Cursor on sb11b/Storykeep-, not a Railway deploy from this chat.
-Do not call railway_deploy. Do not claim redeploying Storykeep web ships Android. You cannot run schema.sql — tell Steve to use Railway Postgres → Query tab if he asks.
-If he wants a Cursor prompt for Android work, give one copy-paste block; otherwise answer the question directly.
+Steve is on the Android Talk/Type app (Compose, Kotlin, voice_id, schema.sql). Give Cursor-ready copy-paste blocks when he asks; you do not fill Cursor's editor or run deploys from this chat.
+Default TTS voice in schema is eve until he pins another.
 """
 
 CURSOR_PROMPT_APPEND = """
@@ -84,7 +82,7 @@ CURSOR_FOLLOW_APPEND = """
 Steve supplied the Cursor / Cloud Agent task himself (typed or dictated). Stay on his scope.
 Reply with ONE polished copy-paste prompt block derived from his text — not a new plan or investigation.
 Do not web-search, list chats, read spec docs, or claim you changed the repo unless he asked.
-Do not trigger railway_deploy, run SQL, or claim you deployed anything. Finish in one reply.
+Do not claim you deployed, pushed repos, or ran SQL. Finish in one reply.
 """
 
 
@@ -180,7 +178,7 @@ def filter_standing_memory(body: str, *, user_text: str) -> str:
     skip = False
     for line in lines:
         stripped = line.strip()
-        if _CURSOR_SECTION_RE.match(stripped):
+        if _CURSOR_SECTION_RE.match(stripped) or _CAPABILITIES_SECTION_RE.match(stripped):
             skip = False
             kept.append(line)
             continue
@@ -311,9 +309,7 @@ def build_turn_extras(
     del memory_block  # standing memory lives in standing_system(), not extras
     extras: list[str] = []
     from app.services import chat_index
-    from app.services import github_tool
     from app.services import mail_tool
-    from app.services import railway_tool
     from app.services import web_search as search_tool
     from app.services.calendar_tool import CALENDAR_OFF_APPEND, CALENDAR_ON_APPEND
 
@@ -322,7 +318,7 @@ def build_turn_extras(
         user_text,
         indexed=bool(index_block),
         read=bool(read_meta),
-        tools=calendar_tools or mail_unread or will_search or railway_tools or github_tools,
+        tools=calendar_tools or mail_unread or will_search,
     )
     if chat_tools:
         extras.append(chat_index.CHATS_ON_APPEND)
@@ -347,16 +343,13 @@ def build_turn_extras(
 
         if will_search or not chat_service.is_small_talk_turn(user_text):
             extras.append(search_tool.SEARCH_ON_APPEND)
-    if railway_tools or github_tools or is_junior_feedback_turn(user_text):
-        extras.append(JUNIOR_IDENTITY_APPEND)
+    if not cursor_task:
+        extras.append(JUNIOR_CAPABILITIES_APPEND)
     if is_junior_feedback_turn(user_text):
         extras.append(JUNIOR_FEEDBACK_APPEND)
     elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):
         extras.append(ANDROID_SCOPE_APPEND)
-    if railway_tools and not cursor_task:
-        extras.append(railway_tool.RAILWAY_ON_APPEND if railway_enabled else railway_tool.RAILWAY_OFF_APPEND)
-    if github_tools and not cursor_task:
-        extras.append(github_tool.GITHUB_ON_APPEND if github_enabled else github_tool.GITHUB_OFF_APPEND)
+    del railway_enabled, railway_tools, github_enabled, github_tools
     mode = cursor_turn_mode(user_text)
     if mode == "generate":
         extras.append(CURSOR_PROMPT_APPEND)

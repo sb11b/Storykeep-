@@ -47,8 +47,6 @@ from app.services.include_chunk import slice_meta as include_slice_meta
 from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
 from app.services import web_search as search_tool
-from app.services import railway_tool
-from app.services import github_tool
 from app.services import chat_index
 from app.services import message_crypto
 
@@ -183,10 +181,6 @@ def chat_status(
         "key_configured": chat_service.key_configured(),
         "key_format_ok": chat_service.key_format_ok(),
         "message_crypto": message_crypto.status(db, user),
-        "railway_configured": settings.railway_configured,
-        "github_configured": settings.github_configured,
-        "railway_tools": railway_tool.owner_can_use(user),
-        "github_tools": github_tool.owner_can_use(user),
     }
 
 
@@ -1119,17 +1113,11 @@ def _chat(
                 read_meta = chat_index.NEED_ID_SYSTEM
     search_enabled = search_tool.owner_can_search(user)
     will_search = search_enabled and search_tool.wants_web_search(user_text)
-    owner_ops = user is not None and not is_locked(user)
-    railway_enabled = railway_tool.owner_can_use(user)
-    github_enabled = github_tool.owner_can_use(user)
-    will_railway = railway_tool.wants_railway(user_text)
-    will_github = github_tool.wants_github(user_text)
-    railway_tools_on = owner_ops and (
-        will_railway or chat_service.should_attach_chat_tools(user_text)
-    )
-    github_tools_on = owner_ops and (
-        will_github or chat_service.should_attach_chat_tools(user_text)
-    )
+    # Railway/GitHub ops stay server-side; Junior capabilities say no deploy/login from chat.
+    railway_tools_on = False
+    github_tools_on = False
+    railway_enabled = False
+    github_enabled = False
     from app.services import junior_model
 
     turn_extras = junior_model.build_turn_extras(
@@ -1197,24 +1185,12 @@ def _chat(
         )
         else None
     )
-    railway_tools = None
-    if railway_tools_on and not junior_model.is_cursor_task_turn(user_text):
-        railway_tools = [railway_tool.RAILWAY_STATUS_TOOL]
-        if railway_tool.wants_railway_deploy(user_text):
-            railway_tools = [*railway_tools, railway_tool.RAILWAY_DEPLOY_TOOL]
-    github_tools = (
-        [github_tool.GITHUB_STATUS_TOOL]
-        if github_tools_on and not junior_model.is_cursor_task_turn(user_text)
-        else None
-    )
     tools = (
         *(
             calendar_tools or []),
         *(mail_tools or []),
         *(search_tools or []),
         *(chat_tools or []),
-        *(railway_tools or []),
-        *(github_tools or []),
     ) or None
     tool_calls_out: list[dict] = []
     payload_chars = chat_service.messages_char_count(
@@ -1433,14 +1409,6 @@ def _chat(
                 else:
                     block = search_tool.format_hits_for_model(outcome.hits)
                     extra = f"{extra}\n{block}" if extra else block
-            if will_railway and not railway_tool.wants_railway_deploy(user_text):
-                railway_outcome = await asyncio.to_thread(railway_tool.fetch_status)
-                block = railway_tool.format_status_for_model(railway_outcome)
-                extra = f"{extra}\n{block}" if extra else block
-            if will_github:
-                github_outcome = await asyncio.to_thread(github_tool.fetch_status)
-                block = github_tool.format_status_for_model(github_outcome)
-                extra = f"{extra}\n{block}" if extra else block
             stream = _stream_xai(extra, tools)
             async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():
@@ -1501,16 +1469,6 @@ def _chat(
                     )
                     if block:
                         follow_blocks.append(block)
-            railway_call = railway_tool.assemble_tool_call(tool_calls_out)
-            if railway_call and railway_enabled:
-                block = await asyncio.to_thread(railway_tool.execute_tool_call, railway_call)
-                if block:
-                    follow_blocks.append(block)
-            github_call = github_tool.assemble_tool_call(tool_calls_out)
-            if github_call and github_enabled:
-                block = await asyncio.to_thread(github_tool.execute_tool_call, github_call)
-                if block:
-                    follow_blocks.append(block)
             if follow_blocks:
                 extra = extra_system
                 for block in follow_blocks:

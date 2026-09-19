@@ -60,6 +60,13 @@ class JuniorModelTests(unittest.TestCase):
         self.assertIn("finish in one reply", filtered)
         self.assertIn("keep me", filtered)
 
+    def test_filter_standing_memory_always_keeps_capabilities_section(self):
+        body = "# TIMELINE\nphase 1\n# Junior capabilities\nschool coding assistant\n# Notes\nkeep me"
+        filtered = junior_model.filter_standing_memory(body, user_text="hello")
+        self.assertNotIn("TIMELINE", filtered)
+        self.assertIn("Junior capabilities", filtered)
+        self.assertIn("school coding assistant", filtered)
+
     def test_asks_for_cursor_prompt_matches_short_requests(self):
         self.assertTrue(junior_model.asks_for_cursor_prompt("write a prompt for cursor to fix login"))
         self.assertTrue(junior_model.asks_for_cursor_prompt("give me a cursor agent prompt"))
@@ -135,9 +142,9 @@ class JuniorModelTests(unittest.TestCase):
         self.assertTrue(junior_model.is_android_project_turn(msg))
         self.assertFalse(junior_model.is_cursor_task_turn(msg))
 
-    def test_build_turn_extras_includes_railway_and_github(self):
+    def test_build_turn_extras_includes_capabilities(self):
         extras = junior_model.build_turn_extras(
-            "deploy storykeep and show github commits",
+            "what can you do from this chat",
             memory_block=None,
             chats_enabled=False,
             index_block=None,
@@ -150,14 +157,10 @@ class JuniorModelTests(unittest.TestCase):
             unread_mail_md=None,
             search_enabled=False,
             will_search=False,
-            railway_enabled=True,
-            railway_tools=True,
-            github_enabled=True,
-            github_tools=True,
         )
         joined = "\n".join(extras)
-        self.assertIn("Railway access", joined)
-        self.assertIn("GitHub access", joined)
+        self.assertIn("Junior capabilities", joined)
+        self.assertNotIn("Railway access", joined)
 
     def test_model_payload_marks_truncated(self):
         payload = junior_model.model_payload(
