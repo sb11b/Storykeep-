@@ -300,9 +300,15 @@
   background-color: var(--storykeep-top-bar);
   border-color: color-mix(in oklch, var(--storykeep-top-bar-fg) 20%, var(--storykeep-top-bar) 80%);
 }
-/* Archive header actions — hard ink fallbacks so OS theme can never wash these out */
+/* Archive header actions — solid ink; never semi-transparent rgba(0,0,0,.55) */
+.archive-toolbar [data-slot="button"]:not(:disabled):not(.bg-primary) {
+  color: #3f3a32 !important;
+  color: var(--storykeep-top-bar-fg, #3f3a32) !important;
+  opacity: 1 !important;
+}
 .archive-toolbar [data-slot="button"][data-variant="toolbar"],
 .archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"] {
+  color: #3f3a32 !important;
   color: var(--storykeep-top-bar-fg, #3f3a32) !important;
   opacity: 1 !important;
 }
@@ -328,7 +334,9 @@
   color: var(--storykeep-top-bar-fg, #3f3a32) !important;
 }
 .archive-toolbar [data-slot="button"][data-variant="toolbar"]:disabled,
-.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"]:disabled {
+.archive-toolbar [data-slot="button"][data-variant="toolbar-ghost"]:disabled,
+.archive-toolbar [data-slot="button"]:disabled:not(.bg-primary) {
+  color: #6f6a62 !important;
   color: var(--storykeep-top-bar-fg-muted, #6f6a62) !important;
   opacity: 1 !important;
 }
