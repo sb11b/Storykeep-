@@ -41,6 +41,34 @@ _OPS_ENV_RE = re.compile(
     r"\b(?:RAILWAY_API_TOKEN|RAILWAY_TOKEN|GITHUB_TOKEN|railway\s+(?:api\s+)?token|github\s+(?:pat|token))\b",
     re.I,
 )
+_JUNIOR_FEEDBACK_RE = re.compile(
+    r"\b(?:junior confuses|fix junior|junior (?:doesn|didn|won)|"
+    r"junior understand|little guy|junior'?s thinking|junior is confusing)\b",
+    re.I,
+)
+_ANDROID_PROJECT_RE = re.compile(
+    r"\b(?:android|jetpack\s+compose|\bcompose\b|kotlin|talk/type|talk\s+or\s+type|"
+    r"voice_id|SkColor|SkSpace|s2s|device_token|schema\.sql|day\s+\d+\s+compose)\b",
+    re.I,
+)
+
+JUNIOR_IDENTITY_APPEND = """
+You are Junior: the Grok chat bubble inside **Storykeep web** (FastAPI + Next on Railway). You are not a separate Railway service.
+The Android Talk/Type app is different work in sb11b/Storykeep- (Cursor + GitHub). Redeploying Storykeep web does not build or ship Android.
+When Steve asks what you can do, list only tools attached this turn — do not claim deploys or repo changes you did not perform.
+"""
+
+JUNIOR_FEEDBACK_APPEND = """
+Steve is giving feedback on Junior's clarity. Answer plainly in your own voice — not as a Cursor copy-paste block.
+State who you are (Storykeep web chat assistant), what is live on Railway (Storykeep web URL + status if known), and what you did **not** do (no Android deploy, no new Railway service, no SQL run unless he explicitly asked and you have a tool for it).
+Do not trigger railway_deploy unless he explicitly asks to redeploy Storykeep web.
+"""
+
+ANDROID_SCOPE_APPEND = """
+Steve is on the Android Talk/Type Junior app track (Compose, Kotlin, voice_id, Postgres schema.sql). That work is in Cursor on sb11b/Storykeep-, not a Railway deploy from this chat.
+Do not call railway_deploy. Do not claim redeploying Storykeep web ships Android. You cannot run schema.sql — tell Steve to use Railway Postgres → Query tab if he asks.
+If he wants a Cursor prompt for Android work, give one copy-paste block; otherwise answer the question directly.
+"""
 
 CURSOR_PROMPT_APPEND = """
 Steve asked you to write a Cursor / Cloud Agent prompt. Reply with ONE complete copy-paste block he can drop into Cursor.
@@ -56,7 +84,7 @@ CURSOR_FOLLOW_APPEND = """
 Steve supplied the Cursor / Cloud Agent task himself (typed or dictated). Stay on his scope.
 Reply with ONE polished copy-paste prompt block derived from his text — not a new plan or investigation.
 Do not web-search, list chats, read spec docs, or claim you changed the repo unless he asked.
-Do not execute the task in this reply. Finish in one reply.
+Do not trigger railway_deploy, run SQL, or claim you deployed anything. Finish in one reply.
 """
 
 
@@ -96,10 +124,22 @@ def cursor_prompt_has_task_details(message: str) -> bool:
     return bool(_TASK_VERB_RE.search(text) and len(text) >= 80)
 
 
+def is_junior_feedback_turn(message: str) -> bool:
+    return bool(_JUNIOR_FEEDBACK_RE.search(message or ""))
+
+
+def is_android_project_turn(message: str) -> bool:
+    return bool(_ANDROID_PROJECT_RE.search(message or ""))
+
+
 def brings_cursor_task(message: str) -> bool:
     """Steve supplied the agent task — polish/follow it, do not invent a new one."""
     text = (message or "").strip()
     if not text or asks_for_cursor_prompt(text):
+        return False
+    if is_junior_feedback_turn(text):
+        return False
+    if is_android_project_turn(text) and not asks_for_cursor_prompt(text):
         return False
     if _OPS_ENV_RE.search(text) and not asks_for_cursor_prompt(text):
         return False
@@ -117,6 +157,8 @@ def brings_cursor_task(message: str) -> bool:
 
 def cursor_turn_mode(message: str) -> str | None:
     """generate | follow | None"""
+    if is_junior_feedback_turn(message):
+        return None
     if asks_for_cursor_prompt(message):
         return "generate"
     if brings_cursor_task(message):
@@ -305,6 +347,12 @@ def build_turn_extras(
 
         if will_search or not chat_service.is_small_talk_turn(user_text):
             extras.append(search_tool.SEARCH_ON_APPEND)
+    if railway_tools or github_tools or is_junior_feedback_turn(user_text):
+        extras.append(JUNIOR_IDENTITY_APPEND)
+    if is_junior_feedback_turn(user_text):
+        extras.append(JUNIOR_FEEDBACK_APPEND)
+    elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):
+        extras.append(ANDROID_SCOPE_APPEND)
     if railway_tools and not cursor_task:
         extras.append(railway_tool.RAILWAY_ON_APPEND if railway_enabled else railway_tool.RAILWAY_OFF_APPEND)
     if github_tools and not cursor_task:

@@ -125,6 +125,16 @@ class JuniorModelTests(unittest.TestCase):
         msg = "I added GITHUB_TOKEN and RAILWAY_API_TOKEN to Railway variables"
         self.assertFalse(junior_model.is_cursor_task_turn(msg))
 
+    def test_junior_feedback_not_cursor_task(self):
+        msg = "Junior confuses me. I don't think he understands his own thinking. Maybe fix this."
+        self.assertTrue(junior_model.is_junior_feedback_turn(msg))
+        self.assertFalse(junior_model.is_cursor_task_turn(msg))
+
+    def test_android_project_not_cursor_follow(self):
+        msg = "Paste Day 1 Compose + SkColor. Run server/schema.sql on Railway Postgres. voice_id eve."
+        self.assertTrue(junior_model.is_android_project_turn(msg))
+        self.assertFalse(junior_model.is_cursor_task_turn(msg))
+
     def test_build_turn_extras_includes_railway_and_github(self):
         extras = junior_model.build_turn_extras(
             "deploy storykeep and show github commits",

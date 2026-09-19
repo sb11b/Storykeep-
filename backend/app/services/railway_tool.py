@@ -22,10 +22,14 @@ STATUS_TOOL_NAME = "railway_status"
 DEPLOY_TOOL_NAME = "railway_deploy"
 
 RAILWAY_ON_APPEND = """
-You have live Railway access for Storykeep (Steve's deploy host).
-- For deploy status, latest deployment, build stamp, or "what's on production", call railway_status or use the attached snapshot.
-- When Steve asks to deploy, redeploy, or push Storykeep to Railway, call railway_deploy after confirming intent in your reply.
-- Report deployment status, commit/build id, and URL when known. Never invent deploy outcomes.
+You have live Railway access for the **Storykeep web** stack (FastAPI + Next) — the site you are embedded in.
+- **railway_status** (read-only): production URL, latest deployment id/status/time. Use when Steve asks what is live on Railway.
+- **railway_deploy**: ONLY when Steve explicitly asks to **deploy or redeploy Storykeep web** (e.g. "deploy storykeep to railway"). Never call it for:
+  • "build Junior" / Android Talk·Type / Compose / Kotlin work (that is Cursor + GitHub, not a new Railway service)
+  • Cursor agent tasks, schema.sql, or Postgres setup (you cannot run SQL from chat)
+  • Mentioning Railway tokens, GitHub, or Junior in general
+- Redeploying Storykeep web does **not** create, ship, or update the Android app.
+- Say plainly what you did: status read vs deploy triggered vs neither. Never invent deploys.
 - Tokens stay server-side; never echo API keys.
 """
 
@@ -36,12 +40,19 @@ Once set, call railway_status or railway_deploy when he asks about deploys.
 Do not say the only tool is web_search; you also have calendar/mail/chats when connected.
 """
 
-_DEPLOY_RE = re.compile(
-    r"\b(?:deploy(?:\s+to|\s+on|\s+it|\s+storykeep|\s+now)?|"
-    r"redeploy|push(?:\s+to|\s+live|\s+prod)?|"
-    r"railway(?:\s+up|\s+deploy)?|"
-    r"ship(?:\s+it|\s+to\s+prod)?|"
-    r"production(?:\s+deploy|\s+build)?)\b",
+_EXPLICIT_DEPLOY_RE = re.compile(
+    r"\b(?:"
+    r"(?:deploy|redeploy)\s+(?:storykeep|to\s+(?:railway|prod(?:uction)?)|production|now)|"
+    r"railway\s+(?:up|deploy)|"
+    r"push\s+(?:storykeep\s+)?(?:to\s+)?(?:live|prod(?:uction)?)|"
+    r"ship\s+(?:storykeep\s+)?to\s+prod(?:uction)?"
+    r")\b",
+    re.I,
+)
+_BUILD_JUNIOR_RE = re.compile(r"\bbuild(?:ing)?\s+junior\b", re.I)
+_ANDROID_PROJECT_RE = re.compile(
+    r"\b(?:android|jetpack\s+compose|\bcompose\b|kotlin|talk/type|talk\s+or\s+type|"
+    r"voice_id|\beve\b|SkColor|SkSpace|s2s|device_token|schema\.sql)\b",
     re.I,
 )
 _STATUS_RE = re.compile(
@@ -76,8 +87,9 @@ RAILWAY_DEPLOY_TOOL = {
     "function": {
         "name": DEPLOY_TOOL_NAME,
         "description": (
-            "Trigger a new Storykeep deployment on Railway (serviceInstanceDeployV2). "
-            "Use only when Steve explicitly asks to deploy or redeploy Storykeep."
+            "Trigger a new Storykeep **web** deployment on Railway. "
+            "Use ONLY when Steve explicitly asks to deploy/redeploy Storykeep web — "
+            "never for Android app work, 'build Junior', Cursor tasks, or Postgres schema."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -127,9 +139,15 @@ def wants_railway_status(message: str) -> bool:
 
 def wants_railway_deploy(message: str) -> bool:
     text = (message or "").strip()
-    if not text:
+    if not text or not _EXPLICIT_DEPLOY_RE.search(text):
         return False
-    return bool(_DEPLOY_RE.search(text))
+    if _BUILD_JUNIOR_RE.search(text):
+        return False
+    if _ANDROID_PROJECT_RE.search(text) and not re.search(
+        r"\b(?:deploy|redeploy)\s+storykeep\b", text, re.I
+    ):
+        return False
+    return True
 
 
 def wants_railway_setup(message: str) -> bool:

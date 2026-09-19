@@ -13,6 +13,16 @@ class RailwayToolTests(unittest.TestCase):
         self.assertTrue(railway_tool.wants_railway("I set RAILWAY_API_TOKEN in variables"))
         self.assertFalse(railway_tool.wants_railway("explain python lists"))
 
+    def test_deploy_not_triggered_for_android_or_build_junior(self):
+        self.assertFalse(railway_tool.wants_railway_deploy("build Junior with Compose and SkColor"))
+        self.assertFalse(
+            railway_tool.wants_railway_deploy(
+                "triggering a Railway deploy since you asked to build Junior from this chat"
+            )
+        )
+        self.assertFalse(railway_tool.wants_railway_deploy("run server/schema.sql on Railway Postgres"))
+        self.assertTrue(railway_tool.wants_railway_deploy("deploy storykeep to railway now"))
+
     def test_owner_can_use_requires_token(self):
         user = type("User", (), {"email": "stevebitsko@duck.com", "is_demo_locked": False})()
         with patch.object(railway_tool, "configured", return_value=False):
