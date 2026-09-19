@@ -11,6 +11,7 @@ class HealthAndLoggedOutShellTests(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertTrue(body["build"])
         self.assertIn("built_at", body)
+        self.assertIn(body["cursor_delegate"], {"configured", "missing"})
 
     def test_health_includes_last_rss_fetch_counts(self):
         from app.services import rss as rss_service

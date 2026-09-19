@@ -55,8 +55,13 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `RAILWAY_API_TOKEN` | No | Railway account/project token so Junior can read deploy status and trigger Storykeep deploys. Create at Railway → Account → Tokens. Server only. |
 | `GITHUB_TOKEN` | No | GitHub fine-grained PAT (repo + Actions read) so Junior can report commits, PRs, and CI. Server only. |
 | `GITHUB_REPO` | No | Repo slug for Junior GitHub tools. Default `sb11b/Storykeep-`. |
+| `CURSOR_API_KEY` | No | Cursor Cloud Agents API key so Junior can start Cloud Agent tasks from chat. Create at Cursor Dashboard → API Keys. Server only. |
+| `CURSOR_AGENT_REPO` | No | Optional GitHub repo slug or full URL for spawned agents. Defaults to `GITHUB_REPO`. |
+| `CURSOR_AGENT_BRANCH` | No | Default starting ref for Cloud Agents. Default `main`. |
 
 Railway injects `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_PUBLIC_DOMAIN` on the storykeep service — Junior uses those automatically when the API token is set.
+
+After deploy, `GET /api/health` reports `cursor_delegate: configured` when `CURSOR_API_KEY` is set (never exposes the key).
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 
