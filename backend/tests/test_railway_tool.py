@@ -10,6 +10,7 @@ class RailwayToolTests(unittest.TestCase):
     def test_wants_railway_status_and_deploy(self):
         self.assertTrue(railway_tool.wants_railway_status("what's the railway deploy status"))
         self.assertTrue(railway_tool.wants_railway_deploy("please deploy storykeep now"))
+        self.assertTrue(railway_tool.wants_railway("I set RAILWAY_API_TOKEN in variables"))
         self.assertFalse(railway_tool.wants_railway("explain python lists"))
 
     def test_owner_can_use_requires_token(self):
@@ -30,7 +31,7 @@ class RailwayToolTests(unittest.TestCase):
             with patch.object(railway_tool.settings, "railway_token", ""):
                 outcome = railway_tool.fetch_status()
         self.assertFalse(outcome.ok)
-        self.assertIn("not configured", outcome.text.lower())
+        self.assertIn("not set", outcome.text.lower())
 
     def test_format_status_for_model(self):
         outcome = railway_tool.RailwayOutcome(True, "line one")

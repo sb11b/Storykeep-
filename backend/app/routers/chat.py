@@ -183,6 +183,10 @@ def chat_status(
         "key_configured": chat_service.key_configured(),
         "key_format_ok": chat_service.key_format_ok(),
         "message_crypto": message_crypto.status(db, user),
+        "railway_configured": settings.railway_configured,
+        "github_configured": settings.github_configured,
+        "railway_tools": railway_tool.owner_can_use(user),
+        "github_tools": github_tool.owner_can_use(user),
     }
 
 
@@ -1115,14 +1119,15 @@ def _chat(
                 read_meta = chat_index.NEED_ID_SYSTEM
     search_enabled = search_tool.owner_can_search(user)
     will_search = search_enabled and search_tool.wants_web_search(user_text)
+    owner_ops = user is not None and not is_locked(user)
     railway_enabled = railway_tool.owner_can_use(user)
     github_enabled = github_tool.owner_can_use(user)
-    will_railway = railway_enabled and railway_tool.wants_railway(user_text)
-    will_github = github_enabled and github_tool.wants_github(user_text)
-    railway_tools_on = railway_enabled and (
+    will_railway = railway_tool.wants_railway(user_text)
+    will_github = github_tool.wants_github(user_text)
+    railway_tools_on = owner_ops and (
         will_railway or chat_service.should_attach_chat_tools(user_text)
     )
-    github_tools_on = github_enabled and (
+    github_tools_on = owner_ops and (
         will_github or chat_service.should_attach_chat_tools(user_text)
     )
     from app.services import junior_model

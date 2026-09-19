@@ -37,6 +37,10 @@ _CURSOR_TASK_MARKERS_RE = re.compile(
     re.I,
 )
 _DATABASE_CURSOR_RE = re.compile(r"\b(?:database|sql|postgres|mysql|sqlite)\s+cursor\b", re.I)
+_OPS_ENV_RE = re.compile(
+    r"\b(?:RAILWAY_API_TOKEN|RAILWAY_TOKEN|GITHUB_TOKEN|railway\s+(?:api\s+)?token|github\s+(?:pat|token))\b",
+    re.I,
+)
 
 CURSOR_PROMPT_APPEND = """
 Steve asked you to write a Cursor / Cloud Agent prompt. Reply with ONE complete copy-paste block he can drop into Cursor.
@@ -96,6 +100,8 @@ def brings_cursor_task(message: str) -> bool:
     """Steve supplied the agent task — polish/follow it, do not invent a new one."""
     text = (message or "").strip()
     if not text or asks_for_cursor_prompt(text):
+        return False
+    if _OPS_ENV_RE.search(text) and not asks_for_cursor_prompt(text):
         return False
     if len(text) < 100 or not _TASK_VERB_RE.search(text):
         return False

@@ -30,7 +30,10 @@ You have live Railway access for Storykeep (Steve's deploy host).
 """
 
 RAILWAY_OFF_APPEND = """
-Railway is not configured on this server (missing RAILWAY_API_TOKEN). Tell Steve to add the token in Railway service variables.
+Railway tools exist (railway_status, railway_deploy) but RAILWAY_API_TOKEN is not set on the Storykeep Railway service yet.
+Tell Steve to add the token value in Railway → storykeep service → Variables — never paste secrets into chat.
+Once set, call railway_status or railway_deploy when he asks about deploys.
+Do not say the only tool is web_search; you also have calendar/mail/chats when connected.
 """
 
 _DEPLOY_RE = re.compile(
@@ -48,6 +51,11 @@ _STATUS_RE = re.compile(
     r"build(?:\s+stamp|\s+info)?|"
     r"latest(?:\s+deploy|\s+deployment)?|"
     r"storykeep(?:\s+production|\s+deploy)?)\b",
+    re.I,
+)
+_SETUP_RE = re.compile(
+    r"\b(?:RAILWAY_API_TOKEN|RAILWAY_TOKEN|railway\s+(?:api\s+)?token|"
+    r"railway\s+variables?|service\s+variables?)\b",
     re.I,
 )
 
@@ -124,8 +132,12 @@ def wants_railway_deploy(message: str) -> bool:
     return bool(_DEPLOY_RE.search(text))
 
 
+def wants_railway_setup(message: str) -> bool:
+    return bool(_SETUP_RE.search(message or ""))
+
+
 def wants_railway(message: str) -> bool:
-    return wants_railway_status(message) or wants_railway_deploy(message)
+    return wants_railway_status(message) or wants_railway_deploy(message) or wants_railway_setup(message)
 
 
 def is_railway_tool(item: object) -> bool:

@@ -121,6 +121,10 @@ class JuniorModelTests(unittest.TestCase):
         self.assertNotIn("asked you to write", joined.lower())
         self.assertNotIn("SEARCH_ON", joined)
 
+    def test_env_token_message_not_cursor_task(self):
+        msg = "I added GITHUB_TOKEN and RAILWAY_API_TOKEN to Railway variables"
+        self.assertFalse(junior_model.is_cursor_task_turn(msg))
+
     def test_build_turn_extras_includes_railway_and_github(self):
         extras = junior_model.build_turn_extras(
             "deploy storykeep and show github commits",

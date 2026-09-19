@@ -28,7 +28,10 @@ You have live GitHub access for Storykeep's repo.
 """
 
 GITHUB_OFF_APPEND = """
-GitHub is not configured on this server (missing GITHUB_TOKEN). Tell Steve to add a fine-grained PAT in Railway service variables.
+GitHub tools exist (github_status) but GITHUB_TOKEN is not set on the Storykeep Railway service yet.
+Tell Steve to add a fine-grained PAT value in Railway → storykeep service → Variables — never paste secrets into chat.
+Once set, call github_status when he asks about commits, PRs, or CI.
+Do not say the only tool is web_search; you also have calendar/mail/chats when connected.
 """
 
 _STATUS_RE = re.compile(
@@ -39,6 +42,11 @@ _STATUS_RE = re.compile(
     r"what(?:'s|\s+is)\s+(?:on|in)\s+github|"
     r"latest(?:\s+push|\s+commit)?|"
     r"storykeep(?:\s+repo|\s+github)?)\b",
+    re.I,
+)
+_SETUP_RE = re.compile(
+    r"\b(?:GITHUB_TOKEN|github\s+(?:pat|token|fine[- ]grained)|"
+    r"github\s+variables?|personal access token)\b",
     re.I,
 )
 
@@ -83,11 +91,15 @@ def reject_demo(user: object) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="GitHub is not enabled on this account")
 
 
+def wants_github_setup(message: str) -> bool:
+    return bool(_SETUP_RE.search(message or ""))
+
+
 def wants_github(message: str) -> bool:
     text = (message or "").strip()
     if not text:
         return False
-    return bool(_STATUS_RE.search(text))
+    return bool(_STATUS_RE.search(text)) or wants_github_setup(text)
 
 
 def is_github_tool(item: object) -> bool:

@@ -29,7 +29,7 @@ class GitHubToolTests(unittest.TestCase):
         with patch.object(github_tool.settings, "github_token", ""):
             outcome = github_tool.fetch_status()
         self.assertFalse(outcome.ok)
-        self.assertIn("not configured", outcome.text.lower())
+        self.assertIn("not set", outcome.text.lower())
 
     def test_default_repo(self):
         self.assertEqual(github_tool._repo(), "sb11b/Storykeep-")
