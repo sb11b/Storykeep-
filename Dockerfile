@@ -29,7 +29,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 COPY --from=web /web/out ./frontend_out
 COPY start.sh /start.sh
-RUN chmod +x /start.sh
+# Windows checkouts can commit CRLF; strip before exec so Railway CLI deploys do not crash.
+RUN sed -i 's/\r$//' /start.sh && chmod +x /start.sh
 ENV PYTHONPATH=/app
 ENV FRONTEND_DIR=/app/frontend_out
 ENV DATA_DIR=/app/var

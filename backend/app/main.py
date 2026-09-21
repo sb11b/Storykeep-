@@ -241,10 +241,18 @@ def _seed_in_background() -> None:
         db.close()
 
 
+def _init_db_background() -> None:
+    """Schema DDL can block on locks during rolling deploys; keep /health fast for Railway."""
+    try:
+        _create_schema()
+    except Exception:
+        logger.exception("Schema init failed")
+    _seed_in_background()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    _create_schema()
-    threading.Thread(target=_seed_in_background, daemon=True, name="storykeep-seed").start()
+    threading.Thread(target=_init_db_background, daemon=True, name="storykeep-init").start()
     scheduler.add_job(refresh_due_feeds, "interval", minutes=settings.refresh_minutes, id="refresh")
     scheduler.add_job(
         run_scheduled_s3_dumps,

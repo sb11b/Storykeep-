@@ -84,3 +84,43 @@ Settings → Networking → Custom domain. HTTPS is automatic. In production the
 ## 7. Backups on Railway
 
 Chat photos live on the **storykeep** volume at `/app/var` (`DATA_DIR=/app/var`). Pre-volume media ids 404 if the file was never on that volume — do not migrate ghosts. Use **Export JSON**, S3/B2, or that volume for other app data.
+
+## 8. GitHub vs CLI deploy (v2 stuck, `railway up` crashed)
+
+Railway **GitHub** deploys build whatever is on **`sb11b/Storykeep-` `main`**. Cursor Origin can be ahead of GitHub. If `/api/health` shows an old `"build"` stamp (for example `junior-cursor-delegate-v2`), GitHub was not updated yet — not a Railway bug.
+
+**Sync Origin → GitHub** (PowerShell in your Storykeep folder):
+
+```powershell
+.\scripts\sync-github.ps1
+```
+
+Or manually:
+
+```powershell
+git fetch origin
+git merge origin/main
+git push github main
+```
+
+Then in Railway: **storykeep web service** (not Postgres) → **Deployments** → **Redeploy** (or wait for auto-deploy).
+
+**Verify after deploy:**
+
+```text
+GET https://storykeep-production.up.railway.app/api/health
+```
+
+Look for `"build": "junior-cursor-delegate-v3"` or newer (`junior-utc-stamp-v1`, `junior-deploy-reply-v1`, etc.).
+
+### `railway up` from your PC
+
+- **`railway up` uploads your local folder**, not GitHub. Old local code → old build stamp even if GitHub is current.
+- When `railway link` asks for a service, choose the **storykeep web app**, **production** environment — **not** the Postgres database. Deploying the app Dockerfile to Postgres always crashes.
+- If deploy shows **CRASHED** on the web service: open **Deploy Logs** on that failed deployment. Common causes:
+  - Wrong service (Postgres selected)
+  - `start.sh` saved with Windows CRLF (repo uses `.gitattributes` + Dockerfile strip; run `git pull` / re-sync)
+  - Missing `DATABASE_URL` on the web service variables
+- Prefer **GitHub redeploy** after `sync-github.ps1` when possible; use CLI when you need to ship un-pushed local changes.
+
+Helper script: `scripts/railway-up.ps1`.
