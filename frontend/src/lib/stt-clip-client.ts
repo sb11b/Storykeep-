@@ -35,6 +35,12 @@ export async function transcribeClip(
   body.append("file", file);
 
   try {
+    console.log("junior-stt", {
+      action: "post",
+      filename: prepared.filename,
+      mime: prepared.mime,
+      bytes: prepared.blob.size,
+    });
     const response = await fetch("/api/v1/stt", {
       method: "POST",
       body,
@@ -50,6 +56,13 @@ export async function transcribeClip(
       mime?: string;
       bytes?: number;
     };
+    console.log("junior-stt", {
+      action: "response",
+      status,
+      textChars: (data.text || "").trim().length,
+      error: data.error || data.detail || null,
+      bytes: data.bytes ?? prepared.blob.size,
+    });
     if (!response.ok) {
       const detail = parseErrorPayload(data) || data.error || data.detail || httpErrorFallback(status);
       throw new ApiError(status, detail);

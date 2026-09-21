@@ -1527,6 +1527,15 @@ export function GrokPane({
     [fillComposerDraft],
   );
 
+  const handleMicPhaseChange = useCallback((phase: JuniorMicPhase, mode: JuniorMicMode | null) => {
+    setSttPhase(phase);
+    setMicMode(mode);
+  }, []);
+
+  const registerMicAbort = useCallback((abort: (() => void) | null) => {
+    micAbortRef.current = abort;
+  }, []);
+
   async function runImagineFromChat(options: {
     prompt: string;
     mediaIds: string[];
@@ -2722,13 +2731,8 @@ export function GrokPane({
             <JuniorMicControls
               enabled={enabled && !busy && !uploadingFiles}
               locked={locked}
-              registerAbort={(abort) => {
-                micAbortRef.current = abort;
-              }}
-              onPhaseChange={(phase, mode) => {
-                setSttPhase(phase);
-                setMicMode(mode);
-              }}
+              registerAbort={registerMicAbort}
+              onPhaseChange={handleMicPhaseChange}
               onStsSubmit={submitVoiceTranscript}
               onSttDraft={applySttDraft}
             />

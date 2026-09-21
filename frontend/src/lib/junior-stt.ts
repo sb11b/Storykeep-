@@ -320,9 +320,7 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
 
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
-    });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (error) {
     if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")) {
       throw new DOMException(MIC_PERMISSION_DENIED, "NotAllowedError");
@@ -335,6 +333,7 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
   });
 
   const preferredMime = pickRecorderMime();
+  console.log("junior-stt", { action: "mime", chosen: preferredMime || "pcm-wav-fallback" });
   if (!preferredMime) {
     return startPcmWavClip(stream, opts);
   }
