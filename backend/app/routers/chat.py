@@ -1257,9 +1257,12 @@ def _chat(
     )
 
     def _persist_assistant(text: str) -> str | None:
+        from app.services import junior_stamp
+
         cleaned = chat_docx.strip_keep_notes_cta((text or "").strip())
         if crypto_on or not persist or not conversation_id or not cleaned:
             return None
+        stamped = junior_stamp.stamp_assistant_content(cleaned)
         try:
             with SessionLocal() as stream_db:
                 conversation = grok_store.owned_conversation_for_user(stream_db, user_id, conversation_id)
@@ -1267,7 +1270,7 @@ def _chat(
                     stream_db,
                     conversation,
                     role="assistant",
-                    content=cleaned,
+                    content=stamped,
                 )
                 grok_store.patch_conversation_for_user(
                     stream_db,
