@@ -478,8 +478,10 @@ export function useGrokMessageListen({
     if (phase !== "playing") return;
     audioRef.current?.pause();
     stopCueLoop();
+    lastCueRef.current = null;
+    emitCue(null);
     setPhase("paused");
-  }, [phase, stopCueLoop]);
+  }, [emitCue, phase, stopCueLoop]);
 
   const changeSpeed = useCallback((rate: number) => {
     writeStoredTtsSpeed(rate);

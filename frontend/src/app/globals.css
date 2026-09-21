@@ -566,6 +566,9 @@
 .tts-word-active {
   background: oklch(0.92 0.14 95);
   box-shadow: 0 0 0 2px oklch(0.88 0.16 90);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.12em;
 }
 .tts-player-bar {
   box-shadow: 0 1px 0 color-mix(in oklab, var(--border) 80%, transparent);

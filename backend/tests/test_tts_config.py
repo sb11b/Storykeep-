@@ -42,6 +42,15 @@ class TtsConfigTests(unittest.TestCase):
         self.assertEqual(payload["optimize_streaming_latency"], 1)
         self.assertIsInstance(payload["optimize_streaming_latency"], int)
 
+    def test_listen_request_payload_includes_timestamps_and_latency(self):
+        payload = tts_service.listen_request_payload("Hello world", "castor")
+        self.assertEqual(payload["voice_id"], "castor")
+        self.assertEqual(payload["language"], "en")
+        self.assertTrue(payload["with_timestamps"])
+        self.assertEqual(payload["optimize_streaming_latency"], 1)
+        self.assertIsInstance(payload["optimize_streaming_latency"], int)
+        self.assertNotIsInstance(payload["optimize_streaming_latency"], bool)
+
 
 if __name__ == "__main__":
     unittest.main()

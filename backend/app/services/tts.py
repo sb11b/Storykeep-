@@ -320,13 +320,32 @@ def order_voices_for_ui(voices: list[dict[str, str]]) -> list[dict[str, str]]:
     return ordered
 
 
-def streaming_payload(text: str, voice_id: str, *, language: str = DEFAULT_TTS_LANGUAGE) -> dict[str, object]:
+def _clip_listen_text(text: str) -> str:
     clipped = (text or "").strip()
     if len(clipped) > 15_000:
         clipped = clipped[:15_000]
+    return clipped
+
+
+def listen_request_payload(text: str, voice_id: str, *, language: str = DEFAULT_TTS_LANGUAGE) -> dict[str, object]:
+    """xAI Listen body: Castor, language, latency i32, timestamps for highlight."""
     lang = (language or DEFAULT_TTS_LANGUAGE).strip() or DEFAULT_TTS_LANGUAGE
     return {
-        "text": clipped,
+        "text": _clip_listen_text(text),
+        "voice_id": _safe_voice(voice_id),
+        "language": lang,
+        "optimize_streaming_latency": STREAMING_LATENCY_LISTEN,
+        "with_timestamps": True,
+        "text_normalization": False,
+        "output_format": {"codec": "mp3", "sample_rate": 24000, "bit_rate": 128000},
+    }
+
+
+def streaming_payload(text: str, voice_id: str, *, language: str = DEFAULT_TTS_LANGUAGE) -> dict[str, object]:
+    """Raw MP3 stream only — no word timings (article highlight uses listen_request_payload)."""
+    lang = (language or DEFAULT_TTS_LANGUAGE).strip() or DEFAULT_TTS_LANGUAGE
+    return {
+        "text": _clip_listen_text(text),
         "voice_id": _safe_voice(voice_id),
         "language": lang,
         "optimize_streaming_latency": STREAMING_LATENCY_LISTEN,
@@ -481,14 +500,7 @@ def synthesize_timed(
         if cached:
             return cached
     key_token = require_key()
-    payload = {
-        "text": text,
-        "voice_id": voice,
-        "language": language,
-        "text_normalization": False,
-        "with_timestamps": True,
-        "output_format": {"codec": "mp3", "sample_rate": 24000, "bit_rate": 128000},
-    }
+    payload = listen_request_payload(text, voice, language=language)
     from app.services.tts_errors import log_tts_failure, raise_for_xai_tts
 
     try:
