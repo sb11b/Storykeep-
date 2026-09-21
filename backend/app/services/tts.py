@@ -30,6 +30,7 @@ COMPOSED_GUID_PREFIX = "storykeep-note:"
 DEFAULT_VOICE_ID = "castor"
 # xAI optimize_streaming_latency is i32: 0=quality, 1=lower TTFB (Listen), 2=aggressive.
 STREAMING_LATENCY_LISTEN = 1
+DEFAULT_TTS_LANGUAGE = "en"
 FALLBACK_VOICES = [
     {"voice_id": "castor", "name": "Castor"},
     {"voice_id": "eve", "name": "Eve"},
@@ -319,24 +320,26 @@ def order_voices_for_ui(voices: list[dict[str, str]]) -> list[dict[str, str]]:
     return ordered
 
 
-def streaming_payload(text: str, voice_id: str) -> dict[str, object]:
+def streaming_payload(text: str, voice_id: str, *, language: str = DEFAULT_TTS_LANGUAGE) -> dict[str, object]:
     clipped = (text or "").strip()
     if len(clipped) > 15_000:
         clipped = clipped[:15_000]
+    lang = (language or DEFAULT_TTS_LANGUAGE).strip() or DEFAULT_TTS_LANGUAGE
     return {
         "text": clipped,
         "voice_id": _safe_voice(voice_id),
+        "language": lang,
         "optimize_streaming_latency": STREAMING_LATENCY_LISTEN,
     }
 
 
-def iter_synthesize_stream(text: str, voice_id: str):
+def iter_synthesize_stream(text: str, voice_id: str, *, language: str = DEFAULT_TTS_LANGUAGE):
     """Stream MP3 bytes from xAI (optimize_streaming_latency) for Junior Listen."""
     clipped = (text or "").strip()
     if not clipped:
         raise HTTPException(status_code=400, detail="There is no text to read aloud.")
     key_token = require_key()
-    payload = streaming_payload(clipped, voice_id)
+    payload = streaming_payload(clipped, voice_id, language=language)
     from app.services.tts_errors import log_tts_failure, raise_for_xai_tts
 
     client = httpx.Client(timeout=tts_timeout())
