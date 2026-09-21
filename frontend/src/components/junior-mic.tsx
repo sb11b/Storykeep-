@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,11 @@ import {
   type MicClipSession,
 } from "@/lib/junior-stt";
 import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
+import { formatSttBlobHint } from "@/lib/stt-upload";
 import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
+
+/** Ignore a second tap right after start so one gesture is not start+stop. */
+export const MIC_TOGGLE_DEBOUNCE_MS = 300;
 
 export type JuniorMicPhase = "idle" | "listening" | "transcribing";
 
@@ -33,9 +37,9 @@ export function JuniorMicButton({
   const [phase, setPhase] = useState<JuniorMicPhase>("idle");
   const sessionRef = useRef<MicClipSession | null>(null);
   const listeningRef = useRef(false);
-  const pointerDownRef = useRef(false);
   const pendingStopRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const startedAtRef = useRef(0);
   listeningRef.current = phase === "listening";
 
   const setMicPhase = useCallback(
@@ -49,7 +53,7 @@ export function JuniorMicButton({
   const upload = useCallback(
     async (blob: Blob) => {
       if (blob.size < MIN_CAPTURE_BYTES) {
-        toast.error(NO_AUDIO_CAPTURED);
+        toast.error(`${NO_AUDIO_CAPTURED} (${formatSttBlobHint(blob)})`);
         setMicPhase("idle");
         return;
       }
@@ -104,6 +108,7 @@ export function JuniorMicButton({
     sessionRef.current?.abort();
     sessionRef.current = null;
     listeningRef.current = false;
+    pendingStopRef.current = false;
     setMicPhase("idle");
   }, [setMicPhase]);
 
@@ -115,6 +120,7 @@ export function JuniorMicButton({
   const start = useCallback(async () => {
     if (listeningRef.current || sessionRef.current || phase === "transcribing") return;
     listeningRef.current = true;
+    startedAtRef.current = Date.now();
     setMicPhase("listening");
     try {
       const session = await startMicClip({
@@ -134,7 +140,7 @@ export function JuniorMicButton({
         pendingStopRef.current = false;
         window.setTimeout(() => {
           if (sessionRef.current === session) void stopAndSend();
-        }, 300);
+        }, MIC_TOGGLE_DEBOUNCE_MS);
       }
     } catch (error) {
       sessionRef.current = null;
@@ -148,24 +154,31 @@ export function JuniorMicButton({
     }
   }, [phase, setMicPhase, stopAndSend]);
 
-  const releasePointer = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    pointerDownRef.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+  const toggleMic = useCallback(() => {
+    if (phase === "transcribing" || !enabled) return;
+    if (listeningRef.current || sessionRef.current) {
+      if (Date.now() - startedAtRef.current < MIC_TOGGLE_DEBOUNCE_MS) return;
+      void stopAndSend();
+      return;
     }
-    if (listeningRef.current || sessionRef.current) void stopAndSend();
-  }, [stopAndSend]);
+    void start();
+  }, [enabled, phase, start, stopAndSend]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (phase === "idle") return;
       event.preventDefault();
+      if (phase === "listening") {
+        if (Date.now() - startedAtRef.current < MIC_TOGGLE_DEBOUNCE_MS) return;
+        void stopAndSend();
+        return;
+      }
       abort();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [abort, phase]);
+  }, [abort, phase, stopAndSend]);
 
   useEffect(() => () => abort(), [abort]);
 
@@ -183,33 +196,18 @@ export function JuniorMicButton({
       className="relative z-10 size-9 shrink-0"
       disabled={transcribing}
       aria-label={statusLabel}
+      aria-pressed={listening}
       data-mic-state={listening ? "live" : transcribing ? "uploading" : "idle"}
       title={
         listening
-          ? `${MIC_LIVE} — release to send`
+          ? `${MIC_LIVE} — tap again to send`
           : transcribing
             ? MIC_TRANSCRIBING
-            : `${MIC_IDLE} — hold to talk`
+            : `${MIC_IDLE} — tap to talk`
       }
-      onPointerDown={(event) => {
-        if (transcribing || !enabled) return;
+      onClick={(event) => {
         event.preventDefault();
-        pointerDownRef.current = true;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        void start();
-      }}
-      onPointerUp={(event) => {
-        if (!pointerDownRef.current) return;
-        releasePointer(event);
-      }}
-      onPointerCancel={(event) => {
-        if (!pointerDownRef.current) return;
-        releasePointer(event);
-      }}
-      onLostPointerCapture={() => {
-        if (!pointerDownRef.current) return;
-        pointerDownRef.current = false;
-        if (listeningRef.current || sessionRef.current) void stopAndSend();
+        toggleMic();
       }}
     >
       {transcribing ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}

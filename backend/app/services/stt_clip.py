@@ -20,7 +20,7 @@ XAI_STT_URL = "https://api.x.ai/v1/stt"
 STT_MODEL_PRIMARY = "grok-voice-transcribe-2.0"
 STT_MODEL_FALLBACK = "grok-voice-transcribe-1.0"
 MAX_CLIP_BYTES = 500 * 1024 * 1024
-MIN_CLIP_BYTES = 64
+MIN_CLIP_BYTES = 256
 STT_TIMEOUT = httpx.Timeout(120.0, connect=15.0)
 
 ALLOWED_TYPES = frozenset(

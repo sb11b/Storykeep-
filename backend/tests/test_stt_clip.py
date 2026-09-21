@@ -20,7 +20,7 @@ from app.routers import stt as stt_router
 from app.services import stt_clip
 from app.services.stt_limits import clear_stt_rate_limits
 
-WAV = b"RIFF" + b"\x00" * 60
+WAV = b"RIFF" + b"\x00" * 252
 _RealClient = httpx.Client
 
 
@@ -72,6 +72,7 @@ class SttClipTests(unittest.TestCase):
 
     def test_success_transcript(self) -> None:
         user = SimpleNamespace(id=uuid.uuid4(), email="steve@example.com", is_demo_locked=False)
+        clip = b"\x1a\x45\xdf\xa3" + b"\x00" * 300
 
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertTrue(request.headers.get("authorization", "").startswith("Bearer "))
@@ -79,6 +80,8 @@ class SttClipTests(unittest.TestCase):
             body = request.content.decode("utf-8", errors="ignore")
             self.assertIn("grok-voice-transcribe-2.0", body)
             self.assertIn("language", body)
+            self.assertIn(b'filename="audio.webm"', request.content or b"")
+            self.assertIn(clip, request.content or b"")
             return httpx.Response(200, json={"text": "hello Junior", "duration": 1.2})
 
         class FakeClient:
@@ -93,7 +96,11 @@ class SttClipTests(unittest.TestCase):
 
         with patch("app.services.stt_clip.httpx.Client", FakeClient):
             client = TestClient(_app(user))
-            response = client.post("/api/v1/stt", files={"file": ("clip.wav", WAV, "audio/wav")})
+            response = client.post(
+                "/api/v1/stt",
+                data={"model": "grok-voice-transcribe-2.0"},
+                files={"file": ("audio.webm", clip, "audio/webm")},
+            )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["text"], "hello Junior")
 

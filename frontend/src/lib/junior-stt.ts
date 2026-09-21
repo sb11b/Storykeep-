@@ -279,8 +279,8 @@ function waitForRecorderClip(
 
     const onStop = () => {
       sawStop = true;
-      // Final dataavailable may land on the same turn or the next microtask.
-      window.setTimeout(finish, 0);
+      // Final dataavailable may land after onstop; allow one frame + a short flush.
+      window.setTimeout(finish, 100);
     };
 
     recorder.addEventListener("dataavailable", onData);
