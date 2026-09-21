@@ -16,9 +16,11 @@ from app.services.stt_limits import enforce_stt_rate_limit
 logger = logging.getLogger(__name__)
 
 XAI_STT_URL = "https://api.x.ai/v1/stt"
-MAX_CLIP_BYTES = 8 * 1024 * 1024
+STT_MODEL_PRIMARY = "grok-voice-transcribe-2.0"
+STT_MODEL_FALLBACK = "grok-voice-transcribe-1.0"
+MAX_CLIP_BYTES = 500 * 1024 * 1024
 MIN_CLIP_BYTES = 64
-STT_TIMEOUT = httpx.Timeout(45.0, connect=10.0)
+STT_TIMEOUT = httpx.Timeout(120.0, connect=15.0)
 
 ALLOWED_TYPES = frozenset(
     {
@@ -60,6 +62,38 @@ def _content_type(raw: str | None, filename: str) -> str:
     if name.endswith(".mp3"):
         return "audio/mpeg"
     return value or "audio/webm"
+
+
+def _post_clip(
+    client: httpx.Client,
+    key: str,
+    name: str,
+    data: bytes,
+    content_type: str,
+    model: str,
+) -> httpx.Response:
+    return client.post(
+        XAI_STT_URL,
+        headers={"Authorization": f"Bearer {key}"},
+        data={"model": model, "language": "en", "format": "true"},
+        files={"file": (name, data, content_type)},
+    )
+
+
+def _should_fallback_model(response: httpx.Response) -> bool:
+    code = int(response.status_code)
+    if code == 404:
+        return True
+    if code not in {400, 422}:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    err = body.get("error") or body.get("detail") or body.get("message") or ""
+    text = err if isinstance(err, str) else str(err)
+    lowered = text.lower()
+    return "model" in lowered or "not found" in lowered
 
 
 def _filename_for(content_type: str, filename: str) -> str:
@@ -110,12 +144,10 @@ def transcribe_clip(
     logger.info("stt clip bytes=%s type=%s", len(data), ctype)
     try:
         with httpx.Client(timeout=STT_TIMEOUT) as client:
-            response = client.post(
-                XAI_STT_URL,
-                headers={"Authorization": f"Bearer {key}"},
-                data={"language": "en", "format": "true"},
-                files={"file": (name, data, ctype)},
-            )
+            response = _post_clip(client, key, name, data, ctype, STT_MODEL_PRIMARY)
+            if response.status_code >= 400 and _should_fallback_model(response):
+                logger.info("stt clip retry model=%s", STT_MODEL_FALLBACK)
+                response = _post_clip(client, key, name, data, ctype, STT_MODEL_FALLBACK)
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail="STT failed (504)") from exc
     except httpx.HTTPError as exc:

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
-import { JuniorMicButton } from "@/components/junior-mic";
+import { JuniorMicButton, type JuniorMicPhase } from "@/components/junior-mic";
 import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
@@ -77,6 +77,7 @@ import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices, resolveTtsVoiceId } from "@/lib/tts-defaults";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
+import { MIC_LIVE, MIC_TRANSCRIBING } from "@/lib/stt-ui";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -284,6 +285,9 @@ export function GrokPane({
   const [listenTarget, setListenTarget] = useState<ListenTarget | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [sttPhase, setSttPhase] = useState<JuniorMicPhase>("idle");
+  const micAbortRef = useRef<(() => void) | null>(null);
+  const sttBusy = sttPhase === "listening" || sttPhase === "transcribing";
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
   const streamStatusRef = useRef<ChatStatusKind | null>(null);
@@ -1298,6 +1302,7 @@ export function GrokPane({
     includeOffset?: number;
   }) {
     dictation?.abort();
+    micAbortRef.current?.();
     const content = (opts?.message ?? draftNow()).trim();
     const pending = pane.pendingAttachments ?? [];
     if (pending.some((item) => !item.id)) {
@@ -2640,7 +2645,13 @@ export function GrokPane({
               enabled={enabled && !busy && !uploadingFiles}
               locked={locked}
               getDraft={() => draftValueRef.current}
+              registerAbort={(abort) => {
+                micAbortRef.current = abort;
+              }}
+              onPhaseChange={setSttPhase}
               onTranscript={(next) => {
+                const message = next.trim();
+                if (!message) return;
                 draftValueRef.current = next;
                 onUpdate((current) => (current.draft === next ? current : { ...current, draft: next }));
                 const el = draftRef.current;
@@ -2649,12 +2660,8 @@ export function GrokPane({
                   el.style.height = "auto";
                   const cap = Math.round(window.innerHeight * 0.6);
                   el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
-                  requestAnimationFrame(() => {
-                    el.focus();
-                    const at = next.length;
-                    el.setSelectionRange(at, at);
-                  });
                 }
+                void send({ message });
               }}
             />
           ) : null}
@@ -2675,13 +2682,27 @@ export function GrokPane({
               type="submit"
               size="icon"
               className="relative z-10 size-9 shrink-0"
-              disabled={!enabled || aborting || (!draftNow().trim() && !(pane.pendingAttachments ?? []).length)}
+              disabled={
+                !enabled ||
+                aborting ||
+                sttBusy ||
+                (!draftNow().trim() && !(pane.pendingAttachments ?? []).length)
+              }
               aria-label="Send"
             >
               <Send className="size-4" />
             </Button>
           )}
         </div>
+        {sttPhase === "listening" ? (
+          <p className="text-[11px] text-muted-foreground" role="status">
+            {MIC_LIVE}
+          </p>
+        ) : sttPhase === "transcribing" ? (
+          <p className="text-[11px] text-muted-foreground" role="status">
+            {MIC_TRANSCRIBING}
+          </p>
+        ) : null}
         {(busy || aborting) && inFlightSpend ? (
           <p className="text-[11px] text-muted-foreground" data-junior-spend="" data-junior-route="">
             {inFlightSpend}

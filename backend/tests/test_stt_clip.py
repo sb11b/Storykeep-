@@ -76,6 +76,9 @@ class SttClipTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertTrue(request.headers.get("authorization", "").startswith("Bearer "))
             self.assertNotIn(b"xai-test-key-not-real", request.content or b"")
+            body = request.content.decode("utf-8", errors="ignore")
+            self.assertIn("grok-voice-transcribe-2.0", body)
+            self.assertIn("language", body)
             return httpx.Response(200, json={"text": "hello Junior", "duration": 1.2})
 
         class FakeClient:

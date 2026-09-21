@@ -5,37 +5,56 @@ import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { appendSpoken } from "@/lib/stt-buffer";
 import { MIN_CLIP_BYTES, startMicClip, sttFailToast, type MicClipSession } from "@/lib/junior-stt";
-import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, micDeniedMessage } from "@/lib/stt-ui";
+import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
+import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
+
+export type JuniorMicPhase = "idle" | "listening" | "transcribing";
 
 export function JuniorMicButton({
   enabled,
   locked,
   getDraft,
   onTranscript,
+  onPhaseChange,
+  registerAbort,
 }: {
   enabled: boolean;
   locked: boolean;
   getDraft: () => string;
+  /** Merged draft after STT; parent should send as a normal Junior message. */
   onTranscript: (next: string) => void;
+  onPhaseChange?: (phase: JuniorMicPhase) => void;
+  registerAbort?: (abort: (() => void) | null) => void;
 }) {
-  const [listening, setListening] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [phase, setPhase] = useState<JuniorMicPhase>("idle");
   const sessionRef = useRef<MicClipSession | null>(null);
   const listeningRef = useRef(false);
-  listeningRef.current = listening;
+  const abortRef = useRef<AbortController | null>(null);
+  listeningRef.current = phase === "listening";
+
+  const setMicPhase = useCallback(
+    (next: JuniorMicPhase) => {
+      setPhase(next);
+      onPhaseChange?.(next);
+    },
+    [onPhaseChange],
+  );
 
   const upload = useCallback(
     async (blob: Blob) => {
       if (blob.size < MIN_CLIP_BYTES) {
         toast.error(sttFailToast(400, "empty blob"));
-        setUploading(false);
-        setListening(false);
+        setMicPhase("idle");
         return;
       }
-      setUploading(true);
-      setListening(false);
+      setMicPhase("transcribing");
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
-        const result = await api.transcribeStt(blob);
+        const result = await api.transcribeStt(blob, {
+          signal: controller.signal,
+          timeoutMs: STT_CLIP_TIMEOUT_MS,
+        });
         const piece = (result.text || "").trim();
         if (!piece) {
           toast.error("STT failed (empty transcript)");
@@ -45,24 +64,23 @@ export function JuniorMicButton({
       } catch (error) {
         if (error instanceof ApiError) {
           toast.error(sttFailToast(error.status, error.message));
-        } else {
+        } else if (!(error instanceof DOMException && error.name === "AbortError")) {
           toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
         }
       } finally {
-        setUploading(false);
-        setListening(false);
+        abortRef.current = null;
+        setMicPhase("idle");
       }
     },
-    [getDraft, onTranscript],
+    [getDraft, onTranscript, setMicPhase],
   );
 
   const stopAndSend = useCallback(async () => {
     const session = sessionRef.current;
     sessionRef.current = null;
     listeningRef.current = false;
-    setListening(false);
     if (!session) {
-      setUploading(false);
+      setMicPhase("idle");
       return;
     }
     try {
@@ -70,30 +88,34 @@ export function JuniorMicButton({
       await upload(blob);
     } catch (error) {
       toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
-      setUploading(false);
-      setListening(false);
+      setMicPhase("idle");
     }
-  }, [upload]);
+  }, [setMicPhase, upload]);
 
   const abort = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     sessionRef.current?.abort();
     sessionRef.current = null;
     listeningRef.current = false;
-    setListening(false);
-    setUploading(false);
-  }, []);
+    setMicPhase("idle");
+  }, [setMicPhase]);
+
+  useEffect(() => {
+    registerAbort?.(abort);
+    return () => registerAbort?.(null);
+  }, [abort, registerAbort]);
 
   const start = useCallback(async () => {
-    if (listeningRef.current || sessionRef.current) return;
+    if (listeningRef.current || sessionRef.current || phase === "transcribing") return;
     listeningRef.current = true;
-    setListening(true);
+    setMicPhase("listening");
     try {
       const session = await startMicClip({
         onPermissionRevoked: () => {
           sessionRef.current = null;
           listeningRef.current = false;
-          setListening(false);
-          setUploading(false);
+          setMicPhase("idle");
           toast.error(MIC_DENIED_TOAST);
         },
       });
@@ -105,25 +127,29 @@ export function JuniorMicButton({
     } catch (error) {
       sessionRef.current = null;
       listeningRef.current = false;
-      setListening(false);
+      setMicPhase("idle");
       toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
     }
-  }, []);
+  }, [phase, setMicPhase]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
-      if (!listeningRef.current) return;
+      if (phase === "idle") return;
       event.preventDefault();
       abort();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [abort]);
+  }, [abort, phase]);
 
   useEffect(() => () => abort(), [abort]);
 
   if (locked || !enabled) return null;
+
+  const listening = phase === "listening";
+  const transcribing = phase === "transcribing";
+  const statusLabel = listening ? MIC_LIVE : transcribing ? MIC_TRANSCRIBING : MIC_IDLE;
 
   return (
     <Button
@@ -131,13 +157,19 @@ export function JuniorMicButton({
       size="icon"
       variant={listening ? "destructive" : "outline"}
       className="relative z-10 size-9 shrink-0"
-      disabled={uploading}
-      aria-label={listening ? MIC_LIVE : uploading ? "Transcribing" : MIC_IDLE}
-      data-mic-state={listening ? "live" : uploading ? "uploading" : "idle"}
-      title={listening ? `${MIC_LIVE} — tap to stop` : `${MIC_IDLE} — tap to talk, tap again to insert`}
+      disabled={transcribing}
+      aria-label={statusLabel}
+      data-mic-state={listening ? "live" : transcribing ? "uploading" : "idle"}
+      title={
+        listening
+          ? `${MIC_LIVE} — tap to stop and send`
+          : transcribing
+            ? MIC_TRANSCRIBING
+            : `${MIC_IDLE} — tap to talk`
+      }
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => {
-        if (uploading) return;
+        if (transcribing) return;
         if (listening) {
           void stopAndSend();
           return;
@@ -145,7 +177,7 @@ export function JuniorMicButton({
         void start();
       }}
     >
-      {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}
+      {transcribing ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}
     </Button>
   );
 }

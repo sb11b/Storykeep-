@@ -42,6 +42,7 @@ import {
   conversationIdForRequest,
   isConversationId,
 } from "@/lib/chat-conversation";
+import { transcribeClip } from "@/lib/stt-clip-client";
 import { fetchSpeechChunk } from "@/lib/tts-speech-client";
 import { formatChatError } from "@/lib/grok-chat-error";
 import {
@@ -546,7 +547,7 @@ export const api = {
     }),
   tts: () => request<TtsStatus>("/api/v1/tts"),
   stt: () => request<SttStatus>("/api/v1/stt"),
-  transcribeStt: (blob: Blob) => {
+  transcribeStt: (blob: Blob, opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
     const type = (blob.type || "audio/webm").split(";", 1)[0].trim() || "audio/webm";
     const name = type.includes("wav")
       ? "clip.wav"
@@ -555,9 +556,7 @@ export const api = {
         : type.includes("mp4") || type.includes("m4a")
           ? "clip.m4a"
           : "clip.webm";
-    const body = new FormData();
-    body.append("file", blob, name);
-    return request<{ text: string }>("/api/v1/stt", { method: "POST", body });
+    return transcribeClip(blob, name, opts);
   },
   ttsPlan: (id: string, voiceId: string, opts?: { includeNotes?: boolean }) => {
     const search = new URLSearchParams({ voice_id: voiceId });
