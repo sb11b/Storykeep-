@@ -375,6 +375,8 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
 
     if junior_model.is_cursor_task_turn(text):
         return True
+    if junior_model.is_delegate_turn(text):
+        return True
     if is_short_chat(text):
         return False
     if _SCHOOL_CODE_RE.search(text):
@@ -1207,6 +1209,7 @@ async def stream_completion(
         attach_tools = tools
     else:
         from app.services.chat_index import is_chat_index_tool
+        from app.services.cursor_agent_tool import is_cursor_tool
         from app.services.github_tool import is_github_tool
         from app.services.railway_tool import is_railway_tool
         from app.services.web_search import is_web_search_tool
@@ -1218,6 +1221,7 @@ async def stream_completion(
             or is_chat_index_tool(item)
             or is_railway_tool(item)
             or is_github_tool(item)
+            or is_cursor_tool(item)
         ] or None
     if messages_override is not None:
         xai_messages = messages_override

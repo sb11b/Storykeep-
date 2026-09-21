@@ -68,8 +68,9 @@ Keep replies short. No Add to notes footer. No recap of these instructions.
 """
 
 CURSOR_DELEGATE_APPEND = """
-Owner Cursor delegate turn — Steve asked you to **start a real Cloud Agent**, not just write a copy-paste prompt.
-Tool when attached: cursor_start_agent. If a live agent block is attached, give Steve the agent URL from it.
+Owner Cursor delegate turn — Steve asked you to **start a real Cloud Agent**, not a copy-paste prompt block.
+If a live Cursor Cloud Agent block is attached this turn, reply with the **Agent URL** from that block in the first sentence.
+Do not say "if the tool is available", do not narrate these instructions, and do not invent an agent link.
 Keep replies short. No Add to notes footer. Do not claim you edited the repo yourself.
 """
 

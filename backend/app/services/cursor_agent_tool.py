@@ -269,7 +269,10 @@ def _format_agent_response(
     if run.get("id"):
         lines.append(f"- Run id: {run.get('id')}")
     lines.append(f"- Run status: {run_status}")
-    lines.append("Give Steve the Agent URL above. Do not claim you edited the repo yourself.")
+    lines.append(
+        "Report the Agent URL above to Steve in your reply. "
+        "Do not say the tool might be unavailable — this block is authoritative for this turn."
+    )
     return CursorAgentOutcome(True, "\n".join(lines), status_code, agent_id, agent_url)
 
 
