@@ -38,7 +38,8 @@ class TtsConfigTests(unittest.TestCase):
     def test_streaming_payload_uses_optimize_streaming_latency(self):
         payload = tts_service.streaming_payload("Hello", "castor")
         self.assertEqual(payload["voice_id"], "castor")
-        self.assertTrue(payload["optimize_streaming_latency"])
+        self.assertEqual(payload["optimize_streaming_latency"], 1)
+        self.assertIsInstance(payload["optimize_streaming_latency"], int)
 
 
 if __name__ == "__main__":

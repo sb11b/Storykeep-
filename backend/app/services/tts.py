@@ -28,6 +28,8 @@ NOTES_HARD_CAP = 60_000
 CACHE_TTL = timedelta(hours=24)
 COMPOSED_GUID_PREFIX = "storykeep-note:"
 DEFAULT_VOICE_ID = "castor"
+# xAI optimize_streaming_latency is i32: 0=quality, 1=lower TTFB (Listen), 2=aggressive.
+STREAMING_LATENCY_LISTEN = 1
 FALLBACK_VOICES = [
     {"voice_id": "castor", "name": "Castor"},
     {"voice_id": "eve", "name": "Eve"},
@@ -324,7 +326,7 @@ def streaming_payload(text: str, voice_id: str) -> dict[str, object]:
     return {
         "text": clipped,
         "voice_id": _safe_voice(voice_id),
-        "optimize_streaming_latency": True,
+        "optimize_streaming_latency": STREAMING_LATENCY_LISTEN,
     }
 
 
