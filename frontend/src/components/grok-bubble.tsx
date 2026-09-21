@@ -134,6 +134,7 @@ export function GrokBubble({
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<TtsVoice[]>([]);
+  const [defaultTtsVoiceId, setDefaultTtsVoiceId] = useState("castor");
   const [sttEnabled, setSttEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
   const dictation = useDictation();
@@ -298,6 +299,9 @@ export function GrokBubble({
       setTtsEnabled(status.enabled);
       const voices = voicesPayload.voices?.length ? voicesPayload.voices : status.voices ?? [];
       setTtsVoices(voices);
+      setDefaultTtsVoiceId(
+        voicesPayload.default_voice_id || status.default_voice_id || "castor",
+      );
     });
     api
       .stt()
@@ -1116,6 +1120,7 @@ export function GrokBubble({
                   messageCryptoEnabled={messageCryptoEnabled}
                   panelOpen={open}
                   ttsVoices={ttsVoices}
+                  defaultTtsVoiceId={defaultTtsVoiceId}
                   customShelves={customShelves}
                   onCreateNoteShelf={createNoteShelf}
                   onOpenArticle={onOpenArticle}
@@ -1151,6 +1156,7 @@ export function GrokBubble({
             messageCryptoEnabled={messageCryptoEnabled}
             panelOpen={open}
             ttsVoices={ttsVoices}
+            defaultTtsVoiceId={defaultTtsVoiceId}
             customShelves={customShelves}
             onCreateNoteShelf={createNoteShelf}
             onOpenArticle={onOpenArticle}

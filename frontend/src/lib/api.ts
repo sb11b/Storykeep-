@@ -42,7 +42,7 @@ import {
   conversationIdForRequest,
   isConversationId,
 } from "@/lib/chat-conversation";
-import { fetchSpeechChunk } from "@/lib/tts-speech-client";
+import { fetchSpeechChunk, fetchSpeechStream } from "@/lib/tts-speech-client";
 import { formatChatError } from "@/lib/grok-chat-error";
 import {
   GROK_STREAM_FIRST_BYTE_MS,
@@ -146,7 +146,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  ttsVoices: () => request<{ voices: import("@/lib/types").TtsVoice[] }>("/api/v1/tts/voices"),
+  ttsVoices: () =>
+    request<{ default_voice_id?: string; voices: import("@/lib/types").TtsVoice[] }>(
+      "/api/v1/tts/voices",
+    ),
   changePassword: (payload: { current_password: string; new_password: string; confirm_password: string }) =>
     request<{ ok: boolean }>("/api/v1/auth/change-password", {
       method: "POST",
@@ -588,8 +591,8 @@ export const api = {
   ) => {
     const search = new URLSearchParams({ chunk: String(chunk) });
     if (confirm) search.set("confirm", "true");
-    return fetchSpeechChunk(
-      `/api/v1/tts/message?${search.toString()}`,
+    return fetchSpeechStream(
+      `/api/v1/tts/stream?${search.toString()}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

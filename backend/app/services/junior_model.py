@@ -80,7 +80,7 @@ Steve is giving feedback on Junior's clarity. Answer plainly — use the Junior 
 
 ANDROID_SCOPE_APPEND = """
 Steve is on the Android Talk/Type app (Compose, Kotlin, voice_id, schema.sql). Give Cursor-ready copy-paste blocks when he asks; you do not fill Cursor's editor.
-Do not railway_deploy for Android — that only redeploys Storykeep web. Default TTS voice is eve until he pins another.
+Do not railway_deploy for Android — that only redeploys Storykeep web. Default Listen voice is castor unless he picks another.
 """
 
 CURSOR_PROMPT_APPEND = """

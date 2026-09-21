@@ -16,6 +16,7 @@ import {
   writeStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
+import { fallbackTtsVoices, resolveTtsVoiceId } from "@/lib/tts-defaults";
 import { cn } from "@/lib/utils";
 import type { TtsStatus, TtsWord } from "@/lib/types";
 
@@ -138,7 +139,7 @@ export const ListenControls = forwardRef<
   const includeNotesRef = useRef(includeNotes);
   const contentHashRef = useRef("");
   const [status, setStatus] = useState<TtsStatus | null>(null);
-  const [voiceId, setVoiceId] = useState("eve");
+  const [voiceId, setVoiceId] = useState("castor");
   const [speed, setSpeed] = useState(1);
   const speedRef = useRef(1);
   const [phase, setPhase] = useState<"idle" | "loading" | "playing" | "paused">("idle");
@@ -166,12 +167,9 @@ export const ListenControls = forwardRef<
       .then((next) => {
         if (cancelled) return;
         setStatus(next);
-        const serverDefault = next.default_voice_id || next.voices[0]?.voice_id || "eve";
-        const storedVoice = readStoredTtsVoice(serverDefault);
-        const known = next.voices.some((voice) => voice.voice_id === storedVoice);
-        if (known) setVoiceId(storedVoice);
-        else if (next.voices.some((voice) => voice.voice_id === serverDefault)) setVoiceId(serverDefault);
-        else if (next.voices[0]?.voice_id) setVoiceId(next.voices[0].voice_id);
+        const storedVoice = readStoredTtsVoice();
+        const pick = resolveTtsVoiceId(next.voices, next.default_voice_id, storedVoice);
+        setVoiceId(pick);
       })
       .catch(() => {
         if (!cancelled) setStatus({ enabled: false, provider: "xai", voices: [] });
@@ -669,7 +667,7 @@ export const ListenControls = forwardRef<
           if (phase !== "idle") void playChunk(0, next, null);
         }}
       >
-        {(status?.voices.length ? status.voices : [{ voice_id: "eve", name: "Eve" }]).map((voice: { voice_id: string; name: string }) => (
+        {(status?.voices.length ? status.voices : fallbackTtsVoices()).map((voice: { voice_id: string; name: string }) => (
           <option key={voice.voice_id} value={voice.voice_id}>
             {voice.name}
           </option>

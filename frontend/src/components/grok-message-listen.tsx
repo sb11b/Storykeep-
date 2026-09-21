@@ -13,6 +13,7 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
+import { fallbackTtsVoices } from "@/lib/tts-defaults";
 import { TTS_CHUNK_TIMEOUT_MS } from "@/lib/tts-speech-client";
 import type { TtsWord } from "@/lib/types";
 
@@ -533,7 +534,7 @@ export function GrokListenBar({
   // Stop stays live while Preparing so a slow request can be cancelled.
   const stopDisabled = phase === "idle";
 
-  const voiceOptions = voices?.length ? voices : [{ voice_id: "eve", name: "Eve" }];
+  const voiceOptions = voices?.length ? voices : fallbackTtsVoices();
 
   return (
     <div

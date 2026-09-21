@@ -3,7 +3,7 @@ import base64
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -313,6 +313,46 @@ def speak_article(
     payload = _speech_response(article, script, _voice(voice_id), chunk, confirm=confirm)
     payload["include_notes"] = bool(include_notes)
     return payload
+
+
+@router.post("/tts/stream")
+def speak_chat_message_stream(
+    payload: ChatSpeechIn,
+    chunk: int = Query(default=0, ge=0, le=200),
+    confirm: bool = Query(default=False),
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream xAI MP3 for Junior Listen — optimize_streaming_latency, 120s read timeout."""
+    reject_locked(user)
+    script = tts_service.visible_speech_script(payload.visible_text)
+    if not script.strip():
+        raise HTTPException(status_code=400, detail="There is no visible reply text to read.")
+    if len(script) > tts_service.LONG_SCRIPT_CHARS and not confirm:
+        raise HTTPException(
+            status_code=412,
+            detail="This text is longer than 20,000 characters. Confirm to listen to the full note.",
+        )
+    chunks = tts_service.split_chunks(script)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="There is no text to read aloud.")
+    if chunk >= len(chunks):
+        raise HTTPException(status_code=400, detail="That speech part does not exist.")
+    voice = _voice(payload.voice_id)
+    offset = sum(tts_service.word_count(part) for part in chunks[:chunk])
+    chunk_counts = [tts_service.word_count(part) for part in chunks]
+    digest = tts_service.script_digest(script, voice)
+    return StreamingResponse(
+        tts_service.iter_synthesize_stream(chunks[chunk], voice),
+        media_type="audio/mpeg",
+        headers={
+            "X-TTS-Chunks": str(len(chunks)),
+            "X-TTS-Chunk": str(chunk),
+            "X-TTS-Word-Offset": str(offset),
+            "X-TTS-Word-Counts": ",".join(str(count) for count in chunk_counts),
+            "X-TTS-Content-Hash": digest,
+            "X-TTS-Word-Total": str(tts_service.word_count(script)),
+        },
+    )
 
 
 @router.post("/tts/message")

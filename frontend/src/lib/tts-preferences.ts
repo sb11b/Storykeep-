@@ -18,7 +18,7 @@ export function writeStoredTtsSpeed(rate: number) {
   }
 }
 
-export function readStoredTtsVoice(fallback = "eve"): string {
+export function readStoredTtsVoice(fallback = "castor"): string {
   if (typeof window === "undefined") return fallback;
   try {
     return window.localStorage.getItem(TTS_VOICE_KEY) || fallback;

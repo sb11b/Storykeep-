@@ -28,7 +28,7 @@ class JuniorVoiceReplyTests(unittest.TestCase):
         )
         self.assertIn("eve", text)
         self.assertIn("Ara", text)
-        self.assertIn("Default is eve", text)
+        self.assertIn("Default is castor", text)
 
 
 if __name__ == "__main__":

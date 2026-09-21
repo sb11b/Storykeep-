@@ -129,3 +129,105 @@ export async function fetchSpeechChunk(
     });
   }
 }
+
+function headerInt(response: Response, name: string, fallback: number) {
+  const raw = response.headers.get(name);
+  const value = raw ? Number(raw) : fallback;
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/** Junior Listen — stream MP3 from xAI via POST /tts/stream (120s timeout). */
+export async function fetchSpeechStream(
+  url: string,
+  init: RequestInit,
+  logLabel: "article" | "chat",
+  options: SpeechChunkOptions = {},
+): Promise<SpeechChunkPayload> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  let timedOut = false;
+  const timeoutMs = options.timeoutMs ?? TTS_CHUNK_TIMEOUT_MS;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  let status = 0;
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      credentials: "include",
+      cache: "no-store",
+    });
+    status = response.status;
+    if (!response.ok) {
+      let detail: string | null = null;
+      let loggedBody: unknown = null;
+      try {
+        const raw = await response.json();
+        loggedBody = raw;
+        detail = parseErrorPayload(raw);
+      } catch {
+        try {
+          const text = (await response.text()).slice(0, 240);
+          loggedBody = text;
+        } catch {
+          loggedBody = null;
+        }
+      }
+      logTtsFailure(logLabel, status, loggedBody);
+      throw new ApiError(status, detail || httpErrorFallback(status));
+    }
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new ApiError(status, "TTS stream returned no body.");
+    }
+    const parts: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value?.length) parts.push(value);
+    }
+    const blob = new Blob(parts, { type: response.headers.get("content-type") || "audio/mpeg" });
+    if (!blob.size) {
+      throw new ApiError(status, `TTS returned no audio (HTTP ${status} with an empty body).`);
+    }
+    const chunks = headerInt(response, "X-TTS-Chunks", 1);
+    const countsRaw = response.headers.get("X-TTS-Word-Counts") || "";
+    const chunkWordCounts = countsRaw
+      ? countsRaw.split(",").map((part) => Number(part.trim())).filter((n) => Number.isFinite(n))
+      : [];
+    return {
+      blob,
+      chunks: chunks > 0 ? chunks : 1,
+      wordOffset: headerInt(response, "X-TTS-Word-Offset", 0),
+      chunkWordCounts,
+      duration: null,
+      words: [],
+      contentHash: response.headers.get("X-TTS-Content-Hash") || "",
+      ttsWordCount: headerInt(response, "X-TTS-Word-Total", 0),
+    };
+  } catch (error) {
+    if (timedOut) {
+      const seconds = Math.round(timeoutMs / 1000);
+      throw new ApiError(
+        status || 408,
+        `TTS timed out after ${seconds}s (HTTP ${status || "…"} or no body).`,
+      );
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abortFromCaller);
+    console.log("larry-tts", {
+      stage: `${logLabel} /tts/stream`,
+      chars: options.chars ?? null,
+      ttsStatus: timedOut ? "timeout" : status || "network",
+      ms: Date.now() - startedAt,
+    });
+  }
+}

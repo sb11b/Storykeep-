@@ -32,7 +32,7 @@ Owner of StoryKeep. Production account: stevebitsko@duck.com.
 - Ask you to paste `GITHUB_TOKEN` / `RAILWAY_API_TOKEN` into chat (already on the server)
 - Deploy the Android Talk/Type app or run `schema.sql` from this bubble
 
-For Android Junior: you copy Cursor-ready blocks; I don’t fill Cursor’s editor. Default TTS voice in schema is still `eve` until you pin another.
+For Android Junior: you copy Cursor-ready blocks; I don’t fill Cursor’s editor. Storykeep Listen default voice is **castor** (`XAI_TTS_VOICE` on Railway).
 
 When Steve asks who you are or what you can do, answer using this section. Say plainly what you did when you call railway_deploy or github_status — never invent outcomes.
 

@@ -75,6 +75,7 @@ import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
+import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices, resolveTtsVoiceId } from "@/lib/tts-defaults";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -211,6 +212,7 @@ export function GrokPane({
   messageCryptoEnabled = false,
   panelOpen = true,
   ttsVoices = [],
+  defaultTtsVoiceId = DEFAULT_TTS_VOICE_ID,
   renamingLabel = false,
   renameDraft = "",
   onStartRename,
@@ -258,6 +260,7 @@ export function GrokPane({
   onHistoryChanged?: () => void;
   panelOpen?: boolean;
   ttsVoices?: TtsVoice[];
+  defaultTtsVoiceId?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -276,7 +279,7 @@ export function GrokPane({
   }, [pane.draft]);
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice());
+  const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice(defaultTtsVoiceId));
   const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
   const [listenTarget, setListenTarget] = useState<ListenTarget | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
@@ -453,22 +456,20 @@ export function GrokPane({
       .then((prefs) => {
         if (cancelled) return;
         const saved = typeof prefs.tts_voice_id === "string" ? prefs.tts_voice_id : null;
-        const local = readStoredTtsVoice(ttsVoices[0]!.voice_id);
-        const pick = [saved, local].find((item) => item && ttsVoices.some((voice) => voice.voice_id === item));
-        const next = pick || ttsVoices[0]!.voice_id;
+        const local = readStoredTtsVoice(defaultTtsVoiceId);
+        const next = resolveTtsVoiceId(ttsVoices, defaultTtsVoiceId, saved || local);
         setVoiceId(next);
         writeStoredTtsVoice(next);
       })
       .catch(() => {
         if (cancelled) return;
-        const stored = readStoredTtsVoice(ttsVoices[0]!.voice_id);
-        if (ttsVoices.some((voice) => voice.voice_id === stored)) setVoiceId(stored);
-        else setVoiceId(ttsVoices[0]!.voice_id);
+        const next = resolveTtsVoiceId(ttsVoices, defaultTtsVoiceId, readStoredTtsVoice(defaultTtsVoiceId));
+        setVoiceId(next);
       });
     return () => {
       cancelled = true;
     };
-  }, [ttsVoices]);
+  }, [defaultTtsVoiceId, ttsVoices]);
 
   useEffect(() => {
     if (!panelOpen) {
@@ -1905,7 +1906,7 @@ export function GrokPane({
   }
 
   const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
-  const voiceOptions = ttsVoices.length ? ttsVoices : [{ voice_id: "eve", name: "Eve" }];
+  const voiceOptions = ttsVoices.length ? ttsVoices : fallbackTtsVoices();
   const hasReadableReply = pane.messages.some((item) => item.role === "assistant" && Boolean(item.content));
   const showStickyPlayer = ttsEnabled && !locked && (listen.isActive || hasReadableReply);
   const visibleStatus = pane.streamStatus ?? streamStatus;

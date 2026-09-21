@@ -27,7 +27,9 @@ LONG_SCRIPT_CHARS = 20_000
 NOTES_HARD_CAP = 60_000
 CACHE_TTL = timedelta(hours=24)
 COMPOSED_GUID_PREFIX = "storykeep-note:"
+DEFAULT_VOICE_ID = "castor"
 FALLBACK_VOICES = [
+    {"voice_id": "castor", "name": "Castor"},
     {"voice_id": "eve", "name": "Eve"},
     {"voice_id": "ara", "name": "Ara"},
     {"voice_id": "rex", "name": "Rex"},
@@ -56,7 +58,9 @@ def voices_url() -> str:
 
 
 def default_voice() -> str:
-    return _safe_voice((settings.xai_tts_voice or "eve").strip() or "eve")
+    raw = (settings.xai_tts_voice or DEFAULT_VOICE_ID).strip().lower() or DEFAULT_VOICE_ID
+    cleaned = re.sub(r"[^a-z0-9_-]", "", raw)[:32]
+    return cleaned or DEFAULT_VOICE_ID
 
 
 def key_configured() -> bool:
@@ -277,9 +281,100 @@ def script_digest(script: str, voice_id: str) -> str:
 
 
 def _safe_voice(voice_id: str | None) -> str:
-    fallback = (settings.xai_tts_voice or "eve").strip().lower() or "eve"
+    fallback = default_voice()
     cleaned = re.sub(r"[^a-z0-9_-]", "", (voice_id or fallback).lower())[:32]
     return cleaned or fallback
+
+
+def _voice_display_name(voice_id: str, name: str) -> str:
+    lowered = (voice_id or "").strip().lower()
+    if lowered == "castor":
+        return "Castor"
+    return (name or voice_id or "").strip() or voice_id
+
+
+def order_voices_for_ui(voices: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Castor (server default) first — never Altair as the implicit pick."""
+    preferred = default_voice().lower()
+    by_id: dict[str, dict[str, str]] = {}
+    for row in voices:
+        voice_id = str(row.get("voice_id") or "").strip()
+        if not voice_id:
+            continue
+        by_id[voice_id.lower()] = {
+            "voice_id": voice_id,
+            "name": _voice_display_name(voice_id, str(row.get("name") or voice_id)),
+        }
+    if not by_id:
+        return list(FALLBACK_VOICES)
+    ordered: list[dict[str, str]] = []
+    for key in (preferred, DEFAULT_VOICE_ID):
+        row = by_id.pop(key, None)
+        if row and row not in ordered:
+            ordered.append(row)
+    rest = sorted(by_id.values(), key=lambda item: (item["voice_id"].lower() == "altair", item["name"].lower()))
+    ordered.extend(rest)
+    return ordered
+
+
+def streaming_payload(text: str, voice_id: str) -> dict[str, object]:
+    clipped = (text or "").strip()
+    if len(clipped) > 15_000:
+        clipped = clipped[:15_000]
+    return {
+        "text": clipped,
+        "voice_id": _safe_voice(voice_id),
+        "optimize_streaming_latency": True,
+    }
+
+
+def iter_synthesize_stream(text: str, voice_id: str):
+    """Stream MP3 bytes from xAI (optimize_streaming_latency) for Junior Listen."""
+    clipped = (text or "").strip()
+    if not clipped:
+        raise HTTPException(status_code=400, detail="There is no text to read aloud.")
+    key_token = require_key()
+    payload = streaming_payload(clipped, voice_id)
+    from app.services.tts_errors import log_tts_failure, raise_for_xai_tts
+
+    client = httpx.Client(timeout=tts_timeout())
+    try:
+        request = client.build_request(
+            "POST",
+            tts_url(),
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {key_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = client.send(request, stream=True)
+    except httpx.TimeoutException as exc:
+        client.close()
+        log_tts_failure(context="stream", status=504, body_snippet="timeout")
+        raise HTTPException(status_code=504, detail="xAI speech service timed out.") from exc
+    except httpx.HTTPError as exc:
+        client.close()
+        log_tts_failure(context="stream", status=502, body_snippet=str(exc))
+        raise HTTPException(status_code=502, detail="Could not reach the xAI speech service.") from exc
+
+    if response.status_code >= 400:
+        body = response.read()[:500]
+        response.close()
+        client.close()
+        fake = httpx.Response(status_code=response.status_code, content=body, request=request)
+        raise_for_xai_tts(fake, context="stream")
+
+    def generate():
+        try:
+            for chunk in response.iter_bytes():
+                if chunk:
+                    yield chunk
+        finally:
+            response.close()
+            client.close()
+
+    return generate()
 
 
 def cache_path(article_id: UUID | str, digest: str, voice_id: str, chunk_index: int):
@@ -496,7 +591,7 @@ def summarize_voices_for_user(voices: list[dict[str, str]]) -> str:
 
 def list_voices() -> list[dict[str, str]]:
     if not key_configured():
-        return FALLBACK_VOICES
+        return list(FALLBACK_VOICES)
     key = settings.xai_api_key.strip()
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -505,12 +600,12 @@ def list_voices() -> list[dict[str, str]]:
                 headers={"Authorization": f"Bearer {key}"},
             )
         if response.status_code >= 400:
-            return FALLBACK_VOICES
+            return list(FALLBACK_VOICES)
         data = response.json()
     except Exception:
-        return FALLBACK_VOICES
-    voices = _normalize_voices(data)
-    return voices or FALLBACK_VOICES
+        return list(FALLBACK_VOICES)
+    voices = order_voices_for_ui(_normalize_voices(data))
+    return voices or list(FALLBACK_VOICES)
 
 
 def _normalize_voices(data: Any) -> list[dict[str, str]]:
@@ -531,7 +626,7 @@ def _normalize_voices(data: Any) -> list[dict[str, str]]:
         if not voice_id or voice_id in seen:
             continue
         seen.add(voice_id)
-        out.append({"voice_id": voice_id, "name": name})
+        out.append({"voice_id": voice_id, "name": _voice_display_name(voice_id, name)})
     return out
 
 

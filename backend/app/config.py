@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     xai_api_key: str = ""
     xai_tts_url: str = "https://api.x.ai/v1/tts"
-    xai_tts_voice: str = "eve"
+    xai_tts_voice: str = "castor"
     # xAI unary TTS can exceed 20s on cold first hit; match Android/Junior backend (120s read).
     xai_tts_read_timeout: float = 120.0
     xai_chat_url: str = "https://api.x.ai/v1/chat/completions"
