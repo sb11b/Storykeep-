@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { LoaderCircle, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
-import { appendSpoken } from "@/lib/stt-buffer";
 import { MIN_CLIP_BYTES, startMicClip, sttFailToast, type MicClipSession } from "@/lib/junior-stt";
 import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
 import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
@@ -13,22 +12,22 @@ export type JuniorMicPhase = "idle" | "listening" | "transcribing";
 export function JuniorMicButton({
   enabled,
   locked,
-  getDraft,
-  onTranscript,
+  onVoiceSubmit,
   onPhaseChange,
   registerAbort,
 }: {
   enabled: boolean;
   locked: boolean;
-  getDraft: () => string;
-  /** Merged draft after STT; parent should send as a normal Junior message. */
-  onTranscript: (next: string) => void;
+  /** Fresh transcript from xAI — parent puts it in the composer and auto-sends. */
+  onVoiceSubmit: (transcript: string) => void;
   onPhaseChange?: (phase: JuniorMicPhase) => void;
   registerAbort?: (abort: (() => void) | null) => void;
 }) {
   const [phase, setPhase] = useState<JuniorMicPhase>("idle");
   const sessionRef = useRef<MicClipSession | null>(null);
   const listeningRef = useRef(false);
+  const pointerDownRef = useRef(false);
+  const pendingStopRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   listeningRef.current = phase === "listening";
 
@@ -56,11 +55,8 @@ export function JuniorMicButton({
           timeoutMs: STT_CLIP_TIMEOUT_MS,
         });
         const piece = (result.text || "").trim();
-        if (!piece) {
-          toast.error("STT failed (empty transcript)");
-          return;
-        }
-        onTranscript(appendSpoken(getDraft(), piece));
+        if (!piece) return;
+        onVoiceSubmit(piece);
       } catch (error) {
         if (error instanceof ApiError) {
           toast.error(sttFailToast(error.status, error.message));
@@ -72,17 +68,19 @@ export function JuniorMicButton({
         setMicPhase("idle");
       }
     },
-    [getDraft, onTranscript, setMicPhase],
+    [onVoiceSubmit, setMicPhase],
   );
 
   const stopAndSend = useCallback(async () => {
+    pendingStopRef.current = false;
     const session = sessionRef.current;
-    sessionRef.current = null;
-    listeningRef.current = false;
     if (!session) {
-      setMicPhase("idle");
+      if (listeningRef.current) pendingStopRef.current = true;
+      else setMicPhase("idle");
       return;
     }
+    sessionRef.current = null;
+    listeningRef.current = false;
     try {
       const blob = await session.stop();
       await upload(blob);
@@ -124,13 +122,25 @@ export function JuniorMicButton({
         return;
       }
       sessionRef.current = session;
+      if (pendingStopRef.current) {
+        pendingStopRef.current = false;
+        void stopAndSend();
+      }
     } catch (error) {
       sessionRef.current = null;
       listeningRef.current = false;
       setMicPhase("idle");
       toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
     }
-  }, [phase, setMicPhase]);
+  }, [phase, setMicPhase, stopAndSend]);
+
+  const releasePointer = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    pointerDownRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (listeningRef.current || sessionRef.current) void stopAndSend();
+  }, [stopAndSend]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -162,19 +172,30 @@ export function JuniorMicButton({
       data-mic-state={listening ? "live" : transcribing ? "uploading" : "idle"}
       title={
         listening
-          ? `${MIC_LIVE} — tap to stop and send`
+          ? `${MIC_LIVE} — release to send`
           : transcribing
             ? MIC_TRANSCRIBING
-            : `${MIC_IDLE} — tap to talk`
+            : `${MIC_IDLE} — hold to talk`
       }
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={() => {
-        if (transcribing) return;
-        if (listening) {
-          void stopAndSend();
-          return;
-        }
+      onPointerDown={(event) => {
+        if (transcribing || !enabled) return;
+        event.preventDefault();
+        pointerDownRef.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
         void start();
+      }}
+      onPointerUp={(event) => {
+        if (!pointerDownRef.current) return;
+        releasePointer(event);
+      }}
+      onPointerCancel={(event) => {
+        if (!pointerDownRef.current) return;
+        releasePointer(event);
+      }}
+      onLostPointerCapture={() => {
+        if (!pointerDownRef.current) return;
+        pointerDownRef.current = false;
+        if (listeningRef.current || sessionRef.current) void stopAndSend();
       }}
     >
       {transcribing ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}

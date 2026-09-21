@@ -287,6 +287,18 @@ export function GrokPane({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [sttPhase, setSttPhase] = useState<JuniorMicPhase>("idle");
   const micAbortRef = useRef<(() => void) | null>(null);
+  const sendRef = useRef<
+    (opts?: {
+      message?: string;
+      fromStt?: boolean;
+      keepDraft?: string;
+      skipPasteSplit?: boolean;
+      includeMode?: IncludeMode;
+      includeHeading?: string | null;
+      includeSelection?: string | null;
+      includeOffset?: number;
+    }) => Promise<void>
+  >(async () => {});
   const sttBusy = sttPhase === "listening" || sttPhase === "transcribing";
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
@@ -1294,6 +1306,7 @@ export function GrokPane({
 
   async function send(opts?: {
     message?: string;
+    fromStt?: boolean;
     keepDraft?: string;
     skipPasteSplit?: boolean;
     includeMode?: IncludeMode;
@@ -1301,8 +1314,10 @@ export function GrokPane({
     includeSelection?: string | null;
     includeOffset?: number;
   }) {
-    dictation?.abort();
-    micAbortRef.current?.();
+    if (!opts?.fromStt) {
+      dictation?.abort();
+      micAbortRef.current?.();
+    }
     const content = (opts?.message ?? draftNow()).trim();
     const pending = pane.pendingAttachments ?? [];
     if (pending.some((item) => !item.id)) {
@@ -1311,6 +1326,9 @@ export function GrokPane({
     }
     const files = pending.filter((item) => item.id);
     if ((!content && !files.length) || busy || aborting || abortingRef.current || !enabled || inFlightRef.current) {
+      if (opts?.fromStt && content) {
+        toast.error("Could not send voice message — try again or tap Send.");
+      }
       return;
     }
     if (pane.includeArticle && articleId) {
@@ -1424,6 +1442,26 @@ export function GrokPane({
       if (turnId === turnIdRef.current) inFlightRef.current = false;
     }
   }
+
+  sendRef.current = send;
+
+  const submitVoiceTranscript = useCallback(
+    (transcript: string) => {
+      const message = transcript.trim();
+      if (!message) return;
+      draftValueRef.current = message;
+      onUpdate((current) => ({ ...current, draft: message }));
+      const el = draftRef.current;
+      if (el) {
+        setNativeTextareaValue(el, message);
+        el.style.height = "auto";
+        const cap = Math.round(window.innerHeight * 0.6);
+        el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
+      }
+      void sendRef.current({ message, fromStt: true });
+    },
+    [onUpdate],
+  );
 
   async function runImagineFromChat(options: {
     prompt: string;
@@ -2644,25 +2682,11 @@ export function GrokPane({
             <JuniorMicButton
               enabled={enabled && !busy && !uploadingFiles}
               locked={locked}
-              getDraft={() => draftValueRef.current}
               registerAbort={(abort) => {
                 micAbortRef.current = abort;
               }}
               onPhaseChange={setSttPhase}
-              onTranscript={(next) => {
-                const message = next.trim();
-                if (!message) return;
-                draftValueRef.current = next;
-                onUpdate((current) => (current.draft === next ? current : { ...current, draft: next }));
-                const el = draftRef.current;
-                if (el) {
-                  setNativeTextareaValue(el, next);
-                  el.style.height = "auto";
-                  const cap = Math.round(window.innerHeight * 0.6);
-                  el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
-                }
-                void send({ message });
-              }}
+              onVoiceSubmit={submitVoiceTranscript}
             />
           ) : null}
           {busy || aborting ? (
