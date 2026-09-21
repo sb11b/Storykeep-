@@ -319,6 +319,13 @@ export function GrokPane({
   const pendingFromHereRef = useRef<number | null>(null);
   const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
   const listenTargetRef = useRef<ListenTarget | null>(null);
+  /** User paused/stopped TTS; skip auto-speak until Listen or From here. */
+  const userStoppedTtsRef = useRef(false);
+  const streamAssistantIdRef = useRef<string | null>(null);
+  const sttPhaseRef = useRef(sttPhase);
+  sttPhaseRef.current = sttPhase;
+  const panelOpenRef = useRef(panelOpen);
+  panelOpenRef.current = panelOpen;
   const createInFlightRef = useRef<Promise<string> | null>(null);
   const createNonceRef = useRef<string | null>(pane.createNonce);
   createNonceRef.current = pane.createNonce;
@@ -613,8 +620,10 @@ export function GrokPane({
     }
     if (listen.isActive && listenTarget?.id === messageId) {
       if (listen.phase === "playing") {
+        userStoppedTtsRef.current = true;
         listen.pause();
       } else {
+        userStoppedTtsRef.current = false;
         listen.listen();
       }
       return;
@@ -629,8 +638,37 @@ export function GrokPane({
       toast.error("That reply is still empty — nothing to read yet.");
       return;
     }
+    userStoppedTtsRef.current = false;
     pendingListenRef.current = true;
     setListenTarget({ id: messageId, trigger, script: resolved.text });
+  }
+
+  /** Same path as Listen, triggered when an assistant reply finishes streaming. */
+  function requestAutoListen(messageId: string, markdown: string) {
+    if (!ttsEnabled || locked || panelOpenRef.current === false) return;
+    if (userStoppedTtsRef.current || sttPhaseRef.current !== "idle") return;
+    const resolved = readReplyText({
+      trigger: null,
+      body: bodyElementsRef.current.get(messageId) ?? null,
+      markdown,
+    });
+    logReplyText("auto", resolved);
+    if (!resolved.chars) return;
+    if (listen.isActive && listenTarget?.id !== messageId) {
+      listen.stop();
+    }
+    pendingListenRef.current = true;
+    setListenTarget({ id: messageId, trigger: null, script: resolved.text });
+  }
+
+  function handleListenPause() {
+    userStoppedTtsRef.current = true;
+    listen.pause();
+  }
+
+  function handleListenStop() {
+    userStoppedTtsRef.current = true;
+    listen.stop();
   }
 
   function readableAssistant(messageId?: string | null) {
@@ -668,9 +706,11 @@ export function GrokPane({
       return;
     }
     if (listenTarget?.id === target.id && listen.isActive) {
+      userStoppedTtsRef.current = false;
       void listen.listenFromWord(word);
       return;
     }
+    userStoppedTtsRef.current = false;
     pendingFromHereRef.current = word;
     pendingListenRef.current = true;
     setListenTarget({ id: target.id, trigger: null, script: resolved.text });
@@ -734,6 +774,8 @@ export function GrokPane({
     const turnId = options.turnId ?? turnIdRef.current;
     const controller = options.controller ?? new AbortController();
     if (turnId !== turnIdRef.current || controller.signal.aborted) return;
+    userStoppedTtsRef.current = false;
+    streamAssistantIdRef.current = assistantId;
     abortRef.current = controller;
     abortingRef.current = false;
     setAborting(false);
@@ -878,6 +920,7 @@ export function GrokPane({
               };
             }
             if (meta.assistant_message_id) {
+              streamAssistantIdRef.current = meta.assistant_message_id;
               next = {
                 ...next,
                 messages: next.messages.map((item) =>
@@ -1097,12 +1140,13 @@ export function GrokPane({
               role: "assistant",
               iv: blob.iv,
               ct: blob.ct,
-              id: assistantId,
+              id: streamAssistantIdRef.current || assistantId,
             });
           } catch (error) {
             toastActionError(error, "save encrypted reply", "Could not save the encrypted reply.");
           }
         }
+        requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
         return;
       }
       failOpenTurn(assistantId, false);
@@ -2162,8 +2206,8 @@ export function GrokPane({
             voices={voiceOptions}
             onListen={listenLatestReply}
             onFromHere={listenFromHere}
-            onPause={listen.pause}
-            onStop={listen.stop}
+            onPause={handleListenPause}
+            onStop={handleListenStop}
             onSpeedChange={handleSpeedChange}
             onVoiceChange={handleVoiceChange}
           />
