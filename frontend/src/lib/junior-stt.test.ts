@@ -10,13 +10,13 @@ import {
   sttFailToast,
 } from "./junior-stt";
 
-test("pickRecorderMime prefers webm opus then webm then ogg", () => {
+test("pickRecorderMime prefers webm opus then webm then mp4", () => {
   assert.equal(
     pickRecorderMime((type) => type === "audio/webm;codecs=opus" || type === "audio/webm"),
     "audio/webm;codecs=opus",
   );
   assert.equal(pickRecorderMime((type) => type === "audio/webm"), "audio/webm");
-  assert.equal(pickRecorderMime((type) => type === "audio/ogg"), "audio/ogg");
+  assert.equal(pickRecorderMime((type) => type === "audio/mp4"), "audio/mp4");
   assert.equal(pickRecorderMime(() => false), "");
 });
 

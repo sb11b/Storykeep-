@@ -117,8 +117,11 @@ class SttClipTests(unittest.TestCase):
             client = TestClient(_app(user))
             response = client.post("/api/v1/stt", files={"file": ("audio.wav", WAV, "audio/wav")})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["text"], "")
-        self.assertEqual(response.json()["error"], "empty transcript")
+        payload = response.json()
+        self.assertEqual(payload["text"], "")
+        self.assertEqual(payload["error"], "empty transcript")
+        self.assertEqual(payload["mime"], "audio/wav")
+        self.assertEqual(payload["bytes"], len(WAV))
 
     def test_results_transcript_shape(self) -> None:
         user = SimpleNamespace(id=uuid.uuid4(), email="steve@example.com", is_demo_locked=False)
@@ -165,7 +168,7 @@ class SttClipTests(unittest.TestCase):
             client = TestClient(_app(user))
             response = client.post("/api/v1/stt", files={"file": ("clip.webm", WAV, "audio/webm")})
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["detail"], "STT failed (401)")
+        self.assertEqual(response.json()["detail"], "bad key")
 
     def test_status_clip_mode(self) -> None:
         user = SimpleNamespace(id=uuid.uuid4(), email="steve@example.com", is_demo_locked=False)

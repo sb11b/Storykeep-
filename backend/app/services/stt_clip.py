@@ -47,6 +47,8 @@ def key_configured() -> bool:
 
 def _content_type(raw: str | None, filename: str) -> str:
     value = (raw or "").split(";", 1)[0].strip().lower()
+    if value == "application/octet-stream":
+        value = ""
     if value in ALLOWED_TYPES:
         return value
     name = (filename or "").lower()
@@ -153,6 +155,12 @@ def _parse_transcript(body: Any) -> str:
         raw = body.get(key)
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
+    nested = body.get("data")
+    if isinstance(nested, dict):
+        for key in ("text", "transcript"):
+            raw = nested.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
     results = body.get("results")
     if isinstance(results, list) and results:
         first = results[0]
@@ -164,13 +172,26 @@ def _parse_transcript(body: Any) -> str:
     return ""
 
 
+def _empty_payload(data: bytes, ctype: str, response: httpx.Response) -> dict[str, Any]:
+    snippet = redact_secrets((response.text or "")[:500])
+    logger.info(
+        "stt clip empty xai_status=%s mime=%s bytes=%s body=%s",
+        response.status_code,
+        ctype,
+        len(data),
+        snippet,
+    )
+    return {"text": "", "error": "empty transcript", "bytes": len(data), "mime": ctype}
+
+
 def transcribe_clip(
     user: User,
     payload: bytes,
     *,
     content_type: str | None,
     filename: str | None,
-) -> dict[str, str]:
+    model: str | None = None,
+) -> dict[str, Any]:
     if is_locked(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -189,10 +210,11 @@ def transcribe_clip(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="STT failed (400)")
     name = _filename_for(ctype, filename or "")
     key = (settings.xai_api_key or "").strip()
-    logger.info("stt clip bytes=%s type=%s name=%s", len(data), ctype, name)
+    primary = (model or STT_MODEL_PRIMARY).strip() or STT_MODEL_PRIMARY
+    logger.info("stt clip bytes=%s type=%s name=%s model=%s", len(data), ctype, name, primary)
     try:
         with httpx.Client(timeout=STT_TIMEOUT) as client:
-            response = _post_clip(client, key, name, data, ctype, STT_MODEL_PRIMARY)
+            response = _post_clip(client, key, name, data, ctype, primary)
             if response.status_code >= 400 and _should_fallback_model(response):
                 logger.info("stt clip retry model=%s", STT_MODEL_FALLBACK)
                 response = _post_clip(client, key, name, data, ctype, STT_MODEL_FALLBACK)
@@ -204,16 +226,21 @@ def transcribe_clip(
 
     if response.status_code >= 400:
         mapped, message = _upstream_error(response)
-        logger.info("stt clip upstream_status=%s", mapped)
+        logger.info("stt clip upstream_status=%s body=%s", mapped, redact_secrets((response.text or "")[:500]))
         raise HTTPException(status_code=mapped, detail=message)
 
     try:
         body = response.json()
     except ValueError as exc:
+        logger.info(
+            "stt clip unreadable json mime=%s bytes=%s body=%s",
+            ctype,
+            len(data),
+            redact_secrets((response.text or "")[:500]),
+        )
         raise HTTPException(status_code=502, detail="STT failed (502)") from exc
 
     text = _parse_transcript(body)
     if not text:
-        logger.info("stt clip empty transcript type=%s bytes=%s", ctype, len(data))
-        return {"text": "", "error": "empty transcript"}
-    return {"text": text}
+        return _empty_payload(data, ctype, response)
+    return {"text": text, "bytes": len(data), "mime": ctype}

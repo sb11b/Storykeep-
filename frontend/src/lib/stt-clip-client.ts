@@ -1,6 +1,6 @@
 import { ApiError } from "@/lib/api";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
-import { formatSttBlobHint, prepareSttUpload } from "@/lib/stt-upload";
+import { formatSttEmptyHint, prepareSttUpload, STT_MODEL } from "@/lib/stt-upload";
 
 /** Match server/xAI batch STT timeout (120s). */
 export const STT_CLIP_TIMEOUT_MS = 120_000;
@@ -9,10 +9,6 @@ export type TranscribeClipOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
 };
-
-export function sttEmptyToast(blob: Blob): string {
-  return `STT empty (${formatSttBlobHint(blob)})`;
-}
 
 /** POST /api/v1/stt — proxy clip to xAI; never expose the API key in the browser. */
 export async function transcribeClip(
@@ -32,10 +28,10 @@ export async function transcribeClip(
   }, timeoutMs);
   let status = 0;
 
-  const prepared = await prepareSttUpload(blob);
-  const uploadBlob = prepared.blob;
-  const file = new File([uploadBlob], prepared.filename, { type: prepared.mime });
+  const prepared = prepareSttUpload(blob);
+  const file = new File([prepared.blob], prepared.filename, { type: prepared.mime });
   const body = new FormData();
+  body.append("model", STT_MODEL);
   body.append("file", file);
 
   try {
@@ -47,14 +43,20 @@ export async function transcribeClip(
       cache: "no-store",
     });
     status = response.status;
-    const data = (await response.json()) as { text?: string; error?: string; detail?: string };
+    const data = (await response.json()) as {
+      text?: string;
+      error?: string;
+      detail?: string;
+      mime?: string;
+      bytes?: number;
+    };
     if (!response.ok) {
       const detail = parseErrorPayload(data) || data.error || data.detail || httpErrorFallback(status);
       throw new ApiError(status, detail);
     }
     const text = (data.text || "").trim();
     if (!text) {
-      throw new ApiError(status, sttEmptyToast(uploadBlob));
+      throw new ApiError(status, formatSttEmptyHint({ mime: data.mime, bytes: data.bytes, blob: prepared.blob }));
     }
     return { text };
   } catch (error) {

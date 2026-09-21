@@ -34,7 +34,7 @@ const RECORDER_TYPES = [
   "audio/webm;codecs=opus",
   "audio/webm",
   "audio/mp4",
-  "audio/ogg",
+  "audio/wav",
 ];
 
 export function pickRecorderMime(supported?: (type: string) => boolean): string {
@@ -122,6 +122,79 @@ export type MicClipSession = {
   stop: () => Promise<Blob>;
   abort: () => void;
 };
+
+/** Real PCM WAV when MediaRecorder cannot use webm/mp4. */
+async function startPcmWavClip(
+  stream: MediaStream,
+  opts?: { onPermissionRevoked?: () => void },
+): Promise<MicClipSession> {
+  const AudioCtx =
+    window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) throw new Error("MediaRecorder is not available");
+  const context = new AudioCtx();
+  if (context.state === "suspended") await context.resume();
+  const pcmChunks: ArrayBuffer[] = [];
+  let aborted = false;
+  let stopPromise: Promise<Blob> | null = null;
+
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = (event) => {
+    if (aborted) return;
+    pcmChunks.push(floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context.sampleRate, 16000)));
+  };
+  const mute = context.createGain();
+  mute.gain.value = 0;
+  source.connect(processor);
+  processor.connect(mute);
+  mute.connect(context.destination);
+
+  stream.getTracks().forEach((track) => {
+    track.addEventListener("ended", () => opts?.onPermissionRevoked?.());
+  });
+
+  const buildBlob = () => {
+    if (!pcmChunks.length) return new Blob([], { type: "audio/wav" });
+    const total = pcmChunks.reduce((sum, part) => sum + part.byteLength, 0);
+    const pcm = new Uint8Array(total);
+    let offset = 0;
+    for (const part of pcmChunks) {
+      pcm.set(new Uint8Array(part), offset);
+      offset += part.byteLength;
+    }
+    const copy = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
+    return encodeWavPcm16(copy, 16000);
+  };
+
+  const cleanup = () => {
+    try {
+      processor.disconnect();
+      source.disconnect();
+      mute.disconnect();
+    } catch {
+      /* ignore */
+    }
+    stopStreamTracks(stream);
+    void context.close();
+  };
+
+  return {
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      stopPromise = Promise.resolve().then(() => {
+        aborted = true;
+        cleanup();
+        return buildBlob();
+      });
+      return stopPromise;
+    },
+    abort: () => {
+      aborted = true;
+      cleanup();
+      stopPromise = Promise.resolve(new Blob());
+    },
+  };
+}
 
 type StreamSink = {
   close: () => void;
@@ -261,15 +334,19 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
     track.addEventListener("ended", () => opts?.onPermissionRevoked?.());
   });
 
+  const preferredMime = pickRecorderMime();
+  if (!preferredMime) {
+    return startPcmWavClip(stream, opts);
+  }
+
   const sink = await attachStreamSink(stream);
-  const mime = pickRecorderMime();
   let recorder: MediaRecorder;
   try {
-    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    recorder = new MediaRecorder(stream, { mimeType: preferredMime });
   } catch {
     sink.close();
     stopStreamTracks(stream);
-    throw new Error("Could not start microphone recorder");
+    return startPcmWavClip(stream, opts);
   }
 
   const chunks: BlobPart[] = [];
@@ -282,17 +359,17 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
 
   try {
     recorder.start(250);
-  } catch (error) {
+  } catch {
     sink.close();
     stopStreamTracks(stream);
-    throw error instanceof Error ? error : new Error("Could not start microphone recorder");
+    return startPcmWavClip(stream, opts);
   }
 
   return {
     stop: () => {
       if (stopPromise) return stopPromise;
       if (aborted) {
-        stopPromise = Promise.resolve(new Blob([], { type: recorder.mimeType || mime || "audio/webm" }));
+        stopPromise = Promise.resolve(new Blob([], { type: recorder.mimeType || preferredMime || "audio/webm" }));
         return stopPromise;
       }
       stopPromise = waitForRecorderClip(recorder, chunks, stream, sink);

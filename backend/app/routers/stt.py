@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlencode
 
 import websockets
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.auth import decode_access_token
@@ -60,14 +60,16 @@ def stt_status(user: User = Depends(require_user)) -> dict:
 @router.post("/stt")
 async def stt_clip(
     file: UploadFile = File(...),
+    model: str | None = Form(default=None),
     user: User = Depends(require_user),
-) -> dict[str, str]:
+) -> dict:
     payload = await file.read()
     return transcribe_clip(
         user,
         payload,
         content_type=file.content_type,
         filename=file.filename,
+        model=model,
     )
 
 
