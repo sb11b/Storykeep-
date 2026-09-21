@@ -293,8 +293,8 @@ export function GrokBubble({
         setPersist(false);
       });
     Promise.all([
-      api.tts().catch(() => ({ enabled: false, provider: "xai", voices: [] as TtsVoice[] })),
-      api.ttsVoices().catch(() => ({ voices: [] as TtsVoice[] })),
+      api.tts().catch(() => ({ enabled: false, provider: "xai", default_voice_id: "castor", voices: [] as TtsVoice[] })),
+      api.ttsVoices().catch(() => ({ default_voice_id: "castor", voices: [] as TtsVoice[] })),
     ]).then(([status, voicesPayload]) => {
       setTtsEnabled(status.enabled);
       const voices = voicesPayload.voices?.length ? voicesPayload.voices : status.voices ?? [];

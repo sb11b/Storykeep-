@@ -192,7 +192,14 @@ export async function fetchSpeechStream(
       if (done) break;
       if (value?.length) parts.push(value);
     }
-    const blob = new Blob(parts, { type: response.headers.get("content-type") || "audio/mpeg" });
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      merged.set(part, offset);
+      offset += part.length;
+    }
+    const blob = new Blob([merged], { type: response.headers.get("content-type") || "audio/mpeg" });
     if (!blob.size) {
       throw new ApiError(status, `TTS returned no audio (HTTP ${status} with an empty body).`);
     }
