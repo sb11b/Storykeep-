@@ -123,6 +123,105 @@ export type MicClipSession = {
   abort: () => void;
 };
 
+/** STS end-of-utterance silence window (ms). */
+export const STS_SILENCE_MS = 1_500;
+export const STS_SPEECH_THRESHOLD = 0.015;
+export const STS_MIN_SPEECH_MS = 250;
+
+export type MicClipOptions = {
+  onPermissionRevoked?: () => void;
+  /** Fires once after speech then ~STS_SILENCE_MS of silence. */
+  onSilenceEnd?: () => void;
+  silenceMs?: number;
+};
+
+type SilenceMonitor = { stop: () => void };
+
+/** Analyser RMS VAD — speech detected, then silence triggers once. */
+export function attachSilenceMonitor(
+  stream: MediaStream,
+  opts: { onSilenceEnd: () => void; silenceMs?: number },
+): SilenceMonitor {
+  const AudioCtx =
+    window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) return { stop: () => {} };
+
+  const context = new AudioCtx();
+  const source = context.createMediaStreamSource(stream);
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+  const samples = new Float32Array(analyser.fftSize);
+  const silenceMs = opts.silenceMs ?? STS_SILENCE_MS;
+  let speechDetected = false;
+  let speechStart = 0;
+  let silenceStart: number | null = null;
+  let fired = false;
+  let rafId = 0;
+  let stopped = false;
+
+  const tick = () => {
+    if (stopped || fired) return;
+    analyser.getFloatTimeDomainData(samples);
+    let sum = 0;
+    for (let i = 0; i < samples.length; i += 1) sum += samples[i]! * samples[i]!;
+    const rms = Math.sqrt(sum / samples.length);
+    const now = performance.now();
+    if (rms >= STS_SPEECH_THRESHOLD) {
+      if (!speechDetected) {
+        speechDetected = true;
+        speechStart = now;
+        console.log("junior-stt", { action: "speech-start", rms: Number(rms.toFixed(4)) });
+      }
+      silenceStart = null;
+    } else if (speechDetected && now - speechStart >= STS_MIN_SPEECH_MS) {
+      if (silenceStart == null) silenceStart = now;
+      else if (now - silenceStart >= silenceMs) {
+        fired = true;
+        console.log("junior-stt", {
+          action: "silence-trigger",
+          rms: Number(rms.toFixed(4)),
+          silenceMs: Math.round(now - silenceStart),
+        });
+        opts.onSilenceEnd();
+        return;
+      }
+    }
+    rafId = requestAnimationFrame(tick);
+  };
+
+  void context.resume().then(() => {
+    if (!stopped) rafId = requestAnimationFrame(tick);
+  });
+
+  return {
+    stop: () => {
+      stopped = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      try {
+        source.disconnect();
+        analyser.disconnect();
+      } catch {
+        /* ignore */
+      }
+      void context.close();
+    },
+  };
+}
+
+function wrapMicSession(session: MicClipSession, monitor?: SilenceMonitor): MicClipSession {
+  return {
+    stop: async () => {
+      monitor?.stop();
+      return session.stop();
+    },
+    abort: () => {
+      monitor?.stop();
+      session.abort();
+    },
+  };
+}
+
 /** Real PCM WAV when MediaRecorder cannot use webm/mp4. */
 async function startPcmWavClip(
   stream: MediaStream,
@@ -309,7 +408,7 @@ function waitForRecorderClip(
   });
 }
 
-export async function startMicClip(opts?: { onPermissionRevoked?: () => void }): Promise<MicClipSession> {
+export async function startMicClip(opts?: MicClipOptions): Promise<MicClipSession> {
   requireSecureMic();
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("Microphone is not available");
@@ -332,10 +431,23 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
     track.addEventListener("ended", () => opts?.onPermissionRevoked?.());
   });
 
+  let silenceMonitor: SilenceMonitor | undefined;
+  if (opts?.onSilenceEnd) {
+    let silenceFired = false;
+    silenceMonitor = attachSilenceMonitor(stream, {
+      silenceMs: opts.silenceMs,
+      onSilenceEnd: () => {
+        if (silenceFired) return;
+        silenceFired = true;
+        opts.onSilenceEnd?.();
+      },
+    });
+  }
+
   const preferredMime = pickRecorderMime();
   console.log("junior-stt", { action: "mime", chosen: preferredMime || "pcm-wav-fallback" });
   if (!preferredMime) {
-    return startPcmWavClip(stream, opts);
+    return wrapMicSession(await startPcmWavClip(stream, opts), silenceMonitor);
   }
 
   const sink = await attachStreamSink(stream);
@@ -345,7 +457,7 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
   } catch {
     sink.close();
     stopStreamTracks(stream);
-    return startPcmWavClip(stream, opts);
+    return wrapMicSession(await startPcmWavClip(stream, opts), silenceMonitor);
   }
 
   const chunks: BlobPart[] = [];
@@ -361,29 +473,32 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
   } catch {
     sink.close();
     stopStreamTracks(stream);
-    return startPcmWavClip(stream, opts);
+    return wrapMicSession(await startPcmWavClip(stream, opts), silenceMonitor);
   }
 
-  return {
-    stop: () => {
-      if (stopPromise) return stopPromise;
-      if (aborted) {
-        stopPromise = Promise.resolve(new Blob([], { type: recorder.mimeType || preferredMime || "audio/webm" }));
+  return wrapMicSession(
+    {
+      stop: () => {
+        if (stopPromise) return stopPromise;
+        if (aborted) {
+          stopPromise = Promise.resolve(new Blob([], { type: recorder.mimeType || preferredMime || "audio/webm" }));
+          return stopPromise;
+        }
+        stopPromise = waitForRecorderClip(recorder, chunks, stream, sink);
         return stopPromise;
-      }
-      stopPromise = waitForRecorderClip(recorder, chunks, stream, sink);
-      return stopPromise;
+      },
+      abort: () => {
+        aborted = true;
+        try {
+          if (recorder.state !== "inactive") recorder.stop();
+        } catch {
+          /* ignore */
+        }
+        sink.close();
+        stopStreamTracks(stream);
+        stopPromise = Promise.resolve(new Blob());
+      },
     },
-    abort: () => {
-      aborted = true;
-      try {
-        if (recorder.state !== "inactive") recorder.stop();
-      } catch {
-        /* ignore */
-      }
-      sink.close();
-      stopStreamTracks(stream);
-      stopPromise = Promise.resolve(new Blob());
-    },
-  };
+    silenceMonitor,
+  );
 }

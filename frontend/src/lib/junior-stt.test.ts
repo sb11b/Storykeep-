@@ -7,8 +7,13 @@ import {
   nextMicRestartDelay,
   pickRecorderMime,
   shouldRestartMic,
+  STS_SILENCE_MS,
   sttFailToast,
 } from "./junior-stt";
+
+test("STS silence window is 1.5s", () => {
+  assert.equal(STS_SILENCE_MS, 1_500);
+});
 
 test("pickRecorderMime prefers webm opus then webm then mp4", () => {
   assert.equal(

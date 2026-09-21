@@ -285,6 +285,10 @@ export function GrokPane({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [sttPhase, setSttPhase] = useState<JuniorMicPhase>("idle");
   const [micMode, setMicMode] = useState<JuniorMicMode | null>(null);
+  const [stsModeOn, setStsModeOn] = useState(false);
+  const stsModeOnRef = useRef(false);
+  const stsRearmRef = useRef<(() => void) | null>(null);
+  const ttsPausedRef = useRef(false);
   const micAbortRef = useRef<(() => void) | null>(null);
   const sendRef = useRef<
     (opts?: {
@@ -542,6 +546,9 @@ export function GrokPane({
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
   }, [pane.draft]);
 
+  const listenPhaseRef = useRef<"idle" | "loading" | "playing" | "paused">("idle");
+  const maybeRearmStsRef = useRef<() => void>(() => {});
+
   /** Re-read the live reply so playback never depends on stale state. */
   const resolveListenScript = useCallback(() => {
     const target = listenTargetRef.current;
@@ -570,13 +577,27 @@ export function GrokPane({
         // Keep the target: clearing it here tore down the request mid-flight.
         onActivateListen(null);
         setActiveWord(null);
+        if (!ttsPausedRef.current) maybeRearmStsRef.current();
       }
     },
   });
 
   const listenApiRef = useRef(listen);
   listenApiRef.current = listen;
+  listenPhaseRef.current = listen.phase;
   stopRef.current = listen.stop;
+
+  const maybeRearmSts = useCallback(() => {
+    if (!stsModeOnRef.current) return;
+    if (ttsPausedRef.current) return;
+    if (sttPhaseRef.current !== "idle") return;
+    if (busy || inFlightRef.current) return;
+    const lp = listenPhaseRef.current;
+    if (lp === "loading" || lp === "playing" || lp === "paused") return;
+    console.log("junior-sts", { action: "rearm-request" });
+    stsRearmRef.current?.();
+  }, [busy]);
+  maybeRearmStsRef.current = maybeRearmSts;
 
   useEffect(() => {
     if (pendingListenRef.current && listenTarget) {
@@ -620,9 +641,11 @@ export function GrokPane({
     if (listen.isActive && listenTarget?.id === messageId) {
       if (listen.phase === "playing") {
         userStoppedTtsRef.current = true;
+        ttsPausedRef.current = true;
         listen.pause();
       } else {
         userStoppedTtsRef.current = false;
+        ttsPausedRef.current = false;
         listen.listen();
       }
       return;
@@ -662,12 +685,15 @@ export function GrokPane({
 
   function handleListenPause() {
     userStoppedTtsRef.current = true;
+    ttsPausedRef.current = true;
     listen.pause();
   }
 
   function handleListenStop() {
     userStoppedTtsRef.current = true;
+    ttsPausedRef.current = false;
     listen.stop();
+    maybeRearmSts();
   }
 
   function readableAssistant(messageId?: string | null) {
@@ -1146,6 +1172,7 @@ export function GrokPane({
           }
         }
         requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
+        window.setTimeout(() => maybeRearmSts(), 120);
         return;
       }
       failOpenTurn(assistantId, false);
@@ -1532,8 +1559,17 @@ export function GrokPane({
     setMicMode(mode);
   }, []);
 
+  const handleStsModeChange = useCallback((active: boolean) => {
+    stsModeOnRef.current = active;
+    setStsModeOn(active);
+  }, []);
+
   const registerMicAbort = useCallback((abort: (() => void) | null) => {
     micAbortRef.current = abort;
+  }, []);
+
+  const registerStsRearm = useCallback((rearm: (() => void) | null) => {
+    stsRearmRef.current = rearm;
   }, []);
 
   async function runImagineFromChat(options: {
@@ -2729,10 +2765,12 @@ export function GrokPane({
           </Button>
           {sttEnabled && !locked ? (
             <JuniorMicControls
-              enabled={enabled && !busy && !uploadingFiles}
+              enabled={enabled && !uploadingFiles}
               locked={locked}
               registerAbort={registerMicAbort}
+              registerStsRearm={registerStsRearm}
               onPhaseChange={handleMicPhaseChange}
+              onStsModeChange={handleStsModeChange}
               onStsSubmit={submitVoiceTranscript}
               onSttDraft={applySttDraft}
             />
@@ -2773,6 +2811,10 @@ export function GrokPane({
         ) : sttPhase === "transcribing" ? (
           <p className="text-[11px] text-muted-foreground" role="status">
             {micMode === "stt" ? "STT" : "STS"} — {MIC_TRANSCRIBING}
+          </p>
+        ) : stsModeOn ? (
+          <p className="text-[11px] text-muted-foreground" role="status">
+            STS — conversation mode
           </p>
         ) : null}
         {(busy || aborting) && inFlightSpend ? (
