@@ -97,6 +97,54 @@ class SttClipTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["text"], "hello Junior")
 
+    def test_empty_transcript_returns_200(self) -> None:
+        user = SimpleNamespace(id=uuid.uuid4(), email="steve@example.com", is_demo_locked=False)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"text": "   ", "duration": 1.0})
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self._client = _RealClient(transport=httpx.MockTransport(handler))
+
+            def __enter__(self):
+                return self._client
+
+            def __exit__(self, *args):
+                self._client.close()
+
+        with patch("app.services.stt_clip.httpx.Client", FakeClient):
+            client = TestClient(_app(user))
+            response = client.post("/api/v1/stt", files={"file": ("audio.wav", WAV, "audio/wav")})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["text"], "")
+        self.assertEqual(response.json()["error"], "empty transcript")
+
+    def test_results_transcript_shape(self) -> None:
+        user = SimpleNamespace(id=uuid.uuid4(), email="steve@example.com", is_demo_locked=False)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"results": [{"transcript": "from results array"}]},
+            )
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self._client = _RealClient(transport=httpx.MockTransport(handler))
+
+            def __enter__(self):
+                return self._client
+
+            def __exit__(self, *args):
+                self._client.close()
+
+        with patch("app.services.stt_clip.httpx.Client", FakeClient):
+            client = TestClient(_app(user))
+            response = client.post("/api/v1/stt", files={"file": ("audio.wav", WAV, "audio/wav")})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["text"], "from results array")
+
     def test_upstream_401(self) -> None:
         user = SimpleNamespace(id=uuid.uuid4(), email="steve@example.com", is_demo_locked=False)
 

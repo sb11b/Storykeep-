@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
@@ -35,7 +36,7 @@ ALLOWED_TYPES = frozenset(
         "audio/m4a",
         "audio/x-m4a",
         "audio/aac",
-        "application/octet-stream",
+        "audio/flac",
     }
 )
 
@@ -46,7 +47,7 @@ def key_configured() -> bool:
 
 def _content_type(raw: str | None, filename: str) -> str:
     value = (raw or "").split(";", 1)[0].strip().lower()
-    if value in ALLOWED_TYPES and value != "application/octet-stream":
+    if value in ALLOWED_TYPES:
         return value
     name = (filename or "").lower()
     if name.endswith(".wav"):
@@ -61,7 +62,32 @@ def _content_type(raw: str | None, filename: str) -> str:
         return "audio/mp4"
     if name.endswith(".mp3"):
         return "audio/mpeg"
+    if name.endswith(".aac"):
+        return "audio/aac"
+    if name.endswith(".flac"):
+        return "audio/flac"
     return value or "audio/webm"
+
+
+def _filename_for(content_type: str, filename: str) -> str:
+    name = (filename or "").strip()
+    if name and "." in name and not name.startswith("."):
+        return name.split("/")[-1][:80]
+    mapping = {
+        "audio/wav": "audio.wav",
+        "audio/wave": "audio.wav",
+        "audio/x-wav": "audio.wav",
+        "audio/webm": "audio.webm",
+        "audio/ogg": "audio.ogg",
+        "audio/opus": "audio.opus",
+        "audio/mpeg": "audio.mp3",
+        "audio/mp4": "audio.mp4",
+        "audio/m4a": "audio.mp4",
+        "audio/x-m4a": "audio.mp4",
+        "audio/aac": "audio.aac",
+        "audio/flac": "audio.flac",
+    }
+    return mapping.get(content_type, "audio.webm")
 
 
 def _post_clip(
@@ -72,11 +98,17 @@ def _post_clip(
     content_type: str,
     model: str,
 ) -> httpx.Response:
+    # xAI requires non-file fields before the file field in multipart form data.
+    parts: list[tuple[str, tuple[str | None, str | bytes | None] | tuple[str, bytes, str]]] = [
+        ("model", (None, model)),
+        ("language", (None, "en")),
+        ("format", (None, "true")),
+        ("file", (name, data, content_type)),
+    ]
     return client.post(
         XAI_STT_URL,
         headers={"Authorization": f"Bearer {key}"},
-        data={"model": model, "language": "en", "format": "true"},
-        files={"file": (name, data, content_type)},
+        files=parts,
     )
 
 
@@ -96,24 +128,40 @@ def _should_fallback_model(response: httpx.Response) -> bool:
     return "model" in lowered or "not found" in lowered
 
 
-def _filename_for(content_type: str, filename: str) -> str:
-    name = (filename or "").strip() or "clip.webm"
-    if "." in name and not name.startswith("."):
-        return name.split("/")[-1][:80]
-    mapping = {
-        "audio/wav": "clip.wav",
-        "audio/wave": "clip.wav",
-        "audio/x-wav": "clip.wav",
-        "audio/webm": "clip.webm",
-        "audio/ogg": "clip.ogg",
-        "audio/opus": "clip.opus",
-        "audio/mpeg": "clip.mp3",
-        "audio/mp4": "clip.m4a",
-        "audio/m4a": "clip.m4a",
-        "audio/x-m4a": "clip.m4a",
-        "audio/aac": "clip.aac",
-    }
-    return mapping.get(content_type, "clip.webm")
+def _upstream_error(response: httpx.Response) -> tuple[int, str]:
+    code = int(response.status_code)
+    mapped = code if 400 <= code < 500 else 502
+    message = f"STT failed ({mapped})"
+    try:
+        body = response.json()
+        err = body.get("error") or body.get("detail") or body.get("message")
+        if isinstance(err, dict):
+            err = err.get("message") or str(err)
+        if isinstance(err, str) and err.strip():
+            message = redact_secrets(err.strip()[:240])
+    except ValueError:
+        text = (response.text or "").strip()
+        if text:
+            message = redact_secrets(text[:240])
+    return mapped, message
+
+
+def _parse_transcript(body: Any) -> str:
+    if not isinstance(body, dict):
+        return ""
+    for key in ("text", "transcript"):
+        raw = body.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    results = body.get("results")
+    if isinstance(results, list) and results:
+        first = results[0]
+        if isinstance(first, dict):
+            for key in ("transcript", "text"):
+                raw = first.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip()
+    return ""
 
 
 def transcribe_clip(
@@ -141,7 +189,7 @@ def transcribe_clip(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="STT failed (400)")
     name = _filename_for(ctype, filename or "")
     key = (settings.xai_api_key or "").strip()
-    logger.info("stt clip bytes=%s type=%s", len(data), ctype)
+    logger.info("stt clip bytes=%s type=%s name=%s", len(data), ctype, name)
     try:
         with httpx.Client(timeout=STT_TIMEOUT) as client:
             response = _post_clip(client, key, name, data, ctype, STT_MODEL_PRIMARY)
@@ -155,20 +203,17 @@ def transcribe_clip(
         raise HTTPException(status_code=502, detail="STT failed (502)") from exc
 
     if response.status_code >= 400:
-        code = int(response.status_code)
-        mapped = code if 400 <= code < 500 else 502
+        mapped, message = _upstream_error(response)
         logger.info("stt clip upstream_status=%s", mapped)
-        raise HTTPException(status_code=mapped, detail=redact_secrets(f"STT failed ({mapped})"))
+        raise HTTPException(status_code=mapped, detail=message)
 
     try:
         body = response.json()
     except ValueError as exc:
         raise HTTPException(status_code=502, detail="STT failed (502)") from exc
-    text = ""
-    if isinstance(body, dict):
-        raw = body.get("text")
-        if isinstance(raw, str):
-            text = raw.strip()
+
+    text = _parse_transcript(body)
     if not text:
-        raise HTTPException(status_code=502, detail="STT failed (empty transcript)")
+        logger.info("stt clip empty transcript type=%s bytes=%s", ctype, len(data))
+        return {"text": "", "error": "empty transcript"}
     return {"text": text}

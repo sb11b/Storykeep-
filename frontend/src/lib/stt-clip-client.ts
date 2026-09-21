@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
+import { formatSttBlobHint, prepareSttUpload } from "@/lib/stt-upload";
 
 /** Match server/xAI batch STT timeout (120s). */
 export const STT_CLIP_TIMEOUT_MS = 120_000;
@@ -9,10 +10,13 @@ export type TranscribeClipOptions = {
   timeoutMs?: number;
 };
 
+export function sttEmptyToast(blob: Blob): string {
+  return `STT empty (${formatSttBlobHint(blob)})`;
+}
+
 /** POST /api/v1/stt — proxy clip to xAI; never expose the API key in the browser. */
 export async function transcribeClip(
   blob: Blob,
-  filename: string,
   options: TranscribeClipOptions = {},
 ): Promise<{ text: string }> {
   const controller = new AbortController();
@@ -28,9 +32,11 @@ export async function transcribeClip(
   }, timeoutMs);
   let status = 0;
 
-  const type = (blob.type || "audio/webm").split(";", 1)[0].trim() || "audio/webm";
+  const prepared = await prepareSttUpload(blob);
+  const uploadBlob = prepared.blob;
+  const file = new File([uploadBlob], prepared.filename, { type: prepared.mime });
   const body = new FormData();
-  body.append("file", blob, filename || (type.includes("wav") ? "clip.wav" : "clip.webm"));
+  body.append("file", file);
 
   try {
     const response = await fetch("/api/v1/stt", {
@@ -41,19 +47,14 @@ export async function transcribeClip(
       cache: "no-store",
     });
     status = response.status;
+    const data = (await response.json()) as { text?: string; error?: string; detail?: string };
     if (!response.ok) {
-      let detail: string | null = null;
-      try {
-        detail = parseErrorPayload(await response.json());
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(status, detail || httpErrorFallback(status));
+      const detail = parseErrorPayload(data) || data.error || data.detail || httpErrorFallback(status);
+      throw new ApiError(status, detail);
     }
-    const data = (await response.json()) as { text?: string };
     const text = (data.text || "").trim();
     if (!text) {
-      throw new ApiError(status || 502, "STT failed (empty transcript)");
+      throw new ApiError(status, sttEmptyToast(uploadBlob));
     }
     return { text };
   } catch (error) {

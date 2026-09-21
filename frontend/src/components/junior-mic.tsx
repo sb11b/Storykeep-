@@ -66,7 +66,8 @@ export function JuniorMicButton({
         onVoiceSubmit(piece);
       } catch (error) {
         if (error instanceof ApiError) {
-          toast.error(sttFailToast(error.status, error.message));
+          const message = error.message || sttFailToast(error.status);
+          toast.error(message);
         } else if (!(error instanceof DOMException && error.name === "AbortError")) {
           toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
         }
