@@ -76,7 +76,7 @@ import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices, resolveTtsVoiceId } from "@/lib/tts-defaults";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
-import { MIC_LIVE, MIC_TRANSCRIBING } from "@/lib/stt-ui";
+import { MIC_LIVE, MIC_STT_EMPTY_HINT, MIC_TRANSCRIBING } from "@/lib/stt-ui";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -285,6 +285,8 @@ export function GrokPane({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [sttPhase, setSttPhase] = useState<JuniorMicPhase>("idle");
   const [micMode, setMicMode] = useState<JuniorMicMode | null>(null);
+  const [sttEmptyHint, setSttEmptyHint] = useState(false);
+  const sttEmptyHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [stsModeOn, setStsModeOn] = useState(false);
   const stsModeOnRef = useRef(false);
   const stsRearmRef = useRef<(() => void) | null>(null);
@@ -1554,10 +1556,31 @@ export function GrokPane({
     [fillComposerDraft],
   );
 
-  const handleMicPhaseChange = useCallback((phase: JuniorMicPhase, mode: JuniorMicMode | null) => {
-    setSttPhase(phase);
-    setMicMode(mode);
+  const clearSttEmptyHint = useCallback(() => {
+    if (sttEmptyHintTimerRef.current != null) {
+      clearTimeout(sttEmptyHintTimerRef.current);
+      sttEmptyHintTimerRef.current = null;
+    }
+    setSttEmptyHint(false);
   }, []);
+
+  const showSttEmptyHint = useCallback(() => {
+    if (sttEmptyHintTimerRef.current != null) clearTimeout(sttEmptyHintTimerRef.current);
+    setSttEmptyHint(true);
+    sttEmptyHintTimerRef.current = setTimeout(() => {
+      sttEmptyHintTimerRef.current = null;
+      setSttEmptyHint(false);
+    }, 5000);
+  }, []);
+
+  const handleMicPhaseChange = useCallback(
+    (phase: JuniorMicPhase, mode: JuniorMicMode | null) => {
+      if (phase === "listening") clearSttEmptyHint();
+      setSttPhase(phase);
+      setMicMode(mode);
+    },
+    [clearSttEmptyHint],
+  );
 
   const handleStsModeChange = useCallback((active: boolean) => {
     stsModeOnRef.current = active;
@@ -2706,6 +2729,7 @@ export function GrokPane({
             className="min-h-12 max-h-[min(60vh,28rem)] min-w-0 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
             value={pane.draft}
             onChange={(event) => {
+              clearSttEmptyHint();
               draftValueRef.current = event.target.value;
               patch({ draft: event.target.value });
             }}
@@ -2773,6 +2797,7 @@ export function GrokPane({
               onStsModeChange={handleStsModeChange}
               onStsSubmit={submitVoiceTranscript}
               onSttDraft={applySttDraft}
+              onSttEmptyHint={showSttEmptyHint}
             />
           ) : null}
           {busy || aborting ? (
@@ -2811,6 +2836,10 @@ export function GrokPane({
         ) : sttPhase === "transcribing" ? (
           <p className="text-[11px] text-muted-foreground" role="status">
             {micMode === "stt" ? "STT" : "STS"} — {MIC_TRANSCRIBING}
+          </p>
+        ) : sttEmptyHint ? (
+          <p className="text-[11px] text-muted-foreground" role="status">
+            {MIC_STT_EMPTY_HINT}
           </p>
         ) : stsModeOn ? (
           <p className="text-[11px] text-muted-foreground" role="status">

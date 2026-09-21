@@ -20,6 +20,8 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str | None
+    legal_name: str | None = None
+    school_name: str | None = None
     avatar_media_id: uuid.UUID | None = None
     avatar_url: str | None = None
     birthdate: date | None = None
@@ -34,6 +36,8 @@ class ProfileOut(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str | None
+    legal_name: str | None = None
+    school_name: str | None = None
     avatar_media_id: uuid.UUID | None = None
     avatar_url: str | None = None
     birthdate: date | None = None
@@ -48,6 +52,8 @@ class ProfileOut(BaseModel):
 
 class ProfilePatchIn(BaseModel):
     display_name: str | None = Field(default=None, max_length=120)
+    legal_name: str | None = Field(default=None, max_length=120)
+    school_name: str | None = Field(default=None, max_length=120)
     birthdate: date | None = None
     avatar_media_id: uuid.UUID | None = None
 
@@ -601,6 +607,8 @@ class AppearancePreferencesIn(BaseModel):
 
 class MePatchIn(BaseModel):
     display_name: str | None = Field(default=None, max_length=120)
+    legal_name: str | None = Field(default=None, max_length=120)
+    school_name: str | None = Field(default=None, max_length=120)
     birthdate: date | None = None
     avatar_media_id: uuid.UUID | None = None
     appearance: AppearancePreferencesIn | None = None

@@ -17,6 +17,14 @@ export function formatSttBlobHint(blob: Blob): string {
   return `${ext} ${kb}kb`;
 }
 
+export function isSttEmptyError(error: unknown): boolean {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = String((error as { message: unknown }).message || "");
+    return /^STT empty\b/.test(message.trim());
+  }
+  return false;
+}
+
 export function formatSttEmptyHint(input: { mime?: string | null; bytes?: number | null; blob?: Blob }): string {
   const mimeRaw = input.mime || input.blob?.type || "unknown";
   const ext = sttUploadFilename(mimeRaw).replace(/^audio\./, "");

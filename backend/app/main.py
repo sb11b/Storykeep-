@@ -145,6 +145,8 @@ def _create_schema() -> None:
     _try_sql("CREATE UNIQUE INDEX IF NOT EXISTS categories_shelf_name_idx ON categories (shelf_id, name)")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_media_id UUID REFERENCES note_media(id) ON DELETE SET NULL")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate DATE")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS legal_name TEXT")
+    _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_name TEXT")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_otp_enabled BOOLEAN DEFAULT FALSE")

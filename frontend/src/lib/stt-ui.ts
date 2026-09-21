@@ -3,6 +3,8 @@
 export const MIC_LIVE = "Listening…";
 export const MIC_IDLE = "Mic";
 export const MIC_TRANSCRIBING = "Transcribing…";
+/** Shown under the composer when STT/STS returns blank audio — not a toast. */
+export const MIC_STT_EMPTY_HINT = "No speech heard — try again.";
 export const MIC_DROPPED_TOAST = "Mic dropped — tap to resume.";
 export const MIC_DENIED_TOAST = "Microphone blocked";
 

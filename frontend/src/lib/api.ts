@@ -112,6 +112,8 @@ export const api = {
   profile: () => request<Profile>("/api/v1/auth/profile"),
   updateMe: (payload: {
     display_name?: string | null;
+    legal_name?: string | null;
+    school_name?: string | null;
     birthdate?: string | null;
     avatar_media_id?: string | null;
     appearance?: Record<string, unknown>;
@@ -130,6 +132,8 @@ export const api = {
   },
   updateProfile: (payload: {
     display_name?: string | null;
+    legal_name?: string | null;
+    school_name?: string | null;
     birthdate?: string | null;
     avatar_media_id?: string | null;
   }) => {

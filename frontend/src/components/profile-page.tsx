@@ -31,6 +31,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [displayName, setDisplayName] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [schoolName, setSchoolName] = useState("");
   const [birthdate, setBirthdate] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -59,6 +61,8 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
       const data = normalizeUserProfile(await api.me());
       setProfile(data);
       setDisplayName(data.display_name || "");
+      setLegalName(data.legal_name || "");
+      setSchoolName(data.school_name || "");
       setBirthdate(data.birthdate || "");
       setAppearance(appearanceFromPreferences(data.preferences));
     } catch (error) {
@@ -79,15 +83,35 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
 
   async function saveProfile() {
     if (!profile || profile.profile_read_only) return;
+    const patch: {
+      display_name?: string | null;
+      legal_name?: string | null;
+      school_name?: string | null;
+      birthdate?: string | null;
+    } = {};
+    const nextDisplay = displayName.trim();
+    const nextLegal = legalName.trim();
+    const nextSchool = schoolName.trim();
+    const existingDisplay = (profile.display_name || "").trim();
+    const existingLegal = (profile.legal_name || "").trim();
+    const existingSchool = (profile.school_name || "").trim();
+    if (nextDisplay !== existingDisplay) patch.display_name = nextDisplay || null;
+    if (nextLegal !== existingLegal) patch.legal_name = nextLegal || null;
+    if (nextSchool !== existingSchool) patch.school_name = nextSchool || null;
+    const nextBirthdate = birthdate || null;
+    if (nextBirthdate !== (profile.birthdate || null)) patch.birthdate = nextBirthdate;
+    if (!Object.keys(patch).length) {
+      toast.message("No profile changes to save");
+      return;
+    }
     setSavingProfile(true);
     try {
-      const updated = normalizeUserProfile(
-        await api.updateProfile({
-          display_name: displayName.trim() || null,
-          birthdate: birthdate || null,
-        }),
-      );
+      const updated = normalizeUserProfile(await api.updateProfile(patch));
       setProfile(updated);
+      setDisplayName(updated.display_name || "");
+      setLegalName(updated.legal_name || "");
+      setSchoolName(updated.school_name || "");
+      setBirthdate(updated.birthdate || "");
       onUpdated?.(updated);
       toast.success("Profile updated");
     } catch (error) {
@@ -318,7 +342,7 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
-            <CardDescription>Your name and photo appear in the sidebar.</CardDescription>
+            <CardDescription>Display name appears in the sidebar. Legal and school names stay on your account only.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
@@ -347,6 +371,17 @@ export function ProfilePage({ onClose, onUpdated, className }: ProfilePageProps 
             <div className="space-y-1.5">
               <Label htmlFor="display_name">Display name</Label>
               <Input id="display_name" value={displayName} disabled={readOnly} onChange={(e) => setDisplayName(e.target.value)} />
+              <p className="text-xs text-muted-foreground">Shown in the sidebar and chat.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="legal_name">Legal name (optional)</Label>
+              <Input id="legal_name" value={legalName} disabled={readOnly} onChange={(e) => setLegalName(e.target.value)} />
+              <p className="text-xs text-muted-foreground">Full legal name for documents — not shown in the sidebar.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="school_name">School name (optional)</Label>
+              <Input id="school_name" value={schoolName} disabled={readOnly} onChange={(e) => setSchoolName(e.target.value)} />
+              <p className="text-xs text-muted-foreground">Name on school records, if different from display or legal name.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>

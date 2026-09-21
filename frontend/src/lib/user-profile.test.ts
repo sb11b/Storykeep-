@@ -7,6 +7,8 @@ const base: User = {
   id: "u1",
   email: "a@example.com",
   display_name: "Ada",
+  legal_name: null,
+  school_name: null,
   avatar_media_id: "11111111-1111-1111-1111-111111111111",
   avatar_url: avatarMediaUrl("11111111-1111-1111-1111-111111111111"),
   birthdate: null,

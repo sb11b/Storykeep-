@@ -118,15 +118,16 @@ export default function LoginPage() {
             <form className="space-y-3" method="post" action="/login" onSubmit={onSubmit}>
               {!twoFactor && mode === "register" ? (
                 <div className="space-y-1.5">
-                  <Label htmlFor="display_name">Name</Label>
+                  <Label htmlFor="display_name">Display name</Label>
                   <Input
                     id="display_name"
                     name="display_name"
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
                     placeholder="Steve"
-                    autoComplete="name"
+                    autoComplete="nickname"
                   />
+                  <p className="text-xs text-muted-foreground">Shown in the sidebar. Legal and school names are set in Profile.</p>
                 </div>
               ) : null}
               {!twoFactor ? (

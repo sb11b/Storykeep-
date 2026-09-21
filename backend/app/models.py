@@ -36,6 +36,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
+    legal_name: Mapped[str | None] = mapped_column(Text)
+    school_name: Mapped[str | None] = mapped_column(Text)
     avatar_media_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("note_media.id", ondelete="SET NULL"), nullable=True
     )

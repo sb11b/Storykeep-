@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatSttBlobHint, formatSttEmptyHint, prepareSttUpload, sttUploadFilename } from "./stt-upload";
+import {
+  formatSttBlobHint,
+  formatSttEmptyHint,
+  isSttEmptyError,
+  prepareSttUpload,
+  sttUploadFilename,
+} from "./stt-upload";
+import { ApiError } from "./api";
 
 test("sttUploadFilename uses audio.* names", () => {
   assert.equal(sttUploadFilename("audio/webm;codecs=opus"), "audio.webm");
@@ -23,4 +30,9 @@ test("formatSttBlobHint shows mime and size", () => {
 
 test("formatSttEmptyHint prefers server mime and bytes", () => {
   assert.equal(formatSttEmptyHint({ mime: "audio/webm", bytes: 28_000 }), "STT empty (webm 27kb)");
+});
+
+test("isSttEmptyError matches blank STT ApiError", () => {
+  assert.equal(isSttEmptyError(new ApiError(200, "STT empty (webm 12kb)")), true);
+  assert.equal(isSttEmptyError(new ApiError(502, "STT failed")), false);
 });

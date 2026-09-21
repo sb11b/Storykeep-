@@ -90,10 +90,14 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    if payload.display_name is not None:
+        display_name = (payload.display_name or "").strip()[:120] or None
+    else:
+        display_name = email.split("@")[0]
     user = User(
         email=email,
         password_hash=hash_password(payload.password),
-        display_name=payload.display_name or email.split("@")[0],
+        display_name=display_name,
         preferences={"theme": "paper", "items_per_page": 40, "mark_read_on_open": True},
     )
     db.add(user)
@@ -171,6 +175,10 @@ def _apply_me_patch(db: Session, user: User, payload: MePatchIn) -> None:
     fields = payload.model_fields_set
     if "display_name" in fields:
         user.display_name = (payload.display_name or "").strip()[:120] or None
+    if "legal_name" in fields:
+        user.legal_name = (payload.legal_name or "").strip()[:120] or None
+    if "school_name" in fields:
+        user.school_name = (payload.school_name or "").strip()[:120] or None
     if "birthdate" in fields:
         user.birthdate = payload.birthdate
     if "avatar_media_id" in fields:

@@ -13,7 +13,7 @@ import {
   type MicClipSession,
 } from "@/lib/junior-stt";
 import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
-import { formatSttBlobHint } from "@/lib/stt-upload";
+import { formatSttBlobHint, isSttEmptyError } from "@/lib/stt-upload";
 import { MIC_DENIED_TOAST, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +28,7 @@ export function JuniorMicControls({
   locked,
   onStsSubmit,
   onSttDraft,
+  onSttEmptyHint,
   onPhaseChange,
   onStsModeChange,
   registerAbort,
@@ -39,6 +40,8 @@ export function JuniorMicControls({
   onStsSubmit: (transcript: string) => void;
   /** STT: composer only — never auto-send. */
   onSttDraft: (transcript: string) => void;
+  /** Blank STT/STS take — show in composer chrome, never send or overwrite draft. */
+  onSttEmptyHint?: () => void;
   onPhaseChange?: (phase: JuniorMicPhase, mode: JuniorMicMode | null) => void;
   onStsModeChange?: (active: boolean) => void;
   registerAbort?: (abort: (() => void) | null) => void;
@@ -62,6 +65,7 @@ export function JuniorMicControls({
   const onStsModeChangeRef = useRef(onStsModeChange);
   const onStsSubmitRef = useRef(onStsSubmit);
   const onSttDraftRef = useRef(onSttDraft);
+  const onSttEmptyHintRef = useRef(onSttEmptyHint);
   const registerAbortRef = useRef(registerAbort);
   const registerStsRearmRef = useRef(registerStsRearm);
 
@@ -69,6 +73,7 @@ export function JuniorMicControls({
   onStsModeChangeRef.current = onStsModeChange;
   onStsSubmitRef.current = onStsSubmit;
   onSttDraftRef.current = onSttDraft;
+  onSttEmptyHintRef.current = onSttEmptyHint;
   registerAbortRef.current = registerAbort;
   registerStsRearmRef.current = registerStsRearm;
   phaseRef.current = phase;
@@ -146,7 +151,10 @@ export function JuniorMicControls({
         console.log("junior-mic", { action: "stt-ok", mode: "stt", chars: piece.length });
         if (piece) onSttDraftRef.current(piece);
       } catch (error) {
-        if (error instanceof ApiError) {
+        if (isSttEmptyError(error)) {
+          console.log("junior-mic", { action: "stt-empty", mode: "stt" });
+          onSttEmptyHintRef.current?.();
+        } else if (error instanceof ApiError) {
           console.log("junior-mic", { action: "stt-fail", mode: "stt", status: error.status, message: error.message });
           toast.error(error.message || sttFailToast(error.status));
         } else if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -185,13 +193,18 @@ export function JuniorMicControls({
         const piece = (result.text || "").trim();
         console.log("junior-mic", { action: "stt-ok", mode: "sts", chars: piece.length, trigger });
         if (!piece) {
+          console.log("junior-mic", { action: "stt-empty", mode: "sts", trigger });
+          onSttEmptyHintRef.current?.();
           if (stsModeOnRef.current) void rearmStsRecordingRef.current?.();
           return;
         }
         onStsSubmitRef.current(piece);
         if (stsModeOnRef.current) emitPhase("idle", null);
       } catch (error) {
-        if (error instanceof ApiError) {
+        if (isSttEmptyError(error)) {
+          console.log("junior-mic", { action: "stt-empty", mode: "sts", trigger });
+          onSttEmptyHintRef.current?.();
+        } else if (error instanceof ApiError) {
           console.log("junior-mic", { action: "stt-fail", mode: "sts", status: error.status, message: error.message });
           toast.error(error.message || sttFailToast(error.status));
         } else if (!(error instanceof DOMException && error.name === "AbortError")) {

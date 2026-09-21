@@ -2,6 +2,8 @@ export type User = {
   id: string;
   email: string;
   display_name: string | null;
+  legal_name: string | null;
+  school_name: string | null;
   avatar_media_id: string | null;
   avatar_url: string | null;
   birthdate: string | null;
