@@ -3,7 +3,7 @@ import { LoaderCircle, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
-import { MIN_CLIP_BYTES, startMicClip, sttFailToast, type MicClipSession } from "@/lib/junior-stt";
+import { NO_AUDIO_CAPTURED, startMicClip, sttFailToast, type MicClipSession } from "@/lib/junior-stt";
 import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
 import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
 
@@ -41,8 +41,8 @@ export function JuniorMicButton({
 
   const upload = useCallback(
     async (blob: Blob) => {
-      if (blob.size < MIN_CLIP_BYTES) {
-        toast.error(sttFailToast(400, "empty blob"));
+      if (blob.size === 0) {
+        toast.error(NO_AUDIO_CAPTURED);
         setMicPhase("idle");
         return;
       }

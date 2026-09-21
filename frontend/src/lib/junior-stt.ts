@@ -1,6 +1,8 @@
 /** Junior composer clip STT. Record → POST /api/v1/stt. Never log audio. */
 
 export const MIN_CLIP_BYTES = 64;
+export const NO_AUDIO_CAPTURED = "No audio captured";
+
 /** Tight-loop guard when MediaRecorder / SpeechRecognition ends on its own. */
 export const MIC_RESTART_MIN_GAP_MS = 400;
 export const MIC_RESTART_MAX_MS = 8_000;
@@ -28,7 +30,6 @@ export function nextMicRestartDelay(input: {
 const RECORDER_TYPES = [
   "audio/webm;codecs=opus",
   "audio/webm",
-  "audio/ogg;codecs=opus",
   "audio/mp4",
   "audio/wav",
 ];
@@ -119,52 +120,48 @@ export type MicClipSession = {
   abort: () => void;
 };
 
-export async function startMicClip(opts?: { onPermissionRevoked?: () => void }): Promise<MicClipSession> {
-  requireSecureMic();
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Microphone is not available");
-  }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  const mime = pickRecorderMime();
-  const chunks: BlobPart[] = [];
-  let recorder: MediaRecorder | null = null;
-  const canRecord = typeof MediaRecorder !== "undefined";
+/** PCM/WAV fallback when MediaRecorder is missing or cannot start. */
+async function startPcmClip(
+  stream: MediaStream,
+  opts?: { onPermissionRevoked?: () => void },
+): Promise<MicClipSession> {
   const AudioCtx =
     window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  let context: AudioContext | null = !canRecord && AudioCtx ? new AudioCtx() : null;
+  if (!AudioCtx) throw new Error("MediaRecorder is not available");
+  const context = new AudioCtx();
+  if (context.state === "suspended") await context.resume();
   const pcmChunks: ArrayBuffer[] = [];
-  let processor: ScriptProcessorNode | null = null;
-  let stopped = false;
-  let listening = true;
-  let restartTimer = 0;
-  let lastRestartAt = 0;
-  let restartDelay = 0;
-  let finishResolve: ((blob: Blob) => void) | null = null;
+  let aborted = false;
+  let stopPromise: Promise<Blob> | null = null;
 
-  const clearRestart = () => {
-    if (restartTimer) window.clearTimeout(restartTimer);
-    restartTimer = 0;
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = (event) => {
+    if (aborted) return;
+    pcmChunks.push(floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context.sampleRate, 16000)));
   };
-
-  const streamLive = () => stream.getTracks().some((track) => track.readyState === "live");
+  const mute = context.createGain();
+  mute.gain.value = 0;
+  source.connect(processor);
+  processor.connect(mute);
+  mute.connect(context.destination);
 
   const cleanup = () => {
-    clearRestart();
     try {
-      processor?.disconnect();
+      processor.disconnect();
     } catch {
       /* ignore */
     }
-    processor = null;
     stream.getTracks().forEach((track) => track.stop());
-    if (context) void context.close();
-    context = null;
+    void context.close();
   };
 
-  const blobFromChunks = () => new Blob(chunks, { type: recorder?.mimeType || mime || "audio/webm" });
+  stream.getTracks().forEach((track) => {
+    track.addEventListener("ended", () => opts?.onPermissionRevoked?.());
+  });
 
-  const pcmBlob = () => {
-    if (!pcmChunks.length) return null;
+  const buildBlob = () => {
+    if (!pcmChunks.length) return new Blob([], { type: "audio/wav" });
     const total = pcmChunks.reduce((sum, part) => sum + part.byteLength, 0);
     const pcm = new Uint8Array(total);
     let offset = 0;
@@ -172,148 +169,120 @@ export async function startMicClip(opts?: { onPermissionRevoked?: () => void }):
       pcm.set(new Uint8Array(part), offset);
       offset += part.byteLength;
     }
-    if (pcm.byteLength < MIN_CLIP_BYTES) return null;
     const copy = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
     return encodeWavPcm16(copy, 16000);
   };
 
-  const settle = (aborted: boolean) => {
-    cleanup();
-    if (!finishResolve) return;
-    const resolve = finishResolve;
-    finishResolve = null;
-    if (aborted) {
-      resolve(new Blob());
-      return;
-    }
-    resolve(pcmBlob() || blobFromChunks());
+  return {
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      stopPromise = Promise.resolve().then(() => {
+        aborted = true;
+        cleanup();
+        return buildBlob();
+      });
+      return stopPromise;
+    },
+    abort: () => {
+      aborted = true;
+      cleanup();
+      stopPromise = Promise.resolve(new Blob());
+    },
   };
+}
 
-  const revoke = () => {
-    if (stopped) return;
-    stopped = true;
-    listening = false;
-    settle(true);
-    opts?.onPermissionRevoked?.();
-  };
-
-  if (context) {
-    if (context.state === "suspended") await context.resume();
-    const source = context.createMediaStreamSource(stream);
-    processor = context.createScriptProcessor(4096, 1, 1);
-    processor.onaudioprocess = (event) => {
-      if (stopped) return;
-      pcmChunks.push(floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context!.sampleRate, 16000)));
-    };
-    const mute = context.createGain();
-    mute.gain.value = 0;
-    source.connect(processor);
-    processor.connect(mute);
-    mute.connect(context.destination);
+export async function startMicClip(opts?: { onPermissionRevoked?: () => void }): Promise<MicClipSession> {
+  requireSecureMic();
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Microphone is not available");
   }
 
-  function scheduleRestart(fromError: boolean) {
-    if (stopped || !shouldRestartMic(listening, "engine")) return;
-    if (!streamLive()) {
-      revoke();
-      return;
-    }
-    const now = Date.now();
-    restartDelay = nextMicRestartDelay({
-      fromError,
-      prevDelayMs: restartDelay,
-      elapsedSinceRestartMs: lastRestartAt ? now - lastRestartAt : MIC_RESTART_MIN_GAP_MS,
-    });
-    lastRestartAt = now;
-    clearRestart();
-    restartTimer = window.setTimeout(() => {
-      restartTimer = 0;
-      if (stopped) return;
-      bindRecorder();
-    }, restartDelay);
-  }
-
-  function bindRecorder() {
-    if (stopped || !canRecord || !streamLive()) return;
-    try {
-      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-    } catch {
-      scheduleRestart(true);
-      return;
-    }
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) chunks.push(event.data);
-    };
-    recorder.onstart = () => {
-      restartDelay = 0;
-    };
-    recorder.onerror = () => {
-      if (stopped) return;
-      scheduleRestart(true);
-    };
-    recorder.onstop = () => {
-      if (stopped) {
-        settle(false);
-        return;
-      }
-      if (!shouldRestartMic(listening, "engine") || !streamLive()) {
-        revoke();
-        return;
-      }
-      scheduleRestart(false);
-    };
-    try {
-      recorder.start(250);
-    } catch {
-      scheduleRestart(true);
-    }
-  }
-
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   stream.getTracks().forEach((track) => {
-    track.addEventListener("ended", () => {
-      if (stopped) return;
-      revoke();
-    });
+    track.addEventListener("ended", () => opts?.onPermissionRevoked?.());
   });
 
-  if (canRecord) bindRecorder();
+  if (typeof MediaRecorder === "undefined") {
+    return startPcmClip(stream, opts);
+  }
 
-  let result: Promise<Blob> | null = null;
-  const finish = (aborted: boolean) => {
-    if (result) return result;
-    listening = false;
-    stopped = true;
-    clearRestart();
-    result = new Promise<Blob>((resolve) => {
-      finishResolve = (blob) => resolve(blob);
-      if (aborted) {
-        if (recorder && recorder.state !== "inactive") {
-          try {
-            recorder.stop();
-          } catch {
-            /* ignore */
-          }
-        }
-        settle(true);
-        return;
-      }
-      if (recorder && recorder.state !== "inactive") {
-        try {
-          recorder.stop();
-        } catch {
-          settle(false);
-        }
-        return;
-      }
-      settle(false);
-    });
-    return result;
+  const mime = pickRecorderMime();
+  let recorder: MediaRecorder;
+  try {
+    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  } catch {
+    return startPcmClip(stream, opts);
+  }
+
+  const chunks: BlobPart[] = [];
+  const blobType = () => recorder.mimeType || mime || "audio/webm";
+  let stopPromise: Promise<Blob> | null = null;
+  let aborted = false;
+
+  const cleanup = () => {
+    stream.getTracks().forEach((track) => track.stop());
   };
 
+  recorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) chunks.push(event.data);
+  };
+
+  recorder.onerror = () => {
+    /* onstop still fires on many browsers after error */
+  };
+
+  try {
+    recorder.start(250);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    return startPcmClip(stream, opts);
+  }
+
+  const finalize = () => new Blob(chunks, { type: blobType() });
+
   return {
-    stop: () => finish(false),
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      stopPromise = new Promise<Blob>((resolve) => {
+        if (aborted) {
+          cleanup();
+          resolve(new Blob());
+          return;
+        }
+        if (recorder.state === "inactive") {
+          cleanup();
+          resolve(finalize());
+          return;
+        }
+        recorder.onstop = () => {
+          cleanup();
+          resolve(finalize());
+        };
+        try {
+          if (recorder.state === "recording") {
+            try {
+              recorder.requestData();
+            } catch {
+              /* optional flush */
+            }
+          }
+          recorder.stop();
+        } catch {
+          cleanup();
+          resolve(finalize());
+        }
+      });
+      return stopPromise;
+    },
     abort: () => {
-      void finish(true);
+      aborted = true;
+      try {
+        if (recorder.state !== "inactive") recorder.stop();
+      } catch {
+        /* ignore */
+      }
+      cleanup();
+      stopPromise = Promise.resolve(new Blob());
     },
   };
 }
