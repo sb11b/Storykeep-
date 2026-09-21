@@ -18,6 +18,10 @@ from app.services.demo_lock import reject_locked
 router = APIRouter(tags=["tts"])
 
 
+def _voice(voice_id: str | None) -> str:
+    return tts_service._safe_voice(voice_id)
+
+
 def _extra_note_scripts(db: Session, article: Article) -> list[tuple[str, str]]:
     """Child overlay notes only. Does not merge into or rewrite the source article."""
     if tts_service.is_composed_note(article):
@@ -184,6 +188,7 @@ def tts_status(user: User = Depends(get_current_user)) -> dict:
     return {
         "enabled": tts_service.key_configured(),
         "provider": "xai",
+        "default_voice_id": tts_service.default_voice(),
         "voices": tts_service.list_voices(),
     }
 
@@ -192,12 +197,15 @@ def tts_status(user: User = Depends(get_current_user)) -> dict:
 def tts_voices(user: User = Depends(get_current_user)) -> dict:
     reject_locked(user)
     _ = user
-    return {"voices": tts_service.list_voices()}
+    return {
+        "default_voice_id": tts_service.default_voice(),
+        "voices": tts_service.list_voices(),
+    }
 
 
 @router.get("/tts/health")
 def tts_health(
-    voice_id: str = Query(default="eve", max_length=64),
+    voice_id: str | None = Query(default=None, max_length=64),
     user: User = Depends(get_current_user),
 ) -> dict:
     """One-word synthesis against the live voice service, timed, never cached."""
@@ -207,7 +215,7 @@ def tts_health(
         return {"ok": False, "ms": 0, "bytes": 0, "message": "No xAI API key is configured."}
     started = time.monotonic()
     try:
-        audio = tts_service.synthesize("Hello.", voice_id)
+        audio = tts_service.synthesize("Hello.", _voice(voice_id))
     except HTTPException as exc:
         return {
             "ok": False,
@@ -235,7 +243,7 @@ def tts_health(
 @router.get("/articles/{article_id}/tts/plan")
 def speech_plan(
     article_id: UUID,
-    voice_id: str = Query(default="eve", max_length=64),
+    voice_id: str | None = Query(default=None, max_length=64),
     include_notes: bool = Query(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -243,7 +251,7 @@ def speech_plan(
     reject_locked(user)
     article = _owned_article(db, user, article_id)
     script = _speech_script(db, article, include_notes=include_notes)
-    return _speech_plan_payload(db, article, script, voice_id, include_notes=include_notes, visible_mode=False)
+    return _speech_plan_payload(db, article, script, _voice(voice_id), include_notes=include_notes, visible_mode=False)
 
 
 @router.post("/articles/{article_id}/tts/plan")
@@ -268,7 +276,7 @@ def speech_plan_visible(
         db,
         article,
         script,
-        payload.voice_id,
+        _voice(payload.voice_id),
         include_notes=payload.include_notes,
         visible_mode=True,
     )
@@ -277,20 +285,20 @@ def speech_plan_visible(
 @router.post("/articles/{article_id}/tts/release")
 def release_speech_audio(
     article_id: UUID,
-    voice_id: str = Query(default="eve", max_length=64),
+    voice_id: str | None = Query(default=None, max_length=64),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     reject_locked(user)
     article = _owned_article(db, user, article_id)
-    dropped = tts_service.release_article_audio(article.id, voice_id)
+    dropped = tts_service.release_article_audio(article.id, _voice(voice_id))
     return {"ok": True, "dropped": dropped}
 
 
 @router.get("/articles/{article_id}/tts")
 def speak_article(
     article_id: UUID,
-    voice_id: str = Query(default="eve", max_length=64),
+    voice_id: str | None = Query(default=None, max_length=64),
     chunk: int = Query(default=0, ge=0, le=200),
     confirm: bool = Query(default=False),
     section: str | None = Query(default=None, max_length=16),
@@ -302,7 +310,7 @@ def speak_article(
     article = _owned_article(db, user, article_id)
     _ = section  # deprecated seek hint; full body is always synthesized
     script = _speech_script(db, article, include_notes=include_notes)
-    payload = _speech_response(article, script, voice_id, chunk, confirm=confirm)
+    payload = _speech_response(article, script, _voice(voice_id), chunk, confirm=confirm)
     payload["include_notes"] = bool(include_notes)
     return payload
 
@@ -322,7 +330,7 @@ def speak_chat_message(
     try:
         response = _speech_response_for_script(
             script,
-            payload.voice_id,
+            _voice(payload.voice_id),
             chunk,
             confirm=confirm,
             cache_owner_id=cache_owner,
@@ -355,6 +363,6 @@ def speak_article_visible(
     )
     if not script.strip():
         raise HTTPException(status_code=400, detail="There is no visible text to read in the article body.")
-    response = _speech_response(article, script, payload.voice_id, chunk, confirm=confirm)
+    response = _speech_response(article, script, _voice(payload.voice_id), chunk, confirm=confirm)
     response["include_notes"] = bool(payload.include_notes)
     return response

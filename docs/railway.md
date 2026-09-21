@@ -49,6 +49,8 @@ Do **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That Node flag disables TLS for
 | `B2_REGION` | No | Backblaze region, e.g. `us-west-004` |
 | `BACKUP_INTERVAL_HOURS` | No | Phase 3 scheduled S3/B2 `pg_dump`. Default 24. Set `0` to disable. |
 | `XAI_API_KEY` | No | xAI API key (`xai-…`) for Listen, dictation, and the Grok chat bubble. Server only — never in the browser. |
+| `XAI_TTS_URL` | No | xAI TTS endpoint. Default `https://api.x.ai/v1/tts`. |
+| `XAI_TTS_VOICE` | No | Default Listen voice id when the browser has no saved pick. Example: `castor`. Default `eve`. |
 | `XAI_CHAT_MODEL` | No | Chat model, default `grok-4` |
 | `FASTMAIL_CALDAV_URL` | No | Optional CalDAV origin. Defaults to `https://caldav.fastmail.com`. Missing `FASTMAIL_*` still shows Connect — tokens are per user. |
 | `FASTMAIL_TOKEN` | No | Fastmail JMAP API token for owner Mail. Server only. Missing token returns 401 “Connect Fastmail”, not 500. |

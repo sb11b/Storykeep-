@@ -166,9 +166,11 @@ export const ListenControls = forwardRef<
       .then((next) => {
         if (cancelled) return;
         setStatus(next);
-        const storedVoice = readStoredTtsVoice(next.voices[0]?.voice_id || "eve");
+        const serverDefault = next.default_voice_id || next.voices[0]?.voice_id || "eve";
+        const storedVoice = readStoredTtsVoice(serverDefault);
         const known = next.voices.some((voice) => voice.voice_id === storedVoice);
         if (known) setVoiceId(storedVoice);
+        else if (next.voices.some((voice) => voice.voice_id === serverDefault)) setVoiceId(serverDefault);
         else if (next.voices[0]?.voice_id) setVoiceId(next.voices[0].voice_id);
       })
       .catch(() => {

@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     extract_on_import: bool = True
     secure_cookies: bool = False
     xai_api_key: str = ""
+    xai_tts_url: str = "https://api.x.ai/v1/tts"
+    xai_tts_voice: str = "eve"
     xai_chat_url: str = "https://api.x.ai/v1/chat/completions"
     xai_chat_model: str = "grok-4.6"
     xai_chat_models: str = "grok-4.6,grok-4.3"

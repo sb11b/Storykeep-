@@ -17,8 +17,8 @@ from app.models import Article
 
 logger = logging.getLogger(__name__)
 
-XAI_TTS_URL = "https://api.x.ai/v1/tts"
-XAI_VOICES_URL = "https://api.x.ai/v1/tts/voices"
+DEFAULT_TTS_URL = "https://api.x.ai/v1/tts"
+DEFAULT_VOICES_URL = "https://api.x.ai/v1/tts/voices"
 # Fail fast enough that the browser hears an answer instead of a platform 504.
 XAI_TTS_TIMEOUT = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=5.0)
 MAX_CHUNK_CHARS = 1400
@@ -40,6 +40,22 @@ _VOICE_TURN_RE = re.compile(
     r")\b",
     re.I,
 )
+
+
+def tts_url() -> str:
+    raw = (settings.xai_tts_url or DEFAULT_TTS_URL).strip().rstrip("/")
+    return raw or DEFAULT_TTS_URL
+
+
+def voices_url() -> str:
+    base = tts_url()
+    if base.endswith("/tts"):
+        return f"{base}/voices"
+    return DEFAULT_VOICES_URL
+
+
+def default_voice() -> str:
+    return _safe_voice((settings.xai_tts_voice or "eve").strip() or "eve")
 
 
 def key_configured() -> bool:
@@ -259,8 +275,10 @@ def script_digest(script: str, voice_id: str) -> str:
     return hashlib.sha256(f"{voice_id}\n{script}".encode("utf-8")).hexdigest()[:40]
 
 
-def _safe_voice(voice_id: str) -> str:
-    return re.sub(r"[^a-z0-9_-]", "", (voice_id or "eve").lower())[:32] or "eve"
+def _safe_voice(voice_id: str | None) -> str:
+    fallback = (settings.xai_tts_voice or "eve").strip().lower() or "eve"
+    cleaned = re.sub(r"[^a-z0-9_-]", "", (voice_id or fallback).lower())[:32]
+    return cleaned or fallback
 
 
 def cache_path(article_id: UUID | str, digest: str, voice_id: str, chunk_index: int):
@@ -354,7 +372,7 @@ def synthesize_timed(
     chunk_index: int = 0,
     digest: str | None = None,
 ) -> dict[str, Any]:
-    voice = (voice_id or "eve").strip().lower() or "eve"
+    voice = _safe_voice(voice_id)
     key = None
     if article_id is not None:
         key = f"{article_id}_{digest or script_digest(text, voice)}_{_safe_voice(voice)}_{chunk_index}"
@@ -375,7 +393,7 @@ def synthesize_timed(
     try:
         with httpx.Client(timeout=XAI_TTS_TIMEOUT) as client:
             response = client.post(
-                XAI_TTS_URL,
+                tts_url(),
                 headers={
                     "Authorization": f"Bearer {key_token}",
                     "Content-Type": "application/json",
@@ -456,21 +474,22 @@ def format_voices_for_model(voices: list[dict[str, str]]) -> str:
         name = row.get("name") or voice_id
         lines.append(f"- {name} (voice_id={voice_id})")
     lines.append(
-        "Default is eve. Junior chat has no separate voice — Listen on articles uses these ids."
+        f"Server default voice is {default_voice()}. Junior chat has no separate voice — Listen uses these ids."
     )
     return "\n".join(lines)
 
 
 def summarize_voices_for_user(voices: list[dict[str, str]]) -> str:
     """Plain reply when xAI stays silent on a voice-list turn."""
+    default = default_voice()
     if not voices:
-        return "Listen uses xAI TTS. Default voice is eve (voice_id=eve)."
+        return f"Listen uses xAI TTS. Default voice is {default} (voice_id={default})."
     bits = ["Storykeep Listen uses these xAI voices:"]
     for row in voices[:12]:
         voice_id = row.get("voice_id") or ""
         name = row.get("name") or voice_id
         bits.append(f"{name} ({voice_id})")
-    bits.append("Default is eve. Junior chat text has no voice — only article Listen.")
+    bits.append(f"Default is {default}. Junior chat text has no voice — only article Listen.")
     return " ".join(bits)
 
 
@@ -481,7 +500,7 @@ def list_voices() -> list[dict[str, str]]:
     try:
         with httpx.Client(timeout=15.0) as client:
             response = client.get(
-                XAI_VOICES_URL,
+                voices_url(),
                 headers={"Authorization": f"Bearer {key}"},
             )
         if response.status_code >= 400:

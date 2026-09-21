@@ -337,6 +337,7 @@ export type TtsPlan = {
 export type TtsStatus = {
   enabled: boolean;
   provider: string;
+  default_voice_id?: string;
   voices: TtsVoice[];
 };
 
