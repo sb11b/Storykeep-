@@ -45,6 +45,9 @@ function logTtsFailure(label: string, status: number, body: unknown) {
   console.error(`[tts] ${label} failed`, { status, body });
 }
 
+/** xAI unary TTS can exceed 20s on a cold first hit — keep client/server aligned. */
+export const TTS_CHUNK_TIMEOUT_MS = 120_000;
+
 export type SpeechChunkOptions = {
   /** Caller abort, e.g. the user pressed Stop. */
   signal?: AbortSignal;
@@ -67,12 +70,11 @@ export async function fetchSpeechChunk(
   if (options.signal?.aborted) controller.abort();
   else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
   let timedOut = false;
-  const timer = options.timeoutMs
-    ? setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, options.timeoutMs)
-    : null;
+  const timeoutMs = options.timeoutMs ?? TTS_CHUNK_TIMEOUT_MS;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   let status = 0;
 
   try {
@@ -109,7 +111,7 @@ export async function fetchSpeechChunk(
     return payload;
   } catch (error) {
     if (timedOut) {
-      const seconds = Math.round((options.timeoutMs ?? 0) / 1000);
+      const seconds = Math.round(timeoutMs / 1000);
       throw new ApiError(
         status || 408,
         `TTS timed out after ${seconds}s (HTTP ${status || "…"} or no body).`,

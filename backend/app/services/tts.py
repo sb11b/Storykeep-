@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTS_URL = "https://api.x.ai/v1/tts"
 DEFAULT_VOICES_URL = "https://api.x.ai/v1/tts/voices"
-# Fail fast enough that the browser hears an answer instead of a platform 504.
-XAI_TTS_TIMEOUT = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=5.0)
+def tts_timeout() -> httpx.Timeout:
+    read = max(20.0, float(settings.xai_tts_read_timeout or 120.0))
+    return httpx.Timeout(connect=15.0, read=read, write=30.0, pool=15.0)
 MAX_CHUNK_CHARS = 1400
 LONG_SCRIPT_CHARS = 20_000
 NOTES_HARD_CAP = 60_000
@@ -391,7 +392,7 @@ def synthesize_timed(
     from app.services.tts_errors import log_tts_failure, raise_for_xai_tts
 
     try:
-        with httpx.Client(timeout=XAI_TTS_TIMEOUT) as client:
+        with httpx.Client(timeout=tts_timeout()) as client:
             response = client.post(
                 tts_url(),
                 headers={

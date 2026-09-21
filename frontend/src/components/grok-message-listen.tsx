@@ -13,12 +13,13 @@ import {
   readStoredTtsVoice,
 } from "@/lib/tts-preferences";
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
+import { TTS_CHUNK_TIMEOUT_MS } from "@/lib/tts-speech-client";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
 
-/** Preparing is allowed to take a moment, never minutes. */
-const PREPARE_TIMEOUT_MS = 20_000;
+/** Preparing can take up to ~120s on xAI cold first hit. */
+const PREPARE_TIMEOUT_MS = TTS_CHUNK_TIMEOUT_MS;
 
 function applyPlaybackRate(audio: HTMLAudioElement, rate: number) {
   audio.playbackRate = rate;

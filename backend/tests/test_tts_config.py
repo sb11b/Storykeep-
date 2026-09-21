@@ -16,6 +16,10 @@ class TtsConfigTests(unittest.TestCase):
             self.assertEqual(tts_service.tts_url(), "https://api.x.ai/v1/tts")
             self.assertEqual(tts_service.voices_url(), "https://api.x.ai/v1/tts/voices")
 
+    def test_tts_read_timeout_default(self):
+        timeout = tts_service.tts_timeout()
+        self.assertEqual(timeout.read, 120.0)
+
 
 if __name__ == "__main__":
     unittest.main()

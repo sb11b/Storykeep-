@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     xai_api_key: str = ""
     xai_tts_url: str = "https://api.x.ai/v1/tts"
     xai_tts_voice: str = "eve"
+    # xAI unary TTS can exceed 20s on cold first hit; match Android/Junior backend (120s read).
+    xai_tts_read_timeout: float = 120.0
     xai_chat_url: str = "https://api.x.ai/v1/chat/completions"
     xai_chat_model: str = "grok-4.6"
     xai_chat_models: str = "grok-4.6,grok-4.3"
