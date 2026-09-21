@@ -377,6 +377,8 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
         return True
     if junior_model.is_delegate_turn(text):
         return True
+    if junior_model.is_ops_turn(text):
+        return True
     if is_short_chat(text):
         return False
     if _SCHOOL_CODE_RE.search(text):

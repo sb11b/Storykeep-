@@ -1415,6 +1415,7 @@ def _chat(
             extra = extra_system
             already_searched = False
             already_deployed = False
+            deploy_outcome: railway_tool.RailwayOutcome | None = None
             already_started_agent = False
             output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
@@ -1473,6 +1474,10 @@ def _chat(
             if will_deploy and railway_enabled:
                 deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
                 already_deployed = deploy_outcome.ok
+                block = railway_tool.format_deploy_for_model(deploy_outcome)
+                extra = f"{extra}\n{block}" if extra else block
+            elif will_deploy:
+                deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
                 block = railway_tool.format_deploy_for_model(deploy_outcome)
                 extra = f"{extra}\n{block}" if extra else block
             elif will_railway and not will_deploy:
@@ -1612,6 +1617,10 @@ def _chat(
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if mail_proposal and not "".join(assistant_parts).strip():
                 note = "I can send this Fastmail message after you confirm."
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+            if not saw_text and will_deploy and deploy_outcome is not None:
+                note = railway_tool.summarize_deploy_for_user(deploy_outcome)
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text:

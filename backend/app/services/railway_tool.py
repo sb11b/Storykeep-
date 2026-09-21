@@ -611,6 +611,37 @@ def format_deploy_for_model(outcome: RailwayOutcome) -> str:
     )
 
 
+def summarize_deploy_for_user(outcome: RailwayOutcome) -> str:
+    """Plain reply when xAI stays silent after server-side deploy."""
+    text = outcome.text or ""
+    dep_id = ""
+    final = ""
+    url = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Deployment id:"):
+            dep_id = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Final status:"):
+            final = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("URL:"):
+            url = stripped.split(":", 1)[1].strip()
+    if outcome.ok and final.upper().startswith("SUCCESS"):
+        bits = ["Storykeep web deploy finished on Railway."]
+        if dep_id:
+            bits.append(f"Deployment id: {dep_id}.")
+        if url:
+            bits.append(f"URL: {url}")
+        return " ".join(bits)
+    if dep_id or final:
+        bits = ["Storykeep web deploy ran on Railway."]
+        if dep_id:
+            bits.append(f"Deployment id: {dep_id}.")
+        if final:
+            bits.append(f"Status: {final}")
+        return " ".join(bits)
+    return text.strip() or "Storykeep web deploy ran on Railway — check Railway for status."
+
+
 def _parse_tool_args(arguments: str) -> dict[str, Any]:
     try:
         parsed = json.loads(arguments or "{}")
