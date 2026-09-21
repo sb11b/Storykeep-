@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Mic } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
@@ -13,51 +13,70 @@ import {
 } from "@/lib/junior-stt";
 import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
 import { formatSttBlobHint } from "@/lib/stt-upload";
-import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
+import { MIC_DENIED_TOAST, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
+import { cn } from "@/lib/utils";
 
 /** Ignore a second tap right after start so one gesture is not start+stop. */
 export const MIC_TOGGLE_DEBOUNCE_MS = 300;
 
+export type JuniorMicMode = "sts" | "stt";
 export type JuniorMicPhase = "idle" | "listening" | "transcribing";
 
-export function JuniorMicButton({
+export function JuniorMicControls({
   enabled,
   locked,
-  onVoiceSubmit,
+  onStsSubmit,
+  onSttDraft,
   onPhaseChange,
   registerAbort,
 }: {
   enabled: boolean;
   locked: boolean;
-  /** Fresh transcript from xAI — parent puts it in the composer and auto-sends. */
-  onVoiceSubmit: (transcript: string) => void;
-  onPhaseChange?: (phase: JuniorMicPhase) => void;
+  /** STS: put transcript in composer and auto-send. */
+  onStsSubmit: (transcript: string) => void;
+  /** STT: put transcript in composer only — never auto-send. */
+  onSttDraft: (transcript: string) => void;
+  onPhaseChange?: (phase: JuniorMicPhase, mode: JuniorMicMode | null) => void;
   registerAbort?: (abort: (() => void) | null) => void;
 }) {
   const [phase, setPhase] = useState<JuniorMicPhase>("idle");
+  const [activeMode, setActiveMode] = useState<JuniorMicMode | null>(null);
   const sessionRef = useRef<MicClipSession | null>(null);
   const listeningRef = useRef(false);
   const pendingStopRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef(0);
+  const activeModeRef = useRef<JuniorMicMode | null>(null);
+  activeModeRef.current = activeMode;
   listeningRef.current = phase === "listening";
 
-  const setMicPhase = useCallback(
-    (next: JuniorMicPhase) => {
+  const emitPhase = useCallback(
+    (next: JuniorMicPhase, mode: JuniorMicMode | null) => {
       setPhase(next);
-      onPhaseChange?.(next);
+      setActiveMode(mode);
+      onPhaseChange?.(next, mode);
     },
     [onPhaseChange],
   );
 
+  const cancelWithoutSend = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    sessionRef.current?.abort();
+    sessionRef.current = null;
+    listeningRef.current = false;
+    pendingStopRef.current = false;
+    emitPhase("idle", null);
+  }, [emitPhase]);
+
   const upload = useCallback(
-    async (blob: Blob) => {
+    async (blob: Blob, mode: JuniorMicMode) => {
       if (blob.size < MIN_CAPTURE_BYTES) {
         toast.error(`${NO_AUDIO_CAPTURED} (${formatSttBlobHint(blob)})`);
-        setMicPhase("idle");
+        emitPhase("idle", null);
         return;
       }
-      setMicPhase("transcribing");
+      emitPhase("transcribing", mode);
       const controller = new AbortController();
       abortRef.current = controller;
       try {
@@ -67,7 +86,8 @@ export function JuniorMicButton({
         });
         const piece = (result.text || "").trim();
         if (!piece) return;
-        onVoiceSubmit(piece);
+        if (mode === "sts") onStsSubmit(piece);
+        else onSttDraft(piece);
       } catch (error) {
         if (error instanceof ApiError) {
           const message = error.message || sttFailToast(error.status);
@@ -77,92 +97,105 @@ export function JuniorMicButton({
         }
       } finally {
         abortRef.current = null;
-        setMicPhase("idle");
+        emitPhase("idle", null);
       }
     },
-    [onVoiceSubmit, setMicPhase],
+    [emitPhase, onStsSubmit, onSttDraft],
   );
 
-  const stopAndSend = useCallback(async () => {
+  const stopAndProcess = useCallback(async () => {
     pendingStopRef.current = false;
+    const mode = activeModeRef.current;
     const session = sessionRef.current;
+    if (!mode) {
+      emitPhase("idle", null);
+      return;
+    }
     if (!session) {
       if (listeningRef.current) pendingStopRef.current = true;
-      else setMicPhase("idle");
+      else emitPhase("idle", null);
       return;
     }
     sessionRef.current = null;
     listeningRef.current = false;
     try {
       const blob = await session.stop();
-      await upload(blob);
+      await upload(blob, mode);
     } catch (error) {
       toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
-      setMicPhase("idle");
+      emitPhase("idle", null);
     }
-  }, [setMicPhase, upload]);
+  }, [emitPhase, upload]);
 
   const abort = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    sessionRef.current?.abort();
-    sessionRef.current = null;
-    listeningRef.current = false;
-    pendingStopRef.current = false;
-    setMicPhase("idle");
-  }, [setMicPhase]);
+    cancelWithoutSend();
+  }, [cancelWithoutSend]);
 
   useEffect(() => {
     registerAbort?.(abort);
     return () => registerAbort?.(null);
   }, [abort, registerAbort]);
 
-  const start = useCallback(async () => {
-    if (listeningRef.current || sessionRef.current || phase === "transcribing") return;
-    listeningRef.current = true;
-    startedAtRef.current = Date.now();
-    setMicPhase("listening");
-    try {
-      const session = await startMicClip({
-        onPermissionRevoked: () => {
-          sessionRef.current = null;
-          listeningRef.current = false;
-          setMicPhase("idle");
-          toast.error(MIC_DENIED_TOAST);
-        },
-      });
-      if (!listeningRef.current && !pendingStopRef.current) {
-        session.abort();
+  const start = useCallback(
+    async (mode: JuniorMicMode) => {
+      if (phase === "transcribing") return;
+      if (activeModeRef.current && activeModeRef.current !== mode) {
+        cancelWithoutSend();
+      }
+      if (listeningRef.current || sessionRef.current) return;
+      listeningRef.current = true;
+      startedAtRef.current = Date.now();
+      emitPhase("listening", mode);
+      try {
+        const session = await startMicClip({
+          onPermissionRevoked: () => {
+            sessionRef.current = null;
+            listeningRef.current = false;
+            emitPhase("idle", null);
+            toast.error(MIC_DENIED_TOAST);
+          },
+        });
+        if (!listeningRef.current && !pendingStopRef.current) {
+          session.abort();
+          return;
+        }
+        sessionRef.current = session;
+        if (pendingStopRef.current) {
+          pendingStopRef.current = false;
+          window.setTimeout(() => {
+            if (sessionRef.current === session) void stopAndProcess();
+          }, MIC_TOGGLE_DEBOUNCE_MS);
+        }
+      } catch (error) {
+        sessionRef.current = null;
+        listeningRef.current = false;
+        emitPhase("idle", null);
+        if (error instanceof DOMException && error.message === MIC_PERMISSION_DENIED) {
+          toast.error(MIC_PERMISSION_DENIED);
+        } else {
+          toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
+        }
+      }
+    },
+    [cancelWithoutSend, emitPhase, phase, stopAndProcess],
+  );
+
+  const toggleMic = useCallback(
+    (mode: JuniorMicMode) => {
+      if (phase === "transcribing" || !enabled) return;
+      const isActive = activeModeRef.current === mode && (listeningRef.current || sessionRef.current);
+      if (isActive) {
+        if (Date.now() - startedAtRef.current < MIC_TOGGLE_DEBOUNCE_MS) return;
+        void stopAndProcess();
         return;
       }
-      sessionRef.current = session;
-      if (pendingStopRef.current) {
-        pendingStopRef.current = false;
-        window.setTimeout(() => {
-          if (sessionRef.current === session) void stopAndSend();
-        }, MIC_TOGGLE_DEBOUNCE_MS);
+      if (activeModeRef.current && activeModeRef.current !== mode) {
+        cancelWithoutSend();
       }
-    } catch (error) {
-      sessionRef.current = null;
-      listeningRef.current = false;
-      setMicPhase("idle");
-      if (error instanceof DOMException && error.message === MIC_PERMISSION_DENIED) {
-        toast.error(MIC_PERMISSION_DENIED);
-      } else {
-        toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
-      }
-    }
-  }, [phase, setMicPhase, stopAndSend]);
-
-  const toggleMic = useCallback(() => {
-    if (phase === "transcribing" || !enabled) return;
-    if (listeningRef.current || sessionRef.current) {
-      if (Date.now() - startedAtRef.current < MIC_TOGGLE_DEBOUNCE_MS) return;
-      void stopAndSend();
-      return;
-    }
-    void start();
-  }, [enabled, phase, start, stopAndSend]);
+      void start(mode);
+    },
+    [cancelWithoutSend, enabled, phase, start, stopAndProcess],
+  );
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -171,46 +204,68 @@ export function JuniorMicButton({
       event.preventDefault();
       if (phase === "listening") {
         if (Date.now() - startedAtRef.current < MIC_TOGGLE_DEBOUNCE_MS) return;
-        void stopAndSend();
+        void stopAndProcess();
         return;
       }
       abort();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [abort, phase, stopAndSend]);
+  }, [abort, phase, stopAndProcess]);
 
   useEffect(() => () => abort(), [abort]);
 
   if (locked || !enabled) return null;
 
-  const listening = phase === "listening";
-  const transcribing = phase === "transcribing";
-  const statusLabel = listening ? MIC_LIVE : transcribing ? MIC_TRANSCRIBING : MIC_IDLE;
+  function renderButton(mode: JuniorMicMode, label: string, idleTitle: string, liveTitle: string) {
+    const mine = activeMode === mode;
+    const listening = mine && phase === "listening";
+    const transcribing = mine && phase === "transcribing";
+    const disabled = transcribing || (phase !== "idle" && !mine);
+
+    return (
+      <Button
+        key={mode}
+        type="button"
+        size="sm"
+        variant={listening ? "destructive" : "outline"}
+        className={cn("relative z-10 h-9 shrink-0 px-2.5 text-xs font-medium", transcribing && "min-w-[3.25rem]")}
+        disabled={disabled}
+        aria-label={
+          listening ? `${label} — ${MIC_LIVE}` : transcribing ? `${label} — ${MIC_TRANSCRIBING}` : label
+        }
+        aria-pressed={listening}
+        data-mic-mode={mode}
+        data-mic-state={listening ? "live" : transcribing ? "uploading" : "idle"}
+        title={
+          listening ? liveTitle : transcribing ? MIC_TRANSCRIBING : idleTitle
+        }
+        onClick={(event) => {
+          event.preventDefault();
+          toggleMic(mode);
+        }}
+      >
+        {transcribing ? <LoaderCircle className="mr-1 size-3.5 animate-spin" /> : null}
+        {label}
+        {listening ? "…" : ""}
+      </Button>
+    );
+  }
 
   return (
-    <Button
-      type="button"
-      size="icon"
-      variant={listening ? "destructive" : "outline"}
-      className="relative z-10 size-9 shrink-0"
-      disabled={transcribing}
-      aria-label={statusLabel}
-      aria-pressed={listening}
-      data-mic-state={listening ? "live" : transcribing ? "uploading" : "idle"}
-      title={
-        listening
-          ? `${MIC_LIVE} — tap again to send`
-          : transcribing
-            ? MIC_TRANSCRIBING
-            : `${MIC_IDLE} — tap to talk`
-      }
-      onClick={(event) => {
-        event.preventDefault();
-        toggleMic();
-      }}
-    >
-      {transcribing ? <LoaderCircle className="size-4 animate-spin" /> : <Mic className="size-4" />}
-    </Button>
+    <>
+      {renderButton(
+        "sts",
+        "STS",
+        "Speech-to-speech — tap to talk, tap again to send",
+        `${MIC_LIVE} — tap again to send`,
+      )}
+      {renderButton(
+        "stt",
+        "STT",
+        "Speech-to-text — tap to talk, tap again to fill composer",
+        `${MIC_LIVE} — tap again to transcribe`,
+      )}
+    </>
   );
 }

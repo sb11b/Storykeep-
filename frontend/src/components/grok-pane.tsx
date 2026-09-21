@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
+import { LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
-import { JuniorMicButton, type JuniorMicPhase } from "@/components/junior-mic";
+import { JuniorMicControls, type JuniorMicMode, type JuniorMicPhase } from "@/components/junior-mic";
 import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
@@ -39,7 +39,6 @@ import {
   formatFileSize,
   LARRY_ATTACH_ACCEPT,
   LARRY_ATTACH_MAX_FILES,
-  LARRY_IMAGE_ACCEPT,
   pendingToMessageFile,
   rejectLarryFile,
   snapshotFiles,
@@ -266,7 +265,6 @@ export function GrokPane({
   const listRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
   const stopRef = useRef<() => void>(() => {});
   const abortRef = useRef<AbortController | null>(null);
   const abortingRef = useRef(false);
@@ -286,6 +284,7 @@ export function GrokPane({
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [sttPhase, setSttPhase] = useState<JuniorMicPhase>("idle");
+  const [micMode, setMicMode] = useState<JuniorMicMode | null>(null);
   const micAbortRef = useRef<(() => void) | null>(null);
   const sendRef = useRef<
     (opts?: {
@@ -1489,8 +1488,8 @@ export function GrokPane({
 
   sendRef.current = send;
 
-  const submitVoiceTranscript = useCallback(
-    (transcript: string) => {
+  const fillComposerDraft = useCallback(
+    (transcript: string, focus = false) => {
       const message = transcript.trim();
       if (!message) return;
       draftValueRef.current = message;
@@ -1501,10 +1500,31 @@ export function GrokPane({
         el.style.height = "auto";
         const cap = Math.round(window.innerHeight * 0.6);
         el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
+        if (focus) {
+          el.focus();
+          const end = message.length;
+          el.setSelectionRange(end, end);
+        }
       }
-      void sendRef.current({ message, fromStt: true });
     },
     [onUpdate],
+  );
+
+  const submitVoiceTranscript = useCallback(
+    (transcript: string) => {
+      const message = transcript.trim();
+      if (!message) return;
+      fillComposerDraft(message);
+      void sendRef.current({ message, fromStt: true });
+    },
+    [fillComposerDraft],
+  );
+
+  const applySttDraft = useCallback(
+    (transcript: string) => {
+      fillComposerDraft(transcript, true);
+    },
+    [fillComposerDraft],
   );
 
   async function runImagineFromChat(options: {
@@ -2674,18 +2694,6 @@ export function GrokPane({
               if (picked.length) void attachFiles(picked);
             }}
           />
-          <input
-            ref={imageInputRef}
-            type="file"
-            className="sr-only"
-            accept={LARRY_IMAGE_ACCEPT}
-            multiple
-            onChange={(event) => {
-              const picked = snapshotFiles(event.currentTarget.files);
-              event.currentTarget.value = "";
-              if (picked.length) void attachFiles(picked);
-            }}
-          />
           <Button
             type="button"
             size="icon"
@@ -2703,18 +2711,6 @@ export function GrokPane({
             size="icon"
             variant="outline"
             className="relative z-10 size-9 shrink-0"
-            disabled={!enabled || locked || uploadingFiles || (pane.pendingAttachments ?? []).length >= LARRY_ATTACH_MAX_FILES}
-            aria-label="Upload image"
-            title="Upload a photo (jpg, png, webp, gif)"
-            onClick={() => imageInputRef.current?.click()}
-          >
-            <ImageIcon className="size-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="relative z-10 size-9 shrink-0"
             disabled={!enabled || locked || busy || uploadingFiles}
             aria-label="Imagine"
             title="Imagine — generate an image from this prompt"
@@ -2723,14 +2719,18 @@ export function GrokPane({
             <Sparkles className="size-4" />
           </Button>
           {sttEnabled && !locked ? (
-            <JuniorMicButton
+            <JuniorMicControls
               enabled={enabled && !busy && !uploadingFiles}
               locked={locked}
               registerAbort={(abort) => {
                 micAbortRef.current = abort;
               }}
-              onPhaseChange={setSttPhase}
-              onVoiceSubmit={submitVoiceTranscript}
+              onPhaseChange={(phase, mode) => {
+                setSttPhase(phase);
+                setMicMode(mode);
+              }}
+              onStsSubmit={submitVoiceTranscript}
+              onSttDraft={applySttDraft}
             />
           ) : null}
           {busy || aborting ? (
@@ -2764,11 +2764,11 @@ export function GrokPane({
         </div>
         {sttPhase === "listening" ? (
           <p className="text-[11px] text-muted-foreground" role="status">
-            {MIC_LIVE}
+            {micMode === "stt" ? "STT" : "STS"} — {MIC_LIVE}
           </p>
         ) : sttPhase === "transcribing" ? (
           <p className="text-[11px] text-muted-foreground" role="status">
-            {MIC_TRANSCRIBING}
+            {micMode === "stt" ? "STT" : "STS"} — {MIC_TRANSCRIBING}
           </p>
         ) : null}
         {(busy || aborting) && inFlightSpend ? (
