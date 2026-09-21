@@ -3,7 +3,14 @@ import { LoaderCircle, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
-import { NO_AUDIO_CAPTURED, startMicClip, sttFailToast, type MicClipSession } from "@/lib/junior-stt";
+import {
+  MIC_PERMISSION_DENIED,
+  MIN_CAPTURE_BYTES,
+  NO_AUDIO_CAPTURED,
+  startMicClip,
+  sttFailToast,
+  type MicClipSession,
+} from "@/lib/junior-stt";
 import { STT_CLIP_TIMEOUT_MS } from "@/lib/stt-clip-client";
 import { MIC_DENIED_TOAST, MIC_IDLE, MIC_LIVE, MIC_TRANSCRIBING, micDeniedMessage } from "@/lib/stt-ui";
 
@@ -41,7 +48,7 @@ export function JuniorMicButton({
 
   const upload = useCallback(
     async (blob: Blob) => {
-      if (blob.size === 0) {
+      if (blob.size < MIN_CAPTURE_BYTES) {
         toast.error(NO_AUDIO_CAPTURED);
         setMicPhase("idle");
         return;
@@ -117,20 +124,26 @@ export function JuniorMicButton({
           toast.error(MIC_DENIED_TOAST);
         },
       });
-      if (!listeningRef.current) {
+      if (!listeningRef.current && !pendingStopRef.current) {
         session.abort();
         return;
       }
       sessionRef.current = session;
       if (pendingStopRef.current) {
         pendingStopRef.current = false;
-        void stopAndSend();
+        window.setTimeout(() => {
+          if (sessionRef.current === session) void stopAndSend();
+        }, 300);
       }
     } catch (error) {
       sessionRef.current = null;
       listeningRef.current = false;
       setMicPhase("idle");
-      toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
+      if (error instanceof DOMException && error.message === MIC_PERMISSION_DENIED) {
+        toast.error(MIC_PERMISSION_DENIED);
+      } else {
+        toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
+      }
     }
   }, [phase, setMicPhase, stopAndSend]);
 
