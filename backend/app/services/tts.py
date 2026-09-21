@@ -31,6 +31,17 @@ FALLBACK_VOICES = [
     {"voice_id": "ara", "name": "Ara"},
     {"voice_id": "rex", "name": "Rex"},
 ]
+
+_VOICE_TURN_RE = re.compile(
+    r"\b(?:"
+    r"xai\s+(?:tts\s+)?voices?|tts\s+voices?|voice\s+list|"
+    r"listen\s+voice|which\s+voice|pick\s+a\s+voice|"
+    r"voice_id|\beve\b|\bara\b|\brex\b|text[\s-]to[\s-]speech"
+    r")\b",
+    re.I,
+)
+
+
 def key_configured() -> bool:
     return bool((settings.xai_api_key or "").strip())
 
@@ -432,6 +443,35 @@ def synthesize_timed(
 
 def synthesize(text: str, voice_id: str, language: str = "en") -> bytes:
     return synthesize_timed(text, voice_id, language)["audio"]
+
+
+def wants_voice_info(message: str) -> bool:
+    return bool(_VOICE_TURN_RE.search(message or ""))
+
+
+def format_voices_for_model(voices: list[dict[str, str]]) -> str:
+    lines = ["Live xAI TTS voices for Storykeep Listen (this turn):"]
+    for row in voices:
+        voice_id = row.get("voice_id") or ""
+        name = row.get("name") or voice_id
+        lines.append(f"- {name} (voice_id={voice_id})")
+    lines.append(
+        "Default is eve. Junior chat has no separate voice — Listen on articles uses these ids."
+    )
+    return "\n".join(lines)
+
+
+def summarize_voices_for_user(voices: list[dict[str, str]]) -> str:
+    """Plain reply when xAI stays silent on a voice-list turn."""
+    if not voices:
+        return "Listen uses xAI TTS. Default voice is eve (voice_id=eve)."
+    bits = ["Storykeep Listen uses these xAI voices:"]
+    for row in voices[:12]:
+        voice_id = row.get("voice_id") or ""
+        name = row.get("name") or voice_id
+        bits.append(f"{name} ({voice_id})")
+    bits.append("Default is eve. Junior chat text has no voice — only article Listen.")
+    return " ".join(bits)
 
 
 def list_voices() -> list[dict[str, str]]:

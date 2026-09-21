@@ -52,6 +52,7 @@ from app.services import github_tool
 from app.services import cursor_agent_tool
 from app.services import chat_index
 from app.services import message_crypto
+from app.services import tts as tts_service
 
 router = APIRouter(tags=["chat"])
 
@@ -1118,6 +1119,7 @@ def _chat(
 
     search_enabled = search_tool.owner_can_search(user)
     will_search = search_enabled and search_tool.wants_web_search(user_text)
+    will_voices = tts_service.wants_voice_info(user_text)
     owner_ops = user is not None and not is_locked(user)
     railway_enabled = railway_tool.owner_can_use(user)
     github_enabled = github_tool.owner_can_use(user)
@@ -1416,6 +1418,7 @@ def _chat(
             already_searched = False
             already_deployed = False
             deploy_outcome: railway_tool.RailwayOutcome | None = None
+            voice_list: list[dict[str, str]] | None = None
             already_started_agent = False
             output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
@@ -1442,6 +1445,10 @@ def _chat(
                 open_meta["user_message_id"] = str(user_message_id)
             yield chat_service.encode_sse({key: value for key, value in open_meta.items() if value is not None})
             await asyncio.sleep(0)
+            if will_voices:
+                voice_list = await asyncio.to_thread(tts_service.list_voices)
+                block = tts_service.format_voices_for_model(voice_list)
+                extra = f"{extra}\n{block}" if extra else block
             if will_search:
                 outcome = await asyncio.to_thread(search_tool.search, user_text)
                 already_searched = True
@@ -1621,6 +1628,10 @@ def _chat(
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text and will_deploy and deploy_outcome is not None:
                 note = railway_tool.summarize_deploy_for_user(deploy_outcome)
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+            if not saw_text and voice_list is not None:
+                note = tts_service.summarize_voices_for_user(voice_list)
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text:
