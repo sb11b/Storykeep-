@@ -41,6 +41,10 @@ CHAT_IDLE_AFTER_TOKEN_MAX_SEC = 7200.0
 CHAT_HEALTH_TIMEOUT_SEC = 10.0
 XAI_SILENT_DETAIL = "xAI silent"
 XAI_EMPTY_DETAIL = "Junior returned no text for this turn."
+EMPTY_REPLY_FALLBACK = (
+    "I didn't get a text reply from the model on that turn. "
+    "Try sending again — if it keeps happening, start a fresh chat thread."
+)
 SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
 # Railway env can still hold retired aliases. Invalid ids hang the stream until a proxy 504.
 _DEAD_MODEL_ALIASES = {

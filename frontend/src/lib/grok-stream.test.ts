@@ -287,6 +287,28 @@ test("generating status extends idle past the 60s text timeout", async () => {
   assert.deepEqual(parts, ["Generating the image…\n\n", "done"]);
 });
 
+test("searching alone does not count as the first token", async () => {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"stream_status":"searching"}\n\n'));
+      controller.close();
+    },
+  });
+  await assert.rejects(
+    () =>
+      readGrokChatStream(new Response(stream), { onDelta: () => {} }, undefined, {
+        firstByteMs: 80,
+        idleAfterMs: 5000,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.match(error.message, /xAI silent/);
+      return true;
+    },
+  );
+});
+
 test("heartbeat does not count as the first token", async () => {
   const hangingChunks = [
     'data: {"heartbeat":true}\n\n',

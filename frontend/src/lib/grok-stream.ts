@@ -103,7 +103,6 @@ function parseSsePart(
     idle.ms = Math.max(idle.ms, GROK_STREAM_IMAGE_IDLE_MS);
   }
   if (parsed.stream_status === "searching") {
-    receivedDelta.value = true;
     receivedActivity && (receivedActivity.value = true);
     if (idle) idle.ms = GROK_STREAM_SEARCH_IDLE_MS;
   }

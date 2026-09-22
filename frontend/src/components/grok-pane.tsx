@@ -379,7 +379,6 @@ export function GrokPane({
       }
       generatingRef.current = mapped === "generating";
       if (mapped === "queued" || mapped === "thinking") gotDeltaRef.current = false;
-      if (mapped === "writing") gotDeltaRef.current = true;
       setStreamStatus(mapped);
       const turn = normalizeTurnStatus(mapped);
       onUpdate((current) => ({

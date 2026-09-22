@@ -1687,10 +1687,33 @@ def _chat(
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text:
-                yield chat_service.encode_sse(
-                    chat_service.stream_error_event(504, chat_service.XAI_EMPTY_DETAIL)
-                )
-                return
+                tool_calls_out.clear()
+                async for piece in _stream_xai(None, None):
+                    if cancelled.is_set() or await request.is_disconnected():
+                        cancelled.set()
+                        if piece:
+                            assistant_parts.append(piece)
+                        _persist_assistant("".join(assistant_parts))
+                        return
+                    if not piece:
+                        if not saw_text:
+                            yield chat_service.encode_sse({"stream_status": "thinking"})
+                            await asyncio.sleep(0)
+                        continue
+                    first = not saw_text
+                    await emit_delta(piece)
+                    payload: dict[str, object] = {"delta": piece}
+                    if first:
+                        payload["stream_status"] = "writing"
+                    yield chat_service.encode_sse(payload)
+                    await asyncio.sleep(0)
+                if cancelled.is_set() or await request.is_disconnected():
+                    _persist_assistant("".join(assistant_parts))
+                    return
+            if not saw_text:
+                note = chat_service.EMPTY_REPLY_FALLBACK
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if persist and conversation_id:
                 assistant_text = "".join(assistant_parts).strip()
                 assistant_message_id = _persist_assistant(assistant_text)

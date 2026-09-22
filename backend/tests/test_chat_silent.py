@@ -266,7 +266,7 @@ class ChatSilentGateTests(unittest.TestCase):
         self.assertIn("Here is a real reply.", response.text)
         self.assertNotIn("returned no text", response.text)
 
-    def test_empty_xai_stream_emits_error_not_done(self):
+    def test_empty_xai_stream_emits_fallback_not_bare_error(self):
         async def empty(*_args, **_kwargs):
             if False:
                 yield ""  # pragma: no cover
@@ -284,8 +284,9 @@ class ChatSilentGateTests(unittest.TestCase):
                 json={"message": "hello", "model": "auto", "reasoning_effort": "auto"},
             )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("returned no text", response.text)
-        self.assertNotIn("data: [DONE]", response.text)
+        self.assertIn(chat_service.EMPTY_REPLY_FALLBACK, response.text)
+        self.assertIn("data: [DONE]", response.text)
+        self.assertNotIn("returned no text", response.text)
 
     def test_empty_piece_after_connect_is_thinking(self):
         async def fake_stream(*_args, **kwargs):
