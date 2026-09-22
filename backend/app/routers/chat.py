@@ -18,6 +18,7 @@ from app.database import SessionLocal, get_db
 from app.deps import require_user
 from app.models import User
 from app.routers.articles import _owned_article
+from app.services.destination import is_composed_guid
 from app.schemas import GrokConversationDetailOut, GrokConversationOut, GrokConversationPatchIn, GrokMessageFileOut, GrokMessageOut
 from app.http_limits import log_chat_exception
 from app.services import chat as chat_service
