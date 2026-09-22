@@ -54,6 +54,20 @@ class ChatGuardTests(unittest.TestCase):
         self.assertIn("Do not refuse questions because no article is attached", system)
         self.assertNotIn("Current article excerpt", system)
 
+    def test_standing_core_is_not_duplicated(self):
+        from app.services.chat import SYSTEM_PROMPT, build_system_content
+
+        core = build_system_content(None, include_article=False)
+        standing = core + "\n\nSteve's Junior memory\nkeep this once"
+        rebuilt = build_system_content(
+            None,
+            include_article=False,
+            extra_system=standing,
+        )
+        self.assertEqual(rebuilt, standing)
+        self.assertEqual(rebuilt.count(SYSTEM_PROMPT.strip()), 1)
+        self.assertEqual(rebuilt.count("general-knowledge mode"), 1)
+
     def test_system_prompt_steers_school_coding_and_fenced_code(self):
         messages = build_xai_messages([{"role": "user", "content": "python average"}], None, include_article=False)
         system = messages[0]["content"].lower()

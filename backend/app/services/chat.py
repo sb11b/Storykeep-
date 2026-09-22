@@ -33,7 +33,7 @@ REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_REASONING_EFFORT = "low"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
-CHAT_FIRST_BYTE_TIMEOUT_SEC = 20.0
+CHAT_FIRST_BYTE_TIMEOUT_SEC = 45.0
 CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC = 60.0
 CHAT_FIRST_BYTE_TIMEOUT_MAX_SEC = 90.0
 CHAT_IDLE_AFTER_TOKEN_MIN_SEC = 120.0
@@ -826,9 +826,17 @@ def _content_text(content: Any) -> str:
     if isinstance(content, list):
         parts = []
         for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(str(item.get("text") or ""))
-        return " ".join(parts)
+            if isinstance(item, str) and item:
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("type") or "")
+            if kind in {"text", "output_text"} or "text" in item:
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "".join(parts)
     return ""
 
 
@@ -1053,6 +1061,12 @@ def build_system_content(
     working_excerpt: str | None = None,
     extra_system: str | None = None,
 ) -> str:
+    extra = (extra_system or "").strip()
+    core = SYSTEM_PROMPT.strip()
+    # standing_system() already prefixes the core prompt. Do not send it twice —
+    # duplicate instructions + memory make grok-4.6 sit silent until the first-byte cut.
+    if extra.startswith(core):
+        return extra
     system = SYSTEM_PROMPT
     grounded = False
     if include_article and excerpt:
@@ -1064,8 +1078,8 @@ def build_system_content(
     if working_excerpt:
         system += WORKING_NOTE_MODE_APPEND + "\n\nWorking note markdown:\n" + working_excerpt
         grounded = True
-    if extra_system:
-        system += "\n\n" + extra_system
+    if extra:
+        system += "\n\n" + extra
     if not grounded:
         system += GENERAL_MODE_APPEND
     if recap_question:
@@ -1448,13 +1462,16 @@ def _parse_sse_payload(raw: str) -> tuple[str, bool, list[dict]]:
     if not choices:
         return "", False, []
     delta = choices[0].get("delta") or {}
-    content = delta.get("content")
-    visible = content if isinstance(content, str) and content else ""
+    visible = _content_text(delta.get("content"))
     if not visible:
         message = choices[0].get("message") or {}
-        fallback = message.get("content")
-        if isinstance(fallback, str) and fallback:
-            visible = fallback
+        visible = _content_text(message.get("content") if isinstance(message, dict) else "")
+    if not visible:
+        for key in ("text", "output_text"):
+            bit = delta.get(key)
+            if isinstance(bit, str) and bit:
+                visible = bit
+                break
     reasoning = delta.get("reasoning_content")
     tool_calls = delta.get("tool_calls") or []
     bits = [item for item in tool_calls if isinstance(item, dict)]

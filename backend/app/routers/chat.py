@@ -1534,29 +1534,44 @@ def _chat(
                             )
                     yield chat_service.encode_sse("[DONE]")
                     return
-            stream = _stream_xai(extra, tools)
-            async for piece in stream:
-                if cancelled.is_set() or await request.is_disconnected():
-                    cancelled.set()
-                    if piece:
-                        assistant_parts.append(piece)
-                    _persist_assistant("".join(assistant_parts))
-                    return
-                if not piece:
-                    if not saw_text:
-                        yield chat_service.encode_sse({"stream_status": "thinking"})
-                        await asyncio.sleep(0)
-                    continue
-                first = not saw_text
-                await emit_delta(piece)
-                payload: dict[str, object] = {"delta": piece}
-                if first:
-                    payload["stream_status"] = "writing"
-                yield chat_service.encode_sse(payload)
-                await asyncio.sleep(0)
+            async def consume_model(stream_tools: list[dict] | None):
+                async for piece in _stream_xai(extra, stream_tools):
+                    if cancelled.is_set() or await request.is_disconnected():
+                        cancelled.set()
+                        if piece:
+                            assistant_parts.append(piece)
+                        _persist_assistant("".join(assistant_parts))
+                        return
+                    if not piece:
+                        if not saw_text:
+                            yield chat_service.encode_sse({"stream_status": "thinking"})
+                            await asyncio.sleep(0)
+                        continue
+                    first = not saw_text
+                    await emit_delta(piece)
+                    payload: dict[str, object] = {"delta": piece}
+                    if first:
+                        payload["stream_status"] = "writing"
+                    yield chat_service.encode_sse(payload)
+                    await asyncio.sleep(0)
+
+            async for chunk in consume_model(tools):
+                yield chunk
             if cancelled.is_set() or await request.is_disconnected():
                 _persist_assistant("".join(assistant_parts))
                 return
+            if not saw_text and tools:
+                tool_calls_out.clear()
+                logger.warning(
+                    "xAI empty on tool turn — retrying core-only user=%s conversation=%s",
+                    user_id,
+                    conversation_id,
+                )
+                async for chunk in consume_model(None):
+                    yield chunk
+                if cancelled.is_set() or await request.is_disconnected():
+                    _persist_assistant("".join(assistant_parts))
+                    return
             follow_blocks: list[str] = []
             followup_query = search_tool.assemble_web_search_query(tool_calls_out)
             if followup_query and not already_searched and search_enabled:

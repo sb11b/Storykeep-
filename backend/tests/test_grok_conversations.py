@@ -177,7 +177,7 @@ class GrokConversationTests(unittest.TestCase):
             resolved_max_output_tokens,
         )
 
-        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 20.0)
+        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 45.0)
         self.assertEqual(JUNIOR_MAX_RESPONSE_WORDS, 100_000)
         self.assertEqual(MAX_TOKENS_CAP, 125_000)
         self.assertEqual(resolved_max_output_tokens(), 125_000)
@@ -220,6 +220,18 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(text, "Hello")
         self.assertTrue(active)
 
+    def test_parse_sse_chunk_reads_array_content(self):
+        raw = '{"choices":[{"delta":{"content":[{"type":"text","text":"Hel"},{"type":"text","text":"lo"}]}}]}'
+        text, active = _parse_sse_chunk(raw)
+        self.assertEqual(text, "Hello")
+        self.assertTrue(active)
+
+    def test_parse_sse_chunk_reads_delta_text_field(self):
+        raw = '{"choices":[{"delta":{"text":"Hi"}}]}'
+        text, active = _parse_sse_chunk(raw)
+        self.assertEqual(text, "Hi")
+        self.assertTrue(active)
+
     def test_default_chat_model_is_grok_46(self):
         self.assertEqual(default_full_model(), "grok-4.6")
         self.assertTrue(default_fast_model())
@@ -232,7 +244,7 @@ class GrokConversationTests(unittest.TestCase):
         self.assertEqual(event["message"], "Grok timed out after 45s.")
 
     def test_first_byte_timeout_is_eight_seconds_xai_silent(self):
-        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 20.0)
+        self.assertEqual(CHAT_FIRST_BYTE_TIMEOUT_SEC, 45.0)
         self.assertEqual(XAI_SILENT_DETAIL, "xAI silent")
         event = stream_error_event(504, XAI_SILENT_DETAIL)
         self.assertEqual(event["message"], "xAI silent")
