@@ -90,9 +90,13 @@ The Junior bubble is a movable panel. Replies stay in the session until **Add to
 
 S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 
-## Android later
+## Android (Talk / Type shell)
 
-`POST /api/v1/sync/delta` and `POST /api/v1/sync/push` are the contract for an offline reader. Saved articles include `content_html` so a phone can keep the text without hitting the original site.
+Days 1–3 UI only lives in [`android/`](android/README.md): Kotlin, Jetpack Compose, min SDK 26. Three screens (Home, Conversation, Stories) with local stub Talk / Type / Save. No Grok Voice APIs. Open the `android` folder in Android Studio to run it.
+
+Railway still deploys the web app from the root `Dockerfile`. The Android module is not in that image.
+
+`POST /api/v1/sync/delta` and `POST /api/v1/sync/push` remain the later offline-reader contract. Saved articles include `content_html` so a phone can keep the text without hitting the original site.
 
 ## Security (Junior lockdown)
 

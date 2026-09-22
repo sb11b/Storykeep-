@@ -1,4 +1,5 @@
 .git
+android
 .gitignore
 **/.venv
 **/node_modules
