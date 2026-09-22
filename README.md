@@ -30,6 +30,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 | Database | PostgreSQL 16 with `tsvector` search |
 | Extraction | Trafilatura, with Readability as fallback |
 | Web | Next.js, Tailwind, shadcn/ui |
+| Android | Kotlin, Jetpack Compose (`android/app`) |
 | Backup | Local files; Amazon S3 if `S3_BUCKET` is set |
 
 Planning documents live in `docs/`:
@@ -90,9 +91,11 @@ The Junior bubble is a movable panel. Replies stay in the session until **Add to
 
 S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 
-## Android later
+## Android
 
-`POST /api/v1/sync/delta` and `POST /api/v1/sync/push` are the contract for an offline reader. Saved articles include `content_html` so a phone can keep the text without hitting the original site.
+Minimal Kotlin + Jetpack Compose app module: open `android/` in Android Studio (or `./gradlew :app:assembleDebug` from that folder). Application id is `com.storykeep.app`.
+
+`POST /api/v1/sync/delta` and `POST /api/v1/sync/push` are the contract for an offline reader. Saved articles include `content_html` so a phone can keep the text without hitting the original site. The scaffold does not call those endpoints yet.
 
 ## Security (Junior lockdown)
 

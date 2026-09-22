@@ -31,6 +31,7 @@ backend/                 FastAPI app
     services/            rss, extractor, backup, archive, changelog
   requirements.txt
 frontend/                Next.js + Tailwind + shadcn/ui
+android/                 Kotlin + Jetpack Compose app (`:app`)
 docs/                    schema + API + this file
 docker-compose.yml       Postgres + API + web for Lightsail
 ```
