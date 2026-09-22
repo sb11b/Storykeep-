@@ -65,7 +65,37 @@ _PROMPT_PREFIX_RES = (
         re.I,
     ),
 )
+_BRANCH_EXPLICIT_RE = re.compile(
+    r"\b(?:branch|ref|startingRef)\s+(?:named|called)?\s*([A-Za-z0-9._/-]+)\b",
+    re.I,
+)
 _BRANCH_RE = re.compile(r"\b(?:on|from)\s+(?:branch\s+)?([A-Za-z0-9._/-]+)\b", re.I)
+_BRANCH_SKIP = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "new",
+        "feature",
+        "separate",
+        "fresh",
+        "dedicated",
+        "local",
+        "remote",
+        "its",
+        "this",
+        "that",
+        "your",
+        "my",
+        "our",
+        "to",
+        "for",
+        "in",
+        "with",
+        "and",
+        "or",
+    },
+)
 _AUTO_PR_RE = re.compile(
     r"\b(?:auto[\s-]?create\s+pr|open\s+a\s+pr|create\s+(?:a\s+)?pull\s+request)\b",
     re.I,
@@ -177,10 +207,29 @@ def extract_prompt(message: str) -> str:
     return text
 
 
+def _valid_branch_ref(ref: str) -> bool:
+    cleaned = (ref or "").strip().strip("/")
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered in _BRANCH_SKIP:
+        return False
+    if len(cleaned) == 1 and not cleaned.isdigit():
+        return False
+    return True
+
+
 def extract_branch(message: str) -> str:
-    match = _BRANCH_RE.search(message or "")
-    if match:
-        return match.group(1).strip()
+    text = message or ""
+    explicit = _BRANCH_EXPLICIT_RE.search(text)
+    if explicit:
+        ref = explicit.group(1).strip()
+        if _valid_branch_ref(ref):
+            return ref
+    for match in _BRANCH_RE.finditer(text):
+        ref = match.group(1).strip()
+        if _valid_branch_ref(ref):
+            return ref
     return _default_branch()
 
 
@@ -227,6 +276,19 @@ def _post(path: str, payload: dict[str, Any]) -> tuple[int, Any]:
     return response.status_code, body
 
 
+def _cursor_api_error_detail(body: Any) -> str:
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            message = str(err.get("message") or "").strip()
+            if message:
+                return message
+        message = str(body.get("message") or "").strip()
+        if message:
+            return message
+    return redact_secrets(str(body))[:400]
+
+
 def _format_agent_response(
     *,
     status_code: int,
@@ -236,7 +298,7 @@ def _format_agent_response(
     repo_url: str,
 ) -> CursorAgentOutcome:
     if status_code >= 400:
-        detail = redact_secrets(str(body))[:400]
+        detail = _cursor_api_error_detail(body)
         return CursorAgentOutcome(
             False,
             f"Cursor Cloud Agent create failed (HTTP {status_code}): {detail}",
@@ -326,6 +388,10 @@ def summarize_agent_for_user(outcome: CursorAgentOutcome) -> str:
         bits.append(f"Open: {outcome.agent_url}")
         return " ".join(bits)
     text = (outcome.text or "").strip()
+    if not outcome.ok and text:
+        if text.startswith("Cursor Cloud Agent create failed"):
+            return text
+        return f"Could not start Cursor Cloud Agent: {text.splitlines()[0][:400]}"
     if text:
         for line in text.splitlines():
             stripped = line.strip()

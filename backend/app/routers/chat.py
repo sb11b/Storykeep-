@@ -1519,6 +1519,21 @@ def _chat(
                 note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+                if not agent_outcome.ok:
+                    if persist and conversation_id:
+                        assistant_message_id = _persist_assistant("".join(assistant_parts))
+                        if assistant_message_id:
+                            yield chat_service.encode_sse(
+                                {
+                                    "conversation_id": str(conversation_id),
+                                    "assistant_message_id": assistant_message_id,
+                                    "model": resolved_model,
+                                    "model_choice": model_choice,
+                                    "reasoning_effort": resolved_reasoning,
+                                }
+                            )
+                    yield chat_service.encode_sse("[DONE]")
+                    return
             stream = _stream_xai(extra, tools)
             async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():

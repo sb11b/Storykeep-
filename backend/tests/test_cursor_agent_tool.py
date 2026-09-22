@@ -40,6 +40,21 @@ class CursorAgentToolTests(unittest.TestCase):
         msg = "Launch cloud agent from develop to fix auth"
         self.assertEqual(cursor_agent_tool.extract_branch(msg), "develop")
 
+    def test_extract_branch_on_main(self):
+        msg = "Launch cloud agent on main to fix auth"
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+
+    def test_extract_branch_ignores_on_a_article(self):
+        msg = (
+            "Start a cursor agent on a new branch to scaffold the Android module "
+            "days 1-3 Kotlin Compose min SDK 26"
+        )
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+
+    def test_extract_branch_explicit(self):
+        msg = "Start cursor agent branch feature/android-voice on main repo"
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "feature/android-voice")
+
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")
     def test_start_agent_success(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
