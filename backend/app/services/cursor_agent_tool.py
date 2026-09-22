@@ -317,6 +317,27 @@ def format_start_for_model(outcome: CursorAgentOutcome) -> str:
     return f"{prefix}\n{outcome.text}"
 
 
+def summarize_agent_for_user(outcome: CursorAgentOutcome) -> str:
+    """Plain reply when xAI stays silent after server-side agent start."""
+    if outcome.ok and outcome.agent_url:
+        bits = ["Cursor Cloud Agent started."]
+        if outcome.agent_id:
+            bits.append(f"Agent id: {outcome.agent_id}.")
+        bits.append(f"Open: {outcome.agent_url}")
+        return " ".join(bits)
+    text = (outcome.text or "").strip()
+    if text:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- Agent URL:"):
+                url = stripped.split(":", 1)[1].strip()
+                return f"Cursor Cloud Agent started. Open: {url}"
+        return text.splitlines()[0][:500]
+    if outcome.ok:
+        return "Cursor Cloud Agent started — open Cursor → Agents to watch progress."
+    return "Could not start Cursor Cloud Agent — check server logs or CURSOR_API_KEY on Railway."
+
+
 def _parse_tool_args(arguments: str) -> dict[str, Any]:
     try:
         parsed = json.loads(arguments or "{}")

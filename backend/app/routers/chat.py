@@ -1420,6 +1420,7 @@ def _chat(
             deploy_outcome: railway_tool.RailwayOutcome | None = None
             voice_list: list[dict[str, str]] | None = None
             already_started_agent = False
+            agent_outcome: cursor_agent_tool.CursorAgentOutcome | None = None
             output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
                 "stream_status": (
@@ -1501,9 +1502,12 @@ def _chat(
                 block = cursor_agent_tool.format_start_for_model(agent_outcome)
                 extra = f"{extra}\n{block}" if extra else block
             elif will_cursor_start:
-                block = cursor_agent_tool.format_start_for_model(
-                    cursor_agent_tool.start_agent("", source_message=user_text)
+                agent_outcome = await asyncio.to_thread(
+                    cursor_agent_tool.start_agent,
+                    "",
+                    source_message=user_text,
                 )
+                block = cursor_agent_tool.format_start_for_model(agent_outcome)
                 extra = f"{extra}\n{block}" if extra else block
             stream = _stream_xai(extra, tools)
             async for piece in stream:
@@ -1628,6 +1632,10 @@ def _chat(
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text and will_deploy and deploy_outcome is not None:
                 note = railway_tool.summarize_deploy_for_user(deploy_outcome)
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+            if not saw_text and will_cursor_start and agent_outcome is not None:
+                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text and voice_list is not None:
