@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
-import { Brain, CalendarClock, ChevronLeft, History, LoaderCircle, Lock, Maximize2, MessageSquarePlus, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronLeft, History, LoaderCircle, Lock, Maximize2, MessageSquarePlus, Pencil, Pin, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { createGrokPane, defaultGrokPaneName, GrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { JuniorJobsPanel } from "@/components/junior-jobs-panel";
@@ -555,6 +555,20 @@ export function GrokBubble({
     updatePane(focusedPaneId, (pane) => ({ ...pane, draft: "", pendingAttachments: [] }));
   }
 
+  async function pinConversation(row: GrokConversation) {
+    const pinned = !row.pinned;
+    try {
+      const updated = await api.patchChatConversation(row.id, { pinned });
+      setConversations((current) => {
+        const next = current.map((item) => (item.id === row.id ? { ...item, ...updated, pinned } : item));
+        next.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+        return next;
+      });
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not pin that chat");
+    }
+  }
+
   async function deleteConversation(row: GrokConversation) {
     if (!window.confirm(`Delete "${row.title}"? This cannot be undone.`)) return;
     try {
@@ -809,7 +823,10 @@ export function GrokBubble({
                       startRename(row);
                     }}
                   >
-                    <span className="line-clamp-2">{row.title}</span>
+                    <span className="line-clamp-2">
+                      {row.pinned ? <Pin className="mr-1 inline size-3 fill-current" /> : null}
+                      {row.title}
+                    </span>
                     <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
                       {grokModelLabel(row.model || "auto", row.last_model, row.last_reasoning)}
                     </span>
@@ -820,6 +837,12 @@ export function GrokBubble({
                     label={row.title}
                     className="mt-0.5"
                     items={[
+                      {
+                        key: "pin",
+                        label: row.pinned ? "Unpin from top" : "Pin to top",
+                        icon: <Pin className="size-3.5" />,
+                        onSelect: () => void pinConversation(row),
+                      },
                       {
                         key: "rename",
                         label: "Rename thread",

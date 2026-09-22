@@ -20,6 +20,7 @@ from app.schemas import (
     CategoryOut,
     FolderIn,
     FolderOut,
+    FolderPatch,
     Page,
     PreferencesIn,
     RssShelfIn,
@@ -31,7 +32,14 @@ from app.schemas import (
     TagOut,
 )
 from app.services import rss_shelves as rss_shelf_service
-from app.services.folders import create_folder, delete_folder, list_folders, rename_folder
+from app.services.folders import (
+    create_folder,
+    delete_folder,
+    get_folder,
+    list_folders,
+    rename_folder,
+    set_folder_pinned,
+)
 from app.services import changelog
 from app.services.overlay_search import article_search_match, overlay_text_subquery
 
@@ -486,7 +494,14 @@ def folders(
 ) -> list[FolderOut]:
     rows = list_folders(db, user, shelf)
     return [
-        FolderOut(id=row.id, shelf=row.shelf, name=row.name, item_count=count, created_at=row.created_at)
+        FolderOut(
+            id=row.id,
+            shelf=row.shelf,
+            name=row.name,
+            item_count=count,
+            pinned=bool(row.pinned),
+            created_at=row.created_at,
+        )
         for row, count in rows
     ]
 
@@ -499,18 +514,33 @@ def create_folder_route(
         row = create_folder(db, user, payload.shelf, payload.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return FolderOut(id=row.id, shelf=row.shelf, name=row.name, item_count=0, created_at=row.created_at)
+    return FolderOut(
+        id=row.id,
+        shelf=row.shelf,
+        name=row.name,
+        item_count=0,
+        pinned=bool(row.pinned),
+        created_at=row.created_at,
+    )
 
 
 @router.patch("/folders/{folder_id}", response_model=FolderOut)
 def rename_folder_route(
     folder_id: UUID,
-    payload: FolderIn,
+    payload: FolderPatch,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FolderOut:
+    if payload.name is None and payload.pinned is None:
+        raise HTTPException(status_code=400, detail="Send a name or pinned flag.")
     try:
-        row = rename_folder(db, user, folder_id, payload.name)
+        row = get_folder(db, user, folder_id)
+        if row is None:
+            raise ValueError("Folder not found.")
+        if payload.name is not None:
+            row = rename_folder(db, user, folder_id, payload.name)
+        if payload.pinned is not None:
+            row = set_folder_pinned(db, user, folder_id, payload.pinned)
     except ValueError as exc:
         status = 404 if "not found" in str(exc).lower() else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
@@ -521,6 +551,7 @@ def rename_folder_route(
         shelf=row.shelf,
         name=row.name,
         item_count=folder_item_count(db, user, row),
+        pinned=bool(row.pinned),
         created_at=row.created_at,
     )
 

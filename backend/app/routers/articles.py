@@ -260,11 +260,23 @@ def list_articles(
         tsquery = func.plainto_tsquery("english", q)
         stmt = stmt.where(article_search_match(user.id, tsquery, q))
     if sort == "published_asc":
-        stmt = stmt.order_by(Article.published_at.asc().nulls_last(), Article.created_at.asc())
+        stmt = stmt.order_by(
+            Article.pinned.desc(),
+            Article.published_at.asc().nulls_last(),
+            Article.created_at.asc(),
+        )
     elif sort == "saved_desc":
-        stmt = stmt.order_by(Article.saved_at.desc().nulls_last(), Article.published_at.desc().nulls_last())
+        stmt = stmt.order_by(
+            Article.pinned.desc(),
+            Article.saved_at.desc().nulls_last(),
+            Article.published_at.desc().nulls_last(),
+        )
     else:
-        stmt = stmt.order_by(Article.published_at.desc().nulls_last(), Article.created_at.desc())
+        stmt = stmt.order_by(
+            Article.pinned.desc(),
+            Article.published_at.desc().nulls_last(),
+            Article.created_at.desc(),
+        )
 
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = db.scalars(stmt.offset(offset).limit(limit)).unique().all()
@@ -373,6 +385,8 @@ def patch_article(
         article.read_at = now if payload.is_read else None
     if payload.is_starred is not None:
         article.is_starred = payload.is_starred
+    if payload.pinned is not None:
+        article.pinned = payload.pinned
     if payload.is_saved is not None:
         article.is_saved = payload.is_saved
         article.saved_at = now if payload.is_saved else None

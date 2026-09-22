@@ -155,6 +155,7 @@ class Article(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     is_saved: Mapped[bool] = mapped_column(Boolean, default=False)
     is_starred: Mapped[bool] = mapped_column(Boolean, default=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -213,6 +214,7 @@ class Folder(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     shelf: Mapped[str] = mapped_column(String(16), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="folders")
@@ -410,6 +412,7 @@ class GrokConversation(Base):
     reasoning: Mapped[str] = mapped_column(String(16), nullable=False, default="auto", server_default="auto")
     last_reasoning: Mapped[str | None] = mapped_column(String(16))
     recap_question: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     saved_note_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("articles.id", ondelete="SET NULL"), nullable=True
     )

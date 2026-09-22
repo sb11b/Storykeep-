@@ -11,7 +11,9 @@ export function isFolderShelf(
 }
 
 export function foldersForShelf(folders: Folder[], shelf: FilingDestination): Folder[] {
-  return folders.filter((row) => row.shelf === shelf);
+  return folders
+    .filter((row) => row.shelf === shelf)
+    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || a.name.localeCompare(b.name));
 }
 
 export function folderValueOnShelf(

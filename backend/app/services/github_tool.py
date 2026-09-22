@@ -44,7 +44,7 @@ _STATUS_RE = re.compile(
     r"workflow|ci(?:\s+status)?|"
     r"what(?:'s|\s+is)\s+(?:on|in)\s+github|"
     r"latest(?:\s+push|\s+commit)?|"
-    r"storykeep(?:\s+repo|\s+github)?|"
+    r"storykeep(?:\s+repo|\s+github)|"
     r"dispatch(?:\s+workflow)?|run(?:\s+the)?\s+ci|trigger(?:\s+the)?\s+workflow|"
     r"ship(?:\s+loop|\s+it)?)\b",
     re.I,

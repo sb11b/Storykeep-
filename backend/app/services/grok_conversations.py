@@ -52,7 +52,7 @@ def list_conversations(db: Session, user: User) -> list[GrokConversation]:
         db.scalars(
             select(GrokConversation)
             .where(GrokConversation.user_id == user.id)
-            .order_by(GrokConversation.updated_at.desc())
+            .order_by(GrokConversation.pinned.desc(), GrokConversation.updated_at.desc())
         ).all()
     )
 
@@ -275,11 +275,13 @@ def patch_conversation(
     last_reasoning: str | None = None,
     recap_question: bool | None = None,
     saved_note_id: UUID | None = None,
+    pinned: bool | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
     reasoning_provided: bool = False,
     recap_provided: bool = False,
     saved_note_provided: bool = False,
+    pinned_provided: bool = False,
 ) -> GrokConversation:
     return patch_conversation_for_user(
         db,
@@ -292,11 +294,13 @@ def patch_conversation(
         last_reasoning=last_reasoning,
         recap_question=recap_question,
         saved_note_id=saved_note_id,
+        pinned=pinned,
         title_provided=title_provided,
         model_provided=model_provided,
         reasoning_provided=reasoning_provided,
         recap_provided=recap_provided,
         saved_note_provided=saved_note_provided,
+        pinned_provided=pinned_provided,
     )
 
 
@@ -312,29 +316,42 @@ def patch_conversation_for_user(
     last_reasoning: str | None = None,
     recap_question: bool | None = None,
     saved_note_id: UUID | None = None,
+    pinned: bool | None = None,
     title_provided: bool = False,
     model_provided: bool = False,
     reasoning_provided: bool = False,
     recap_provided: bool = False,
     saved_note_provided: bool = False,
+    pinned_provided: bool = False,
 ) -> GrokConversation:
     row = owned_conversation_for_user(db, user_id, conversation_id)
+    touch_time = False
     if title_provided:
         first_user = first_user_message_content(db, conversation_id)
         row.title = resolve_patched_title(title or "", first_user)
+        touch_time = True
     if model_provided and model is not None:
         row.model = model
+        touch_time = True
     if reasoning_provided and reasoning is not None:
         row.reasoning = reasoning
+        touch_time = True
     if recap_provided and recap_question is not None:
         row.recap_question = recap_question
+        touch_time = True
     if saved_note_provided:
         row.saved_note_id = saved_note_id
+        touch_time = True
+    if pinned_provided and pinned is not None:
+        row.pinned = pinned
     if last_model is not None:
         row.last_model = last_model
+        touch_time = True
     if last_reasoning is not None:
         row.last_reasoning = last_reasoning
-    row.updated_at = datetime.now(timezone.utc)
+        touch_time = True
+    if touch_time:
+        row.updated_at = datetime.now(timezone.utc)
     db.add(row)
     db.flush()
     return row

@@ -213,6 +213,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ shelf, name }),
     }),
+  pinFolder: (folderId: string, pinned: boolean) =>
+    request<import("@/lib/types").Folder>(`/api/v1/folders/${folderId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    }),
   deleteFolder: (folderId: string) =>
     request<{ ok: boolean }>(`/api/v1/folders/${folderId}`, { method: "DELETE" }),
   feeds: (opts?: { shelfId?: string; categoryId?: string }) => {
@@ -476,7 +481,7 @@ export const api = {
   article: (id: string) => request<Article>(`/api/v1/articles/${id}`),
   patchArticle: (
     id: string,
-    body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred" | "destination" | "folder_id">>,
+    body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred" | "pinned" | "destination" | "folder_id">>,
   ) =>
     request<Article>(`/api/v1/articles/${id}`, {
       method: "PATCH",
@@ -707,7 +712,14 @@ export const api = {
   },
   patchChatConversation: (
     id: string,
-    payload: { title?: string; model?: string; reasoning?: string; recap_question?: boolean; saved_note_id?: string | null },
+    payload: {
+      title?: string;
+      model?: string;
+      reasoning?: string;
+      recap_question?: boolean;
+      saved_note_id?: string | null;
+      pinned?: boolean;
+    },
   ) => {
     if (!isConversationId(id)) return Promise.reject(new ApiError(422, INVALID_CHAT_TOAST));
     return request<GrokConversation>(`/api/v1/chat/conversations/${id}`, {

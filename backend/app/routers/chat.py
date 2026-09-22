@@ -379,11 +379,13 @@ def patch_conversation(
         reasoning=reasoning_value,
         recap_question=payload.recap_question,
         saved_note_id=payload.saved_note_id,
+        pinned=payload.pinned,
         title_provided="title" in fields,
         model_provided="model" in fields,
         reasoning_provided="reasoning" in fields,
         recap_provided="recap_question" in fields,
         saved_note_provided="saved_note_id" in fields,
+        pinned_provided="pinned" in fields,
     )
     db.commit()
     db.refresh(row)
@@ -681,9 +683,12 @@ async def chat(
     except MemoryError:
         log_chat_exception("chat memory error", user=getattr(user, "id", None))
         raise HTTPException(status_code=413, detail=chat_service.SEND_THREAD_TOO_LARGE) from None
-    except Exception:
+    except Exception as exc:
         log_chat_exception("chat failed", user=getattr(user, "id", None))
-        raise HTTPException(status_code=500, detail="Chat failed.") from None
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat failed ({exc.__class__.__name__}).",
+        ) from None
 
 
 def _chat(
@@ -1469,25 +1474,44 @@ def _chat(
                 else:
                     block = search_tool.format_hits_for_model(outcome.hits)
                     extra = f"{extra}\n{block}" if extra else block
-            if will_github and github_enabled:
-                github_outcome = await asyncio.to_thread(github_tool.fetch_status)
-                block = github_tool.format_status_for_model(github_outcome)
+            async def _ops_block(label: str, loader, formatter) -> str:
+                try:
+                    outcome = await asyncio.to_thread(loader)
+                    return formatter(outcome)
+                except Exception:
+                    log_chat_exception(
+                        f"{label} prefetch failed",
+                        user=user_id,
+                        conversation=conversation_id,
+                    )
+                    return f"{label} status was unavailable this turn. Answer without it."
+
+            if will_github:
+                block = await _ops_block(
+                    "GitHub",
+                    github_tool.fetch_status,
+                    github_tool.format_status_for_model,
+                )
                 extra = f"{extra}\n{block}" if extra else block
-            elif will_github:
-                block = github_tool.format_status_for_model(github_tool.fetch_status())
+            if will_deploy:
+                try:
+                    deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
+                    already_deployed = deploy_outcome.ok
+                    block = railway_tool.format_deploy_for_model(deploy_outcome)
+                except Exception:
+                    log_chat_exception(
+                        "Railway deploy prefetch failed",
+                        user=user_id,
+                        conversation=conversation_id,
+                    )
+                    block = "Railway deploy was unavailable this turn. Answer without it."
                 extra = f"{extra}\n{block}" if extra else block
-            if will_deploy and railway_enabled:
-                deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
-                already_deployed = deploy_outcome.ok
-                block = railway_tool.format_deploy_for_model(deploy_outcome)
-                extra = f"{extra}\n{block}" if extra else block
-            elif will_deploy:
-                deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
-                block = railway_tool.format_deploy_for_model(deploy_outcome)
-                extra = f"{extra}\n{block}" if extra else block
-            elif will_railway and not will_deploy:
-                railway_outcome = await asyncio.to_thread(railway_tool.fetch_status)
-                block = railway_tool.format_status_for_model(railway_outcome)
+            elif will_railway:
+                block = await _ops_block(
+                    "Railway",
+                    railway_tool.fetch_status,
+                    railway_tool.format_status_for_model,
+                )
                 extra = f"{extra}\n{block}" if extra else block
             if will_cursor_start:
                 start_task = asyncio.create_task(

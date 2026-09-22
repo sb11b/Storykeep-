@@ -75,7 +75,7 @@ _STATUS_RE = re.compile(
     r"what(?:'s|\s+is)\s+(?:on|in)\s+prod|"
     r"build(?:\s+stamp|\s+info)?|"
     r"latest(?:\s+deploy|\s+deployment)?|"
-    r"storykeep(?:\s+production|\s+deploy)?|"
+    r"storykeep(?:\s+production|\s+deploy)|"
     r"deploy(?:ment)?\s+logs?|build\s+logs?|"
     r"railway\s+variables?|env\s+vars?)\b",
     re.I,

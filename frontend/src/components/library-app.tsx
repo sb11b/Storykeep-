@@ -25,6 +25,7 @@ import {
   Minimize2,
   History,
   NotebookPen,
+  Pin,
   Plus,
   RefreshCw,
   Search,
@@ -1227,6 +1228,21 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     }
   }
 
+  async function pinListItem(item: ArticleListItem) {
+    const pinned = !item.pinned;
+    try {
+      const next = await api.patchArticle(item.id, { pinned });
+      setItems((current) => {
+        const mapped = current.map((row) => (row.id === item.id ? { ...row, ...next, pinned } : row));
+        mapped.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+        return mapped;
+      });
+      if (article?.id === item.id) setArticle((current) => (current ? { ...current, pinned } : current));
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not pin that note");
+    }
+  }
+
   async function patchSelected(body: Partial<Pick<Article, "is_read" | "is_saved" | "is_starred">>) {
     if (!selectedId || !article) return;
     const id = selectedId;
@@ -1437,6 +1453,16 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
     }
   }
 
+  async function pinFolderRow(folder: Folder) {
+    try {
+      await api.pinFolder(folder.id, !folder.pinned);
+      await loadNav();
+      toast.success(folder.pinned ? "Folder unpinned." : "Folder pinned to the top of this shelf.");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not pin that folder");
+    }
+  }
+
   async function renameFolderRow(folder: Folder) {
     const name = window.prompt("Rename folder:", folder.name)?.trim();
     if (!name || name === folder.name) return;
@@ -1488,6 +1514,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       customNoteShelves={customNoteShelves}
       onCreateFolder={(shelfKind) => createFolderOnShelf(shelfKind)}
       onRenameFolder={(folder) => void renameFolderRow(folder)}
+      onPinFolder={(folder) => void pinFolderRow(folder)}
       onDeleteFolder={(folder) => void deleteFolderRow(folder)}
       onShelf={(next) => {
         setListFirstOffset(0);
@@ -1852,6 +1879,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
                       );
                     }}
                     onDelete={() => setArticleToDelete(item)}
+                    onPin={() => void pinListItem(item)}
                     onClick={() => selectArticle(item)}
                   />
                 ))
@@ -2300,6 +2328,7 @@ function ShelfWithFolders({
   onShelf,
   onCreateFolder,
   onRenameFolder,
+  onPinFolder,
   onDeleteFolder,
 }: {
   shelfId: FilingDestination;
@@ -2311,6 +2340,7 @@ function ShelfWithFolders({
   onShelf: (shelf: Shelf) => void;
   onCreateFolder: (shelf: FilingDestination) => Promise<string | null>;
   onRenameFolder: (folder: Folder) => void;
+  onPinFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
 }) {
   const rows = foldersForShelf(folders, shelfId);
@@ -2342,8 +2372,24 @@ function ShelfWithFolders({
             count={folder.item_count}
             className="flex-1 text-[0.92rem]"
           >
+            {folder.pinned ? <Pin className="mr-1 inline size-3 fill-current" /> : null}
             {folder.name}
           </NavButton>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className={cn(
+              "shrink-0 hover:text-sidebar-foreground",
+              folder.pinned
+                ? "text-sidebar-foreground"
+                : "text-sidebar-foreground/45 opacity-0 group-hover:opacity-100",
+            )}
+            aria-label={folder.pinned ? `Unpin ${folder.name}` : `Pin ${folder.name} to the top`}
+            onClick={() => onPinFolder(folder)}
+          >
+            <Pin className="size-3" />
+          </Button>
           <Button
             type="button"
             size="icon-xs"
@@ -2385,6 +2431,7 @@ function Sidebar({
   onAddRssShelf,
   onCreateFolder,
   onRenameFolder,
+  onPinFolder,
   onDeleteFolder,
   onAdd,
   onAddCategory,
@@ -2415,6 +2462,7 @@ function Sidebar({
   onAddRssShelf: () => void;
   onCreateFolder: (shelf: FilingDestination) => Promise<string | null>;
   onRenameFolder: (folder: Folder) => void;
+  onPinFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
   onAdd: () => void;
   onAddCategory: () => void;
@@ -2469,11 +2517,11 @@ function Sidebar({
         <NavButton active={shelf.kind === "saved"} onClick={() => onShelf({ kind: "saved" })} icon={<Bookmark className="size-4" />} count={stats?.saved_count}>
           Saved
         </NavButton>
-        <ShelfWithFolders shelfId="vault" label="Vault" icon={<Library className="size-4" />} count={stats?.vault_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders shelfId="additions" label="Additions" icon={<FilePlus className="size-4" />} count={stats?.additions_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders shelfId="books" label="Books" icon={<BookOpen className="size-4" />} count={stats?.books_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders shelfId="notes" label="Notes" icon={<NotebookPen className="size-4" />} count={stats?.annotation_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
-        <ShelfWithFolders shelfId="schoolwork" label="Schoolwork" icon={<GraduationCap className="size-4" />} count={stats?.schoolwork_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="vault" label="Vault" icon={<Library className="size-4" />} count={stats?.vault_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onPinFolder={onPinFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="additions" label="Additions" icon={<FilePlus className="size-4" />} count={stats?.additions_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onPinFolder={onPinFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="books" label="Books" icon={<BookOpen className="size-4" />} count={stats?.books_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onPinFolder={onPinFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="notes" label="Notes" icon={<NotebookPen className="size-4" />} count={stats?.annotation_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onPinFolder={onPinFolder} onDeleteFolder={onDeleteFolder} />
+        <ShelfWithFolders shelfId="schoolwork" label="Schoolwork" icon={<GraduationCap className="size-4" />} count={stats?.schoolwork_count} shelf={shelf} folders={folders} onShelf={onShelf} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onPinFolder={onPinFolder} onDeleteFolder={onDeleteFolder} />
         {customNoteShelves.map((row) => (
           <ShelfWithFolders
             key={row.id}
@@ -2485,6 +2533,7 @@ function Sidebar({
             onShelf={onShelf}
             onCreateFolder={onCreateFolder}
             onRenameFolder={onRenameFolder}
+            onPinFolder={onPinFolder}
             onDeleteFolder={onDeleteFolder}
           />
         ))}
@@ -2587,6 +2636,7 @@ function ArticleRow({
   selected,
   onToggleSelect,
   onDelete,
+  onPin,
   onClick,
 }: {
   listIndex: number;
@@ -2595,6 +2645,7 @@ function ArticleRow({
   selected: boolean;
   onToggleSelect: () => void;
   onDelete: () => void;
+  onPin: () => void;
   onClick: () => void;
 }) {
   const thumbUrl = articleHeroImageUrl(item.image_url, item.url);
@@ -2648,11 +2699,28 @@ function ArticleRow({
             <ArticleImage src={thumbUrl} className="size-14 shrink-0 rounded-md object-cover bg-muted" />
           ) : null}
           <div className="min-w-0 flex-1">
-            <p className={cn("leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>{item.title}</p>
+            <p className={cn("leading-snug", item.is_read ? "font-medium text-foreground" : "font-semibold text-foreground")}>
+              {item.pinned ? <Pin className="mr-1 inline size-3.5 fill-current text-primary" /> : null}
+              {item.title}
+            </p>
             <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{stripHtml(item.summary)}</p>
           </div>
         </div>
       </button>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        className={cn("mt-0.5 shrink-0", item.pinned ? "text-primary" : "text-muted-foreground")}
+        aria-label={item.pinned ? `Unpin ${item.title}` : `Pin ${item.title} to the top`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onPin();
+        }}
+      >
+        <Pin className="size-3.5" />
+      </Button>
       <Button
         type="button"
         size="icon-sm"

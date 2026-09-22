@@ -318,11 +318,18 @@ class FolderIn(BaseModel):
     shelf: str
 
 
+class FolderPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    shelf: str | None = None
+    pinned: bool | None = None
+
+
 class FolderOut(BaseModel):
     id: uuid.UUID
     shelf: str
     name: str
     item_count: int = 0
+    pinned: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -447,6 +454,7 @@ class ArticleOut(BaseModel):
     is_read: bool
     is_saved: bool
     is_starred: bool
+    pinned: bool = False
     read_at: datetime | None
     saved_at: datetime | None
     fetched_at: datetime | None
@@ -488,6 +496,7 @@ class ArticleListItem(BaseModel):
     is_read: bool
     is_saved: bool
     is_starred: bool
+    pinned: bool = False
     has_full_text: bool = False
     source_kind: str = "rss"
     destination: str | None = None
@@ -501,6 +510,7 @@ class ArticlePatch(BaseModel):
     is_read: bool | None = None
     is_saved: bool | None = None
     is_starred: bool | None = None
+    pinned: bool | None = None
     destination: str | None = None
     folder_id: uuid.UUID | None = None
 
@@ -703,6 +713,7 @@ class GrokConversationOut(BaseModel):
     last_reasoning: str | None = None
     recap_question: bool = False
     saved_note_id: uuid.UUID | None = None
+    pinned: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -742,3 +753,4 @@ class GrokConversationPatchIn(BaseModel):
     reasoning: str | None = Field(default=None, max_length=16)
     recap_question: bool | None = None
     saved_note_id: uuid.UUID | None = None
+    pinned: bool | None = None
