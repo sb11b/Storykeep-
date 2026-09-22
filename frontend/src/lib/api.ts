@@ -810,7 +810,9 @@ export const api = {
                 meta.stream_status === "queued" ||
                 meta.stream_status === "writing" ||
                 meta.stream_status === "generating" ||
-                meta.stream_status === "searching"
+                meta.stream_status === "searching" ||
+                meta.stream_status === "starting_agent" ||
+                meta.stream_status === "deploying"
               ) {
                 tokenWatch?.disarm();
               }

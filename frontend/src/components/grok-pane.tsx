@@ -909,7 +909,9 @@ export function GrokPane({
             meta.stream_status === "thinking" ||
             meta.stream_status === "writing" ||
             meta.stream_status === "generating" ||
-            meta.stream_status === "searching"
+            meta.stream_status === "searching" ||
+            meta.stream_status === "starting_agent" ||
+            meta.stream_status === "deploying"
           ) {
             applyStreamStatus(meta.stream_status);
             const turn = normalizeTurnStatus(meta.stream_status);

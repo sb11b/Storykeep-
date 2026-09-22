@@ -22,14 +22,28 @@ export function isDefaultPaneName(name: string, index: number): boolean {
 export type ChatTurnStatus = "queued" | "thinking" | "writing" | "done" | "error";
 
 /** Server/stream aliases plus the turn enum. `working` means Thinking. */
-export type ChatStatusKind = ChatTurnStatus | "working" | "generating" | "searching";
+export type ChatStatusKind =
+  | ChatTurnStatus
+  | "working"
+  | "generating"
+  | "searching"
+  | "starting_agent"
+  | "deploying";
 
 export const NO_REPLY_TOAST = "No reply — retry";
 
 export function normalizeTurnStatus(kind: string | null | undefined): ChatTurnStatus | null {
   if (!kind) return null;
   if (kind === "queued") return "queued";
-  if (kind === "thinking" || kind === "working" || kind === "searching") return "thinking";
+  if (
+    kind === "thinking" ||
+    kind === "working" ||
+    kind === "searching" ||
+    kind === "starting_agent" ||
+    kind === "deploying"
+  ) {
+    return "thinking";
+  }
   if (kind === "writing" || kind === "generating") return "writing";
   if (kind === "done") return "done";
   if (kind === "error") return "error";
@@ -41,6 +55,8 @@ export function chatStatusLine(name: string, kind: ChatStatusKind): string {
   const turn = normalizeTurnStatus(kind);
   if (turn === "error") return "Error";
   if (kind === "searching") return "Searching…";
+  if (kind === "starting_agent") return "Starting Cloud Agent…";
+  if (kind === "deploying") return "Deploying Storykeep…";
   if (kind === "generating") return `${who} is generating…`;
   if (kind === "working") return `${who} is working…`;
   if (turn === "queued" || turn === "thinking") return `${who} is thinking…`;

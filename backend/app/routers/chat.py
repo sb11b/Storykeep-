@@ -1257,6 +1257,12 @@ def _chat(
         has_working_note=bool(working_excerpt),
         reasoning_effort=resolved_reasoning,
     )
+    if will_cursor_start and cursor_enabled:
+        # Cursor API create can take ~45s before xAI gets a turn — avoid client first-byte abort.
+        first_byte_timeout = max(
+            first_byte_timeout,
+            cursor_agent_tool.TIMEOUT_SEC + chat_service.CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC,
+        )
 
     def _persist_assistant(text: str) -> str | None:
         from app.services import junior_stamp
@@ -1509,6 +1515,10 @@ def _chat(
                 )
                 block = cursor_agent_tool.format_start_for_model(agent_outcome)
                 extra = f"{extra}\n{block}" if extra else block
+            if will_cursor_start and agent_outcome is not None:
+                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             stream = _stream_xai(extra, tools)
             async for piece in stream:
                 if cancelled.is_set() or await request.is_disconnected():

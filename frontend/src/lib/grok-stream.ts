@@ -107,6 +107,10 @@ function parseSsePart(
     receivedActivity && (receivedActivity.value = true);
     if (idle) idle.ms = GROK_STREAM_SEARCH_IDLE_MS;
   }
+  if (parsed.stream_status === "starting_agent" || parsed.stream_status === "deploying") {
+    receivedActivity && (receivedActivity.value = true);
+    if (idle) idle.ms = Math.max(idle.ms, GROK_STREAM_IDLE_AFTER_MS);
+  }
   if (
     parsed.stream_status === "thinking" ||
     parsed.stream_status === "working" ||
