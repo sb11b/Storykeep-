@@ -82,10 +82,43 @@ class CursorAgentToolTests(unittest.TestCase):
         outcome = cursor_agent_tool.start_agent("Add deploy polling tests", branch="main")
         self.assertTrue(outcome.ok)
         self.assertIn("Agent URL:", outcome.text)
+        self.assertIn("Push to main (Ubuntu)", outcome.text)
         self.assertEqual(outcome.agent_id, "bc-00000000-0000-0000-0000-000000000001")
         payload = mock_client.post.call_args.kwargs["json"]
         self.assertEqual(payload["prompt"]["text"], "Add deploy polling tests")
         self.assertEqual(payload["repos"][0]["startingRef"], "main")
+
+    def test_push_workflow_mentions_cursor_branch(self):
+        text = cursor_agent_tool.push_workflow_for_user(
+            agent_url="https://cursor.com/agents/bc-test",
+            repo_slug="sb11b/Storykeep-",
+        )
+        self.assertIn("cursor/*", text)
+        self.assertIn("git fetch github", text)
+        self.assertIn("Open in Cursor", text)
+
+    @patch("app.services.cursor_agent_tool.httpx.Client")
+    @patch("app.services.cursor_agent_tool.settings")
+    def test_start_agent_delegate_auto_pr(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
+        mock_settings.cursor_api_key = "key_test"
+        mock_settings.cursor_agent_repo = ""
+        mock_settings.github_repo = "sb11b/Storykeep-"
+        mock_settings.cursor_agent_branch = "main"
+        mock_settings.cursor_api_url = "https://api.cursor.com"
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "agent": {"id": "bc-1", "status": "ACTIVE", "url": "https://cursor.com/agents/bc-1"},
+            "run": {"id": "run-1", "status": "CREATING"},
+        }
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.post.return_value = response
+        mock_client_cls.return_value = mock_client
+        outcome = cursor_agent_tool.start_agent("Task", branch="main", auto_create_pr=True)
+        self.assertTrue(outcome.ok)
+        self.assertIn("Auto PR", outcome.text)
+        self.assertTrue(mock_client.post.call_args.kwargs["json"].get("autoCreatePR"))
 
     @patch("app.services.cursor_agent_tool.settings")
     def test_start_agent_not_configured(self, mock_settings: MagicMock) -> None:

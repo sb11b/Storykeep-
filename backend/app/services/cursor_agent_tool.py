@@ -22,10 +22,11 @@ CURSOR_TOOL_NAMES = frozenset({START_TOOL_NAME})
 
 CURSOR_ON_APPEND = """
 You can **start a real Cursor Cloud Agent** from chat (Steve's code twin — you spawn it; Cursor edits the repo in a cloud VM).
-- **cursor_start_agent**: creates a Cloud Agent with prompt text, repo URL, and branch (default main on sb11b/Storykeep-).
+- **cursor_start_agent**: creates a Cloud Agent with prompt text, repo URL, and starting ref main on sb11b/Storykeep-.
+- Cloud Agents commit on a **cursor/* branch**, not Steve's local main — the tool reply includes Ubuntu push steps and the agent URL.
 - Use ONLY when Steve explicitly asks to start/launch/open/spawn/run-in a Cursor or Cloud Agent — NOT when he only wants a copy-paste prompt block.
-- After the tool runs, give him the **agent URL** from the tool block (https://cursor.com/agents/bc-...). Say plainly that the agent is running; do not claim you edited files yourself.
-- Optional: set auto_create_pr=true when he asks to open a PR when done.
+- After the tool runs, give him the **agent URL** and the **Push to main (Ubuntu)** block from the tool data — do not bury instructions only in prose.
+- Delegate turns auto-open a PR to main when the agent finishes unless he says otherwise.
 - Tokens stay server-side; never echo CURSOR_API_KEY.
 """
 
@@ -289,6 +290,41 @@ def _cursor_api_error_detail(body: Any) -> str:
     return redact_secrets(str(body))[:400]
 
 
+def push_workflow_for_user(
+    *,
+    agent_url: str | None,
+    repo_slug: str | None = None,
+    starting_branch: str = "main",
+    auto_create_pr: bool = False,
+) -> str:
+    """Copy-paste Ubuntu steps — Cloud Agents use cursor/* branches, not local main."""
+    slug = (repo_slug or _repo_slug()).strip().strip("/")
+    repo_https = f"https://github.com/{slug}.git"
+    agent_line = agent_url or "(agent URL from above)"
+    pr_note = (
+        "An open PR to main will be created when the agent finishes — merge it on GitHub, then deploy."
+        if auto_create_pr
+        else "On GitHub → Branches, find the new cursor/… branch the agent pushed."
+    )
+    return (
+        "Push to main (Ubuntu) — Cloud Agents commit on cursor/*, not your local main:\n\n"
+        f"Easiest: open {agent_line} → **Open in Cursor** → review → push (or merge the PR).\n\n"
+        "Existing clone in Cursor terminal:\n"
+        "```bash\n"
+        "cd ~/Storykeep   # or your clone path\n"
+        f"git remote add github {repo_https} 2>/dev/null || true\n"
+        "git fetch github\n"
+        "git branch -r | grep 'github/cursor/'   # note the branch name\n"
+        f"git checkout {starting_branch}\n"
+        f"git pull github {starting_branch}\n"
+        "git merge github/cursor/YOUR-BRANCH-NAME\n"
+        f"git push github {starting_branch}\n"
+        "```\n"
+        f"{pr_note}\n"
+        "Then in Junior: Show GitHub status, then deploy Storykeep."
+    )
+
+
 def _format_agent_response(
     *,
     status_code: int,
@@ -296,6 +332,7 @@ def _format_agent_response(
     prompt: str,
     branch: str,
     repo_url: str,
+    auto_create_pr: bool = False,
 ) -> CursorAgentOutcome:
     if status_code >= 400:
         detail = _cursor_api_error_detail(body)
@@ -331,8 +368,22 @@ def _format_agent_response(
     if run.get("id"):
         lines.append(f"- Run id: {run.get('id')}")
     lines.append(f"- Run status: {run_status}")
+    if auto_create_pr:
+        lines.append("- Auto PR: enabled (merge to main on GitHub when the agent finishes)")
     lines.append(
-        "Report the Agent URL above to Steve in your reply. "
+        "Cloud Agents push to a cursor/* branch — not Steve's local main checkout. "
+        "Include the Push to main block below in your reply."
+    )
+    lines.append("")
+    lines.append(
+        push_workflow_for_user(
+            agent_url=agent_url,
+            starting_branch=branch,
+            auto_create_pr=auto_create_pr,
+        )
+    )
+    lines.append(
+        "Report the Agent URL and the Push to main (Ubuntu) block to Steve. "
         "Do not say the tool might be unavailable — this block is authoritative for this turn."
     )
     return CursorAgentOutcome(True, "\n".join(lines), status_code, agent_id, agent_url)
@@ -371,6 +422,7 @@ def start_agent(
         prompt=task,
         branch=ref,
         repo_url=repo_url,
+        auto_create_pr=bool(auto_pr),
     )
 
 

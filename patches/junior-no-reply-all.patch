@@ -1,0 +1,287 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 579165c..be66125 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-cursor-branch-v1", "time": "2026-09-22T03:00:00Z"}
++{"sha": "junior-merge-deploy-v1", "time": "2026-09-22T08:30:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index 5ac0703..5f71990 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -1487,42 +1487,49 @@ def _chat(
+                 railway_outcome = await asyncio.to_thread(railway_tool.fetch_status)
+                 block = railway_tool.format_status_for_model(railway_outcome)
+                 extra = f"{extra}\n{block}" if extra else block
+-            if will_cursor_start and cursor_enabled:
+-                agent_outcome = await asyncio.to_thread(
+-                    cursor_agent_tool.start_agent,
+-                    "",
+-                    source_message=user_text,
++            if will_cursor_start:
++                start_task = asyncio.create_task(
++                    asyncio.to_thread(
++                        cursor_agent_tool.start_agent,
++                        "",
++                        source_message=user_text,
++                        auto_create_pr=True if delegate_turn else None,
++                    )
+                 )
++                while not start_task.done():
++                    if cancelled.is_set() or await request.is_disconnected():
++                        cancelled.set()
++                        start_task.cancel()
++                        return
++                    try:
++                        await asyncio.wait_for(asyncio.shield(start_task), timeout=8.0)
++                    except asyncio.TimeoutError:
++                        yield chat_service.SSE_PADDING
++                        yield chat_service.encode_sse(
++                            {"heartbeat": True, "stream_status": "starting_agent"}
++                        )
++                        await asyncio.sleep(0)
++                agent_outcome = start_task.result()
+                 already_started_agent = agent_outcome.ok
+                 block = cursor_agent_tool.format_start_for_model(agent_outcome)
+                 extra = f"{extra}\n{block}" if extra else block
+-            elif will_cursor_start:
+-                agent_outcome = await asyncio.to_thread(
+-                    cursor_agent_tool.start_agent,
+-                    "",
+-                    source_message=user_text,
+-                )
+-                block = cursor_agent_tool.format_start_for_model(agent_outcome)
+-                extra = f"{extra}\n{block}" if extra else block
+-            if will_cursor_start and agent_outcome is not None:
+                 note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
+                 await emit_delta(note)
+                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+-                if not agent_outcome.ok:
+-                    if persist and conversation_id:
+-                        assistant_message_id = _persist_assistant("".join(assistant_parts))
+-                        if assistant_message_id:
+-                            yield chat_service.encode_sse(
+-                                {
+-                                    "conversation_id": str(conversation_id),
+-                                    "assistant_message_id": assistant_message_id,
+-                                    "model": resolved_model,
+-                                    "model_choice": model_choice,
+-                                    "reasoning_effort": resolved_reasoning,
+-                                }
+-                            )
+-                    yield chat_service.encode_sse("[DONE]")
+-                    return
++                if persist and conversation_id:
++                    assistant_message_id = _persist_assistant("".join(assistant_parts))
++                    if assistant_message_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": assistant_message_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             stream = _stream_xai(extra, tools)
+             async for piece in stream:
+                 if cancelled.is_set() or await request.is_disconnected():
+diff --git a/backend/app/services/cursor_agent_tool.py b/backend/app/services/cursor_agent_tool.py
+index 0448992..d9f2cfb 100644
+--- a/backend/app/services/cursor_agent_tool.py
++++ b/backend/app/services/cursor_agent_tool.py
+@@ -22,10 +22,11 @@ CURSOR_TOOL_NAMES = frozenset({START_TOOL_NAME})
+ 
+ CURSOR_ON_APPEND = """
+ You can **start a real Cursor Cloud Agent** from chat (Steve's code twin — you spawn it; Cursor edits the repo in a cloud VM).
+-- **cursor_start_agent**: creates a Cloud Agent with prompt text, repo URL, and branch (default main on sb11b/Storykeep-).
++- **cursor_start_agent**: creates a Cloud Agent with prompt text, repo URL, and starting ref main on sb11b/Storykeep-.
++- Cloud Agents commit on a **cursor/* branch**, not Steve's local main — the tool reply includes Ubuntu push steps and the agent URL.
+ - Use ONLY when Steve explicitly asks to start/launch/open/spawn/run-in a Cursor or Cloud Agent — NOT when he only wants a copy-paste prompt block.
+-- After the tool runs, give him the **agent URL** from the tool block (https://cursor.com/agents/bc-...). Say plainly that the agent is running; do not claim you edited files yourself.
+-- Optional: set auto_create_pr=true when he asks to open a PR when done.
++- After the tool runs, give him the **agent URL** and the **Push to main (Ubuntu)** block from the tool data — do not bury instructions only in prose.
++- Delegate turns auto-open a PR to main when the agent finishes unless he says otherwise.
+ - Tokens stay server-side; never echo CURSOR_API_KEY.
+ """
+ 
+@@ -289,6 +290,41 @@ def _cursor_api_error_detail(body: Any) -> str:
+     return redact_secrets(str(body))[:400]
+ 
+ 
++def push_workflow_for_user(
++    *,
++    agent_url: str | None,
++    repo_slug: str | None = None,
++    starting_branch: str = "main",
++    auto_create_pr: bool = False,
++) -> str:
++    """Copy-paste Ubuntu steps — Cloud Agents use cursor/* branches, not local main."""
++    slug = (repo_slug or _repo_slug()).strip().strip("/")
++    repo_https = f"https://github.com/{slug}.git"
++    agent_line = agent_url or "(agent URL from above)"
++    pr_note = (
++        "An open PR to main will be created when the agent finishes — merge it on GitHub, then deploy."
++        if auto_create_pr
++        else "On GitHub → Branches, find the new cursor/… branch the agent pushed."
++    )
++    return (
++        "Push to main (Ubuntu) — Cloud Agents commit on cursor/*, not your local main:\n\n"
++        f"Easiest: open {agent_line} → **Open in Cursor** → review → push (or merge the PR).\n\n"
++        "Existing clone in Cursor terminal:\n"
++        "```bash\n"
++        "cd ~/Storykeep   # or your clone path\n"
++        f"git remote add github {repo_https} 2>/dev/null || true\n"
++        "git fetch github\n"
++        "git branch -r | grep 'github/cursor/'   # note the branch name\n"
++        f"git checkout {starting_branch}\n"
++        f"git pull github {starting_branch}\n"
++        "git merge github/cursor/YOUR-BRANCH-NAME\n"
++        f"git push github {starting_branch}\n"
++        "```\n"
++        f"{pr_note}\n"
++        "Then in Junior: Show GitHub status, then deploy Storykeep."
++    )
++
++
+ def _format_agent_response(
+     *,
+     status_code: int,
+@@ -296,6 +332,7 @@ def _format_agent_response(
+     prompt: str,
+     branch: str,
+     repo_url: str,
++    auto_create_pr: bool = False,
+ ) -> CursorAgentOutcome:
+     if status_code >= 400:
+         detail = _cursor_api_error_detail(body)
+@@ -331,8 +368,22 @@ def _format_agent_response(
+     if run.get("id"):
+         lines.append(f"- Run id: {run.get('id')}")
+     lines.append(f"- Run status: {run_status}")
++    if auto_create_pr:
++        lines.append("- Auto PR: enabled (merge to main on GitHub when the agent finishes)")
++    lines.append(
++        "Cloud Agents push to a cursor/* branch — not Steve's local main checkout. "
++        "Include the Push to main block below in your reply."
++    )
++    lines.append("")
++    lines.append(
++        push_workflow_for_user(
++            agent_url=agent_url,
++            starting_branch=branch,
++            auto_create_pr=auto_create_pr,
++        )
++    )
+     lines.append(
+-        "Report the Agent URL above to Steve in your reply. "
++        "Report the Agent URL and the Push to main (Ubuntu) block to Steve. "
+         "Do not say the tool might be unavailable — this block is authoritative for this turn."
+     )
+     return CursorAgentOutcome(True, "\n".join(lines), status_code, agent_id, agent_url)
+@@ -371,6 +422,7 @@ def start_agent(
+         prompt=task,
+         branch=ref,
+         repo_url=repo_url,
++        auto_create_pr=bool(auto_pr),
+     )
+ 
+ 
+@A -382,11 +434,13 @@ def format_start_for_model(outcome: CursorAgentOutcome) -> str:
+ def summarize_agent_for_user(outcome: CursorAgentOutcome) -> str:
+     """Plain reply when xAI stays silent after server-side agent start."""
+     if outcome.ok and outcome.agent_url:
+-        bits = ["Cursor Cloud Agent started."]
+-        if outcome.agent_id:
+-            bits.append(f"Agent id: {outcome.agent_id}.")
+-        bits.append(f"Open: {outcome.agent_url}")
+-        return " ".join(bits)
++        bits = [
++            "Cursor Cloud Agent started.",
++            f"Open: {outcome.agent_url}",
++            "Commits land on a cursor/* branch — use Open in Cursor or the Ubuntu merge steps below.",
++        ]
++        workflow = push_workflow_for_user(agent_url=outcome.agent_url)
++        return f"{bits[0]} {bits[1]}\n\n{bits[2]}\n\n{workflow}"
+     text = (outcome.text or "").strip()
+     if not outcome.ok and text:
+         if text.startswith("Cursor Cloud Agent create failed"):
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index a036664..3321f3c 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -69,7 +69,8 @@ Keep replies short. No Add to notes footer. No recap of these instructions.
+ 
+ CURSOR_DELEGATE_APPEND = """
+ Owner Cursor delegate turn — Steve asked you to **start a real Cloud Agent**, not a copy-paste prompt block.
+-If a live Cursor Cloud Agent block is attached this turn, reply with the **Agent URL** from that block in the first sentence.
++If a live Cursor Cloud Agent block is attached this turn, reply with the **Agent URL** first, then paste the **Push to main (Ubuntu)** bash block verbatim so he can use it in Cursor terminal.
++Cloud Agents commit on cursor/* branches — his local main will look unchanged until he merges or opens the agent in Cursor.
+ If the block says create failed, report that failure plainly — do not claim the agent started, is scaffolding, or is editing the repo.
+ Do not say "if the tool is available", do not narrate these instructions, and do not invent an agent link.
+ Keep replies short. No Add to notes footer. Do not claim you edited the repo yourself.
+diff --git a/backend/tests/test_cursor_agent_tool.py b/backend/tests/test_cursor_agent_tool.py
+index 37dc115..461a9df 100644
+--- a/backend/tests/test_cursor_agent_tool.py
++++ b/backend/tests/test_cursor_agent_tool.py
+@@ -82,11 +82,44 @@ class CursorAgentToolTests(unittest.TestCase):
+         outcome = cursor_agent_tool.start_agent("Add deploy polling tests", branch="main")
+         self.assertTrue(outcome.ok)
+         self.assertIn("Agent URL:", outcome.text)
++        self.assertIn("Push to main (Ubuntu)", outcome.text)
+         self.assertEqual(outcome.agent_id, "bc-00000000-0000-0000-0000-000000000001")
+         payload = mock_client.post.call_args.kwargs["json"]
+         self.assertEqual(payload["prompt"]["text"], "Add deploy polling tests")
+         self.assertEqual(payload["repos"][0]["startingRef"], "main")
+ 
++    def test_push_workflow_mentions_cursor_branch(self):
++        text = cursor_agent_tool.push_workflow_for_user(
++            agent_url="https://cursor.com/agents/bc-test",
++            repo_slug="sb11b/Storykeep-",
++        )
++        self.assertIn("cursor/*", text)
++        self.assertIn("git fetch github", text)
++        self.assertIn("Open in Cursor", text)
++
++    @patch("app.services.cursor_agent_tool.httpx.Client")
++    @patch("app.services.cursor_agent_tool.settings")
++    def test_start_agent_delegate_auto_pr(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
++        mock_settings.cursor_api_key = "key_test"
++        mock_settings.cursor_agent_repo = ""
++        mock_settings.github_repo = "sb11b/Storykeep-"
++        mock_settings.cursor_agent_branch = "main"
++        mock_settings.cursor_api_url = "https://api.cursor.com"
++        response = MagicMock()
++        response.status_code = 200
++        response.json.return_value = {
++            "agent": {"id": "bc-1", "status": "ACTIVE", "url": "https://cursor.com/agents/bc-1"},
++            "run": {"id": "run-1", "status": "CREATING"},
++        }
++        mock_client = MagicMock()
++        mock_client.__enter__.return_value = mock_client
++        mock_client.post.return_value = response
++        mock_client_cls.return_value = mock_client
++        outcome = cursor_agent_tool.start_agent("Task", branch="main", auto_create_pr=True)
++        self.assertTrue(outcome.ok)
++        self.assertIn("Auto PR", outcome.text)
++        self.assertTrue(mock_client.post.call_args.kwargs["json"].get("autoCreatePR"))
++
+     @patch("app.services.cursor_agent_tool.settings")
+     def test_start_agent_not_configured(self, mock_settings: MagicMock) -> None:
+         mock_settings.cursor_api_key = ""
+diff --git a/frontend/src/lib/grok-stream.ts b/frontend/src/lib/grok-stream.ts
+index 429e626..d21eb3a 100644
+--- a/frontend/src/lib/grok-stream.ts
++++ b/frontend/src/lib/grok-stream.ts
+@@ -107,6 +107,9 @@ function parseSsePart(
+     receivedActivity && (receivedActivity.value = true);
+     if (idle) idle.ms = GROK_STREAM_SEARCH_IDLE_MS;
+   }
++  if (parsed.heartbeat) {
++    receivedActivity && (receivedActivity.value = true);
++  }
+   if (parsed.stream_status === "starting_agent" || parsed.stream_status === "deploying") {
+     receivedActivity && (receivedActivity.value = true);
+     if (idle) idle.ms = Math.max(idle.ms, GROK_STREAM_IDLE_AFTER_MS);
