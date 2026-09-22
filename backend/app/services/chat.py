@@ -33,7 +33,7 @@ REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_REASONING_EFFORT = "low"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
 CHAT_CONNECT_TIMEOUT_SEC = 8.0
-CHAT_FIRST_BYTE_TIMEOUT_SEC = 20.0
+CHAT_FIRST_BYTE_TIMEOUT_SEC = 45.0
 CHAT_FIRST_BYTE_TIMEOUT_HEAVY_SEC = 60.0
 CHAT_FIRST_BYTE_TIMEOUT_MAX_SEC = 90.0
 CHAT_IDLE_AFTER_TOKEN_MIN_SEC = 120.0
@@ -1065,7 +1065,11 @@ def build_system_content(
         system += WORKING_NOTE_MODE_APPEND + "\n\nWorking note markdown:\n" + working_excerpt
         grounded = True
     if extra_system:
-        system += "\n\n" + extra_system
+        extra = extra_system.strip()
+        # Legacy callers used to embed SYSTEM_PROMPT in extra_system; do not send it twice.
+        if extra.startswith(SYSTEM_PROMPT.strip()):
+            return extra
+        system += "\n\n" + extra
     if not grounded:
         system += GENERAL_MODE_APPEND
     if recap_question:
@@ -1438,6 +1442,24 @@ async def stream_completion(
         ) from exc
 
 
+def _content_text(value: Any) -> str:
+    """Accept string, text-part arrays, and {text|content|output_text} objects."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_content_text(item) for item in value)
+    if isinstance(value, dict):
+        for key in ("text", "content", "output_text"):
+            piece = value.get(key)
+            if isinstance(piece, str) and piece:
+                return piece
+            if isinstance(piece, list):
+                joined = _content_text(piece)
+                if joined:
+                    return joined
+    return ""
+
+
 def _parse_sse_payload(raw: str) -> tuple[str, bool, list[dict]]:
     """Return (user-visible text, activity, tool_call fragments)."""
     try:
@@ -1447,19 +1469,20 @@ def _parse_sse_payload(raw: str) -> tuple[str, bool, list[dict]]:
     choices = parsed.get("choices") or []
     if not choices:
         return "", False, []
-    delta = choices[0].get("delta") or {}
-    content = delta.get("content")
-    visible = content if isinstance(content, str) and content else ""
-    if not visible:
-        message = choices[0].get("message") or {}
-        fallback = message.get("content")
-        if isinstance(fallback, str) and fallback:
-            visible = fallback
-    reasoning = delta.get("reasoning_content")
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    delta = choice.get("delta") or {}
+    message = choice.get("message") or {}
+    visible = (
+        _content_text(delta.get("content"))
+        or _content_text(delta.get("text"))
+        or _content_text(message.get("content"))
+        or _content_text(message.get("text"))
+        or _content_text(choice.get("text"))
+    )
+    reasoning = delta.get("reasoning_content") or message.get("reasoning_content")
     tool_calls = delta.get("tool_calls") or []
     bits = [item for item in tool_calls if isinstance(item, dict)]
     if not bits:
-        message = choices[0].get("message") or {}
         extra = message.get("tool_calls") or []
         bits = [item for item in extra if isinstance(item, dict)]
     active = bool(visible) or (isinstance(reasoning, str) and bool(reasoning)) or bool(bits)

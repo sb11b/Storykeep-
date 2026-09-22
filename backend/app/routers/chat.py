@@ -1162,21 +1162,10 @@ def _chat(
         ops_turn=ops_turn,
         delegate_turn=delegate_turn,
     )
-    core_system = chat_service.build_system_content(
-        excerpt,
-        include_article=include_article,
-        recap_question=recap_question,
-        has_attachments=has_attachments,
-        include_note=include_note,
-        note_excerpt=note_excerpt,
-        working_excerpt=working_excerpt,
-        extra_system=None,
-    )
     extra_system = junior_model.standing_system(
         db,
         user,
         user_text=user_text,
-        core_prompt=core_system,
         extras=turn_extras,
     )
     calendar_tools = (
@@ -1621,6 +1610,29 @@ def _chat(
                 extra = extra_system
                 for block in follow_blocks:
                     extra = f"{extra}\n{block}" if extra else block
+                async for piece in _stream_xai(extra, None):
+                    if cancelled.is_set() or await request.is_disconnected():
+                        cancelled.set()
+                        if piece:
+                            assistant_parts.append(piece)
+                        _persist_assistant("".join(assistant_parts))
+                        return
+                    if not piece:
+                        if not saw_text:
+                            yield chat_service.encode_sse({"stream_status": "thinking"})
+                            await asyncio.sleep(0)
+                        continue
+                    first = not saw_text
+                    await emit_delta(piece)
+                    payload: dict[str, object] = {"delta": piece}
+                    if first:
+                        payload["stream_status"] = "writing"
+                    yield chat_service.encode_sse(payload)
+                    await asyncio.sleep(0)
+                if cancelled.is_set() or await request.is_disconnected():
+                    _persist_assistant("".join(assistant_parts))
+                    return
+            if not saw_text and tools and not follow_blocks:
                 async for piece in _stream_xai(extra, None):
                     if cancelled.is_set() or await request.is_disconnected():
                         cancelled.set()

@@ -47,6 +47,27 @@ class ChatGuardTests(unittest.TestCase):
         self.assertIn("Title: Long", excerpt)
         self.assertIn("§", excerpt)
 
+    def test_build_xai_messages_does_not_double_core_prompt(self):
+        from app.services.chat import SYSTEM_PROMPT
+
+        extra = "Owner note: keep answers short."
+        messages = build_xai_messages(
+            [{"role": "user", "content": "hi"}],
+            None,
+            include_article=False,
+            extra_system=extra,
+        )
+        system = messages[0]["content"]
+        self.assertEqual(system.count("school coding assistant"), 1)
+        self.assertIn(extra, system)
+        doubled = build_xai_messages(
+            [{"role": "user", "content": "hi"}],
+            None,
+            include_article=False,
+            extra_system=SYSTEM_PROMPT + "\n\n" + extra,
+        )
+        self.assertEqual(doubled[0]["content"].count("school coding assistant"), 1)
+
     def test_general_mode_prompt_allows_outside_knowledge(self):
         messages = build_xai_messages([{"role": "user", "content": "Explain GDP"}], None, include_article=False)
         system = messages[0]["content"]
@@ -225,6 +246,7 @@ class ChatGuardTests(unittest.TestCase):
         from app.services.chat import first_byte_timeout_sec
 
         hello = first_byte_timeout_sec(message_chars=200)
+        self.assertGreaterEqual(hello, 45.0)
         heavy = first_byte_timeout_sec(
             message_chars=70_000,
             has_attachments=True,

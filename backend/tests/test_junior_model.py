@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock, patch
 
 from app.services import junior_model
+from app.services.chat import SYSTEM_PROMPT
 
 
 class JuniorModelTests(unittest.TestCase):
@@ -181,6 +183,21 @@ class JuniorModelTests(unittest.TestCase):
         )
         joined = "\n".join(extras)
         self.assertIn("Storykeep web", joined)
+
+    def test_standing_system_omits_core_prompt(self):
+        user = MagicMock()
+        db = MagicMock()
+        with patch("app.services.junior_model.junior_memory.system_section", return_value="Junior memory\nKeep it short."):
+            text = junior_model.standing_system(
+                db,
+                user,
+                user_text="hello",
+                extras=["Turn extra"],
+                core_prompt=SYSTEM_PROMPT,
+            )
+        self.assertIn("Keep it short.", text)
+        self.assertIn("Turn extra", text)
+        self.assertNotIn("school coding assistant", text)
 
     def test_model_payload_marks_truncated(self):
         payload = junior_model.model_payload(

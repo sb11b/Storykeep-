@@ -101,7 +101,11 @@ class ChatIndexUnitTests(unittest.TestCase):
             },
             standing_memory="STANDING_MEMORY",
         )
-        self.assertEqual(payload[0], {"role": "system", "content": "STANDING_MEMORY"})
+        from app.services.chat import SYSTEM_PROMPT
+
+        self.assertTrue(payload[0]["content"].startswith(SYSTEM_PROMPT))
+        self.assertIn("STANDING_MEMORY", payload[0]["content"])
+        self.assertEqual(payload[0]["role"], "system")
         self.assertEqual(payload[-1], {"role": "user", "content": "summarize this thread"})
         self.assertEqual(len(payload), 4)
 

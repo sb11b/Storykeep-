@@ -234,6 +234,38 @@ class ChatSilentGateTests(unittest.TestCase):
         tools = captured.get("tools")
         self.assertTrue(tools is None or all((t.get("function") or {}).get("name") != "propose_send_mail" for t in tools))
 
+    def test_empty_tool_turn_retries_without_tools(self):
+        calls: list[object] = []
+
+        async def fake_stream(*_args, **kwargs):
+            calls.append(kwargs.get("tools"))
+            if kwargs.get("tools"):
+                if False:
+                    yield ""  # pragma: no cover
+                return
+            yield "Here is a real reply."
+
+        app = _app()
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.search_tool.owner_can_search", return_value=True),
+            patch("app.routers.chat.search_tool.wants_web_search", return_value=False),
+            patch.object(chat_service, "stream_completion", fake_stream),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "What is a Python list?", "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertTrue(calls[0])
+        self.assertIsNone(calls[-1])
+        self.assertIn("Here is a real reply.", response.text)
+        self.assertNotIn("returned no text", response.text)
+
     def test_empty_xai_stream_emits_error_not_done(self):
         async def empty(*_args, **_kwargs):
             if False:

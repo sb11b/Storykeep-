@@ -236,11 +236,12 @@ def standing_system(
     user: User,
     *,
     user_text: str,
-    core_prompt: str,
     extras: list[str] | None = None,
+    core_prompt: str | None = None,
 ) -> str:
-    """Standing memory + core Junior prompt + only turn-relevant extras."""
-    parts: list[str] = [core_prompt.strip()]
+    """Standing memory + only turn-relevant extras. Core prompt is sent once in build_xai_messages."""
+    del core_prompt
+    parts: list[str] = []
     memory = junior_memory.system_section(db, user)
     if memory:
         prefix, _, body = memory.partition("\n")
@@ -306,10 +307,18 @@ def model_payload(
     slice: dict[str, Any],
     standing_memory: str,
 ) -> list[dict[str, str]]:
-    """Standing memory + one read_chat slice + current user line."""
+    """Core prompt once + standing extras + one read_chat slice + current user line."""
+    from app.services.chat import SYSTEM_PROMPT
+
     rows = slice.get("messages") or slice.get("turns") or []
     window, _ = cap_slice_messages(rows)
-    system = standing_memory
+    memory = (standing_memory or "").strip()
+    if memory.startswith(SYSTEM_PROMPT.strip()):
+        system = memory
+    elif memory:
+        system = f"{SYSTEM_PROMPT}\n\n{memory}"
+    else:
+        system = SYSTEM_PROMPT
     if slice.get("truncated"):
         system += "\n\n[Slice truncated=true. Summarize what you have; ask Steve for the next offset.]"
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
