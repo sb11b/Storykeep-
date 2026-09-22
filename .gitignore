@@ -11,3 +11,9 @@ frontend/.next/
 frontend/out/
 *.log
 .DS_Store
+android/.gradle/
+android/.idea/
+android/local.properties
+android/app/build/
+android/build/
+android/**/captures/
