@@ -80,6 +80,16 @@ JUNIOR_FEEDBACK_APPEND = """
 Steve is giving feedback on Junior's clarity. Answer plainly — use the Junior capabilities section, not a Cursor copy-paste block unless he asked for one.
 """
 
+CHAT_PROGRAM_APPEND = """
+Steve wants chat/program organization — answer with this system (no web search needed):
+- **One program per pane chat**: Storykeep web, Android Talk/Type, Meridian bootstrap, school course — each gets its own Junior pane thread.
+- **Rename the pane** (tap the pane title) to the program name so the tab matches the work.
+- **Stay in the right thread**: deploy/GitHub/Cursor agent turns belong in Storykeep web; Android UI in Android pane; Meridian bootstrap in its own pane until wired.
+- **Index**: if a chat index is attached, list titles + ids and tell him which pane/thread fits which program.
+- Offer a simple rule he can follow: before each session, check the pane name matches the program he is about to work on.
+Keep it short and actionable. No Add to notes footer.
+"""
+
 ANDROID_SCOPE_APPEND = """
 Steve is on the Android Talk/Type app (Compose, Kotlin, voice_id, schema.sql). Give Cursor-ready copy-paste blocks when he asks; you do not fill Cursor's editor.
 Do not railway_deploy for Android — that only redeploys Storykeep web. Default Listen voice is castor unless he picks another.
@@ -141,6 +151,24 @@ def cursor_prompt_has_task_details(message: str) -> bool:
 
 def is_junior_feedback_turn(message: str) -> bool:
     return bool(_JUNIOR_FEEDBACK_RE.search(message or ""))
+
+
+def is_chat_program_turn(message: str) -> bool:
+    from app.services import chat_index
+
+    text = (message or "").strip()
+    if not text:
+        return False
+    if chat_index.wants_index(text):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:organize(?:\s+\w+){0,4}\s+chats?|program per chat|"
+            r"correct (?:program|chat|pane|thread)|wrong chat|separate chats?)\b",
+            text,
+            re.I,
+        )
+    )
 
 
 def is_android_project_turn(message: str) -> bool:
@@ -394,13 +422,12 @@ def build_turn_extras(
             extras.append(unread_mail_md)
     elif mail_connected and mail_tool.wants_send_mail(user_text):
         extras.append(mail_tool.MAIL_ON_APPEND)
-    if search_enabled and not cursor_task:
-        from app.services import chat as chat_service
-
-        if will_search or not chat_service.is_small_talk_turn(user_text):
-            extras.append(search_tool.SEARCH_ON_APPEND)
+    if search_enabled and not cursor_task and will_search:
+        extras.append(search_tool.SEARCH_ON_APPEND)
     if not cursor_task:
         extras.append(JUNIOR_CAPABILITIES_APPEND)
+    if is_chat_program_turn(user_text):
+        extras.append(CHAT_PROGRAM_APPEND)
     if is_junior_feedback_turn(user_text):
         extras.append(JUNIOR_FEEDBACK_APPEND)
     elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):

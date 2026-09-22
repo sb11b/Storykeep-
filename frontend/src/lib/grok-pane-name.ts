@@ -32,6 +32,10 @@ export type ChatStatusKind =
 
 export const NO_REPLY_TOAST = "No reply — retry";
 
+/** Shown in the bubble when the model stream ends with no words. Never leave the turn blank. */
+export const EMPTY_REPLY_BODY =
+  "I didn't get a text reply from the model on that turn. Try sending again — if it keeps happening, start a fresh chat thread.";
+
 export function normalizeTurnStatus(kind: string | null | undefined): ChatTurnStatus | null {
   if (!kind) return null;
   if (kind === "queued") return "queued";

@@ -434,11 +434,13 @@ def format_start_for_model(outcome: CursorAgentOutcome) -> str:
 def summarize_agent_for_user(outcome: CursorAgentOutcome) -> str:
     """Plain reply when xAI stays silent after server-side agent start."""
     if outcome.ok and outcome.agent_url:
-        bits = ["Cursor Cloud Agent started."]
-        if outcome.agent_id:
-            bits.append(f"Agent id: {outcome.agent_id}.")
-        bits.append(f"Open: {outcome.agent_url}")
-        return " ".join(bits)
+        bits = [
+            "Cursor Cloud Agent started.",
+            f"Open: {outcome.agent_url}",
+            "Commits land on a cursor/* branch — use Open in Cursor or the Ubuntu merge steps below.",
+        ]
+        workflow = push_workflow_for_user(agent_url=outcome.agent_url)
+        return f"{bits[0]} {bits[1]}\n\n{bits[2]}\n\n{workflow}"
     text = (outcome.text or "").strip()
     if not outcome.ok and text:
         if text.startswith("Cursor Cloud Agent create failed"):

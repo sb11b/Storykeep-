@@ -1,0 +1,454 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 5b90942..6ee9d95 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-empty-fallback-v1", "time": "2026-09-22T08:50:00Z"}
++{"sha": "junior-reply-always-v1", "time": "2026-09-22T09:10:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index 8f9173b..8c638d1 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -1181,9 +1181,9 @@ def _chat(
+     search_tools = (
+         [search_tool.WEB_SEARCH_TOOL]
+         if search_enabled
++        and will_search
+         and not ops_turn
+         and not delegate_turn
+-        and not chat_service.is_small_talk_turn(user_text)
+         and not junior_model.is_cursor_task_turn(user_text)
+         else None
+     )
+@@ -1351,13 +1351,15 @@ def _chat(
+         tried_slim = False
+         while True:
+             try:
+-                async for piece in _open_stream(
+-                    extra,
+-                    stream_tools,
+-                    history=slim_history if tried_slim else None,
+-                    working="" if tried_slim else None,
+-                    reasoning=slim_reasoning if tried_slim else None,
+-                    fb_timeout=slim_timeout if tried_slim else None,
++                async for piece in chat_service.pace_stream(
++                    _open_stream(
++                        extra,
++                        stream_tools,
++                        history=slim_history if tried_slim else None,
++                        working="" if tried_slim else None,
++                        reasoning=slim_reasoning if tried_slim else None,
++                        fb_timeout=slim_timeout if tried_slim else None,
++                    )
+                 ):
+                     yield piece
+                 return
+@@ -1532,9 +1534,19 @@ def _chat(
+                 return
+             stream = _stream_xai(extra, tools)
+             async for piece in stream:
++                if piece is chat_service.STREAM_HEARTBEAT:
++                    yield chat_service.SSE_PADDING
++                    yield chat_service.encode_sse(
++                        {
++                            "heartbeat": True,
++                            "stream_status": "thinking" if not saw_text else "writing",
++                        }
++                    )
++                    await asyncio.sleep(0)
++                    continue
+                 if cancelled.is_set() or await request.is_disconnected():
+                     cancelled.set()
+-                    if piece:
++                    if isinstance(piece, str) and piece:
+                         assistant_parts.append(piece)
+                     _persist_assistant("".join(assistant_parts))
+                     return
+@@ -1618,9 +1630,19 @@ def _chat(
+                 for block in follow_blocks:
+                     extra = f"{extra}\n{block}" if extra else block
+                 async for piece in _stream_xai(extra, None):
++                    if piece is chat_service.STREAM_HEARTBEAT:
++                        yield chat_service.SSE_PADDING
++                        yield chat_service.encode_sse(
++                            {
++                                "heartbeat": True,
++                                "stream_status": "thinking" if not saw_text else "writing",
++                            }
++                        )
++                        await asyncio.sleep(0)
++                        continue
+                     if cancelled.is_set() or await request.is_disconnected():
+                         cancelled.set()
+-                        if piece:
++                        if isinstance(piece, str) and piece:
+                             assistant_parts.append(piece)
+                         _persist_assistant("".join(assistant_parts))
+                         return
+@@ -1641,9 +1663,19 @@ def _chat(
+                     return
+             if not saw_text and tools and not follow_blocks:
+                 async for piece in _stream_xai(extra, None):
++                    if piece is chat_service.STREAM_HEARTBEAT:
++                        yield chat_service.SSE_PADDING
++                        yield chat_service.encode_sse(
++                            {
++                                "heartbeat": True,
++                                "stream_status": "thinking" if not saw_text else "writing",
++                            }
++                        )
++                        await asyncio.sleep(0)
++                        continue
+                     if cancelled.is_set() or await request.is_disconnected():
+                         cancelled.set()
+-                        if piece:
++                        if isinstance(piece, str) and piece:
+                             assistant_parts.append(piece)
+                         _persist_assistant("".join(assistant_parts))
+                         return
+@@ -1689,9 +1721,19 @@ def _chat(
+             if not saw_text:
+                 tool_calls_out.clear()
+                 async for piece in _stream_xai(None, None):
++                    if piece is chat_service.STREAM_HEARTBEAT:
++                        yield chat_service.SSE_PADDING
++                        yield chat_service.encode_sse(
++                            {
++                                "heartbeat": True,
++                                "stream_status": "thinking" if not saw_text else "writing",
++                            }
++                        )
++                        await asyncio.sleep(0)
++                        continue
+                     if cancelled.is_set() or await request.is_disconnected():
+                         cancelled.set()
+-                        if piece:
++                        if isinstance(piece, str) and piece:
+                             assistant_parts.append(piece)
+                         _persist_assistant("".join(assistant_parts))
+                         return
+@@ -1735,6 +1777,27 @@ def _chat(
+         except HTTPException as exc:
+             status_code, detail = chat_service.http_exception_detail(exc)
+             partial_text = "".join(assistant_parts)
++            if not partial_text.strip() and chat_service.is_recoverable_empty_reply(
++                status_code, detail
++            ):
++                note = chat_service.EMPTY_REPLY_FALLBACK
++                assistant_parts.append(note)
++                await emit_delta(note)
++                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
++                if persist and conversation_id:
++                    saved_id = _persist_assistant(note)
++                    if saved_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": saved_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             flushed = flushed or bool(partial_text)
+             saved_id = _persist_assistant(partial_text) if persist else None
+             if saved_id and conversation_id:
+diff --git a/backend/app/services/chat.py b/backend/app/services/chat.py
+index 48182a5..5e2769c 100644
+--- a/backend/app/services/chat.py
++++ b/backend/app/services/chat.py
+@@ -45,6 +45,57 @@ EMPTY_REPLY_FALLBACK = (
+     "I didn't get a text reply from the model on that turn. "
+     "Try sending again — if it keeps happening, start a fresh chat thread."
+ )
++
++
++def is_recoverable_empty_reply(status_code: int, detail: str) -> bool:
++    """504 empty/silent streams should surface fallback text, not a bare error bubble."""
++    if status_code != 504:
++        return False
++    cleaned = (detail or "").strip()
++    return cleaned in {XAI_SILENT_DETAIL, XAI_EMPTY_DETAIL}
++
++
++STREAM_HEARTBEAT = object()
++
++
++async def pace_stream(source: AsyncIterator[str], interval: float = 8.0) -> AsyncIterator[str | object]:
++    """Yield source items, and STREAM_HEARTBEAT whenever the source is quiet.
++
++    Proxies and the browser drop chat streams that go ~60s with no bytes. xAI
++    often sits that long before the first token, which surfaced as "No reply".
++    """
++    end = object()
++    queue: asyncio.Queue[object] = asyncio.Queue()
++
++    async def pump() -> None:
++        try:
++            async for piece in source:
++                await queue.put(piece)
++        except Exception as exc:
++            await queue.put(exc)
++        finally:
++            await queue.put(end)
++
++    task = asyncio.create_task(pump())
++    try:
++        while True:
++            try:
++                item = await asyncio.wait_for(queue.get(), timeout=interval)
++            except asyncio.TimeoutError:
++                yield STREAM_HEARTBEAT
++                continue
++            if item is end:
++                return
++            if isinstance(item, Exception):
++                raise item
++            yield item
++    finally:
++        if not task.done():
++            task.cancel()
++            try:
++                await task
++            except asyncio.CancelledError:
++                pass
+ SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
+ # Railway env can still hold retired aliases. Invalid ids hang the stream until a proxy 504.
+ _DEAD_MODEL_ALIASES = {
+diff --git a/backend/app/services/chat_index.py b/backend/app/services/chat_index.py
+index 2216373..ed62c54 100644
+--- a/backend/app/services/chat_index.py
++++ b/backend/app/services/chat_index.py
+@@ -44,6 +44,9 @@ _INDEX_RE = re.compile(
+     r"\ball chats\b|"
+     r"\bcatch me up\b|"
+     r"\bchat index\b|"
++    r"\borganize(?:\s+\w+){0,4}\s+chats?\b|"
++    r"\bwhich chat\b|"
++    r"\bcorrect (?:program|chat|pane|thread)\b|"
+     r"\b(other|previous|past|older)\s+chats\b|"
+     r"\blist(?:\s+my|\s+the)?\s+chats\b|"
+     r"\bacross chats\b",
+diff --git a/backend/app/services/cursor_agent_tool.py b/backend/app/services/cursor_agent_tool.py
+index 6cb4c31..d9f2cfb 100644
+--- a/backend/app/services/cursor_agent_tool.py
++++ b/backend/app/services/cursor_agent_tool.py
+@@ -434,11 +434,13 @@ def format_start_for_model(outcome: CursorAgentOutcome) -> str:
+ def summarize_agent_for_user(outcome: CursorAgentOutcome) -> str:
+     """Plain reply when xAI stays silent after server-side agent start."""
+     if outcome.ok and outcome.agent_url:
+-        bits = ["Cursor Cloud Agent started."]
+-        if outcome.agent_id:
+-            bits.append(f"Agent id: {outcome.agent_id}.")
+-        bits.append(f"Open: {outcome.agent_url}")
+-        return " ".join(bits)
++        bits = [
++            "Cursor Cloud Agent started.",
++            f"Open: {outcome.agent_url}",
++            "Commits land on a cursor/* branch — use Open in Cursor or the Ubuntu merge steps below.",
++        ]
++        workflow = push_workflow_for_user(agent_url=outcome.agent_url)
++        return f"{bits[0]} {bits[1]}\n\n{bits[2]}\n\n{workflow}"
+     text = (outcome.text or "").strip()
+     if not outcome.ok and text:
+         if text.startswith("Cursor Cloud Agent create failed"):
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index 3321f3c..4640c04 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -80,6 +80,16 @@ JUNIOR_FEEDBACK_APPEND = """
+ Steve is giving feedback on Junior's clarity. Answer plainly — use the Junior capabilities section, not a Cursor copy-paste block unless he asked for one.
+ """
+ 
++CHAT_PROGRAM_APPEND = """
++Steve wants chat/program organization — answer with this system (no web search needed):
++- **One program per pane chat**: Storykeep web, Android Talk/Type, Meridian bootstrap, school course — each gets its own Junior pane thread.
++- **Rename the pane** (tap the pane title) to the program name so the tab matches the work.
++- **Stay in the right thread**: deploy/GitHub/Cursor agent turns belong in Storykeep web; Android UI in Android pane; Meridian bootstrap in its own pane until wired.
++- **Index**: if a chat index is attached, list titles + ids and tell him which pane/thread fits which program.
++- Offer a simple rule he can follow: before each session, check the pane name matches the program he is about to work on.
++Keep it short and actionable. No Add to notes footer.
++"""
++
+ ANDROID_SCOPE_APPEND = """
+ Steve is on the Android Talk/Type app (Compose, Kotlin, voice_id, schema.sql). Give Cursor-ready copy-paste blocks when he asks; you do not fill Cursor's editor.
+ Do not railway_deploy for Android — that only redeploys Storykeep web. Default Listen voice is castor unless he picks another.
+@@ -143,6 +153,24 @@ def is_junior_feedback_turn(message: str) -> bool:
+     return bool(_JUNIOR_FEEDBACK_RE.search(message or ""))
+ 
+ 
++def is_chat_program_turn(message: str) -> bool:
++    from app.services import chat_index
++
++    text = (message or "").strip()
++    if not text:
++        return False
++    if chat_index.wants_index(text):
++        return True
++    return bool(
++        re.search(
++            r"\b(?:organize(?:\s+\w+){0,4}\s+chats?|program per chat|"
++            r"correct (?:program|chat|pane|thread)|wrong chat|separate chats?)\b",
++            text,
++            re.I,
++        )
++    )
++
++
+ def is_android_project_turn(message: str) -> bool:
+     return bool(_ANDROID_PROJECT_RE.search(message or ""))
+ 
+@@ -394,13 +422,12 @@ def build_turn_extras(
+             extras.append(unread_mail_md)
+     elif mail_connected and mail_tool.wants_send_mail(user_text):
+         extras.append(mail_tool.MAIL_ON_APPEND)
+-    if search_enabled and not cursor_task:
+-        from app.services import chat as chat_service
+-
+-        if will_search or not chat_service.is_small_talk_turn(user_text):
+-            extras.append(search_tool.SEARCH_ON_APPEND)
++    if search_enabled and not cursor_task and will_search:
++        extras.append(search_tool.SEARCH_ON_APPEND)
+     if not cursor_task:
+         extras.append(JUNIOR_CAPABILITIES_APPEND)
++    if is_chat_program_turn(user_text):
++        extras.append(CHAT_PROGRAM_APPEND)
+     if is_junior_feedback_turn(user_text):
+         extras.append(JUNIOR_FEEDBACK_APPEND)
+     elif is_android_project_turn(user_text) and not asks_for_cursor_prompt(user_text):
+diff --git a/frontend/src/components/grok-pane.tsx b/frontend/src/components/grok-pane.tsx
+index 8180c8c..26d10df 100644
+--- a/frontend/src/components/grok-pane.tsx
++++ b/frontend/src/components/grok-pane.tsx
+@@ -14,7 +14,7 @@ import { MailProposalCard } from "@/components/mail-overlay";
+ import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
+ import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
+ import { wordIndexFromSelection } from "@/lib/tts-words";
+-import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
++import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
+ import { Button } from "@/components/ui/button";
+ import { Textarea } from "@/components/ui/textarea";
+ import { ApiError, api } from "@/lib/api";
+@@ -1070,8 +1070,22 @@ export function GrokPane({
+       streamFailed = true;
+       const aborted = controller.signal.aborted && !(error instanceof ApiError);
+       if (aborted) {
+-        failOpenTurn(assistantId, true);
+-        toast.error(NO_REPLY_TOAST);
++        onUpdate((current) => ({
++          ...current,
++          streamStatus: null,
++          messages: current.messages.map((item) => {
++            if (item.role !== "assistant" || !(item.waiting || item.id === assistantId)) return item;
++            const kept = (item.content || "").trim();
++            return {
++              ...item,
++              waiting: false,
++              turnStatus: kept ? ("done" as const) : ("error" as const),
++              failed: !kept,
++              error: kept ? null : "Stopped.",
++              content: item.content,
++            };
++          }),
++        }));
+         return;
+       }
+       const status = error instanceof ApiError ? error.status : 502;
+@@ -1120,22 +1134,32 @@ export function GrokPane({
+             !/\/api\/v1\/media\//.test(item.content) &&
+             /Generating the image|Here's the image|implemented and passing/i.test(item.content);
+           const empty = wipePlaceholder || !kept;
++          const bubble = empty
++            ? imageFail
++              ? shortImage || "Could not generate that image."
++              : emptyDetail || formatted || EMPTY_REPLY_BODY
++            : item.content;
++          const softEmpty =
++            empty &&
++            !imageFail &&
++            (bubble === EMPTY_REPLY_BODY ||
++              /didn't get a text reply|xai silent|returned no text/i.test(bubble));
+           return {
+             ...item,
+             waiting: false,
+-            turnStatus: "error" as const,
+-            failed: true,
+-            error: empty
+-              ? imageFail
+-                ? shortImage || "Could not generate that image."
+-                : NO_REPLY_TOAST
+-              : formatted,
+-            content: wipePlaceholder ? "" : item.content,
++            turnStatus: softEmpty ? ("done" as const) : ("error" as const),
++            failed: !softEmpty,
++            error: softEmpty ? null : imageFail ? shortImage || "Could not generate that image." : formatted,
++            content: empty ? bubble : item.content,
+           };
+         }),
+       }));
+       applyStreamStatus("error");
+-      if (!oversizedPaste) {
++      if (
++        !oversizedPaste &&
++        toastText !== NO_REPLY_TOAST &&
++        !/didn't get a text reply|xai silent|returned no text/i.test(toastText)
++      ) {
+         toast.error(toastText);
+       }
+     } finally {
+@@ -1178,8 +1202,22 @@ export function GrokPane({
+         window.setTimeout(() => maybeRearmSts(), 120);
+         return;
+       }
+-      failOpenTurn(assistantId, false);
+-      toast.error(NO_REPLY_TOAST);
++      onUpdate((current) => ({
++        ...current,
++        streamStatus: null,
++        messages: current.messages.map((item) =>
++          item.id === assistantId || item.waiting
++            ? {
++                ...item,
++                waiting: false,
++                turnStatus: "done" as const,
++                failed: false,
++                error: null,
++                content: item.content?.trim() ? item.content : EMPTY_REPLY_BODY,
++              }
++            : item,
++        ),
++      }));
+     }
+   }
+ 
+diff --git a/frontend/src/lib/grok-pane-name.ts b/frontend/src/lib/grok-pane-name.ts
+index 4227b9d..d83c568 100644
+--- a/frontend/src/lib/grok-pane-name.ts
++++ b/frontend/src/lib/grok-pane-name.ts
+@@ -32,6 +32,10 @@ export type ChatStatusKind =
+ 
+ export const NO_REPLY_TOAST = "No reply — retry";
+ 
++/** Shown in the bubble when the model stream ends with no words. Never leave the turn blank. */
++export const EMPTY_REPLY_BODY =
++  "I didn't get a text reply from the model on that turn. Try sending again — if it keeps happening, start a fresh chat thread.";
++
+ export function normalizeTurnStatus(kind: string | null | undefined): ChatTurnStatus | null {
+   if (!kind) return null;
+   if (kind === "queued") return "queued";
+diff --git a/frontend/src/lib/grok-stream.ts b/frontend/src/lib/grok-stream.ts
+index 9d54a93..958cc8e 100644
+--- a/frontend/src/lib/grok-stream.ts
++++ b/frontend/src/lib/grok-stream.ts
+@@ -108,6 +108,9 @@ function parseSsePart(
+   }
+   if (parsed.heartbeat) {
+     receivedActivity && (receivedActivity.value = true);
++    handlers.onMeta?.({
++      stream_status: parsed.stream_status || "thinking",
++    });
+   }
+   if (parsed.stream_status === "starting_agent" || parsed.stream_status === "deploying") {
+     receivedActivity && (receivedActivity.value = true);

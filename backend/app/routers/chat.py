@@ -1181,9 +1181,9 @@ def _chat(
     search_tools = (
         [search_tool.WEB_SEARCH_TOOL]
         if search_enabled
+        and will_search
         and not ops_turn
         and not delegate_turn
-        and not chat_service.is_small_talk_turn(user_text)
         and not junior_model.is_cursor_task_turn(user_text)
         else None
     )
@@ -1351,13 +1351,15 @@ def _chat(
         tried_slim = False
         while True:
             try:
-                async for piece in _open_stream(
-                    extra,
-                    stream_tools,
-                    history=slim_history if tried_slim else None,
-                    working="" if tried_slim else None,
-                    reasoning=slim_reasoning if tried_slim else None,
-                    fb_timeout=slim_timeout if tried_slim else None,
+                async for piece in chat_service.pace_stream(
+                    _open_stream(
+                        extra,
+                        stream_tools,
+                        history=slim_history if tried_slim else None,
+                        working="" if tried_slim else None,
+                        reasoning=slim_reasoning if tried_slim else None,
+                        fb_timeout=slim_timeout if tried_slim else None,
+                    )
                 ):
                     yield piece
                 return
@@ -1532,9 +1534,19 @@ def _chat(
                 return
             stream = _stream_xai(extra, tools)
             async for piece in stream:
+                if piece is chat_service.STREAM_HEARTBEAT:
+                    yield chat_service.SSE_PADDING
+                    yield chat_service.encode_sse(
+                        {
+                            "heartbeat": True,
+                            "stream_status": "thinking" if not saw_text else "writing",
+                        }
+                    )
+                    await asyncio.sleep(0)
+                    continue
                 if cancelled.is_set() or await request.is_disconnected():
                     cancelled.set()
-                    if piece:
+                    if isinstance(piece, str) and piece:
                         assistant_parts.append(piece)
                     _persist_assistant("".join(assistant_parts))
                     return
@@ -1618,9 +1630,19 @@ def _chat(
                 for block in follow_blocks:
                     extra = f"{extra}\n{block}" if extra else block
                 async for piece in _stream_xai(extra, None):
+                    if piece is chat_service.STREAM_HEARTBEAT:
+                        yield chat_service.SSE_PADDING
+                        yield chat_service.encode_sse(
+                            {
+                                "heartbeat": True,
+                                "stream_status": "thinking" if not saw_text else "writing",
+                            }
+                        )
+                        await asyncio.sleep(0)
+                        continue
                     if cancelled.is_set() or await request.is_disconnected():
                         cancelled.set()
-                        if piece:
+                        if isinstance(piece, str) and piece:
                             assistant_parts.append(piece)
                         _persist_assistant("".join(assistant_parts))
                         return
@@ -1641,9 +1663,19 @@ def _chat(
                     return
             if not saw_text and tools and not follow_blocks:
                 async for piece in _stream_xai(extra, None):
+                    if piece is chat_service.STREAM_HEARTBEAT:
+                        yield chat_service.SSE_PADDING
+                        yield chat_service.encode_sse(
+                            {
+                                "heartbeat": True,
+                                "stream_status": "thinking" if not saw_text else "writing",
+                            }
+                        )
+                        await asyncio.sleep(0)
+                        continue
                     if cancelled.is_set() or await request.is_disconnected():
                         cancelled.set()
-                        if piece:
+                        if isinstance(piece, str) and piece:
                             assistant_parts.append(piece)
                         _persist_assistant("".join(assistant_parts))
                         return
@@ -1689,9 +1721,19 @@ def _chat(
             if not saw_text:
                 tool_calls_out.clear()
                 async for piece in _stream_xai(None, None):
+                    if piece is chat_service.STREAM_HEARTBEAT:
+                        yield chat_service.SSE_PADDING
+                        yield chat_service.encode_sse(
+                            {
+                                "heartbeat": True,
+                                "stream_status": "thinking" if not saw_text else "writing",
+                            }
+                        )
+                        await asyncio.sleep(0)
+                        continue
                     if cancelled.is_set() or await request.is_disconnected():
                         cancelled.set()
-                        if piece:
+                        if isinstance(piece, str) and piece:
                             assistant_parts.append(piece)
                         _persist_assistant("".join(assistant_parts))
                         return
@@ -1735,6 +1777,27 @@ def _chat(
         except HTTPException as exc:
             status_code, detail = chat_service.http_exception_detail(exc)
             partial_text = "".join(assistant_parts)
+            if not partial_text.strip() and chat_service.is_recoverable_empty_reply(
+                status_code, detail
+            ):
+                note = chat_service.EMPTY_REPLY_FALLBACK
+                assistant_parts.append(note)
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+                if persist and conversation_id:
+                    saved_id = _persist_assistant(note)
+                    if saved_id:
+                        yield chat_service.encode_sse(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": saved_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                                "reasoning_effort": resolved_reasoning,
+                            }
+                        )
+                yield chat_service.encode_sse("[DONE]")
+                return
             flushed = flushed or bool(partial_text)
             saved_id = _persist_assistant(partial_text) if persist else None
             if saved_id and conversation_id:

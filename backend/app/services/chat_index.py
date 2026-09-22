@@ -44,6 +44,9 @@ _INDEX_RE = re.compile(
     r"\ball chats\b|"
     r"\bcatch me up\b|"
     r"\bchat index\b|"
+    r"\borganize(?:\s+\w+){0,4}\s+chats?\b|"
+    r"\bwhich chat\b|"
+    r"\bcorrect (?:program|chat|pane|thread)\b|"
     r"\b(other|previous|past|older)\s+chats\b|"
     r"\blist(?:\s+my|\s+the)?\s+chats\b|"
     r"\bacross chats\b",

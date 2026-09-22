@@ -45,6 +45,57 @@ EMPTY_REPLY_FALLBACK = (
     "I didn't get a text reply from the model on that turn. "
     "Try sending again — if it keeps happening, start a fresh chat thread."
 )
+
+
+def is_recoverable_empty_reply(status_code: int, detail: str) -> bool:
+    """504 empty/silent streams should surface fallback text, not a bare error bubble."""
+    if status_code != 504:
+        return False
+    cleaned = (detail or "").strip()
+    return cleaned in {XAI_SILENT_DETAIL, XAI_EMPTY_DETAIL}
+
+
+STREAM_HEARTBEAT = object()
+
+
+async def pace_stream(source: AsyncIterator[str], interval: float = 8.0) -> AsyncIterator[str | object]:
+    """Yield source items, and STREAM_HEARTBEAT whenever the source is quiet.
+
+    Proxies and the browser drop chat streams that go ~60s with no bytes. xAI
+    often sits that long before the first token, which surfaced as "No reply".
+    """
+    end = object()
+    queue: asyncio.Queue[object] = asyncio.Queue()
+
+    async def pump() -> None:
+        try:
+            async for piece in source:
+                await queue.put(piece)
+        except Exception as exc:
+            await queue.put(exc)
+        finally:
+            await queue.put(end)
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield STREAM_HEARTBEAT
+                continue
+            if item is end:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 SSE_PADDING = b":" + (b" " * 4096) + b"\n\n"
 # Railway env can still hold retired aliases. Invalid ids hang the stream until a proxy 504.
 _DEAD_MODEL_ALIASES = {

@@ -14,7 +14,7 @@ import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { wordIndexFromSelection } from "@/lib/tts-words";
-import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
+import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -1070,8 +1070,22 @@ export function GrokPane({
       streamFailed = true;
       const aborted = controller.signal.aborted && !(error instanceof ApiError);
       if (aborted) {
-        failOpenTurn(assistantId, true);
-        toast.error(NO_REPLY_TOAST);
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: null,
+          messages: current.messages.map((item) => {
+            if (item.role !== "assistant" || !(item.waiting || item.id === assistantId)) return item;
+            const kept = (item.content || "").trim();
+            return {
+              ...item,
+              waiting: false,
+              turnStatus: kept ? ("done" as const) : ("error" as const),
+              failed: !kept,
+              error: kept ? null : "Stopped.",
+              content: item.content,
+            };
+          }),
+        }));
         return;
       }
       const status = error instanceof ApiError ? error.status : 502;
@@ -1120,22 +1134,32 @@ export function GrokPane({
             !/\/api\/v1\/media\//.test(item.content) &&
             /Generating the image|Here's the image|implemented and passing/i.test(item.content);
           const empty = wipePlaceholder || !kept;
+          const bubble = empty
+            ? imageFail
+              ? shortImage || "Could not generate that image."
+              : emptyDetail || formatted || EMPTY_REPLY_BODY
+            : item.content;
+          const softEmpty =
+            empty &&
+            !imageFail &&
+            (bubble === EMPTY_REPLY_BODY ||
+              /didn't get a text reply|xai silent|returned no text/i.test(bubble));
           return {
             ...item,
             waiting: false,
-            turnStatus: "error" as const,
-            failed: true,
-            error: empty
-              ? imageFail
-                ? shortImage || "Could not generate that image."
-                : NO_REPLY_TOAST
-              : formatted,
-            content: wipePlaceholder ? "" : item.content,
+            turnStatus: softEmpty ? ("done" as const) : ("error" as const),
+            failed: !softEmpty,
+            error: softEmpty ? null : imageFail ? shortImage || "Could not generate that image." : formatted,
+            content: empty ? bubble : item.content,
           };
         }),
       }));
       applyStreamStatus("error");
-      if (!oversizedPaste) {
+      if (
+        !oversizedPaste &&
+        toastText !== NO_REPLY_TOAST &&
+        !/didn't get a text reply|xai silent|returned no text/i.test(toastText)
+      ) {
         toast.error(toastText);
       }
     } finally {
@@ -1178,8 +1202,22 @@ export function GrokPane({
         window.setTimeout(() => maybeRearmSts(), 120);
         return;
       }
-      failOpenTurn(assistantId, false);
-      toast.error(NO_REPLY_TOAST);
+      onUpdate((current) => ({
+        ...current,
+        streamStatus: null,
+        messages: current.messages.map((item) =>
+          item.id === assistantId || item.waiting
+            ? {
+                ...item,
+                waiting: false,
+                turnStatus: "done" as const,
+                failed: false,
+                error: null,
+                content: item.content?.trim() ? item.content : EMPTY_REPLY_BODY,
+              }
+            : item,
+        ),
+      }));
     }
   }
 

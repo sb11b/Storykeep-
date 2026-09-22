@@ -108,6 +108,9 @@ function parseSsePart(
   }
   if (parsed.heartbeat) {
     receivedActivity && (receivedActivity.value = true);
+    handlers.onMeta?.({
+      stream_status: parsed.stream_status || "thinking",
+    });
   }
   if (parsed.stream_status === "starting_agent" || parsed.stream_status === "deploying") {
     receivedActivity && (receivedActivity.value = true);
