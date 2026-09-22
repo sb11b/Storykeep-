@@ -1,7 +1,11 @@
 package com.storykeep.junior.ui.navigation
 
+import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -11,6 +15,7 @@ import androidx.navigation.navArgument
 import com.storykeep.junior.data.BottomTab
 import com.storykeep.junior.data.EntryMode
 import com.storykeep.junior.data.JuniorSession
+import com.storykeep.junior.data.PrefsStoryStore
 import com.storykeep.junior.ui.conversation.ConversationScreen
 import com.storykeep.junior.ui.home.HomeScreen
 import com.storykeep.junior.ui.stories.StoriesScreen
@@ -23,8 +28,27 @@ object Routes {
     fun conversation(mode: EntryMode): String = "conversation/${mode.name}"
 }
 
+class JuniorSessionFactory(
+    private val application: Application,
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        val prefs = application.getSharedPreferences(
+            PrefsStoryStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        return JuniorSession(PrefsStoryStore(prefs)) as T
+    }
+}
+
 @Composable
-fun StorykeepNav(session: JuniorSession = viewModel()) {
+fun rememberJuniorSession(): JuniorSession {
+    val application = LocalContext.current.applicationContext as Application
+    return viewModel(factory = JuniorSessionFactory(application))
+}
+
+@Composable
+fun StorykeepNav(session: JuniorSession = rememberJuniorSession()) {
     val nav = rememberNavController()
 
     fun openConversation(mode: EntryMode) {
@@ -32,8 +56,12 @@ fun StorykeepNav(session: JuniorSession = viewModel()) {
         nav.navigate(Routes.conversation(mode))
     }
 
-    fun goHome() {
-        session.leaveConversation()
+    fun goHome(ended: Boolean) {
+        if (ended) {
+            session.endConversation()
+        } else {
+            session.leaveConversation()
+        }
         session.selectTab(BottomTab.Talk)
         nav.popBackStack(Routes.Home, inclusive = false)
         if (nav.currentDestination?.route != Routes.Home) {
@@ -82,20 +110,11 @@ fun StorykeepNav(session: JuniorSession = viewModel()) {
         composable(
             route = Routes.Conversation,
             arguments = listOf(navArgument("mode") { type = NavType.StringType }),
-        ) { entry ->
-            val mode = runCatching {
-                EntryMode.valueOf(entry.arguments?.getString("mode") ?: EntryMode.Talk.name)
-            }.getOrDefault(EntryMode.Talk)
-            DisposableEffect(mode) {
-                session.openConversation(mode)
-                onDispose {
-                    // Leaving Conversation (back, End, lock later) kills the stub voice session.
-                }
-            }
+        ) {
             ConversationScreen(
                 session = session,
-                onBack = { goHome() },
-                onEnd = { goHome() },
+                onBack = { goHome(ended = false) },
+                onEnd = { goHome(ended = true) },
             )
         }
     }

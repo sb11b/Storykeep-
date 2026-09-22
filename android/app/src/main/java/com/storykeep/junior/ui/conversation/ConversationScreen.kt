@@ -48,11 +48,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.storykeep.junior.data.EntryMode
 import com.storykeep.junior.data.JuniorSession
+import com.storykeep.junior.data.TalkKillReason
 import com.storykeep.junior.data.TranscriptLine
 import com.storykeep.junior.data.VoiceState
 import com.storykeep.junior.ui.theme.Amber
@@ -72,6 +74,7 @@ fun ConversationScreen(
     onEnd: () -> Unit,
 ) {
     val typeMode = session.entryMode == EntryMode.Type
+    val talkEnabled = !typeMode && session.talkAlive
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
@@ -92,7 +95,9 @@ fun ConversationScreen(
     }
 
     val stateLabel = when {
-        typeMode -> "Typing · mic off · sound off"
+        session.lastKillReason == TalkKillReason.NetworkLost -> "Talk ended · network lost"
+        session.lastKillReason == TalkKillReason.Lock -> "Talk ended · app locked or left"
+        typeMode || !session.talkAlive -> "Typing · mic off · sound off"
         session.voiceState == VoiceState.Listening -> "Listening"
         session.voiceState == VoiceState.Speaking -> "Speaking"
         else -> "Ready"
@@ -141,7 +146,6 @@ fun ConversationScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val talkEnabled = !typeMode
             FilledIconButton(
                 onClick = { session.tapTalkControl() },
                 enabled = talkEnabled,
@@ -160,7 +164,7 @@ fun ConversationScreen(
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = if (typeMode) "Talk control is off in Type" else talkHint(session.voiceState),
+                    text = if (!talkEnabled) "Talk control is off" else talkHint(session.voiceState),
                     style = StorykeepTypography.bodyMedium,
                 )
             }
@@ -171,7 +175,12 @@ fun ConversationScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { focus ->
+                    if (focus.isFocused) {
+                        session.beginTyping()
+                    }
+                },
             placeholder = { Text("Write to Junior") },
             trailingIcon = {
                 IconButton(
@@ -201,21 +210,21 @@ fun ConversationScreen(
         ) {
             TextButton(
                 onClick = { session.toggleListen() },
-                enabled = !typeMode,
+                enabled = talkEnabled,
             ) {
                 Icon(
-                    imageVector = if (session.listenOn && !typeMode) {
+                    imageVector = if (session.listenOn && talkEnabled) {
                         Icons.AutoMirrored.Outlined.VolumeUp
                     } else {
                         Icons.AutoMirrored.Outlined.VolumeOff
                     },
                     contentDescription = null,
-                    tint = if (typeMode || !session.listenOn) InkSoft else Amber,
+                    tint = if (!talkEnabled || !session.listenOn) InkSoft else Amber,
                 )
                 Spacer(Modifier.size(6.dp))
                 Text(
-                    text = if (typeMode) "Listen off" else if (session.listenOn) "Listen on" else "Listen",
-                    color = if (typeMode) InkSoft else DeepInk,
+                    text = if (!talkEnabled) "Listen off" else if (session.listenOn) "Listen on" else "Listen",
+                    color = if (!talkEnabled) InkSoft else DeepInk,
                 )
             }
             OutlinedButton(

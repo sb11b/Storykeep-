@@ -1,8 +1,8 @@
-# Storykeep Android (days 1–3 shell)
+# Storykeep Android (Talk session core)
 
 Kotlin + Jetpack Compose app. Three screens only: Home, Conversation, Stories.
 
-No Grok Voice / Speech-to-Speech. No account wall, wake word, family sharing, or film tools. Talk, Type, and Save as story use a **local fake transcript** so you can walk the shell on a device.
+No Grok Voice / Speech-to-Speech APIs yet. Talk, Type, and Save as story still use a **local fake transcript**. The session core already enforces the product lock: Talk dies on Type, End, leave, lock / background, and network loss. Saved stories persist on device (transcript text only).
 
 This folder is a separate Gradle project. It is not part of the Railway web image (`Dockerfile` / `railway.toml` still build backend + Next.js only).
 
@@ -27,8 +27,9 @@ On Windows: `gradlew.bat :app:installDebug`.
 
 - **Home:** mark, “Junior is here”, presence orb, Talk / Type, last-spoke placeholder, bottom nav Talk / Stories / Keep.
 - **Talk** opens Conversation with the mic stub. Tap the amber control: Idle → Listening → fake transcript → Speaking.
-- **Type** opens Conversation with the keyboard up, mic off, Listen off, sound off.
-- **Save as story** appends the current transcript (text only) to Stories. **End** and **Back** return Home and clear the stub session.
+- **Type**, or focusing / typing in the field, kills Talk. Mic and Listen stay off.
+- **Lock / leave the app** or **lose network** kills Talk and keeps the transcript so you can still save it.
+- **Save as story** appends the current transcript (text only) to Stories and keeps it after restart. **End** and **Back** return Home and clear the turn.
 - **Stories:** pinned week’s question, Answer by talking / typing, cards, Record a story.
 
 Keep is not a fourth screen; it returns to Home.
