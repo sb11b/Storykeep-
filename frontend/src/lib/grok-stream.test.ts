@@ -94,50 +94,36 @@ test("readGrokChatStream delivers deltas", async () => {
   assert.deepEqual(parts, ["Hel", "lo"]);
 });
 
-test("readGrokChatStream first-byte timeout is xAI silent", async () => {
+test("readGrokChatStream first-byte timeout ends without an error", async () => {
   const hanging = new ReadableStream<Uint8Array>({
     start() {
       /* never enqueue */
     },
   });
-  await assert.rejects(
-    () =>
-      readGrokChatStream(
-        new Response(hanging),
-        { onDelta: () => {} },
-        undefined,
-        { firstByteMs: 80, idleAfterMs: 5000 },
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof ApiError);
-      assert.equal(error.status, 504);
-      assert.match(error.message, /xAI silent/);
-      return true;
-    },
+  const parts: string[] = [];
+  await readGrokChatStream(
+    new Response(hanging),
+    { onDelta: (text) => parts.push(text) },
+    undefined,
+    { firstByteMs: 80, idleAfterMs: 5000 },
   );
+  assert.deepEqual(parts, []);
 });
 
-test("readGrokChatStream idle timeout when stream sends nothing", async () => {
+test("readGrokChatStream idle timeout when stream sends nothing ends quietly", async () => {
   const hanging = new ReadableStream<Uint8Array>({
     start() {
       /* never enqueue */
     },
   });
-  await assert.rejects(
-    () =>
-      readGrokChatStream(
-        new Response(hanging),
-        { onDelta: () => {} },
-        undefined,
-        { idleMs: 80, hardMs: 5000 },
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof ApiError);
-      assert.equal(error.status, 504);
-      assert.match(error.message, /xAI silent/);
-      return true;
-    },
+  const parts: string[] = [];
+  await readGrokChatStream(
+    new Response(hanging),
+    { onDelta: (text) => parts.push(text) },
+    undefined,
+    { idleMs: 80, hardMs: 5000 },
   );
+  assert.deepEqual(parts, []);
 });
 
 test("readGrokChatStream does not hard-kill after tokens start", async () => {
@@ -295,18 +281,12 @@ test("searching alone does not count as the first token", async () => {
       controller.close();
     },
   });
-  await assert.rejects(
-    () =>
-      readGrokChatStream(new Response(stream), { onDelta: () => {} }, undefined, {
-        firstByteMs: 80,
-        idleAfterMs: 5000,
-      }),
-    (error: unknown) => {
-      assert.ok(error instanceof ApiError);
-      assert.match(error.message, /xAI silent/);
-      return true;
-    },
-  );
+  const parts: string[] = [];
+  await readGrokChatStream(new Response(stream), { onDelta: (text) => parts.push(text) }, undefined, {
+    firstByteMs: 80,
+    idleAfterMs: 5000,
+  });
+  assert.deepEqual(parts, []);
 });
 
 test("heartbeat does not count as the first token", async () => {
@@ -323,18 +303,12 @@ test("heartbeat does not count as the first token", async () => {
       }
     },
   });
-  await assert.rejects(
-    () =>
-      readGrokChatStream(new Response(stream), { onDelta: () => {} }, undefined, {
-        firstByteMs: 80,
-        idleAfterMs: 5000,
-      }),
-    (error: unknown) => {
-      assert.ok(error instanceof ApiError);
-      assert.match(error.message, /xAI silent/);
-      return true;
-    },
-  );
+  const parts: string[] = [];
+  await readGrokChatStream(new Response(stream), { onDelta: (text) => parts.push(text) }, undefined, {
+    firstByteMs: 5000,
+    idleAfterMs: 80,
+  });
+  assert.deepEqual(parts, []);
 });
 
 test("thinking SSE is not a token and keeps the stream open past the first-byte cut", async () => {
@@ -364,19 +338,28 @@ test("thinking SSE is not a token and keeps the stream open past the first-byte 
   assert.deepEqual(parts, ["hello"]);
 });
 
-test("DONE with no text is an empty close, not a finished reply", async () => {
-  await assert.rejects(
-    () =>
-      readGrokChatStream(
-        sseResponse(['data: {"stream_status":"thinking"}\n\n', "data: [DONE]\n\n"]),
-        { onDelta: () => {} },
-        undefined,
-        { firstByteMs: 5_000, idleAfterMs: 5_000 },
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof ApiError);
-      assert.equal(error.status, 504);
-      return true;
-    },
+test("DONE with no text is an empty close, not an error", async () => {
+  const parts: string[] = [];
+  await readGrokChatStream(
+    sseResponse([
+      'data: {"stream_status":"working","model":"grok-4.6","reasoning_effort":"low"}\n\n',
+      "data: [DONE]\n\n",
+    ]),
+    { onDelta: (text) => parts.push(text) },
+    undefined,
+    { firstByteMs: 5_000, idleAfterMs: 5_000 },
   );
+  assert.deepEqual(parts, []);
+});
+
+test("xAI silent error event does not throw", async () => {
+  const parts: string[] = [];
+  await readGrokChatStream(
+    sseResponse([
+      'data: {"stream_status":"working","model":"grok-4.6","reasoning_effort":"low"}\n\n',
+      'data: {"error":"Chat failed (HTTP 504): xAI silent","status":504,"message":"xAI silent"}\n\n',
+    ]),
+    { onDelta: (text) => parts.push(text) },
+  );
+  assert.deepEqual(parts, []);
 });

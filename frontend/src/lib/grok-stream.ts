@@ -1,6 +1,14 @@
 import { ApiError } from "@/lib/api";
-import { formatChatError } from "@/lib/grok-chat-error";
+import { formatChatError, isSilentEmptyChatDetail } from "@/lib/grok-chat-error";
 import { spendChipLabel } from "@/lib/grok-model";
+
+/** Pre-token silence ends the read so the pane can write the fallback sentence. */
+class SilentTurn extends Error {
+  constructor() {
+    super("silent");
+    this.name = "SilentTurn";
+  }
+}
 
 /** Wait for /chat response headers through heavy setup (attachments, working notes). */
 export const GROK_STREAM_HEADER_MS = 25_000;
@@ -129,7 +137,9 @@ function parseSsePart(
     const status = typeof parsed.status === "number" ? parsed.status : 502;
     const detail =
       (typeof parsed.message === "string" ? parsed.message : undefined) || parsed.detail || parsed.error;
-    throw new ApiError(status, detail || formatChatError(status, "Chat failed"), {
+    const text = typeof detail === "string" ? detail : "";
+    if (!parsed.partial && isSilentEmptyChatDetail(text)) return "done" as const;
+    throw new ApiError(status, text || formatChatError(status, "Chat failed"), {
       partial: Boolean(parsed.partial),
     });
   }
@@ -302,15 +312,15 @@ export async function readGrokChatStream(
     if (!receivedDelta.value) {
       if (receivedActivity.value) {
         if (now - lastActivityAt >= idle.ms) {
-          xaiStatus = 504;
-          throw new ApiError(504, formatChatError(504, "xAI silent"));
+          xaiStatus = "empty";
+          throw new SilentTurn();
         }
         return;
       }
       const budget = preTokenHardMs != null ? Math.min(firstByteMs, preTokenHardMs) : firstByteMs;
       if (now - startedAt >= budget) {
-        xaiStatus = 504;
-        throw new ApiError(504, formatChatError(504, "xAI silent"));
+        xaiStatus = "empty";
+        throw new SilentTurn();
       }
       return;
     }
@@ -369,13 +379,7 @@ export async function readGrokChatStream(
             if (firstDeltaAt == null) firstDeltaAt = lastActivityAt;
             if (xaiStatus == null) xaiStatus = 200;
           }
-          if (outcome === "done") {
-            if (!receivedDelta.value) {
-              xaiStatus = 504;
-              throw new ApiError(504, formatChatError(504, "xAI silent"));
-            }
-            return;
-          }
+          if (outcome === "done") return;
         } catch (error) {
           if (error instanceof ApiError) {
             xaiStatus = error.status;
@@ -392,10 +396,8 @@ export async function readGrokChatStream(
         if (error instanceof ApiError) throw error;
       }
     }
-    if (!receivedDelta.value) {
-      xaiStatus = 504;
-      throw new ApiError(504, formatChatError(504, "xAI silent"));
-    }
+  } catch (error) {
+    if (!(error instanceof SilentTurn)) throw error;
   } finally {
     const ttftMs = firstDeltaAt != null ? firstDeltaAt - startedAt : -1;
     console.info("xAI", spendChipLabel(postedModel, postedReasoning), {

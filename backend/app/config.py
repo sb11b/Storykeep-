@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     xai_tts_read_timeout: float = 120.0
     xai_chat_url: str = "https://api.x.ai/v1/chat/completions"
     xai_chat_model: str = "grok-4.6"
-    xai_chat_models: str = "grok-4.6,grok-4.3"
+    xai_chat_models: str = "grok-4.6,grok-4.7,grok-4.3"
     xai_chat_fast_model: str = "grok-4.3"
     xai_chat_max_tokens: int = 125_000
     chat_requests_per_hour: int = 120

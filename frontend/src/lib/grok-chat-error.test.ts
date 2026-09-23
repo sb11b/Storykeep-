@@ -5,6 +5,7 @@ import {
   chatTimeoutToast,
   formatChatError,
   isOversizedPasteHttp,
+  isSilentEmptyChatDetail,
   readableXaiToast,
   withAssistantName,
 } from "./grok-chat-error";
@@ -34,6 +35,12 @@ test("formatChatError shows the pane name instead of the upstream model name", (
 test("withAssistantName leaves a message alone when there is no pane name", () => {
   assert.equal(withAssistantName("Grok timed out."), "Grok timed out.");
   assert.equal(withAssistantName("Grokking is fine", "Junior"), "Grokking is fine");
+});
+
+test("isSilentEmptyChatDetail matches the bare silent phrase", () => {
+  assert.equal(isSilentEmptyChatDetail("Chat failed (HTTP 504): xAI silent"), true);
+  assert.equal(isSilentEmptyChatDetail("Junior returned no text for this turn."), true);
+  assert.equal(isSilentEmptyChatDetail("xAI HTTP 422: invalid tool"), false);
 });
 
 test("readableXaiToast keeps the upstream xAI message", () => {

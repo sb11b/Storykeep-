@@ -26,6 +26,7 @@ import {
   chatTimeoutToast,
   formatChatError,
   isOversizedPasteHttp,
+  isSilentEmptyChatDetail,
   readableXaiToast,
   withAssistantName,
 } from "@/lib/grok-chat-error";
@@ -1105,22 +1106,42 @@ export function GrokPane({
       const shortImage = readableXaiToast(detail);
       const capDetail = /over the cap|too long|Recent messages are too long/i.test(detail) ? detail : null;
       const timeoutDetail = chatTimeoutToast(status, detail);
-      const emptyDetail = /returned no text|xai silent/i.test(detail) ? readableXaiToast(detail) : null;
+      const silentEmpty = !imageFail && isSilentEmptyChatDetail(detail);
+      if (silentEmpty) {
+        setStreamStatus(null);
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: null,
+          messages: current.messages.map((item) => {
+            const target = item.role === "assistant" && (item.waiting || item.id === assistantId);
+            if (!target) return item;
+            const kept = (item.content || "").trim();
+            const keepText = Boolean(kept) && !isSilentEmptyChatDetail(kept);
+            return {
+              ...item,
+              waiting: false,
+              turnStatus: "done" as const,
+              failed: false,
+              error: null,
+              content: keepText ? item.content : EMPTY_REPLY_BODY,
+            };
+          }),
+        }));
+        return;
+      }
       const toastText = imageFail
         ? (shortImage.length > 180 ? "Could not generate that image." : shortImage)
         : capDetail
           ? capDetail
-          : emptyDetail
-            ? emptyDetail
-            : timeoutDetail && status === 504
-              ? timeoutDetail
-              : oversizedPaste && turnText.length >= PASTE_FIRST_CHUNK_CHARS
-                ? pasteSplitToast(turnText.length)
-                : status === 413 || status === 400
-                  ? detail
-                  : status === 502
-                    ? readableXaiToast(detail)
-                    : NO_REPLY_TOAST;
+          : timeoutDetail && status === 504
+            ? timeoutDetail
+            : oversizedPaste && turnText.length >= PASTE_FIRST_CHUNK_CHARS
+              ? pasteSplitToast(turnText.length)
+              : status === 413 || status === 400
+                ? detail
+                : status === 502
+                  ? readableXaiToast(detail)
+                  : NO_REPLY_TOAST;
       onUpdate((current) => ({
         ...current,
         streamStatus: "error",
@@ -1137,7 +1158,7 @@ export function GrokPane({
           const bubble = empty
             ? imageFail
               ? shortImage || "Could not generate that image."
-              : emptyDetail || formatted || EMPTY_REPLY_BODY
+              : formatted || EMPTY_REPLY_BODY
             : item.content;
           const softEmpty =
             empty &&

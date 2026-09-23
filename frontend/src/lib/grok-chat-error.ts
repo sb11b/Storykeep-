@@ -1,5 +1,10 @@
 import { httpErrorFallback } from "@/lib/api-errors";
 
+/** Model finished with no user-visible text. Never show this phrase in the bubble. */
+export function isSilentEmptyChatDetail(message: string): boolean {
+  return /xai silent|returned no text|didn't get a text reply/i.test(message);
+}
+
 export function readableXaiToast(message: string): string {
   const stripped = message
     .replace(/^Chat failed \(HTTP \d+\):\s*/i, "")

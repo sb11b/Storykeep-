@@ -29,6 +29,8 @@ MODEL_AUTO = "auto"
 REASONING_AUTO = "auto"
 CURRENT_CHAT_MODEL = "grok-4.6"
 CURRENT_FAST_MODEL = "grok-4.3"
+# Selectable, never the Auto default. Kept even if XAI_CHAT_MODELS omits it.
+OPTIONAL_CHAT_MODELS = ("grok-4.7",)
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_REASONING_EFFORT = "low"
 CHAT_STREAM_TIMEOUT_SEC = 45.0
@@ -48,11 +50,13 @@ EMPTY_REPLY_FALLBACK = (
 
 
 def is_recoverable_empty_reply(status_code: int, detail: str) -> bool:
-    """504 empty/silent streams should surface fallback text, not a bare error bubble."""
-    if status_code != 504:
+    """Empty/silent streams should surface fallback text, not a bare error bubble."""
+    if status_code not in {502, 504}:
         return False
-    cleaned = (detail or "").strip()
-    return cleaned in {XAI_SILENT_DETAIL, XAI_EMPTY_DETAIL}
+    cleaned = (detail or "").strip().lower()
+    if status_code == 504 and not cleaned:
+        return True
+    return "xai silent" in cleaned or "returned no text" in cleaned
 
 
 STREAM_HEARTBEAT = object()
@@ -308,18 +312,30 @@ def _dedupe_models(models: list[str]) -> list[str]:
     return ordered or [CURRENT_CHAT_MODEL]
 
 
+def _with_optional_models(models: list[str]) -> list[str]:
+    ordered = _dedupe_models(models)
+    for extra in OPTIONAL_CHAT_MODELS:
+        if extra in ordered:
+            continue
+        if CURRENT_CHAT_MODEL in ordered:
+            ordered.insert(ordered.index(CURRENT_CHAT_MODEL) + 1, extra)
+        else:
+            ordered.append(extra)
+    return ordered
+
+
 def available_models() -> list[str]:
     raw = (settings.xai_chat_models or "").strip()
     if raw:
         models = [part.strip() for part in raw.split(",") if part.strip()]
         if models:
-            return _dedupe_models(models)
+            return _with_optional_models(models)
     full = rewrite_xai_model(settings.xai_chat_model or CURRENT_CHAT_MODEL)
     fast = rewrite_xai_model(settings.xai_chat_fast_model or CURRENT_FAST_MODEL)
     ordered = [full]
     if fast and fast not in ordered:
         ordered.append(fast)
-    return ordered
+    return _with_optional_models(ordered)
 
 
 def default_full_model() -> str:
@@ -346,7 +362,7 @@ def model_uses_reasoning(model: str) -> bool:
     lowered = rewrite_xai_model(model).lower()
     if "non-reasoning" in lowered:
         return False
-    return lowered.startswith("grok-4.6") or lowered.startswith("grok-4.5") or lowered.startswith("grok-4.3")
+    return lowered.startswith(("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"))
 
 
 def clamp_reasoning_effort(model: str, effort: str) -> str:
@@ -354,7 +370,7 @@ def clamp_reasoning_effort(model: str, effort: str) -> str:
     if cleaned not in REASONING_EFFORTS:
         cleaned = DEFAULT_REASONING_EFFORT
     rewritten = rewrite_xai_model(model).lower()
-    if cleaned == "xhigh" and not rewritten.startswith("grok-4.6"):
+    if cleaned == "xhigh" and not rewritten.startswith(("grok-4.7", "grok-4.6")):
         return "high"
     return cleaned
 

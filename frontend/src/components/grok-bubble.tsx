@@ -142,7 +142,7 @@ export function GrokBubble({
   const [cryptoStatus, setCryptoStatus] = useState<MessageCryptoStatus | null>(null);
   const [cryptoReady, setCryptoReady] = useState(() => isCryptoUnlocked());
   const [showCryptoSetup, setShowCryptoSetup] = useState(false);
-  const [chatModels, setChatModels] = useState<string[]>(["grok-4.6", "grok-4.3"]);
+  const [chatModels, setChatModels] = useState<string[]>(["grok-4.6", "grok-4.7", "grok-4.3"]);
   const [conversations, setConversations] = useState<GrokConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
