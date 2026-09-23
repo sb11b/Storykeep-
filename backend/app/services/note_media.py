@@ -12,7 +12,8 @@ from app.config import settings
 from app.models import Article, Feed, GrokMessageFile, NoteMedia, OverlayAddition, User
 from app.services.vault_paths import windows_safe_component
 
-MAX_MEDIA_BYTES = 10 * 1024 * 1024
+MAX_MEDIA_BYTES = 40 * 1024 * 1024
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 FILE_SUFFIXES = {".pdf", ".txt", ".md", ".docx", ".csv"}
 ALLOWED_SUFFIXES = IMAGE_SUFFIXES | FILE_SUFFIXES
@@ -125,8 +126,12 @@ def is_image_media(row: NoteMedia) -> bool:
 def save_note_media(db: Session, user: User, filename: str, payload: bytes, content_type: str | None) -> NoteMedia:
     if not payload:
         raise ValueError("That file is empty.")
-    if len(payload) > MAX_MEDIA_BYTES:
-        raise ValueError("Attachments must be 10 MB or smaller.")
+    image = _normalize_suffix(filename) in IMAGE_SUFFIXES or (content_type or "").startswith("image/")
+    limit = MAX_IMAGE_BYTES if image else MAX_MEDIA_BYTES
+    if len(payload) > limit:
+        mb = limit // (1024 * 1024)
+        kind = "Images" if image else "Documents"
+        raise ValueError(f"{kind} must be {mb} MB or smaller.")
     suffix = _normalize_suffix(filename)
     if suffix == ".doc":
         raise ValueError("Legacy Word .doc is not supported. Save as .docx and attach again.")

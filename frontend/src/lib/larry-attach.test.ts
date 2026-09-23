@@ -24,7 +24,9 @@ test("Larry accepts the documented file types and rejects the rest", () => {
     rejectLarryFile(fakeFile("old.doc", 12)),
     "old.doc is a legacy .doc file. Save as .docx and attach again.",
   );
-  assert.equal(rejectLarryFile(fakeFile("huge.pdf", 11 * 1024 * 1024)), "huge.pdf is larger than 10 MB.");
+  assert.equal(rejectLarryFile(fakeFile("chapter.pdf", 11 * 1024 * 1024)), null);
+  assert.equal(rejectLarryFile(fakeFile("huge.pdf", 41 * 1024 * 1024)), "huge.pdf is larger than 40 MB.");
+  assert.equal(rejectLarryFile(fakeFile("scan.png", 11 * 1024 * 1024)), "scan.png is larger than 10 MB.");
 });
 
 test("formatFileSize is readable on chips", () => {

@@ -17,8 +17,9 @@ from app.services.note_media import is_image_media, owned_media
 logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENTS = 5
-ATTACHMENT_CHAR_CAP = 12_000
-PDF_PAGE_CAP = 8
+# ~140 dense pages or 200 lighter ones. A 12k cap was about four pages and read as "cut off".
+ATTACHMENT_CHAR_CAP = 700_000
+PDF_PAGE_CAP = 200
 MAX_VISION_SIDE = 1280
 MAX_VISION_RAW_BYTES = 400_000
 MAX_VISION_ENCODED_BYTES = 1_200_000

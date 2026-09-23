@@ -4,7 +4,8 @@ import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 export const LARRY_ATTACH_ACCEPT = ".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.gif,.webp,.csv";
 export const LARRY_IMAGE_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp";
-export const LARRY_ATTACH_MAX_BYTES = 10 * 1024 * 1024;
+export const LARRY_ATTACH_MAX_BYTES = 40 * 1024 * 1024;
+export const LARRY_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export const LARRY_ATTACH_MAX_FILES = 5;
 
 const ALLOWED_SUFFIXES = new Set([".pdf", ".txt", ".md", ".docx", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".csv"]);
@@ -65,8 +66,11 @@ export function rejectLarryFile(file: File): string | null {
   if (!isAllowedLarryFile(file)) {
     return `${file.name} is not a PDF, TXT, MD, DOCX, CSV, PNG, JPG, GIF, or WebP.`;
   }
-  if (file.size > LARRY_ATTACH_MAX_BYTES) {
-    return `${file.name} is larger than 10 MB.`;
+  const image = [".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(suffix);
+  const maxBytes = image ? LARRY_IMAGE_MAX_BYTES : LARRY_ATTACH_MAX_BYTES;
+  if (file.size > maxBytes) {
+    const mb = Math.round(maxBytes / (1024 * 1024));
+    return `${file.name} is larger than ${mb} MB.`;
   }
   return null;
 }

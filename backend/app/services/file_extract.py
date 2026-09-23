@@ -82,12 +82,19 @@ def _pdf(payload: bytes, max_pages: int | None = None) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(payload))
-    pages = []
+    total = len(reader.pages)
+    pages: list[str] = []
+    stopped = False
     for index, page in enumerate(reader.pages):
         if max_pages is not None and index >= max_pages:
+            stopped = True
             break
-        pages.append(page.extract_text() or "")
-    return "\n\n".join(pages)
+        body = page.extract_text() or ""
+        pages.append(f"--- page {index + 1} of {total} ---\n{body}".rstrip())
+    text = "\n\n".join(pages)
+    if stopped and max_pages is not None:
+        text += f"\n\n[Extract stopped after {max_pages} pages of {total}.]"
+    return text
 
 
 def _docx(payload: bytes) -> str:
