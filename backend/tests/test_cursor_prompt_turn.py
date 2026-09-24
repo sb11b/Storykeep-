@@ -71,6 +71,46 @@ class CursorPromptTurnTests(unittest.TestCase):
         msg = "Fix login in auth.py\n- add tests\n- deploy\n" + ("ensure session persists.\n" * 12)
         self.assertFalse(chat.should_attach_chat_tools(msg))
 
+    def test_follow_task_starts_agent_when_configured(self):
+        msg = (
+            "Fix the mail list contrast in mail-overlay.tsx.\n"
+            "- Unread rows stay readable on cream\n"
+            "- Pin chats, notes, and folders\n"
+            "Done when: refresh keeps pin order."
+        )
+        self.assertEqual(junior_model.cursor_turn_mode(msg), "follow")
+        self.assertTrue(junior_model.should_server_start_agent(msg, configured=True))
+        self.assertFalse(junior_model.should_server_start_agent(msg, configured=False))
+        extras = junior_model.build_turn_extras(
+            msg,
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+        )
+        joined = "\n".join(extras)
+        self.assertNotIn("cannot start", joined.lower())
+        self.assertIn("agent url", joined.lower())
+
+    def test_generate_prompt_does_not_start_agent(self):
+        msg = "give me a cursor prompt to fix the mail list contrast"
+        self.assertEqual(junior_model.cursor_turn_mode(msg), "generate")
+        self.assertFalse(junior_model.should_server_start_agent(msg, configured=True))
+        self.assertFalse(junior_model.should_server_start_agent(msg, configured=False))
+
+    def test_explicit_start_still_starts_without_key_flag(self):
+        msg = "start a cursor agent to fix the mail list"
+        self.assertTrue(junior_model.should_server_start_agent(msg, configured=False))
+        self.assertTrue(junior_model.should_server_start_agent(msg, configured=True))
+
 
 if __name__ == "__main__":
     unittest.main()

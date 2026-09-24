@@ -1134,7 +1134,10 @@ def _chat(
     will_railway = railway_tool.wants_railway(user_text)
     will_github = github_tool.wants_github(user_text)
     will_deploy = railway_tool.wants_railway_deploy(user_text)
-    will_cursor_start = cursor_agent_tool.wants_start(user_text)
+    cursor_enabled = cursor_agent_tool.owner_can_use(user)
+    will_cursor_start = junior_model.should_server_start_agent(
+        user_text, configured=cursor_enabled
+    )
     ops_turn = owner_ops and junior_model.is_ops_turn(user_text)
     delegate_turn = owner_ops and junior_model.is_delegate_turn(user_text)
     railway_tools_on = owner_ops and (
@@ -1146,7 +1149,6 @@ def _chat(
     cursor_tools_on = owner_ops and (
         delegate_turn or chat_service.should_attach_chat_tools(user_text)
     )
-    cursor_enabled = cursor_agent_tool.owner_can_use(user)
     turn_extras = junior_model.build_turn_extras(
         user_text,
         memory_block=memory_block,

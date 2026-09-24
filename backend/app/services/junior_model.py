@@ -56,7 +56,8 @@ _ANDROID_PROJECT_RE = re.compile(
 JUNIOR_CAPABILITIES_APPEND = """
 When Steve asks who you are or what you can do, use the **Junior capabilities** section in standing memory.
 Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) when configured and he explicitly asks — confirm what you did after tool calls.
-Owner delegate: cursor_start_agent when configured and he explicitly asks to start/launch a Cursor Cloud Agent — return the agent URL.
+Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
+When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
 Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
 """
 
@@ -107,8 +108,9 @@ Steve already gave task details (typed or dictated). Fold every detail into the 
 
 CURSOR_FOLLOW_APPEND = """
 Steve supplied the Cursor / Cloud Agent task himself (typed or dictated). Stay on his scope.
-Reply with ONE polished copy-paste prompt block derived from his text — not a new plan or investigation.
-Do not web-search, list chats, read spec docs, or claim you changed the repo unless he asked.
+If a live Cursor Cloud Agent block is attached, the server already started it — lead with the Agent URL and paste the Push to main (Ubuntu) block. Do not refuse, and do not replace that URL with a copy-paste prompt.
+If no live agent block is attached, CURSOR_API_KEY is missing: say that in one sentence, then give ONE polished copy-paste prompt block derived from his text.
+Do not web-search, list chats, read spec docs, or claim you changed the repo yourself.
 Do not claim you deployed, pushed repos, or ran SQL. Finish in one reply.
 """
 
@@ -234,6 +236,25 @@ def cursor_turn_mode(message: str) -> str | None:
 
 def is_cursor_task_turn(message: str) -> bool:
     return cursor_turn_mode(message) is not None
+
+
+def should_server_start_agent(message: str, *, configured: bool) -> bool:
+    """Start a Cloud Agent before the model replies.
+
+    Explicit start/launch phrases always try (a missing key becomes the setup reply).
+    A supplied code task (follow mode) starts only when CURSOR_API_KEY is set.
+    "Write me a cursor prompt" stays a copy-paste block and does not start an agent.
+    """
+    from app.services import cursor_agent_tool
+
+    text = (message or "").strip()
+    if not text:
+        return False
+    if cursor_agent_tool.wants_start(text):
+        return True
+    if not configured:
+        return False
+    return cursor_turn_mode(text) == "follow"
 
 
 def filter_standing_memory(body: str, *, user_text: str) -> str:
