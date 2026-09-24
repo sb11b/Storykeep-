@@ -1,0 +1,117 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index ed42ff8..9b7b1a0 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-read-retry-v1", "time": "2026-09-24T16:40:00Z"}
++{"sha": "junior-mark-ten-v1", "time": "2026-09-24T16:55:00Z"}
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index 0385526..0227110 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -59,7 +59,7 @@ Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) whe
+ Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
+ When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
+ “What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
+-“Mark all unread read” marks the unread inbox list read. A named sender or subject marks only those matches. Do not mark mail read unless he asked.
++“Mark all unread read” or “mark the first 10 unread” marks Fastmail from this chat. A named sender or subject marks only those matches. Do not say the mail-mark action is unavailable. Do not mark mail read unless he asked.
+ Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
+ """
+ 
+diff --git a/backend/app/services/mail_tool.py b/backend/app/services/mail_tool.py
+index 86bc9d2..d0a9ae3 100644
+--- a/backend/app/services/mail_tool.py
++++ b/backend/app/services/mail_tool.py
+@@ -57,19 +57,36 @@ def wants_send_mail(message: str) -> bool:
+     return bool(MAIL_SEND_RE.search(message or ""))
+ 
+ 
+-MARK_READ_RE = re.compile(r"\bmark\b.{0,80}\bread\b", re.I)
+-_MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread)\b", re.I)
++_MARK_ACT_RE = re.compile(r"\bmark\b.{0,60}\b(?:unread|read)\b", re.I)
++_MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread|fastmail)\b", re.I)
+ _MARK_ALL_RE = re.compile(r"\ball\b|\bunread\s+(?:mail|e-mail|email|inbox|messages)\b", re.I)
+ _MARK_FROM_RE = re.compile(r"\bfrom\s+(.+?)\s+(?:as\s+)?read\b", re.I)
++_MARK_LIMIT_RE = re.compile(r"\b(?:first|top)\s+(\d{1,2})\b|\bmark\s+(\d{1,2})\s+unread\b", re.I)
+ _MARK_STOP = re.compile(
+-    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read)\b",
++    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read|fastmail|first|top)\b",
+     re.I,
+ )
+ 
+ 
+ def wants_mark_read(message: str) -> bool:
+     text = message or ""
+-    return bool(MARK_READ_RE.search(text) and _MARK_MAIL_RE.search(text))
++    return bool(_MARK_ACT_RE.search(text) and _MARK_MAIL_RE.search(text))
++
++
++def _mark_limit(message: str) -> int | None:
++    found = _MARK_LIMIT_RE.search(message or "")
++    if not found:
++        return None
++    raw = found.group(1) or found.group(2)
++    count = int(raw)
++    return max(1, min(50, count))
++
++
++def _cap_rows(message: str, rows: list[dict]) -> list[dict]:
++    limit = _mark_limit(message)
++    if limit is None:
++        return rows
++    return rows[:limit]
+ 
+ 
+ def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
+@@ -79,22 +96,24 @@ def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
+     if found:
+         needle = " ".join(found.group(1).split()).strip(" .")
+         low = needle.lower()
+-        return [item for item in items if low and low in str(item.get("from") or "").lower()], needle
++        picked = [item for item in items if low and low in str(item.get("from") or "").lower()]
++        return _cap_rows(text, picked), needle
+     cleaned = _MARK_STOP.sub(" ", text)
++    cleaned = re.sub(r"\b\d{1,2}\b", " ", cleaned)
+     needle = " ".join(cleaned.split()).strip(" .")
+     if len(needle) < 3:
+-        if _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
+-            return list(items), "all"
++        if _mark_limit(text) is not None or _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
++            return _cap_rows(text, list(items)), "all"
+         return [], "vague"
+     if _MARK_ALL_RE.search(text) and needle.lower() in {"all", "all unread"}:
+-        return list(items), "all"
++        return _cap_rows(text, list(items)), "all"
+     low = needle.lower()
+     picked = [
+         item
+         for item in items
+         if low in str(item.get("subject") or "").lower() or low in str(item.get("from") or "").lower()
+     ]
+-    return picked, needle
++    return _cap_rows(text, picked), needle
+ 
+ 
+ def format_mark_read(chosen: list[dict], *, marked: int, label: str, connected: bool, error: str | None = None) -> str:
+diff --git a/backend/tests/test_mark_read.py b/backend/tests/test_mark_read.py
+index 80d0a9e..257835a 100644
+--- a/backend/tests/test_mark_read.py
++++ b/backend/tests/test_mark_read.py
+@@ -10,8 +10,17 @@ class MarkReadTests(unittest.TestCase):
+         self.assertTrue(mail_tool.wants_mark_read("mark all unread read"))
+         self.assertTrue(mail_tool.wants_mark_read("mark the email from Ada read"))
+         self.assertFalse(mail_tool.wants_mark_read("mark this note read"))
++        self.assertTrue(mail_tool.wants_mark_read("mark the first 10 unread"))
+         self.assertFalse(mail_tool.wants_mark_read("what's on today"))
+ 
++    def test_first_ten_unread(self):
++        items = [{"id": str(i), "from": "Ada", "subject": f"Note {i}"} for i in range(12)]
++        chosen, label = mail_tool.choose_mark_read("mark the first 10 unread", items)
++        self.assertEqual(label, "all")
++        self.assertEqual(len(chosen), 10)
++        self.assertEqual(chosen[0]["id"], "0")
++        self.assertEqual(chosen[-1]["id"], "9")
++
+     def test_all_unread(self):
+         items = [{"id": "1", "from": "Ada", "subject": "Syllabus"}]
+         chosen, label = mail_tool.choose_mark_read("mark all unread read", items)

@@ -59,7 +59,7 @@ Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) whe
 Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
 When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
 “What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
-“Mark all unread read” marks the unread inbox list read. A named sender or subject marks only those matches. Do not mark mail read unless he asked.
+“Mark all unread read” or “mark the first 10 unread” marks Fastmail from this chat. A named sender or subject marks only those matches. Do not say the mail-mark action is unavailable. Do not mark mail read unless he asked.
 Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
 """
 

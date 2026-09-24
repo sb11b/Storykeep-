@@ -57,19 +57,36 @@ def wants_send_mail(message: str) -> bool:
     return bool(MAIL_SEND_RE.search(message or ""))
 
 
-MARK_READ_RE = re.compile(r"\bmark\b.{0,80}\bread\b", re.I)
-_MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread)\b", re.I)
+_MARK_ACT_RE = re.compile(r"\bmark\b.{0,60}\b(?:unread|read)\b", re.I)
+_MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread|fastmail)\b", re.I)
 _MARK_ALL_RE = re.compile(r"\ball\b|\bunread\s+(?:mail|e-mail|email|inbox|messages)\b", re.I)
 _MARK_FROM_RE = re.compile(r"\bfrom\s+(.+?)\s+(?:as\s+)?read\b", re.I)
+_MARK_LIMIT_RE = re.compile(r"\b(?:first|top)\s+(\d{1,2})\b|\bmark\s+(\d{1,2})\s+unread\b", re.I)
 _MARK_STOP = re.compile(
-    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read)\b",
+    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read|fastmail|first|top)\b",
     re.I,
 )
 
 
 def wants_mark_read(message: str) -> bool:
     text = message or ""
-    return bool(MARK_READ_RE.search(text) and _MARK_MAIL_RE.search(text))
+    return bool(_MARK_ACT_RE.search(text) and _MARK_MAIL_RE.search(text))
+
+
+def _mark_limit(message: str) -> int | None:
+    found = _MARK_LIMIT_RE.search(message or "")
+    if not found:
+        return None
+    raw = found.group(1) or found.group(2)
+    count = int(raw)
+    return max(1, min(50, count))
+
+
+def _cap_rows(message: str, rows: list[dict]) -> list[dict]:
+    limit = _mark_limit(message)
+    if limit is None:
+        return rows
+    return rows[:limit]
 
 
 def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
@@ -79,22 +96,24 @@ def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
     if found:
         needle = " ".join(found.group(1).split()).strip(" .")
         low = needle.lower()
-        return [item for item in items if low and low in str(item.get("from") or "").lower()], needle
+        picked = [item for item in items if low and low in str(item.get("from") or "").lower()]
+        return _cap_rows(text, picked), needle
     cleaned = _MARK_STOP.sub(" ", text)
+    cleaned = re.sub(r"\b\d{1,2}\b", " ", cleaned)
     needle = " ".join(cleaned.split()).strip(" .")
     if len(needle) < 3:
-        if _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
-            return list(items), "all"
+        if _mark_limit(text) is not None or _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
+            return _cap_rows(text, list(items)), "all"
         return [], "vague"
     if _MARK_ALL_RE.search(text) and needle.lower() in {"all", "all unread"}:
-        return list(items), "all"
+        return _cap_rows(text, list(items)), "all"
     low = needle.lower()
     picked = [
         item
         for item in items
         if low in str(item.get("subject") or "").lower() or low in str(item.get("from") or "").lower()
     ]
-    return picked, needle
+    return _cap_rows(text, picked), needle
 
 
 def format_mark_read(chosen: list[dict], *, marked: int, label: str, connected: bool, error: str | None = None) -> str:

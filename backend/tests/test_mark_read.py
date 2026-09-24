@@ -10,7 +10,16 @@ class MarkReadTests(unittest.TestCase):
         self.assertTrue(mail_tool.wants_mark_read("mark all unread read"))
         self.assertTrue(mail_tool.wants_mark_read("mark the email from Ada read"))
         self.assertFalse(mail_tool.wants_mark_read("mark this note read"))
+        self.assertTrue(mail_tool.wants_mark_read("mark the first 10 unread"))
         self.assertFalse(mail_tool.wants_mark_read("what's on today"))
+
+    def test_first_ten_unread(self):
+        items = [{"id": str(i), "from": "Ada", "subject": f"Note {i}"} for i in range(12)]
+        chosen, label = mail_tool.choose_mark_read("mark the first 10 unread", items)
+        self.assertEqual(label, "all")
+        self.assertEqual(len(chosen), 10)
+        self.assertEqual(chosen[0]["id"], "0")
+        self.assertEqual(chosen[-1]["id"], "9")
 
     def test_all_unread(self):
         items = [{"id": "1", "from": "Ada", "subject": "Syllabus"}]
