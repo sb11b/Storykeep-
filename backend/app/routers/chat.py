@@ -158,6 +158,8 @@ def _conversation_detail(row, *, crypto_enabled: bool = False) -> GrokConversati
         last_reasoning=getattr(row, "last_reasoning", None),
         recap_question=bool(row.recap_question),
         saved_note_id=getattr(row, "saved_note_id", None),
+        pinned=bool(getattr(row, "pinned", False)),
+        pinned_at=getattr(row, "pinned_at", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
         messages=[_message_out(item, crypto_enabled=crypto_enabled) for item in row.messages],

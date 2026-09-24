@@ -59,6 +59,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { applyAppearanceFromUser } from "@/lib/appearance";
+import { comparePinned } from "@/lib/pin-order";
 import { ApiError, api } from "@/lib/api";
 import { normalizeUserProfile } from "@/lib/user-profile";
 import { ArticleImage } from "@/components/article-image";
@@ -1234,7 +1235,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       const next = await api.patchArticle(item.id, { pinned });
       setItems((current) => {
         const mapped = current.map((row) => (row.id === item.id ? { ...row, ...next, pinned } : row));
-        mapped.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+        mapped.sort((a, b) => comparePinned(a, b));
         return mapped;
       });
       if (article?.id === item.id) setArticle((current) => (current ? { ...current, pinned } : current));

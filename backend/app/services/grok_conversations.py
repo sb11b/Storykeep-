@@ -52,7 +52,11 @@ def list_conversations(db: Session, user: User) -> list[GrokConversation]:
         db.scalars(
             select(GrokConversation)
             .where(GrokConversation.user_id == user.id)
-            .order_by(GrokConversation.pinned.desc(), GrokConversation.updated_at.desc())
+            .order_by(
+                GrokConversation.pinned.desc(),
+                GrokConversation.pinned_at.desc().nulls_last(),
+                GrokConversation.updated_at.desc(),
+            )
         ).all()
     )
 
@@ -344,6 +348,7 @@ def patch_conversation_for_user(
         touch_time = True
     if pinned_provided and pinned is not None:
         row.pinned = pinned
+        row.pinned_at = datetime.now(timezone.utc) if pinned else None
     if last_model is not None:
         row.last_model = last_model
         touch_time = True

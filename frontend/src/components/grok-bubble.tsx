@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { toastActionError } from "@/lib/toast-message";
 import { INVALID_CHAT_TOAST, isConversationId } from "@/lib/chat-conversation";
 import { grokModelLabel, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
+import { comparePinned } from "@/lib/pin-order";
 import type { GrokConversation, MessageCryptoStatus, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import {
@@ -561,7 +562,9 @@ export function GrokBubble({
       const updated = await api.patchChatConversation(row.id, { pinned });
       setConversations((current) => {
         const next = current.map((item) => (item.id === row.id ? { ...item, ...updated, pinned } : item));
-        next.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+        next.sort((a, b) =>
+          comparePinned(a, b, (left, right) => (right.updated_at || "").localeCompare(left.updated_at || "")),
+        );
         return next;
       });
     } catch (error) {
@@ -832,6 +835,18 @@ export function GrokBubble({
                     </span>
                   </button>
                 )}
+                {!renaming ? (
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    className={cn("mt-0.5 shrink-0", row.pinned ? "text-primary" : "text-muted-foreground")}
+                    aria-label={row.pinned ? `Unpin ${row.title}` : `Pin ${row.title} to the top`}
+                    onClick={() => void pinConversation(row)}
+                  >
+                    <Pin className={cn("size-3.5", row.pinned && "fill-current")} />
+                  </Button>
+                ) : null}
                 {!renaming ? (
                   <GrokRowMenu
                     label={row.title}

@@ -500,6 +500,7 @@ def folders(
             name=row.name,
             item_count=count,
             pinned=bool(row.pinned),
+            pinned_at=row.pinned_at,
             created_at=row.created_at,
         )
         for row, count in rows
@@ -520,6 +521,7 @@ def create_folder_route(
         name=row.name,
         item_count=0,
         pinned=bool(row.pinned),
+        pinned_at=row.pinned_at,
         created_at=row.created_at,
     )
 
@@ -552,6 +554,7 @@ def rename_folder_route(
         name=row.name,
         item_count=folder_item_count(db, user, row),
         pinned=bool(row.pinned),
+        pinned_at=row.pinned_at,
         created_at=row.created_at,
     )
 

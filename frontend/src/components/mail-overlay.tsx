@@ -216,7 +216,7 @@ export function MailOverlay({ open, onClose }: { open: boolean; onClose: () => v
   const shownFolders = [...primary, ...extra].slice(0, 12);
 
   return (
-    <div className="absolute inset-0 z-30 flex min-h-0 flex-col bg-[var(--storykeep-page-bg)]">
+    <div className="sk-page-surface absolute inset-0 z-30 flex min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
         <Mail className="size-4" />
         <h2 className="text-sm font-medium">Mail</h2>
@@ -293,18 +293,22 @@ export function MailOverlay({ open, onClose }: { open: boolean; onClose: () => v
                   <li key={item.id}>
                     <button
                       type="button"
-                      className={cn(
-                        "flex w-full flex-col gap-0.5 border-b px-3 py-2 text-left text-sm hover:bg-muted/50",
-                        selectedId === item.id && "bg-muted",
-                      )}
+                      data-unread={item.unseen ? "true" : "false"}
+                      data-selected={selectedId === item.id ? "true" : "false"}
+                      className="mail-thread-row flex w-full flex-col gap-0.5 border-b border-[color-mix(in_oklab,var(--storykeep-page-fg)_18%,var(--storykeep-page-bg))] px-3 py-2 text-left text-sm"
                       onClick={() => void openMessage(item.id)}
                     >
                       <span className="flex items-center gap-2">
-                        {item.unseen ? <span className="size-1.5 shrink-0 rounded-full bg-primary" /> : <Inbox className="size-3 shrink-0 text-muted-foreground" />}
-                        <span className={cn("truncate", item.unseen && "font-medium")}>{item.from || "(no sender)"}</span>
+                        {item.unseen ? (
+                          <span className="mail-unread-dot size-1.5 shrink-0 rounded-full" aria-hidden />
+                        ) : (
+                          <Inbox className="size-3 shrink-0 text-[color:var(--storykeep-page-fg)]" />
+                        )}
+                        <span className="mail-thread-from min-w-0 flex-1 truncate">{item.from || "(no sender)"}</span>
+                        <span className="mail-thread-meta shrink-0 text-[11px]">{formatWhen(item.date)}</span>
                       </span>
-                      <span className="truncate text-xs">{item.subject}</span>
-                      <span className="text-[10px] text-muted-foreground">{formatWhen(item.date)}</span>
+                      <span className="mail-thread-subject truncate text-[13px]">{item.subject || "(no subject)"}</span>
+                      {item.preview ? <span className="mail-thread-preview truncate text-xs">{item.preview}</span> : null}
                     </button>
                   </li>
                 ))}

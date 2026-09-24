@@ -1,4 +1,5 @@
 import { isBuiltInDestination, type FilingDestination } from "@/lib/custom-note-shelves";
+import { comparePinned } from "@/lib/pin-order";
 import type { Folder, FolderShelfKind, Shelf } from "@/lib/types";
 import type { NoteDestination } from "@/lib/destinations";
 
@@ -13,7 +14,7 @@ export function isFolderShelf(
 export function foldersForShelf(folders: Folder[], shelf: FilingDestination): Folder[] {
   return folders
     .filter((row) => row.shelf === shelf)
-    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || a.name.localeCompare(b.name));
+    .sort((a, b) => comparePinned(a, b, (left, right) => left.name.localeCompare(right.name)));
 }
 
 export function folderValueOnShelf(

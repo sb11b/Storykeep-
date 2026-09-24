@@ -262,18 +262,21 @@ def list_articles(
     if sort == "published_asc":
         stmt = stmt.order_by(
             Article.pinned.desc(),
+            Article.pinned_at.desc().nulls_last(),
             Article.published_at.asc().nulls_last(),
             Article.created_at.asc(),
         )
     elif sort == "saved_desc":
         stmt = stmt.order_by(
             Article.pinned.desc(),
+            Article.pinned_at.desc().nulls_last(),
             Article.saved_at.desc().nulls_last(),
             Article.published_at.desc().nulls_last(),
         )
     else:
         stmt = stmt.order_by(
             Article.pinned.desc(),
+            Article.pinned_at.desc().nulls_last(),
             Article.published_at.desc().nulls_last(),
             Article.created_at.desc(),
         )
@@ -387,6 +390,7 @@ def patch_article(
         article.is_starred = payload.is_starred
     if payload.pinned is not None:
         article.pinned = payload.pinned
+        article.pinned_at = now if payload.pinned else None
     if payload.is_saved is not None:
         article.is_saved = payload.is_saved
         article.saved_at = now if payload.is_saved else None

@@ -194,6 +194,33 @@
   --card-foreground: var(--storykeep-page-fg, var(--foreground));
 }
 
+/* Mail thread list sits on the cream page. Do not inherit dark-mode foreground. */
+.mail-thread-row {
+  color: var(--storykeep-page-fg);
+  background: transparent;
+}
+.mail-thread-row:hover {
+  background: color-mix(in oklab, var(--storykeep-page-fg) 7%, var(--storykeep-page-bg));
+}
+.mail-thread-row[data-selected="true"] {
+  background: color-mix(in oklab, var(--storykeep-page-fg) 12%, var(--storykeep-page-bg));
+}
+.mail-thread-from,
+.mail-thread-subject {
+  color: var(--storykeep-page-fg);
+}
+.mail-thread-row[data-unread="true"] .mail-thread-from,
+.mail-thread-row[data-unread="true"] .mail-thread-subject {
+  font-weight: 650;
+}
+.mail-thread-meta,
+.mail-thread-preview {
+  color: color-mix(in oklab, var(--storykeep-page-fg) 78%, var(--storykeep-page-bg));
+}
+.mail-unread-dot {
+  background: oklch(0.62 0.19 45);
+}
+
 [data-page-theme="dark"] .sk-page-surface {
   --muted: oklch(0.28 0.02 55);
   --accent: oklch(0.32 0.03 55);

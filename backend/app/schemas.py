@@ -330,6 +330,7 @@ class FolderOut(BaseModel):
     name: str
     item_count: int = 0
     pinned: bool = False
+    pinned_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -455,6 +456,7 @@ class ArticleOut(BaseModel):
     is_saved: bool
     is_starred: bool
     pinned: bool = False
+    pinned_at: datetime | None = None
     read_at: datetime | None
     saved_at: datetime | None
     fetched_at: datetime | None
@@ -497,6 +499,7 @@ class ArticleListItem(BaseModel):
     is_saved: bool
     is_starred: bool
     pinned: bool = False
+    pinned_at: datetime | None = None
     has_full_text: bool = False
     source_kind: str = "rss"
     destination: str | None = None
@@ -714,6 +717,7 @@ class GrokConversationOut(BaseModel):
     recap_question: bool = False
     saved_note_id: uuid.UUID | None = None
     pinned: bool = False
+    pinned_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

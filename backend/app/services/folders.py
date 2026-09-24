@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -50,7 +51,14 @@ def list_folders(db: Session, user: User, shelf: str | None = None) -> list[tupl
     stmt = select(Folder).where(Folder.user_id == user.id)
     if shelf:
         stmt = stmt.where(Folder.shelf == normalize_folder_shelf(shelf, user))
-    rows = db.scalars(stmt.order_by(Folder.pinned.desc(), Folder.shelf.asc(), Folder.name.asc())).all()
+    rows = db.scalars(
+        stmt.order_by(
+            Folder.pinned.desc(),
+            Folder.pinned_at.desc().nulls_last(),
+            Folder.shelf.asc(),
+            Folder.name.asc(),
+        )
+    ).all()
     return [(row, folder_item_count(db, user, row)) for row in rows]
 
 
@@ -90,6 +98,7 @@ def set_folder_pinned(db: Session, user: User, folder_id: UUID, pinned: bool) ->
     if not row:
         raise ValueError("Folder not found.")
     row.pinned = pinned
+    row.pinned_at = datetime.now(timezone.utc) if pinned else None
     db.add(row)
     db.commit()
     db.refresh(row)

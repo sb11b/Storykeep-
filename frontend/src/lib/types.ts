@@ -173,6 +173,7 @@ export type ArticleListItem = {
   is_saved: boolean;
   is_starred: boolean;
   pinned?: boolean;
+  pinned_at?: string | null;
   has_full_text: boolean;
   source_kind?: string;
   destination?: string | null;
@@ -295,6 +296,7 @@ export type GrokConversation = {
   recap_question?: boolean;
   saved_note_id?: string | null;
   pinned?: boolean;
+  pinned_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -374,6 +376,7 @@ export type Folder = {
   name: string;
   item_count: number;
   pinned?: boolean;
+  pinned_at?: string | null;
   created_at: string;
 };
 
