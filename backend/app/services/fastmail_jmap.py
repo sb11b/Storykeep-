@@ -313,6 +313,20 @@ def _body_from_email(row: dict[str, Any]) -> tuple[str, str]:
     return text, html[:BODY_CAP] if html else ""
 
 
+def mark_seen(token: str, email_ids: list[str]) -> int:
+    """Set $seen on up to 50 inbox messages. Returns how many Fastmail updated."""
+    ids = [item.strip() for item in email_ids if isinstance(item, str) and item.strip()][:LIST_CAP]
+    if not ids:
+        return 0
+    session, acct, _boxes = mailboxes(token)
+    update = {email_id: {"keywords/$seen": True} for email_id in ids}
+    calls = _api_call(token, session, [["Email/set", {"accountId": acct, "update": update}, "seen"]])
+    updated = _result(calls, "Email/set", "seen").get("updated")
+    if isinstance(updated, dict):
+        return len(updated)
+    return len(ids)
+
+
 def get_email(token: str, email_id: str) -> dict[str, Any]:
     cleaned = (email_id or "").strip()
     if not cleaned or len(cleaned) > 200:

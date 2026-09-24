@@ -15,6 +15,7 @@ import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-l
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
 import { wordIndexFromSelection } from "@/lib/tts-words";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
+import { restoreDraftAfterSilent } from "@/lib/silent-retry";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -796,6 +797,7 @@ export function GrokPane({
     includeOffset?: number;
     controller?: AbortController;
     turnId?: number;
+    silentRetried?: boolean;
   }) {
     const { message, retry = false, userLine, assistantId } = options;
     const turnId = options.turnId ?? turnIdRef.current;
@@ -817,6 +819,16 @@ export function GrokPane({
 
     setBusy(true);
     let streamFailed = false;
+    let holdSilentRetry = false;
+    const sentText = (userLine?.content || "").trim();
+    const putSentBack = (reply: string) => {
+      onUpdate((current) => {
+        const next = restoreDraftAfterSilent(current.draft, sentText, reply);
+        if (next === current.draft) return current;
+        draftValueRef.current = next;
+        return { ...current, draft: next };
+      });
+    };
     let streamedText = "";
     let conversationId: string | null = conversationIdForRequest(pane.conversationId);
     try {
@@ -1108,8 +1120,40 @@ export function GrokPane({
       const capDetail = /over the cap|too long|Recent messages are too long/i.test(detail) ? detail : null;
       const timeoutDetail = chatTimeoutToast(status, detail);
       const silentEmpty = !imageFail && isSilentEmptyChatDetail(detail);
+      if (silentEmpty && !options.silentRetried) {
+        holdSilentRetry = true;
+        streamFailed = false;
+        gotDeltaRef.current = false;
+        streamedText = "";
+        setStreamStatus("thinking");
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: "thinking",
+          messages: current.messages.map((item) =>
+            item.id === assistantId || item.waiting
+              ? { ...item, content: "", waiting: true, turnStatus: "thinking" as const, failed: false, error: null }
+              : item,
+          ),
+        }));
+        await runStream({
+          message,
+          retry: true,
+          silentRetried: true,
+          userLine,
+          assistantId,
+          mediaIds: options.mediaIds,
+          includeMode: options.includeMode,
+          includeHeading: options.includeHeading,
+          includeSelection: options.includeSelection,
+          includeOffset: options.includeOffset,
+          controller,
+          turnId,
+        });
+        return;
+      }
       if (silentEmpty) {
         setStreamStatus(null);
+        putSentBack(EMPTY_REPLY_BODY);
         onUpdate((current) => ({
           ...current,
           streamStatus: null,
@@ -1186,6 +1230,7 @@ export function GrokPane({
       }
     } finally {
       if (turnId !== turnIdRef.current) return;
+      if (holdSilentRetry) return;
       if (abortRef.current === controller) abortRef.current = null;
       abortingRef.current = false;
       setAborting(false);
@@ -1197,6 +1242,7 @@ export function GrokPane({
         hasMediaImage(streamedText) ||
         /\/api\/v1\/media\//.test(streamedText);
       if (hasReply) {
+        if (isSilentEmptyChatDetail(streamedText)) putSentBack(streamedText);
         clearStreamStatus();
         onUpdate((current) => ({
           ...current,
@@ -1224,6 +1270,7 @@ export function GrokPane({
         window.setTimeout(() => maybeRearmSts(), 120);
         return;
       }
+      putSentBack(EMPTY_REPLY_BODY);
       onUpdate((current) => ({
         ...current,
         streamStatus: null,

@@ -57,6 +57,80 @@ def wants_send_mail(message: str) -> bool:
     return bool(MAIL_SEND_RE.search(message or ""))
 
 
+MARK_READ_RE = re.compile(r"\bmark\b.{0,80}\bread\b", re.I)
+_MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread)\b", re.I)
+_MARK_ALL_RE = re.compile(r"\ball\b|\bunread\s+(?:mail|e-mail|email|inbox|messages)\b", re.I)
+_MARK_FROM_RE = re.compile(r"\bfrom\s+(.+?)\s+(?:as\s+)?read\b", re.I)
+_MARK_STOP = re.compile(
+    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read)\b",
+    re.I,
+)
+
+
+def wants_mark_read(message: str) -> bool:
+    text = message or ""
+    return bool(MARK_READ_RE.search(text) and _MARK_MAIL_RE.search(text))
+
+
+def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
+    """Return (rows, label). Label 'all', a search needle, or 'vague' when nothing should change."""
+    text = message or ""
+    found = _MARK_FROM_RE.search(text)
+    if found:
+        needle = " ".join(found.group(1).split()).strip(" .")
+        low = needle.lower()
+        return [item for item in items if low and low in str(item.get("from") or "").lower()], needle
+    cleaned = _MARK_STOP.sub(" ", text)
+    needle = " ".join(cleaned.split()).strip(" .")
+    if len(needle) < 3:
+        if _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
+            return list(items), "all"
+        return [], "vague"
+    if _MARK_ALL_RE.search(text) and needle.lower() in {"all", "all unread"}:
+        return list(items), "all"
+    low = needle.lower()
+    picked = [
+        item
+        for item in items
+        if low in str(item.get("subject") or "").lower() or low in str(item.get("from") or "").lower()
+    ]
+    return picked, needle
+
+
+def format_mark_read(chosen: list[dict], *, marked: int, label: str, connected: bool, error: str | None = None) -> str:
+    if not connected:
+        return "Mail is not connected. Open Mail in StoryKeep."
+    if error:
+        return "Could not mark mail read this turn. Open Mail in StoryKeep and try again."
+    if label == "vague":
+        return "Name the message, or say mark all unread read."
+    if label == "all" and not chosen:
+        return "No unread mail."
+    if not chosen:
+        shown = label or "that"
+        return f"No unread message matched {shown}."
+    noun = "message" if marked == 1 else "messages"
+    lines = [f"Marked {marked} unread {noun} read."]
+    for item in chosen:
+        who = str(item.get("from") or "(unknown)").strip() or "(unknown)"
+        subject = str(item.get("subject") or "(no subject)").strip() or "(no subject)"
+        lines.append(f"- {who} — {subject}")
+    return "\n".join(lines)
+
+
+def mark_read_reply(token: str, message: str) -> str:
+    from app.services import fastmail_jmap as jmap
+
+    listed = jmap.list_emails(token, role="inbox", unseen=True, limit=50)
+    items = [item for item in (listed.get("items") or []) if isinstance(item, dict)]
+    chosen, label = choose_mark_read(message, items)
+    if label == "vague" or not chosen:
+        return format_mark_read(chosen, marked=0, label=label, connected=True)
+    ids = [str(item.get("id") or "") for item in chosen]
+    marked = jmap.mark_seen(token, ids)
+    return format_mark_read(chosen, marked=marked, label=label, connected=True)
+
+
 def unread_mail_markdown(items: list[dict]) -> str:
     if not items:
         return "Unread Fastmail inbox (cap 50): none."

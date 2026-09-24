@@ -1,0 +1,380 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index cfc7c21..ed42ff8 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-morning-v1", "time": "2026-09-24T06:00:00Z"}
++{"sha": "junior-read-retry-v1", "time": "2026-09-24T16:40:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index f96ae72..dcd18b0 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -963,7 +963,17 @@ def _chat(
+     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
+     from app.services import morning_brief
+ 
+-    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user)
++    mark_read_text = None
++    if mail_tool.wants_mark_read(user_text) and not is_locked(user):
++        if mail_service.has_token(db, user):
++            try:
++                mark_read_text = mail_tool.mark_read_reply(mail_service.require_token(db, user), user_text)
++            except Exception:
++                log_chat_exception("mark read failed", user=user_id, conversation=conversation_id)
++                mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=True, error="failed")
++        else:
++            mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=False)
++    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user) and mark_read_text is None
+     morning_text = None
+     if morning_turn:
+         try:
+@@ -971,7 +981,7 @@ def _chat(
+         except Exception:
+             log_chat_exception("morning brief failed", user=user_id, conversation=conversation_id)
+             morning_text = "School morning could not be loaded. Try again."
+-    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn
++    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn and mark_read_text is None
+     if mail_unread:
+         resolved_model = chat_service.CURRENT_CHAT_MODEL
+         resolved_reasoning = "low"
+@@ -1471,6 +1481,23 @@ def _chat(
+                 await emit_delta(pane_note)
+                 yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
+                 await asyncio.sleep(0)
++            if mark_read_text:
++                await emit_delta(mark_read_text)
++                yield chat_service.encode_sse({"delta": mark_read_text, "stream_status": "writing"})
++                if persist and conversation_id:
++                    assistant_message_id = _persist_assistant("".join(assistant_parts))
++                    if assistant_message_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": assistant_message_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             if morning_text:
+                 await emit_delta(morning_text)
+                 yield chat_service.encode_sse({"delta": morning_text, "stream_status": "writing"})
+diff --git a/backend/app/services/fastmail_jmap.py b/backend/app/services/fastmail_jmap.py
+index ffaa555..3b39d39 100644
+--- a/backend/app/services/fastmail_jmap.py
++++ b/backend/app/services/fastmail_jmap.py
+@@ -313,6 +313,20 @@ def _body_from_email(row: dict[str, Any]) -> tuple[str, str]:
+     return text, html[:BODY_CAP] if html else ""
+ 
+ 
++def mark_seen(token: str, email_ids: list[str]) -> int:
++    """Set $seen on up to 50 inbox messages. Returns how many Fastmail updated."""
++    ids = [item.strip() for item in email_ids if isinstance(item, str) and item.strip()][:LIST_CAP]
++    if not ids:
++        return 0
++    session, acct, _boxes = mailboxes(token)
++    update = {email_id: {"keywords/$seen": True} for email_id in ids}
++    calls = _api_call(token, session, [["Email/set", {"accountId": acct, "update": update}, "seen"]])
++    updated = _result(calls, "Email/set", "seen").get("updated")
++    if isinstance(updated, dict):
++        return len(updated)
++    return len(ids)
++
++
+ def get_email(token: str, email_id: str) -> dict[str, Any]:
+     cleaned = (email_id or "").strip()
+     if not cleaned or len(cleaned) > 200:
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index 5b4cb11..0385526 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -59,6 +59,7 @@ Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) whe
+ Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
+ When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
+ “What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
++“Mark all unread read” marks the unread inbox list read. A named sender or subject marks only those matches. Do not mark mail read unless he asked.
+ Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
+ """
+ 
+diff --git a/backend/app/services/mail_tool.py b/backend/app/services/mail_tool.py
+index c492692..86bc9d2 100644
+--- a/backend/app/services/mail_tool.py
++++ b/backend/app/services/mail_tool.py
+@@ -57,6 +57,80 @@ def wants_send_mail(message: str) -> bool:
+     return bool(MAIL_SEND_RE.search(message or ""))
+ 
+ 
++MARK_READ_RE = re.compile(r"\bmark\b.{0,80}\bread\b", re.I)
++_MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread)\b", re.I)
++_MARK_ALL_RE = re.compile(r"\ball\b|\bunread\s+(?:mail|e-mail|email|inbox|messages)\b", re.I)
++_MARK_FROM_RE = re.compile(r"\bfrom\s+(.+?)\s+(?:as\s+)?read\b", re.I)
++_MARK_STOP = re.compile(
++    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read)\b",
++    re.I,
++)
++
++
++def wants_mark_read(message: str) -> bool:
++    text = message or ""
++    return bool(MARK_READ_RE.search(text) and _MARK_MAIL_RE.search(text))
++
++
++def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
++    """Return (rows, label). Label 'all', a search needle, or 'vague' when nothing should change."""
++    text = message or ""
++    found = _MARK_FROM_RE.search(text)
++    if found:
++        needle = " ".join(found.group(1).split()).strip(" .")
++        low = needle.lower()
++        return [item for item in items if low and low in str(item.get("from") or "").lower()], needle
++    cleaned = _MARK_STOP.sub(" ", text)
++    needle = " ".join(cleaned.split()).strip(" .")
++    if len(needle) < 3:
++        if _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
++            return list(items), "all"
++        return [], "vague"
++    if _MARK_ALL_RE.search(text) and needle.lower() in {"all", "all unread"}:
++        return list(items), "all"
++    low = needle.lower()
++    picked = [
++        item
++        for item in items
++        if low in str(item.get("subject") or "").lower() or low in str(item.get("from") or "").lower()
++    ]
++    return picked, needle
++
++
++def format_mark_read(chosen: list[dict], *, marked: int, label: str, connected: bool, error: str | None = None) -> str:
++    if not connected:
++        return "Mail is not connected. Open Mail in StoryKeep."
++    if error:
++        return "Could not mark mail read this turn. Open Mail in StoryKeep and try again."
++    if label == "vague":
++        return "Name the message, or say mark all unread read."
++    if label == "all" and not chosen:
++        return "No unread mail."
++    if not chosen:
++        shown = label or "that"
++        return f"No unread message matched {shown}."
++    noun = "message" if marked == 1 else "messages"
++    lines = [f"Marked {marked} unread {noun} read."]
++    for item in chosen:
++        who = str(item.get("from") or "(unknown)").strip() or "(unknown)"
++        subject = str(item.get("subject") or "(no subject)").strip() or "(no subject)"
++        lines.append(f"- {who} — {subject}")
++    return "\n".join(lines)
++
++
++def mark_read_reply(token: str, message: str) -> str:
++    from app.services import fastmail_jmap as jmap
++
++    listed = jmap.list_emails(token, role="inbox", unseen=True, limit=50)
++    items = [item for item in (listed.get("items") or []) if isinstance(item, dict)]
++    chosen, label = choose_mark_read(message, items)
++    if label == "vague" or not chosen:
++        return format_mark_read(chosen, marked=0, label=label, connected=True)
++    ids = [str(item.get("id") or "") for item in chosen]
++    marked = jmap.mark_seen(token, ids)
++    return format_mark_read(chosen, marked=marked, label=label, connected=True)
++
++
+ def unread_mail_markdown(items: list[dict]) -> str:
+     if not items:
+         return "Unread Fastmail inbox (cap 50): none."
+diff --git a/backend/tests/test_mark_read.py b/backend/tests/test_mark_read.py
+new file mode 100644
+index 0000000..80d0a9e
+--- /dev/null
++++ b/backend/tests/test_mark_read.py
+@@ -0,0 +1,44 @@
++from __future__ import annotations
++
++import unittest
++
++from app.services import mail_tool
++
++
++class MarkReadTests(unittest.TestCase):
++    def test_phrases(self):
++        self.assertTrue(mail_tool.wants_mark_read("mark all unread read"))
++        self.assertTrue(mail_tool.wants_mark_read("mark the email from Ada read"))
++        self.assertFalse(mail_tool.wants_mark_read("mark this note read"))
++        self.assertFalse(mail_tool.wants_mark_read("what's on today"))
++
++    def test_all_unread(self):
++        items = [{"id": "1", "from": "Ada", "subject": "Syllabus"}]
++        chosen, label = mail_tool.choose_mark_read("mark all unread read", items)
++        self.assertEqual(label, "all")
++        self.assertEqual(chosen, items)
++        text = mail_tool.format_mark_read(chosen, marked=1, label=label, connected=True)
++        self.assertIn("Marked 1 unread message read.", text)
++        self.assertIn("Ada — Syllabus", text)
++
++    def test_from_match(self):
++        items = [
++            {"id": "1", "from": "Ada Lovelace", "subject": "Syllabus"},
++            {"id": "2", "from": "Bob", "subject": "Hello"},
++        ]
++        chosen, label = mail_tool.choose_mark_read("mark the email from Ada read", items)
++        self.assertEqual(label, "Ada")
++        self.assertEqual([item["id"] for item in chosen], ["1"])
++
++    def test_subject_match(self):
++        items = [{"id": "1", "from": "Ada", "subject": "Syllabus update"}]
++        chosen, label = mail_tool.choose_mark_read("mark the syllabus email read", items)
++        self.assertEqual(label, "syllabus")
++        self.assertEqual(len(chosen), 1)
++
++    def test_vague_does_not_mark_the_inbox(self):
++        items = [{"id": "1", "from": "Ada", "subject": "Syllabus"}]
++        chosen, label = mail_tool.choose_mark_read("mark mail read", items)
++        self.assertEqual(label, "vague")
++        self.assertEqual(chosen, [])
++        self.assertIn("mark all unread read", mail_tool.format_mark_read(chosen, marked=0, label=label, connected=True))
+diff --git a/frontend/src/components/grok-pane.tsx b/frontend/src/components/grok-pane.tsx
+index ac0188a..14e6291 100644
+--- a/frontend/src/components/grok-pane.tsx
++++ b/frontend/src/components/grok-pane.tsx
+@@ -15,6 +15,7 @@ import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-l
+ import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
+ import { wordIndexFromSelection } from "@/lib/tts-words";
+ import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
++import { restoreDraftAfterSilent } from "@/lib/silent-retry";
+ import { Button } from "@/components/ui/button";
+ import { Textarea } from "@/components/ui/textarea";
+ import { ApiError, api } from "@/lib/api";
+@@ -796,6 +797,7 @@ export function GrokPane({
+     includeOffset?: number;
+     controller?: AbortController;
+     turnId?: number;
++    silentRetried?: boolean;
+   }) {
+     const { message, retry = false, userLine, assistantId } = options;
+     const turnId = options.turnId ?? turnIdRef.current;
+@@ -817,6 +819,16 @@ export function GrokPane({
+ 
+     setBusy(true);
+     let streamFailed = false;
++    let holdSilentRetry = false;
++    const sentText = (userLine?.content || "").trim();
++    const putSentBack = (reply: string) => {
++      onUpdate((current) => {
++        const next = restoreDraftAfterSilent(current.draft, sentText, reply);
++        if (next === current.draft) return current;
++        draftValueRef.current = next;
++        return { ...current, draft: next };
++      });
++    };
+     let streamedText = "";
+     let conversationId: string | null = conversationIdForRequest(pane.conversationId);
+     try {
+@@ -1108,8 +1120,40 @@ export function GrokPane({
+       const capDetail = /over the cap|too long|Recent messages are too long/i.test(detail) ? detail : null;
+       const timeoutDetail = chatTimeoutToast(status, detail);
+       const silentEmpty = !imageFail && isSilentEmptyChatDetail(detail);
++      if (silentEmpty && !options.silentRetried) {
++        holdSilentRetry = true;
++        streamFailed = false;
++        gotDeltaRef.current = false;
++        streamedText = "";
++        setStreamStatus("thinking");
++        onUpdate((current) => ({
++          ...current,
++          streamStatus: "thinking",
++          messages: current.messages.map((item) =>
++            item.id === assistantId || item.waiting
++              ? { ...item, content: "", waiting: true, turnStatus: "thinking" as const, failed: false, error: null }
++              : item,
++          ),
++        }));
++        await runStream({
++          message,
++          retry: true,
++          silentRetried: true,
++          userLine,
++          assistantId,
++          mediaIds: options.mediaIds,
++          includeMode: options.includeMode,
++          includeHeading: options.includeHeading,
++          includeSelection: options.includeSelection,
++          includeOffset: options.includeOffset,
++          controller,
++          turnId,
++        });
++        return;
++      }
+       if (silentEmpty) {
+         setStreamStatus(null);
++        putSentBack(EMPTY_REPLY_BODY);
+         onUpdate((current) => ({
+           ...current,
+           streamStatus: null,
+@@ -1186,6 +1230,7 @@ export function GrokPane({
+       }
+     } finally {
+       if (turnId !== turnIdRef.current) return;
++      if (holdSilentRetry) return;
+       if (abortRef.current === controller) abortRef.current = null;
+       abortingRef.current = false;
+       setAborting(false);
+@@ -1197,6 +1242,7 @@ export function GrokPane({
+         hasMediaImage(streamedText) ||
+         /\/api\/v1\/media\//.test(streamedText);
+       if (hasReply) {
++        if (isSilentEmptyChatDetail(streamedText)) putSentBack(streamedText);
+         clearStreamStatus();
+         onUpdate((current) => ({
+           ...current,
+@@ -1224,6 +1270,7 @@ export function GrokPane({
+         window.setTimeout(() => maybeRearmSts(), 120);
+         return;
+       }
++      putSentBack(EMPTY_REPLY_BODY);
+       onUpdate((current) => ({
+         ...current,
+         streamStatus: null,
+diff --git a/frontend/src/lib/silent-retry.test.ts b/frontend/src/lib/silent-retry.test.ts
+new file mode 100644
+index 0000000..80ce4d6
+--- /dev/null
++++ b/frontend/src/lib/silent-retry.test.ts
+@@ -0,0 +1,20 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import { EMPTY_REPLY_BODY } from "./grok-pane-name.ts";
++import { restoreDraftAfterSilent } from "./silent-retry.ts";
++
++test("silent fallback puts the sent line back when the box is empty", () => {
++  assert.equal(
++    restoreDraftAfterSilent("", "explain the DAT homework", EMPTY_REPLY_BODY),
++    "explain the DAT homework",
++  );
++});
++
++test("a real reply leaves an empty box empty", () => {
++  assert.equal(restoreDraftAfterSilent("", "explain lists", "A list keeps order."), "");
++});
++
++test("text already in the box stays", () => {
++  assert.equal(restoreDraftAfterSilent("next question", "explain lists", EMPTY_REPLY_BODY), "next question");
++});
+diff --git a/frontend/src/lib/silent-retry.ts b/frontend/src/lib/silent-retry.ts
+new file mode 100644
+index 0000000..b21dad8
+--- /dev/null
++++ b/frontend/src/lib/silent-retry.ts
+@@ -0,0 +1,11 @@
++import { isSilentEmptyChatDetail } from "./grok-chat-error";
++import { EMPTY_REPLY_BODY } from "./grok-pane-name";
++
++/** Keep the typed line in the composer when the turn ends on the silent fallback. */
++export function restoreDraftAfterSilent(currentDraft: string, sent: string, reply: string): string {
++  if ((currentDraft || "").trim()) return currentDraft;
++  const body = (reply || "").trim();
++  if (!body) return currentDraft;
++  if (body !== EMPTY_REPLY_BODY && !isSilentEmptyChatDetail(body)) return currentDraft;
++  return (sent || "").trim();
++}

@@ -963,7 +963,17 @@ def _chat(
     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     from app.services import morning_brief
 
-    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user)
+    mark_read_text = None
+    if mail_tool.wants_mark_read(user_text) and not is_locked(user):
+        if mail_service.has_token(db, user):
+            try:
+                mark_read_text = mail_tool.mark_read_reply(mail_service.require_token(db, user), user_text)
+            except Exception:
+                log_chat_exception("mark read failed", user=user_id, conversation=conversation_id)
+                mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=True, error="failed")
+        else:
+            mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=False)
+    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user) and mark_read_text is None
     morning_text = None
     if morning_turn:
         try:
@@ -971,7 +981,7 @@ def _chat(
         except Exception:
             log_chat_exception("morning brief failed", user=user_id, conversation=conversation_id)
             morning_text = "School morning could not be loaded. Try again."
-    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn
+    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn and mark_read_text is None
     if mail_unread:
         resolved_model = chat_service.CURRENT_CHAT_MODEL
         resolved_reasoning = "low"
@@ -1471,6 +1481,23 @@ def _chat(
                 await emit_delta(pane_note)
                 yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
                 await asyncio.sleep(0)
+            if mark_read_text:
+                await emit_delta(mark_read_text)
+                yield chat_service.encode_sse({"delta": mark_read_text, "stream_status": "writing"})
+                if persist and conversation_id:
+                    assistant_message_id = _persist_assistant("".join(assistant_parts))
+                    if assistant_message_id:
+                        yield chat_service.encode_sse(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": assistant_message_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                                "reasoning_effort": resolved_reasoning,
+                            }
+                        )
+                yield chat_service.encode_sse("[DONE]")
+                return
             if morning_text:
                 await emit_delta(morning_text)
                 yield chat_service.encode_sse({"delta": morning_text, "stream_status": "writing"})
