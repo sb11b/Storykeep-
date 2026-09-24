@@ -77,6 +77,8 @@ import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices, resolveTtsVoiceId } from "@/lib/tts-defaults";
 import { readStoredTtsSpeed, readStoredTtsVoice, TTS_SPEEDS, writeStoredTtsSpeed, writeStoredTtsVoice } from "@/lib/tts-preferences";
+import { shouldRearmAfterJuniorTurn } from "@/lib/junior-stt";
+import { appendSpoken } from "@/lib/stt-buffer";
 import { MIC_LIVE, MIC_STT_EMPTY_HINT, MIC_TRANSCRIBING } from "@/lib/stt-ui";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -414,26 +416,29 @@ export function GrokPane({
       setAborting(false);
       abortingRef.current = false;
       onUpdate((current) => {
-        const messages = current.messages.map((item) => {
-          if (item.role !== "assistant") return item;
+        const messages = current.messages.flatMap((item) => {
+          if (item.role !== "assistant") return [item];
           const target = item.waiting || (assistantId && item.id === assistantId);
-          if (!target) return item;
+          if (!target) return [item];
           const closed = closeAssistantTurn(item.content, {
             fileCount: item.files?.length,
             aborted,
           });
-          return { ...item, ...closed };
+          if (closed.drop) return [];
+          const { drop: _drop, ...rest } = closed;
+          return [{ ...item, ...rest }];
         });
         const failed = messages.some(
           (item) => item.role === "assistant" && (item.waiting === false && item.failed) && (assistantId ? item.id === assistantId : true),
         );
         return {
           ...current,
-          streamStatus: failed ? "error" : "done",
+          streamStatus: aborted ? null : failed ? "error" : "done",
           messages,
         };
       });
-      applyStreamStatus("error");
+      if (!aborted) applyStreamStatus("error");
+      else applyStreamStatus(null);
     },
     [applyStreamStatus, onUpdate],
   );
@@ -446,6 +451,7 @@ export function GrokPane({
     abortRef.current = null;
     failOpenTurn(undefined, true);
     toast.error(NO_REPLY_TOAST);
+    window.setTimeout(() => maybeRearmStsRef.current(), 120);
   }, [dictation, failOpenTurn]);
 
   const markWriting = useCallback(() => {
@@ -590,10 +596,16 @@ export function GrokPane({
   stopRef.current = listen.stop;
 
   const maybeRearmSts = useCallback(() => {
-    if (!stsModeOnRef.current) return;
-    if (ttsPausedRef.current) return;
-    if (sttPhaseRef.current !== "idle") return;
-    if (busy || inFlightRef.current) return;
+    if (
+      !shouldRearmAfterJuniorTurn({
+        stsModeOn: stsModeOnRef.current,
+        ttsPaused: ttsPausedRef.current,
+        sttPhaseIdle: sttPhaseRef.current === "idle",
+        busy: busy || inFlightRef.current,
+      })
+    ) {
+      return;
+    }
     const lp = listenPhaseRef.current;
     if (lp === "loading" || lp === "playing" || lp === "paused") return;
     console.log("junior-sts", { action: "rearm-request" });
@@ -1075,17 +1087,15 @@ export function GrokPane({
         onUpdate((current) => ({
           ...current,
           streamStatus: null,
-          messages: current.messages.map((item) => {
-            if (item.role !== "assistant" || !(item.waiting || item.id === assistantId)) return item;
-            const kept = (item.content || "").trim();
-            return {
-              ...item,
-              waiting: false,
-              turnStatus: kept ? ("done" as const) : ("error" as const),
-              failed: !kept,
-              error: kept ? null : "Stopped.",
-              content: item.content,
-            };
+          messages: current.messages.flatMap((item) => {
+            if (item.role !== "assistant" || !(item.waiting || item.id === assistantId)) return [item];
+            const closed = closeAssistantTurn(item.content, {
+              fileCount: item.files?.length,
+              aborted: true,
+            });
+            if (closed.drop) return [];
+            const { drop: _drop, ...rest } = closed;
+            return [{ ...item, ...rest, content: item.content }];
           }),
         }));
         return;
@@ -1190,7 +1200,11 @@ export function GrokPane({
       abortingRef.current = false;
       setAborting(false);
       setBusy(false);
-      if (streamFailed) return;
+      const scheduleRearm = () => window.setTimeout(() => maybeRearmSts(), 120);
+      if (streamFailed) {
+        scheduleRearm();
+        return;
+      }
       const hasReply =
         gotDeltaRef.current ||
         Boolean(streamedText.trim()) ||
@@ -1221,7 +1235,7 @@ export function GrokPane({
           }
         }
         requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
-        window.setTimeout(() => maybeRearmSts(), 120);
+        scheduleRearm();
         return;
       }
       onUpdate((current) => ({
@@ -1240,6 +1254,7 @@ export function GrokPane({
             : item,
         ),
       }));
+      scheduleRearm();
     }
   }
 
@@ -1579,9 +1594,10 @@ export function GrokPane({
   sendRef.current = send;
 
   const fillComposerDraft = useCallback(
-    (transcript: string, focus = false) => {
-      const message = transcript.trim();
-      if (!message) return;
+    (transcript: string, focus = false, append = false) => {
+      const piece = transcript.trim();
+      if (!piece) return;
+      const message = append ? appendSpoken(draftNow(), piece) : piece;
       draftValueRef.current = message;
       onUpdate((current) => ({ ...current, draft: message }));
       const el = draftRef.current;
@@ -1612,7 +1628,7 @@ export function GrokPane({
 
   const applySttDraft = useCallback(
     (transcript: string) => {
-      fillComposerDraft(transcript, true);
+      fillComposerDraft(transcript, true, true);
     },
     [fillComposerDraft],
   );

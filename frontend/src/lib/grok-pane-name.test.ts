@@ -46,13 +46,27 @@ test("ChatTurnStatus maps working to thinking and empty close to error", () => {
     failed: false,
     waiting: false,
     error: null,
+    drop: false,
   });
   assert.deepEqual(closeAssistantTurn("   "), {
     turnStatus: "error",
     failed: true,
     waiting: false,
     error: NO_REPLY_TOAST,
+    drop: false,
   });
-  assert.equal(closeAssistantTurn("", { aborted: true }).turnStatus, "error");
-  assert.equal(closeAssistantTurn("partial", { aborted: true }).failed, true);
+  assert.deepEqual(closeAssistantTurn("", { aborted: true }), {
+    turnStatus: "done",
+    failed: false,
+    waiting: false,
+    error: null,
+    drop: true,
+  });
+  assert.deepEqual(closeAssistantTurn("partial", { aborted: true }), {
+    turnStatus: "done",
+    failed: false,
+    waiting: false,
+    error: null,
+    drop: false,
+  });
 });

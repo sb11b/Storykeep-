@@ -18,6 +18,16 @@ export function shouldRestartMic(listening: boolean, reason: MicEndReason): bool
   return listening && reason === "engine";
 }
 
+/** STS conversation stays armed after Junior errors, Stop, or an empty turn. */
+export function shouldRearmAfterJuniorTurn(input: {
+  stsModeOn: boolean;
+  ttsPaused: boolean;
+  sttPhaseIdle: boolean;
+  busy: boolean;
+}): boolean {
+  return input.stsModeOn && !input.ttsPaused && input.sttPhaseIdle && !input.busy;
+}
+
 export function nextMicRestartDelay(input: {
   fromError: boolean;
   prevDelayMs: number;
@@ -133,6 +143,8 @@ export type MicClipOptions = {
   /** Fires once after speech then ~STS_SILENCE_MS of silence. */
   onSilenceEnd?: () => void;
   silenceMs?: number;
+  /** MediaRecorder / stream died without a user stop. */
+  onEngineEnd?: (reason: MicEndReason) => void;
 };
 
 type SilenceMonitor = { stop: () => void };
@@ -467,6 +479,19 @@ export async function startMicClip(opts?: MicClipOptions): Promise<MicClipSessio
 
   let stopPromise: Promise<Blob> | null = null;
   let aborted = false;
+  let closedByClient = false;
+  let engineEnded = false;
+
+  const notifyEngineEnd = () => {
+    if (closedByClient || engineEnded) return;
+    engineEnded = true;
+    opts?.onEngineEnd?.("engine");
+  };
+
+  recorder.addEventListener("error", notifyEngineEnd);
+  recorder.addEventListener("stop", () => {
+    if (!closedByClient) notifyEngineEnd();
+  });
 
   try {
     recorder.start(250);
@@ -479,6 +504,7 @@ export async function startMicClip(opts?: MicClipOptions): Promise<MicClipSessio
   return wrapMicSession(
     {
       stop: () => {
+        closedByClient = true;
         if (stopPromise) return stopPromise;
         if (aborted) {
           stopPromise = Promise.resolve(new Blob([], { type: recorder.mimeType || preferredMime || "audio/webm" }));
@@ -488,6 +514,7 @@ export async function startMicClip(opts?: MicClipOptions): Promise<MicClipSessio
         return stopPromise;
       },
       abort: () => {
+        closedByClient = true;
         aborted = true;
         try {
           if (recorder.state !== "inactive") recorder.stop();

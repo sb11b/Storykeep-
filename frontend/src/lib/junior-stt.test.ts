@@ -6,6 +6,7 @@ import {
   MIC_RESTART_MAX_MS,
   nextMicRestartDelay,
   pickRecorderMime,
+  shouldRearmAfterJuniorTurn,
   shouldRestartMic,
   STS_SILENCE_MS,
   sttFailToast,
@@ -49,6 +50,25 @@ test("composer mic restarts only while listening and the engine dropped", () => 
   assert.equal(shouldRestartMic(true, "user"), false);
   assert.equal(shouldRestartMic(true, "permission"), false);
   assert.equal(shouldRestartMic(false, "engine"), false);
+});
+
+test("STS rearms after Junior errors or Stop once the turn is idle", () => {
+  assert.equal(
+    shouldRearmAfterJuniorTurn({ stsModeOn: true, ttsPaused: false, sttPhaseIdle: true, busy: false }),
+    true,
+  );
+  assert.equal(
+    shouldRearmAfterJuniorTurn({ stsModeOn: true, ttsPaused: false, sttPhaseIdle: true, busy: true }),
+    false,
+  );
+  assert.equal(
+    shouldRearmAfterJuniorTurn({ stsModeOn: false, ttsPaused: false, sttPhaseIdle: true, busy: false }),
+    false,
+  );
+  assert.equal(
+    shouldRearmAfterJuniorTurn({ stsModeOn: true, ttsPaused: true, sttPhaseIdle: true, busy: false }),
+    false,
+  );
 });
 
 test("mic restart backoffs on error and tight onend loops, not on a quiet restart", () => {

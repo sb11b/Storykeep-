@@ -76,10 +76,20 @@ export function closeAssistantTurn(
   failed: boolean;
   waiting: false;
   error: string | null;
+  drop: boolean;
 } {
   const hasBody = Boolean(content.trim()) || (opts?.fileCount ?? 0) > 0;
-  if (hasBody && !opts?.aborted) {
-    return { turnStatus: "done", failed: false, waiting: false, error: null };
+  if (opts?.aborted) {
+    return {
+      turnStatus: "done",
+      failed: false,
+      waiting: false,
+      error: null,
+      drop: !hasBody,
+    };
   }
-  return { turnStatus: "error", failed: true, waiting: false, error: NO_REPLY_TOAST };
+  if (hasBody) {
+    return { turnStatus: "done", failed: false, waiting: false, error: null, drop: false };
+  }
+  return { turnStatus: "error", failed: true, waiting: false, error: NO_REPLY_TOAST, drop: false };
 }

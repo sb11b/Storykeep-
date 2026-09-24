@@ -12,6 +12,7 @@ import {
 import { Mic } from "lucide-react";
 import { toast } from "sonner";
 import { appendSpoken, newFinalSegment, normalizeSpoken } from "@/lib/stt-buffer";
+import { nextMicRestartDelay, shouldRestartMic } from "@/lib/junior-stt";
 import {
   MIC_DENIED_TOAST,
   MIC_DROPPED_TOAST,
@@ -120,12 +121,19 @@ export function DictationProvider({ children }: { children: ReactNode }) {
   const closedCleanlyRef = useRef(false);
   const deniedToastRef = useRef(false);
   const startForRef = useRef<(field: Field, options?: StartOptions) => void>(() => {});
+  const restartTimerRef = useRef<number | null>(null);
+  const restartDelayRef = useRef(0);
+  const lastRestartAtRef = useRef(0);
   useEffect(() => {
     continuousRef.current = continuous;
     listeningRef.current = listening;
   }, [continuous, listening]);
 
   const disconnectEngine = useCallback((opts?: { keepUi?: boolean }) => {
+    if (restartTimerRef.current != null && !opts?.keepUi) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     closedCleanlyRef.current = true;
     startingRef.current = false;
     if (!opts?.keepUi) {
@@ -182,6 +190,34 @@ export function DictationProvider({ children }: { children: ReactNode }) {
     },
     [disconnectEngine],
   );
+
+  const scheduleEngineRestart = useCallback((fromError: boolean) => {
+    const el = fieldRef.current;
+    const latched = listeningRef.current || sessionContinuousRef.current;
+    if (!el || !shouldRestartMic(latched, "engine") || abortedRef.current || stoppingRef.current) {
+      return false;
+    }
+    const delay = nextMicRestartDelay({
+      fromError,
+      prevDelayMs: restartDelayRef.current,
+      elapsedSinceRestartMs: Date.now() - lastRestartAtRef.current,
+    });
+    restartDelayRef.current = delay || 0;
+    lastRestartAtRef.current = Date.now();
+    disconnectEngine({ keepUi: true });
+    if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current);
+    restartTimerRef.current = window.setTimeout(() => {
+      restartTimerRef.current = null;
+      const field = fieldRef.current;
+      if (!field || abortedRef.current || stoppingRef.current) return;
+      if (!listeningRef.current && !sessionContinuousRef.current) return;
+      startForRef.current(field, {
+        resume: true,
+        continuous: sessionContinuousRef.current || continuousRef.current,
+      });
+    }, delay);
+    return true;
+  }, [disconnectEngine]);
 
   const commitFinal = useCallback((raw: string) => {
     if (abortedRef.current) return;
@@ -281,6 +317,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               if (msg.type === "ready") {
                 listeningRef.current = true;
                 startingRef.current = false;
+                restartDelayRef.current = 0;
                 setListening(true);
                 flushPending();
                 return;
@@ -304,11 +341,13 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "error") {
+                if (scheduleEngineRestart(true)) return;
                 sttToast(msg.message || "STT failed");
                 teardown();
                 return;
               }
               if (msg.type === "timeout") {
+                if (scheduleEngineRestart(true)) return;
                 if (sessionContinuousRef.current) {
                   sleepMic(msg.message || MIC_IDLE);
                   return;
@@ -318,6 +357,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
                 return;
               }
               if (msg.type === "idle") {
+                if (scheduleEngineRestart(false)) return;
                 sleepMic(msg.message || MIC_IDLE);
               }
             } catch {
@@ -344,6 +384,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
               return;
             }
             if (stoppingRef.current || abortedRef.current) return;
+            if (scheduleEngineRestart(true)) return;
             if (sessionContinuousRef.current) {
               sleepMic(MIC_DROPPED_TOAST, true);
               return;
@@ -397,7 +438,7 @@ export function DictationProvider({ children }: { children: ReactNode }) {
         }
       })();
     },
-    [abort, commitFinal, disconnectEngine, sleepMic, teardown],
+    [abort, commitFinal, disconnectEngine, scheduleEngineRestart, sleepMic, teardown],
   );
   startForRef.current = startFor;
 

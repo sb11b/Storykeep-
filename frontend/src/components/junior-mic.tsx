@@ -6,8 +6,10 @@ import { ApiError, api } from "@/lib/api";
 import {
   MIC_PERMISSION_DENIED,
   MIN_CAPTURE_BYTES,
+  nextMicRestartDelay,
   NO_AUDIO_CAPTURED,
   pickRecorderMime,
+  shouldRestartMic,
   startMicClip,
   sttFailToast,
   type MicClipSession,
@@ -61,6 +63,9 @@ export function JuniorMicControls({
   const stsModeOnRef = useRef(false);
   const processingRef = useRef(false);
   const rearmStsRecordingRef = useRef<(() => void) | null>(null);
+  const restartTimerRef = useRef<number | null>(null);
+  const restartDelayRef = useRef(0);
+  const lastRestartAtRef = useRef(0);
   const onPhaseChangeRef = useRef(onPhaseChange);
   const onStsModeChangeRef = useRef(onStsModeChange);
   const onStsSubmitRef = useRef(onStsSubmit);
@@ -96,6 +101,10 @@ export function JuniorMicControls({
   }, []);
 
   const abortSessionOnly = useCallback(() => {
+    if (restartTimerRef.current != null) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     uploadAbortRef.current?.abort();
     uploadAbortRef.current = null;
     sessionRef.current?.abort();
@@ -128,6 +137,44 @@ export function JuniorMicControls({
     } else {
       toast.error(micDeniedMessage(error) || MIC_DENIED_TOAST);
     }
+  }, []);
+
+  const transcribeSttInBackground = useCallback(async (blob: Blob) => {
+    if (blob.size < MIN_CAPTURE_BYTES) return;
+    const controller = new AbortController();
+    uploadAbortRef.current = controller;
+    try {
+      const result = await api.transcribeStt(blob, {
+        signal: controller.signal,
+        timeoutMs: STT_CLIP_TIMEOUT_MS,
+      });
+      const piece = (result.text || "").trim();
+      if (piece) onSttDraftRef.current(piece);
+    } catch (error) {
+      if (isSttEmptyError(error)) onSttEmptyHintRef.current?.();
+      else if (error instanceof ApiError) toast.error(error.message || sttFailToast(error.status));
+      else if (!(error instanceof DOMException && error.name === "AbortError")) {
+        toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
+      }
+    } finally {
+      if (uploadAbortRef.current === controller) uploadAbortRef.current = null;
+    }
+  }, []);
+
+  const scheduleMicRestart = useCallback((mode: JuniorMicMode, fromError: boolean, start: () => void) => {
+    const delay = nextMicRestartDelay({
+      fromError,
+      prevDelayMs: restartDelayRef.current,
+      elapsedSinceRestartMs: Date.now() - lastRestartAtRef.current,
+    });
+    restartDelayRef.current = delay || 0;
+    lastRestartAtRef.current = Date.now();
+    if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current);
+    restartTimerRef.current = window.setTimeout(() => {
+      restartTimerRef.current = null;
+      start();
+    }, delay);
+    console.log("junior-mic", { action: "engine-restart", mode, delay });
   }, []);
 
   const uploadSttDraft = useCallback(
@@ -254,6 +301,12 @@ export function JuniorMicControls({
     const session = sessionRef.current;
     console.log("junior-mic", { action: "stop", mode: "stt", trigger: "button", hasSession: Boolean(session) });
     if (!session) {
+      if (restartTimerRef.current != null) {
+        window.clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+        emitPhase("idle", null);
+        return;
+      }
       if (phaseRef.current === "listening" || startingRef.current) pendingStopRef.current = true;
       else emitPhase("idle", null);
       return;
@@ -304,6 +357,11 @@ export function JuniorMicControls({
           console.log("junior-mic", { action: "silence-end", mode: "sts" });
           void processStsTake("silence");
         },
+        onEngineEnd: () => {
+          if (!stsModeOnRef.current || sessionRef.current !== session) return;
+          console.log("junior-mic", { action: "engine-end", mode: "sts" });
+          if (shouldRestartMic(true, "engine")) void processStsTake("silence");
+        },
       });
       if (!stsModeOnRef.current) {
         session.abort();
@@ -313,6 +371,7 @@ export function JuniorMicControls({
       }
       sessionRef.current = session;
       startingRef.current = false;
+      restartDelayRef.current = 0;
       console.log("junior-mic", { action: "recording", mode: "sts", mime: mimeHint });
     } catch (error) {
       sessionRef.current = null;
@@ -352,6 +411,27 @@ export function JuniorMicControls({
           emitPhase("idle", null);
           toast.error(MIC_DENIED_TOAST);
         },
+        onEngineEnd: () => {
+          if (sessionRef.current !== session || activeModeRef.current !== "stt") return;
+          if (!shouldRestartMic(phaseRef.current === "listening", "engine")) {
+            emitPhase("idle", null);
+            return;
+          }
+          console.log("junior-mic", { action: "engine-end", mode: "stt" });
+          sessionRef.current = null;
+          startingRef.current = false;
+          void session
+            .stop()
+            .then((blob) => {
+              if (blob.size >= MIN_CAPTURE_BYTES) void transcribeSttInBackground(blob);
+            })
+            .catch(() => {});
+          scheduleMicRestart("stt", true, () => {
+            if (phaseRef.current === "listening" && activeModeRef.current === "stt") {
+              void startSttRecording();
+            }
+          });
+        },
       });
       if (phaseRef.current !== "listening" || activeModeRef.current !== "stt") {
         session.abort();
@@ -360,6 +440,7 @@ export function JuniorMicControls({
       }
       sessionRef.current = session;
       startingRef.current = false;
+      restartDelayRef.current = 0;
       console.log("junior-mic", { action: "recording", mode: "stt", mime: mimeHint });
       if (pendingStopRef.current) {
         pendingStopRef.current = false;
@@ -373,7 +454,7 @@ export function JuniorMicControls({
       emitPhase("idle", null);
       showMicError(error, "stt");
     }
-  }, [emitPhase, exitStsMode, showMicError, stopSttAndUpload]);
+  }, [emitPhase, exitStsMode, scheduleMicRestart, showMicError, stopSttAndUpload, transcribeSttInBackground]);
 
   const toggleSts = useCallback(() => {
     console.log("junior-mic", { action: "tap", mode: "sts", phase: phaseRef.current, stsMode: stsModeOnRef.current, enabled });
