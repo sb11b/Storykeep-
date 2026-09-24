@@ -1,0 +1,324 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 8b23048..cfc7c21 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-pane-nudge-v1", "time": "2026-09-24T05:40:00Z"}
++{"sha": "junior-morning-v1", "time": "2026-09-24T06:00:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index dd43a92..f96ae72 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -961,7 +961,17 @@ def _chat(
+         None,
+     )
+     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
+-    mail_unread = mail_tool.wants_unread_mail(user_text)
++    from app.services import morning_brief
++
++    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user)
++    morning_text = None
++    if morning_turn:
++        try:
++            morning_text = morning_brief.build(db, user)
++        except Exception:
++            log_chat_exception("morning brief failed", user=user_id, conversation=conversation_id)
++            morning_text = "School morning could not be loaded. Try again."
++    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn
+     if mail_unread:
+         resolved_model = chat_service.CURRENT_CHAT_MODEL
+         resolved_reasoning = "low"
+@@ -1461,6 +1471,23 @@ def _chat(
+                 await emit_delta(pane_note)
+                 yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
+                 await asyncio.sleep(0)
++            if morning_text:
++                await emit_delta(morning_text)
++                yield chat_service.encode_sse({"delta": morning_text, "stream_status": "writing"})
++                if persist and conversation_id:
++                    assistant_message_id = _persist_assistant("".join(assistant_parts))
++                    if assistant_message_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": assistant_message_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             if will_voices:
+                 voice_list = await asyncio.to_thread(tts_service.list_voices)
+                 block = tts_service.format_voices_for_model(voice_list)
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index ef79f66..5b4cb11 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -58,6 +58,7 @@ When Steve asks who you are or what you can do, use the **Junior capabilities**
+ Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) when configured and he explicitly asks — confirm what you did after tool calls.
+ Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
+ When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
++“What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
+ Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
+ """
+ 
+diff --git a/backend/app/services/morning_brief.py b/backend/app/services/morning_brief.py
+new file mode 100644
+index 0000000..a825967
+--- /dev/null
++++ b/backend/app/services/morning_brief.py
+@@ -0,0 +1,182 @@
++"""One chat turn: today's calendar, unread mail, and pinned Schoolwork notes."""
++
++from __future__ import annotations
++
++import re
++from datetime import datetime, timedelta, timezone
++from zoneinfo import ZoneInfo
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.models import Article, Feed, Folder, User
++from app.services.destination import apply_shelf_filter
++
++MORNING_TZ = ZoneInfo("America/New_York")
++MAIL_CAP = 8
++NOTE_CAP = 12
++
++MORNING_RE = re.compile(
++    r"\b(?:"
++    r"what(?:'s| is) on today|"
++    r"whats on today|"
++    r"school morning|"
++    r"morning line|"
++    r"what(?:'s| is) due today|"
++    r"today(?:'s|s)? school"
++    r")\b",
++    re.I,
++)
++
++
++def wants_morning(message: str) -> bool:
++    return bool(MORNING_RE.search(message or ""))
++
++
++def today_window(now: datetime | None = None) -> tuple[datetime, datetime, str]:
++    instant = now or datetime.now(timezone.utc)
++    if instant.tzinfo is None:
++        instant = instant.replace(tzinfo=timezone.utc)
++    local = instant.astimezone(MORNING_TZ)
++    start = local.replace(hour=0, minute=0, second=0, microsecond=0)
++    end = start + timedelta(days=1)
++    label = start.strftime("%A, %B ") + str(start.day)
++    return start, end, label
++
++
++def _clock(start: str) -> str:
++    raw = (start or "").strip()
++    if not raw:
++        return ""
++    try:
++        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
++    except ValueError:
++        return ""
++    if parsed.tzinfo is None:
++        parsed = parsed.replace(tzinfo=timezone.utc)
++    local = parsed.astimezone(MORNING_TZ)
++    hour = local.strftime("%I").lstrip("0") or "12"
++    return f"{hour}:{local.strftime('%M %p').lower()}"
++
++
++def format_morning(
++    *,
++    date_label: str,
++    events: list[dict] | None,
++    calendar_connected: bool,
++    calendar_error: bool = False,
++    mail_items: list[dict] | None,
++    mail_total: int = 0,
++    mail_connected: bool,
++    mail_error: bool = False,
++    notes: list[tuple[str, str | None]] | None,
++    notes_error: bool = False,
++) -> str:
++    lines = [f"School morning — {date_label}", "", "Today"]
++    if not calendar_connected:
++        lines.append("- Calendar is not connected. Open Calendar in StoryKeep.")
++    elif calendar_error:
++        lines.append("- Calendar could not be read this turn.")
++    elif not events:
++        lines.append("- Nothing on the calendar.")
++    else:
++        for item in events[:20]:
++            title = str(item.get("title") or "Untitled").strip() or "Untitled"
++            when = _clock(str(item.get("start") or ""))
++            lines.append(f"- {when} — {title}" if when else f"- {title}")
++    lines.extend(["", "Unread mail"])
++    if not mail_connected:
++        lines.append("- Mail is not connected. Open Mail in StoryKeep.")
++    elif mail_error:
++        lines.append("- Unread mail could not be read this turn.")
++    elif not mail_items:
++        lines.append("- No unread mail.")
++    else:
++        shown = mail_items[:MAIL_CAP]
++        for item in shown:
++            who = str(item.get("from") or "(unknown)").strip() or "(unknown)"
++            subject = str(item.get("subject") or "(no subject)").strip() or "(no subject)"
++            lines.append(f"- {who} — {subject}")
++        extra = max(0, mail_total - len(shown))
++        if extra:
++            lines.append(f"- {extra} more unread")
++    lines.extend(["", "Pinned Schoolwork"])
++    if notes_error:
++        lines.append("- Pinned notes could not be read this turn.")
++    elif not notes:
++        lines.append("- No pinned notes on the Schoolwork shelf.")
++    else:
++        for title, folder in notes[:NOTE_CAP]:
++            name = (title or "Untitled").strip() or "Untitled"
++            if folder:
++                lines.append(f"- {name} ({folder})")
++            else:
++                lines.append(f"- {name}")
++    return "\n".join(lines)
++
++
++def pinned_schoolwork(db: Session, user: User) -> list[tuple[str, str | None]]:
++    stmt = apply_shelf_filter(
++        select(Article.title, Folder.name)
++        .join(Feed, Article.feed_id == Feed.id)
++        .outerjoin(Folder, Article.folder_id == Folder.id)
++        .where(Feed.user_id == user.id, Article.pinned.is_(True), Article.is_correction.is_(False)),
++        "schoolwork",
++    )
++    stmt = stmt.order_by(Article.pinned_at.desc().nulls_last(), Article.title.asc()).limit(NOTE_CAP)
++    rows = db.execute(stmt).all()
++    return [(str(title or ""), folder if isinstance(folder, str) else None) for title, folder in rows]
++
++
++def build(db: Session, user: User, *, now: datetime | None = None) -> str:
++    from app.services import calendar_access as calendars
++    from app.services import fastmail_jmap as jmap
++    from app.services import mail as mail_service
++
++    start, end, label = today_window(now)
++    calendar_connected = calendars.is_connected(db, user.id)
++    events: list[dict] | None = []
++    calendar_error = False
++    if calendar_connected:
++        try:
++            events = calendars.list_events(
++                db,
++                user.id,
++                time_min=start.isoformat(),
++                time_max=end.isoformat(),
++                timezone_name="America/New_York",
++            )
++        except Exception:
++            events = None
++            calendar_error = True
++    mail_connected = mail_service.has_token(db, user)
++    mail_items: list[dict] | None = []
++    mail_total = 0
++    mail_error = False
++    if mail_connected:
++        try:
++            listed = jmap.list_emails(mail_service.require_token(db, user), role="inbox", unseen=True, limit=50)
++            mail_items = list(listed.get("items") or [])
++            mail_total = int(listed.get("total") or len(mail_items))
++        except Exception:
++            mail_items = None
++            mail_error = True
++    notes: list[tuple[str, str | None]] | None = []
++    notes_error = False
++    try:
++        notes = pinned_schoolwork(db, user)
++    except Exception:
++        notes = None
++        notes_error = True
++    return format_morning(
++        date_label=label,
++        events=events,
++        calendar_connected=calendar_connected,
++        calendar_error=calendar_error,
++        mail_items=mail_items,
++        mail_total=mail_total,
++        mail_connected=mail_connected,
++        mail_error=mail_error,
++        notes=notes,
++        notes_error=notes_error,
++    )
+diff --git a/backend/tests/test_morning_brief.py b/backend/tests/test_morning_brief.py
+new file mode 100644
+index 0000000..f2dd23c
+--- /dev/null
++++ b/backend/tests/test_morning_brief.py
+@@ -0,0 +1,64 @@
++from __future__ import annotations
++
++import unittest
++from datetime import datetime, timezone
++
++from app.services import morning_brief
++
++
++class MorningBriefTests(unittest.TestCase):
++    def test_wants_morning_phrases(self):
++        for msg in (
++            "what's on today",
++            "Whats on today",
++            "what is due today",
++            "school morning",
++            "morning line",
++            "today's school",
++        ):
++            self.assertTrue(morning_brief.wants_morning(msg), msg)
++        self.assertFalse(morning_brief.wants_morning("what is on the calendar next week"))
++        self.assertFalse(morning_brief.wants_morning("explain python lists for my homework"))
++
++    def test_format_includes_three_sections(self):
++        text = morning_brief.format_morning(
++            date_label="Thursday, September 24",
++            events=[{"title": "DAT class", "start": "2026-09-24T13:00:00+00:00"}],
++            calendar_connected=True,
++            mail_items=[{"from": "Ada", "subject": "Syllabus"}],
++            mail_total=10,
++            mail_connected=True,
++            notes=[("Normalization", "DAT"), ("Bare note", None)],
++        )
++        self.assertIn("School morning — Thursday, September 24", text)
++        self.assertIn("Today", text)
++        self.assertIn("DAT class", text)
++        self.assertIn("9:00 am", text)
++        self.assertIn("Unread mail", text)
++        self.assertIn("Ada — Syllabus", text)
++        self.assertIn("9 more unread", text)
++        self.assertIn("Pinned Schoolwork", text)
++        self.assertIn("Normalization (DAT)", text)
++        self.assertIn("- Bare note", text)
++        self.assertNotIn("preview", text.lower())
++
++    def test_missing_connections_are_named(self):
++        text = morning_brief.format_morning(
++            date_label="Thursday, September 24",
++            events=[],
++            calendar_connected=False,
++            mail_items=[],
++            mail_connected=False,
++            notes=[],
++        )
++        self.assertIn("Open Calendar", text)
++        self.assertIn("Open Mail", text)
++        self.assertIn("No pinned notes", text)
++
++    def test_today_window_is_eastern(self):
++        # 03:30 UTC is still the previous evening in New York during September (EDT, UTC-4).
++        now = datetime(2026, 9, 24, 3, 30, tzinfo=timezone.utc)
++        start, end, label = morning_brief.today_window(now)
++        self.assertEqual(label, "Wednesday, September 23")
++        self.assertEqual(start.hour, 0)
++        self.assertEqual((end - start).days, 1)

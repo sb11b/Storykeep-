@@ -961,7 +961,17 @@ def _chat(
         None,
     )
     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
-    mail_unread = mail_tool.wants_unread_mail(user_text)
+    from app.services import morning_brief
+
+    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user)
+    morning_text = None
+    if morning_turn:
+        try:
+            morning_text = morning_brief.build(db, user)
+        except Exception:
+            log_chat_exception("morning brief failed", user=user_id, conversation=conversation_id)
+            morning_text = "School morning could not be loaded. Try again."
+    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn
     if mail_unread:
         resolved_model = chat_service.CURRENT_CHAT_MODEL
         resolved_reasoning = "low"
@@ -1461,6 +1471,23 @@ def _chat(
                 await emit_delta(pane_note)
                 yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
                 await asyncio.sleep(0)
+            if morning_text:
+                await emit_delta(morning_text)
+                yield chat_service.encode_sse({"delta": morning_text, "stream_status": "writing"})
+                if persist and conversation_id:
+                    assistant_message_id = _persist_assistant("".join(assistant_parts))
+                    if assistant_message_id:
+                        yield chat_service.encode_sse(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": assistant_message_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                                "reasoning_effort": resolved_reasoning,
+                            }
+                        )
+                yield chat_service.encode_sse("[DONE]")
+                return
             if will_voices:
                 voice_list = await asyncio.to_thread(tts_service.list_voices)
                 block = tts_service.format_voices_for_model(voice_list)
