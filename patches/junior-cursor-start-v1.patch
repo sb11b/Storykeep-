@@ -1,0 +1,134 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 0766cba..2292188 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-mail-pin-v1", "time": "2026-09-24T03:40:00Z"}
++{"sha": "junior-cursor-start-v1", "time": "2026-09-24T04:50:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index babed4f..8e985eb 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -1134,7 +1134,10 @@ def _chat(
+     will_railway = railway_tool.wants_railway(user_text)
+     will_github = github_tool.wants_github(user_text)
+     will_deploy = railway_tool.wants_railway_deploy(user_text)
+-    will_cursor_start = cursor_agent_tool.wants_start(user_text)
++    cursor_enabled = cursor_agent_tool.owner_can_use(user)
++    will_cursor_start = junior_model.should_server_start_agent(
++        user_text, configured=cursor_enabled
++    )
+     ops_turn = owner_ops and junior_model.is_ops_turn(user_text)
+     delegate_turn = owner_ops and junior_model.is_delegate_turn(user_text)
+     railway_tools_on = owner_ops and (
+@@ -1146,7 +1149,6 @@ def _chat(
+     cursor_tools_on = owner_ops and (
+         delegate_turn or chat_service.should_attach_chat_tools(user_text)
+     )
+-    cursor_enabled = cursor_agent_tool.owner_can_use(user)
+     turn_extras = junior_model.build_turn_extras(
+         user_text,
+         memory_block=memory_block,
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index 4640c04..e5d2f6c 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -56,7 +56,8 @@ _ANDROID_PROJECT_RE = re.compile(
+ JUNIOR_CAPABILITIES_APPEND = """
+ When Steve asks who you are or what you can do, use the **Junior capabilities** section in standing memory.
+ Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) when configured and he explicitly asks — confirm what you did after tool calls.
+-Owner delegate: cursor_start_agent when configured and he explicitly asks to start/launch a Cursor Cloud Agent — return the agent URL.
++Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
++When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
+ Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
+ """
+ 
+@@ -107,8 +108,9 @@ Steve already gave task details (typed or dictated). Fold every detail into the
+ 
+ CURSOR_FOLLOW_APPEND = """
+ Steve supplied the Cursor / Cloud Agent task himself (typed or dictated). Stay on his scope.
+-Reply with ONE polished copy-paste prompt block derived from his text — not a new plan or investigation.
+-Do not web-search, list chats, read spec docs, or claim you changed the repo unless he asked.
++If a live Cursor Cloud Agent block is attached, the server already started it — lead with the Agent URL and paste the Push to main (Ubuntu) block. Do not refuse, and do not replace that URL with a copy-paste prompt.
++If no live agent block is attached, CURSOR_API_KEY is missing: say that in one sentence, then give ONE polished copy-paste prompt block derived from his text.
++Do not web-search, list chats, read spec docs, or claim you changed the repo yourself.
+ Do not claim you deployed, pushed repos, or ran SQL. Finish in one reply.
+ """
+ 
+@@ -236,6 +238,25 @@ def is_cursor_task_turn(message: str) -> bool:
+     return cursor_turn_mode(message) is not None
+ 
+ 
++def should_server_start_agent(message: str, *, configured: bool) -> bool:
++    """Start a Cloud Agent before the model replies.
++
++    Explicit start/launch phrases always try (a missing key becomes the setup reply).
++    A supplied code task (follow mode) starts only when CURSOR_API_KEY is set.
++    "Write me a cursor prompt" stays a copy-paste block and does not start an agent.
++    """
++    from app.services import cursor_agent_tool
++
++    text = (message or "").strip()
++    if not text:
++        return False
++    if cursor_agent_tool.wants_start(text):
++        return True
++    if not configured:
++        return False
++    return cursor_turn_mode(text) == "follow"
++
++
+ def filter_standing_memory(body: str, *, user_text: str) -> str:
+     """Drop spec-doc sections from memory unless Steve's turn is about them."""
+     text = (body or "").strip()
+diff --git a/backend/tests/test_cursor_prompt_turn.py b/backend/tests/test_cursor_prompt_turn.py
+index 47bb5cf..d497ef2 100644
+--- a/backend/tests/test_cursor_prompt_turn.py
++++ b/backend/tests/test_cursor_prompt_turn.py
+@@ -71,6 +71,46 @@ class CursorPromptTurnTests(unittest.TestCase):
+         msg = "Fix login in auth.py\n- add tests\n- deploy\n" + ("ensure session persists.\n" * 12)
+         self.assertFalse(chat.should_attach_chat_tools(msg))
+ 
++    def test_follow_task_starts_agent_when_configured(self):
++        msg = (
++            "Fix the mail list contrast in mail-overlay.tsx.\n"
++            "- Unread rows stay readable on cream\n"
++            "- Pin chats, notes, and folders\n"
++            "Done when: refresh keeps pin order."
++        )
++        self.assertEqual(junior_model.cursor_turn_mode(msg), "follow")
++        self.assertTrue(junior_model.should_server_start_agent(msg, configured=True))
++        self.assertFalse(junior_model.should_server_start_agent(msg, configured=False))
++        extras = junior_model.build_turn_extras(
++            msg,
++            memory_block=None,
++            chats_enabled=False,
++            index_block=None,
++            read_meta=None,
++            unread_catalog=None,
++            calendar_connected=False,
++            calendar_tools=False,
++            mail_connected=False,
++            mail_unread=False,
++            unread_mail_md=None,
++            search_enabled=False,
++            will_search=False,
++        )
++        joined = "\n".join(extras)
++        self.assertNotIn("cannot start", joined.lower())
++        self.assertIn("agent url", joined.lower())
++
++    def test_generate_prompt_does_not_start_agent(self):
++        msg = "give me a cursor prompt to fix the mail list contrast"
++        self.assertEqual(junior_model.cursor_turn_mode(msg), "generate")
++        self.assertFalse(junior_model.should_server_start_agent(msg, configured=True))
++        self.assertFalse(junior_model.should_server_start_agent(msg, configured=False))
++
++    def test_explicit_start_still_starts_without_key_flag(self):
++        msg = "start a cursor agent to fix the mail list"
++        self.assertTrue(junior_model.should_server_start_agent(msg, configured=False))
++        self.assertTrue(junior_model.should_server_start_agent(msg, configured=True))
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

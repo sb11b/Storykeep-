@@ -19,6 +19,7 @@ import { toastActionError } from "@/lib/toast-message";
 import { INVALID_CHAT_TOAST, isConversationId } from "@/lib/chat-conversation";
 import { grokModelLabel, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { comparePinned } from "@/lib/pin-order";
+import { agentFollowUpPending } from "@/lib/agent-followup";
 import type { GrokConversation, MessageCryptoStatus, TtsVoice } from "@/lib/types";
 import { parseCustomNoteShelves, uniqueShelfId, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import {
@@ -132,6 +133,8 @@ export function GrokBubble({
   const [panes, setPanes] = useState<GrokPaneState[]>(() => loadSavedGrokPanes() ?? [createGrokPane(0)]);
   const [focusedPaneId, setFocusedPaneId] = useState<string>(() => (loadSavedGrokPanes() ?? [createGrokPane(0)])[0]!.id);
   const focusedPaneIdRef = useRef(focusedPaneId);
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<TtsVoice[]>([]);
@@ -532,6 +535,51 @@ export function GrokBubble({
       void loadConversationInto(pane.id, id);
     }
   }, [loadConversationInto, panes, persist]);
+
+  useEffect(() => {
+    if (!persist || needsCryptoUnlock) return;
+    const timer = window.setInterval(() => {
+      for (const pane of panesRef.current) {
+        if (pane.streamStatus) continue;
+        if (!pane.conversationId || !agentFollowUpPending(pane.messages)) continue;
+        void refreshAgentMessages(pane.id, pane.conversationId);
+      }
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, [persist, needsCryptoUnlock]);
+
+  async function refreshAgentMessages(paneId: string, conversationId: string) {
+    try {
+      const detail = await api.chatConversation(conversationId);
+      const incoming = await Promise.all(
+        detail.messages.map(async (item) => ({
+          id: item.id,
+          role: item.role as "user" | "assistant",
+          content: await decryptStoredMessage(item),
+          files: item.files?.map((file) => ({
+            media_id: file.media_id,
+            filename: file.filename,
+            content_type: file.content_type,
+            kind: file.kind,
+            url: file.url,
+            byte_size: file.byte_size,
+            extract_text: file.extract_text,
+          })),
+        })),
+      );
+      setPanes((current) =>
+        current.map((pane) => {
+          if (pane.id !== paneId || pane.conversationId !== conversationId) return pane;
+          const known = new Set(pane.messages.map((item) => item.id));
+          const extra = incoming.filter((item) => !known.has(item.id));
+          if (!extra.length) return pane;
+          return { ...pane, messages: [...pane.messages, ...extra] };
+        }),
+      );
+    } catch {
+      // Leave the open thread in place. The next poll retries.
+    }
+  }
 
   function startNewChat() {
     updatePane(focusedPaneId, (pane) => ({

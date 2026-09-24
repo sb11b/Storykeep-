@@ -234,6 +234,19 @@ def _create_schema() -> None:
         "ALTER TABLE grok_messages ADD COLUMN IF NOT EXISTS encrypted BOOLEAN NOT NULL DEFAULT false"
     )
     _try_sql("ALTER TABLE grok_messages ALTER COLUMN content DROP NOT NULL")
+    _try_sql(
+        "CREATE TABLE IF NOT EXISTS cursor_agent_watches ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "conversation_id UUID NOT NULL REFERENCES grok_conversations(id) ON DELETE CASCADE, "
+        "agent_id TEXT NOT NULL UNIQUE, "
+        "run_id TEXT, "
+        "agent_url TEXT NOT NULL DEFAULT '', "
+        "starting_branch TEXT NOT NULL DEFAULT 'main', "
+        "status VARCHAR(16) NOT NULL DEFAULT 'pending', "
+        "created_at TIMESTAMPTZ DEFAULT now(), "
+        "updated_at TIMESTAMPTZ DEFAULT now())"
+    )
 
 
 def _seed_in_background() -> None:
@@ -241,9 +254,10 @@ def _seed_in_background() -> None:
     try:
         if settings.seed_demo:
             seed_demo(db)
-        from app.services.junior_memory import seed_steve_memory
+        from app.services.junior_memory import refresh_cursor_memory, seed_steve_memory
 
         seed_steve_memory(db)
+        refresh_cursor_memory(db)
         db.commit()
     except Exception:
         logger.exception("Seed failed")
@@ -280,6 +294,16 @@ async def lifespan(_: FastAPI):
         "interval",
         minutes=1,
         id="junior-jobs",
+        coalesce=True,
+        max_instances=1,
+    )
+    from app.services.cursor_agent_watch import poll_agent_watches
+
+    scheduler.add_job(
+        poll_agent_watches,
+        "interval",
+        minutes=1,
+        id="cursor-agent-watches",
         coalesce=True,
         max_instances=1,
     )

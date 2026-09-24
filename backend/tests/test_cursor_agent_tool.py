@@ -76,7 +76,7 @@ class CursorAgentToolTests(unittest.TestCase):
         }
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
-        mock_client.post.return_value = response
+        mock_client.request.return_value = response
         mock_client_cls.return_value = mock_client
 
         outcome = cursor_agent_tool.start_agent("Add deploy polling tests", branch="main")
@@ -84,7 +84,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("Agent URL:", outcome.text)
         self.assertIn("Push to main (Ubuntu)", outcome.text)
         self.assertEqual(outcome.agent_id, "bc-00000000-0000-0000-0000-000000000001")
-        payload = mock_client.post.call_args.kwargs["json"]
+        payload = mock_client.request.call_args.kwargs["json"]
         self.assertEqual(payload["prompt"]["text"], "Add deploy polling tests")
         self.assertEqual(payload["repos"][0]["startingRef"], "main")
 
@@ -113,12 +113,12 @@ class CursorAgentToolTests(unittest.TestCase):
         }
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
-        mock_client.post.return_value = response
+        mock_client.request.return_value = response
         mock_client_cls.return_value = mock_client
         outcome = cursor_agent_tool.start_agent("Task", branch="main", auto_create_pr=True)
         self.assertTrue(outcome.ok)
         self.assertIn("Auto PR", outcome.text)
-        self.assertTrue(mock_client.post.call_args.kwargs["json"].get("autoCreatePR"))
+        self.assertTrue(mock_client.request.call_args.kwargs["json"].get("autoCreatePR"))
 
     @patch("app.services.cursor_agent_tool.settings")
     def test_start_agent_not_configured(self, mock_settings: MagicMock) -> None:

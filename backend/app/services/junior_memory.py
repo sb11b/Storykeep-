@@ -80,6 +80,72 @@ def save_markdown(db: Session, user: User, markdown: str) -> JuniorMemory:
     return row
 
 
+STALE_CURSOR_TASK_MARK = "polish his text into one copy-paste block"
+CURSOR_PROMPT_SECTION = """## Prompt for Cursor
+
+Same rules for **typed or dictated (STT)** input:
+
+1. **Steve asks you to write one** (“write a prompt for Cursor…”) — one complete copy-paste block: goal, context, constraints, files, done-when. Fold in any details he already said. Do not start an agent.
+2. **Steve supplied the task** (pasted or spoke the work) — when CURSOR_API_KEY is set, the server starts a Cloud Agent and the reply is the agent URL. Do not replace that with a copy-paste prompt. Do not say you cannot start an agent from this chat. When the key is missing, say that in one sentence, then give one copy-paste block.
+3. **Steve asks to start/launch a Cloud Agent** (“start a cursor agent to…”) — the server starts it. Return the agent URL and the Ubuntu push steps.
+4. **After a start,** this same chat gets a follow-up when the run finishes: branch name, what changed, and the merge commands. Do not invent that follow-up before it is in the thread.
+"""
+CURSOR_DELEGATE_OLD = (
+    "- **Owner Cursor delegate (Steve only):** when configured, I can **start a real Cursor Cloud Agent** "
+    "on sb11b/Storykeep- and return the agent link (https://cursor.com/agents/bc-...). "
+    "You still edit/push in Cursor or via that agent — I do not edit the repo from this bubble."
+)
+CURSOR_DELEGATE_NEW = (
+    CURSOR_DELEGATE_OLD
+    + " A code task you already wrote also starts an agent when the key is set. "
+    "When the run finishes, I post the branch name, what changed, and the Ubuntu merge commands in that same chat."
+)
+
+
+def apply_cursor_memory_fix(markdown: str) -> str | None:
+    """Replace the stale copy-paste rule. None when the note already matches."""
+    text = markdown or ""
+    if STALE_CURSOR_TASK_MARK not in text and "when the run finishes" in text:
+        return None
+    updated = text
+    if CURSOR_DELEGATE_OLD in updated and "when the run finishes" not in updated:
+        updated = updated.replace(CURSOR_DELEGATE_OLD, CURSOR_DELEGATE_NEW, 1)
+    if STALE_CURSOR_TASK_MARK not in updated:
+        return updated if updated != text else None
+    heading = "## Prompt for Cursor"
+    start = updated.find(heading)
+    replacement = CURSOR_PROMPT_SECTION.strip() + "\n"
+    if start < 0:
+        updated = updated.rstrip() + "\n\n" + replacement
+    else:
+        rest = updated[start + len(heading) :]
+        import re
+
+        match = re.search(r"\n## ", rest)
+        end = start + len(heading) + match.start() if match else len(updated)
+        tail = updated[end:]
+        updated = updated[:start] + replacement + ("" if tail.startswith("\n") else "\n") + tail.lstrip("\n")
+    if updated == text:
+        return None
+    return updated
+
+
+def refresh_cursor_memory(db: Session) -> None:
+    """Patch the owner's standing note in place. Leave the rest of the note alone."""
+    user = db.scalar(select(User).where(func.lower(User.email) == OWNER_EMAIL))
+    if user is None or is_locked(user):
+        return
+    row = get_row(db, user.id)
+    if row is None or not (row.markdown or "").strip():
+        return
+    updated = apply_cursor_memory_fix(row.markdown)
+    if updated is None:
+        return
+    row.markdown = updated
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+
+
 def seed_steve_memory(db: Session) -> None:
     user = db.scalar(select(User).where(func.lower(User.email) == OWNER_EMAIL))
     if user is None or is_locked(user):

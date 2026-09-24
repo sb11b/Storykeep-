@@ -144,6 +144,7 @@ class CursorAgentOutcome:
     status_code: int = 200
     agent_id: str | None = None
     agent_url: str | None = None
+    run_id: str | None = None
 
 
 def _api_key() -> str:
@@ -258,14 +259,14 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _post(path: str, payload: dict[str, Any]) -> tuple[int, Any]:
+def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, Any]:
     key = _api_key()
     if not key:
         return 503, {"message": "Cursor API key not configured"}
     url = f"{_api_root()}{path}"
     try:
         with httpx.Client(timeout=TIMEOUT_SEC) as client:
-            response = client.post(url, headers=_headers(), json=payload)
+            response = client.request(method, url, headers=_headers(), json=payload)
     except httpx.TimeoutException:
         return 504, {"message": "Cursor API timeout"}
     except httpx.HTTPError as exc:
@@ -275,6 +276,14 @@ def _post(path: str, payload: dict[str, Any]) -> tuple[int, Any]:
     except json.JSONDecodeError:
         body = {"message": response.text[:500]}
     return response.status_code, body
+
+
+def _post(path: str, payload: dict[str, Any]) -> tuple[int, Any]:
+    return _request("POST", path, payload)
+
+
+def _get(path: str) -> tuple[int, Any]:
+    return _request("GET", path)
 
 
 def _cursor_api_error_detail(body: Any) -> str:
@@ -386,7 +395,8 @@ def _format_agent_response(
         "Report the Agent URL and the Push to main (Ubuntu) block to Steve. "
         "Do not say the tool might be unavailable — this block is authoritative for this turn."
     )
-    return CursorAgentOutcome(True, "\n".join(lines), status_code, agent_id, agent_url)
+    run_id = str(run.get("id") or "").strip() or None
+    return CursorAgentOutcome(True, "\n".join(lines), status_code, agent_id, agent_url, run_id)
 
 
 def start_agent(
@@ -438,9 +448,10 @@ def summarize_agent_for_user(outcome: CursorAgentOutcome) -> str:
             "Cursor Cloud Agent started.",
             f"Open: {outcome.agent_url}",
             "Commits land on a cursor/* branch — use Open in Cursor or the Ubuntu merge steps below.",
+            "When it finishes, this chat gets the branch name, what changed, and the merge commands.",
         ]
         workflow = push_workflow_for_user(agent_url=outcome.agent_url)
-        return f"{bits[0]} {bits[1]}\n\n{bits[2]}\n\n{workflow}"
+        return f"{bits[0]} {bits[1]}\n\n{bits[2]}\n\n{bits[3]}\n\n{workflow}"
     text = (outcome.text or "").strip()
     if not outcome.ok and text:
         if text.startswith("Cursor Cloud Agent create failed"):
@@ -495,6 +506,151 @@ def assemble_tool_calls(fragments: list[dict] | None) -> list[dict[str, Any]]:
 def assemble_tool_call(fragments: list[dict] | None) -> dict[str, Any] | None:
     calls = assemble_tool_calls(fragments)
     return calls[0] if calls else None
+
+
+TERMINAL_RUN_STATUSES = frozenset({"FINISHED", "ERROR", "CANCELLED", "EXPIRED", "FAILED"})
+
+
+@dataclass(frozen=True)
+class AgentRunSnapshot:
+    status: str
+    result: str = ""
+    branch: str | None = None
+    pr_url: str | None = None
+    run_id: str | None = None
+    reachable: bool = True
+
+
+def _branch_from_run(body: dict[str, Any]) -> tuple[str | None, str | None]:
+    git = body.get("git") if isinstance(body.get("git"), dict) else {}
+    branches = git.get("branches") if isinstance(git.get("branches"), list) else []
+    for item in branches:
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("branch") or "").strip()
+        pr_url = str(item.get("prUrl") or "").strip() or None
+        if branch or pr_url:
+            return branch or None, pr_url
+    target = body.get("target") if isinstance(body.get("target"), dict) else {}
+    branch = str(target.get("branchName") or "").strip() or None
+    pr_url = str(target.get("prUrl") or "").strip() or None
+    return branch, pr_url
+
+
+def _snapshot_from_run(body: dict[str, Any], *, run_id: str | None) -> AgentRunSnapshot:
+    status_name = str(body.get("status") or "UNKNOWN").strip().upper() or "UNKNOWN"
+    result = str(body.get("result") or body.get("summary") or "").strip()
+    branch, pr_url = _branch_from_run(body)
+    found_run = str(body.get("id") or run_id or "").strip() or None
+    return AgentRunSnapshot(status_name, result, branch, pr_url, found_run, True)
+
+
+def fetch_run(agent_id: str, run_id: str | None = None) -> AgentRunSnapshot:
+    """Read the current Cloud Agent run. Unreachable snapshots stay pending."""
+    agent = (agent_id or "").strip()
+    if not agent:
+        return AgentRunSnapshot("UNKNOWN", reachable=False)
+    current_run = (run_id or "").strip() or None
+    if not current_run:
+        status_code, body = _get(f"/v1/agents/{quote(agent, safe='')}")
+        if status_code == 404:
+            return AgentRunSnapshot("MISSING", reachable=True)
+        if status_code >= 400 or not isinstance(body, dict):
+            return AgentRunSnapshot("UNKNOWN", reachable=False)
+        current_run = str(body.get("latestRunId") or "").strip() or None
+        nested = body.get("run") if isinstance(body.get("run"), dict) else {}
+        if not current_run:
+            current_run = str(nested.get("id") or "").strip() or None
+        if not current_run:
+            return AgentRunSnapshot(str(body.get("status") or "UNKNOWN").upper(), run_id=None, reachable=True)
+    status_code, body = _get(f"/v1/agents/{quote(agent, safe='')}/runs/{quote(current_run, safe='')}")
+    if status_code == 404:
+        return AgentRunSnapshot("MISSING", run_id=current_run, reachable=True)
+    if status_code >= 400 or not isinstance(body, dict):
+        return AgentRunSnapshot("UNKNOWN", run_id=current_run, reachable=False)
+    run_body = body.get("run") if isinstance(body.get("run"), dict) else body
+    if not isinstance(run_body, dict):
+        return AgentRunSnapshot("UNKNOWN", run_id=current_run, reachable=False)
+    return _snapshot_from_run(run_body, run_id=current_run)
+
+
+def merge_commands(branch: str, *, starting_branch: str = "main", repo_slug: str | None = None) -> str:
+    slug = (repo_slug or _repo_slug()).strip().strip("/")
+    base = (starting_branch or "main").strip() or "main"
+    remote = branch.strip()
+    return (
+        "```bash\n"
+        "cd ~/Storykeep\n"
+        f"git remote add github https://github.com/{slug}.git 2>/dev/null || true\n"
+        "git fetch github\n"
+        f"git checkout {base}\n"
+        f"git pull github {base}\n"
+        f"git merge github/{remote}\n"
+        f"git push github {base}\n"
+        "```"
+    )
+
+
+def format_follow_up(
+    snapshot: AgentRunSnapshot,
+    *,
+    agent_url: str,
+    starting_branch: str = "main",
+    stale: bool = False,
+) -> str | None:
+    """Chat text for a finished, failed, missing, or stale run. None while it is still running."""
+    url = (agent_url or "").strip() or "(agent link from the earlier message)"
+    if stale:
+        return (
+            "Cloud Agent update\n\n"
+            f"This run is still going. Open: {url}\n\n"
+            "The branch name and merge commands will show up here when it finishes."
+        )
+    status_name = (snapshot.status or "").upper()
+    if status_name == "MISSING":
+        return (
+            "Cloud Agent update\n\n"
+            f"That agent is no longer on Cursor. Open: {url}"
+        )
+    if status_name not in TERMINAL_RUN_STATUSES:
+        return None
+    if status_name != "FINISHED":
+        detail = (snapshot.result or "").strip() or "No result text came back."
+        return (
+            "Cloud Agent update\n\n"
+            f"The run ended with status {status_name}. Open: {url}\n\n"
+            f"{detail[:1200]}"
+        )
+    changed = " ".join((snapshot.result or "").split())
+    if len(changed) > 1200:
+        changed = changed[:1200].rstrip() + "…"
+    if not changed:
+        changed = "The agent finished without a written summary. Open the link to review the diff."
+    lines = [
+        "Cloud Agent update",
+        "",
+        f"Finished. Open: {url}",
+        "",
+        f"What changed: {changed}",
+    ]
+    if snapshot.pr_url:
+        lines.extend(["", f"Pull request: {snapshot.pr_url}", "You can merge that on GitHub, or use the commands below."])
+    if snapshot.branch:
+        lines.extend(
+            [
+                "",
+                f"Branch: `{snapshot.branch}`",
+                "",
+                "Ubuntu — merge that branch into main:",
+                "",
+                merge_commands(snapshot.branch, starting_branch=starting_branch),
+                "",
+                "Then in this chat: Show GitHub status, then deploy Storykeep.",
+            ]
+        )
+    else:
+        lines.extend(["", "No cursor/ branch was listed yet. Open the agent link and check Branches on GitHub."])
+    return "\n".join(lines)
 
 
 def execute_tool_call(call: dict[str, Any], *, source_message: str | None = None) -> str:

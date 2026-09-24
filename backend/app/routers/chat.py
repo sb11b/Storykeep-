@@ -1542,6 +1542,17 @@ def _chat(
                         await asyncio.sleep(0)
                 agent_outcome = start_task.result()
                 already_started_agent = agent_outcome.ok
+                if agent_outcome.ok and agent_outcome.agent_id and persist and conversation_id:
+                    from app.services.cursor_agent_watch import record_watch
+
+                    record_watch(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        agent_id=agent_outcome.agent_id,
+                        agent_url=agent_outcome.agent_url or "",
+                        run_id=agent_outcome.run_id,
+                        starting_branch=cursor_agent_tool.extract_branch(user_text),
+                    )
                 block = cursor_agent_tool.format_start_for_model(agent_outcome)
                 extra = f"{extra}\n{block}" if extra else block
                 note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
