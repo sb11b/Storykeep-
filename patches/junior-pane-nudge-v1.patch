@@ -1,0 +1,209 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 236e4aa..8b23048 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-agent-follow-v1", "time": "2026-09-24T05:20:00Z"}
++{"sha": "junior-pane-nudge-v1", "time": "2026-09-24T05:40:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index 8bbc71f..dd43a92 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -81,6 +81,7 @@ class ChatIn(BaseModel):
+     media_ids: list[UUID] = Field(default_factory=list, max_length=5)
+     history_override: list[HistoryTurn] | None = None
+     client_title: str | None = Field(default=None, max_length=80)
++    pane_name: str | None = Field(default=None, max_length=80)
+ 
+     @model_validator(mode="after")
+     def require_text_or_files(self) -> "ChatIn":
+@@ -1172,6 +1173,9 @@ def _chat(
+         ops_turn=ops_turn,
+         delegate_turn=delegate_turn,
+     )
++    pane_note = junior_model.pane_mismatch_note(user_text, payload.pane_name)
++    if pane_note:
++        turn_extras.append(junior_model.PANE_MISMATCH_APPEND)
+     extra_system = junior_model.standing_system(
+         db,
+         user,
+@@ -1453,6 +1457,10 @@ def _chat(
+                 open_meta["user_message_id"] = str(user_message_id)
+             yield chat_service.encode_sse({key: value for key, value in open_meta.items() if value is not None})
+             await asyncio.sleep(0)
++            if pane_note:
++                await emit_delta(pane_note)
++                yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
++                await asyncio.sleep(0)
+             if will_voices:
+                 voice_list = await asyncio.to_thread(tts_service.list_voices)
+                 block = tts_service.format_voices_for_model(voice_list)
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index e5d2f6c..ef79f66 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -238,6 +238,91 @@ def is_cursor_task_turn(message: str) -> bool:
+     return cursor_turn_mode(message) is not None
+ 
+ 
++_PANE_DEFAULT_RE = re.compile(r"^junior(?:\s+\d+)?$", re.I)
++_PANE_STORYKEEP_RE = re.compile(r"\b(?:story\s*keep|storykeep)\b", re.I)
++_PANE_ANDROID_RE = re.compile(r"\b(?:android|talk\s*/?\s*type)\b", re.I)
++_PANE_MERIDIAN_RE = re.compile(r"\bmeridian\b", re.I)
++_PANE_SCHOOL_RE = re.compile(r"\b(?:school(?:work)?|homework|dat|mat|ids|class)\b", re.I)
++_MESSAGE_STORYKEEP_RE = re.compile(
++    r"\b(?:story\s*keep|storykeep|railway|mail-overlay|grok-pane)\b|(?:frontend|backend)/",
++    re.I,
++)
++_MESSAGE_SCHOOL_RE = re.compile(
++    r"\b(?:homework|assignment|discussion post|essay|syllabus|ucertify|"
++    r"schoolwork|my class|dat|mat|ids)\b",
++    re.I,
++)
++_MESSAGE_MERIDIAN_RE = re.compile(r"\bmeridian\b", re.I)
++
++PROGRAM_LABELS = {
++    "storykeep": "StoryKeep",
++    "android": "Android",
++    "meridian": "Meridian",
++    "school": "Schoolwork",
++}
++
++PANE_MISMATCH_APPEND = """
++A one-line pane mismatch is already at the top of this reply. Do not repeat it. Answer the question.
++"""
++
++
++def pane_program(name: str) -> str | None:
++    """storykeep | android | meridian | school | None. Default Junior labels are unnamed."""
++    text = (name or "").strip()
++    if not text or _PANE_DEFAULT_RE.match(text):
++        return None
++    if _PANE_STORYKEEP_RE.search(text):
++        return "storykeep"
++    if _PANE_ANDROID_RE.search(text):
++        return "android"
++    if _PANE_MERIDIAN_RE.search(text):
++        return "meridian"
++    if _PANE_SCHOOL_RE.search(text):
++        return "school"
++    return None
++
++
++def message_program(message: str) -> str | None:
++    """Which program this turn belongs to, or None when it is general chat."""
++    text = (message or "").strip()
++    if not text:
++        return None
++    story = bool(
++        is_ops_turn(text)
++        or is_delegate_turn(text)
++        or is_cursor_task_turn(text)
++        or _MESSAGE_STORYKEEP_RE.search(text)
++    )
++    if is_android_project_turn(text) and not story:
++        return "android"
++    if _MESSAGE_MERIDIAN_RE.search(text) and not story:
++        return "meridian"
++    school = bool(_MESSAGE_SCHOOL_RE.search(text))
++    if story and school:
++        if is_cursor_task_turn(text) or is_delegate_turn(text) or is_ops_turn(text):
++            return "storykeep"
++        return "school"
++    if story:
++        return "storykeep"
++    if school:
++        return "school"
++    return None
++
++
++def pane_mismatch_note(message: str, pane_name: str | None) -> str | None:
++    """One line when a named pane does not match the work. Unnamed panes stay quiet."""
++    pane = pane_program(pane_name or "")
++    work = message_program(message)
++    if not pane or not work or pane == work:
++        return None
++    label = (pane_name or "").strip()
++    return (
++        f"This pane is named {label}, which is {PROGRAM_LABELS[pane]}. "
++        f"This message looks like {PROGRAM_LABELS[work]} work. "
++        f"Continue it in your {PROGRAM_LABELS[work]} pane.\n\n"
++    )
++
++
+ def should_server_start_agent(message: str, *, configured: bool) -> bool:
+     """Start a Cloud Agent before the model replies.
+ 
+diff --git a/backend/tests/test_pane_program.py b/backend/tests/test_pane_program.py
+new file mode 100644
+index 0000000..58c8f3e
+--- /dev/null
++++ b/backend/tests/test_pane_program.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++
++import unittest
++
++from app.services import junior_model
++
++
++class PaneProgramTests(unittest.TestCase):
++    def test_unnamed_junior_pane_stays_quiet(self):
++        msg = "Fix the mail list contrast in frontend/src/components/mail-overlay.tsx and add tests."
++        self.assertEqual(junior_model.message_program(msg), "storykeep")
++        self.assertIsNone(junior_model.pane_program("Junior"))
++        self.assertIsNone(junior_model.pane_program("Junior 2"))
++        self.assertIsNone(junior_model.pane_mismatch_note(msg, "Junior"))
++
++    def test_school_pane_flags_storykeep_work(self):
++        msg = (
++            "Fix the mail list contrast in mail-overlay.tsx.\n"
++            "- Keep the orange unread dot\n"
++            "Done when the list is readable."
++        )
++        note = junior_model.pane_mismatch_note(msg, "DAT")
++        assert note is not None
++        self.assertIn("named DAT", note)
++        self.assertIn("StoryKeep", note)
++        self.assertIn("StoryKeep pane", note)
++
++    def test_storykeep_pane_flags_school_work(self):
++        msg = "Explain the DAT homework on database normalization for my class."
++        note = junior_model.pane_mismatch_note(msg, "StoryKeep")
++        assert note is not None
++        self.assertIn("Schoolwork", note)
++        self.assertIsNone(junior_model.pane_mismatch_note(msg, "Schoolwork"))
++
++    def test_matching_android_pane_is_quiet(self):
++        msg = "The Talk/Type Compose screen should keep the Kotlin voice_id field."
++        self.assertEqual(junior_model.message_program(msg), "android")
++        self.assertIsNone(junior_model.pane_mismatch_note(msg, "Android"))
++
++    def test_school_question_is_not_a_cursor_task(self):
++        msg = "explain python lists and how append works for my homework"
++        self.assertEqual(junior_model.message_program(msg), "school")
++        self.assertIsNone(junior_model.cursor_turn_mode(msg))
+diff --git a/frontend/src/components/grok-pane.tsx b/frontend/src/components/grok-pane.tsx
+index 3ecb75f..ac0188a 100644
+--- a/frontend/src/components/grok-pane.tsx
++++ b/frontend/src/components/grok-pane.tsx
+@@ -877,6 +877,7 @@ export function GrokPane({
+           media_ids: retry ? undefined : options.mediaIds,
+           history_override: historyOverride,
+           client_title: clientTitle,
++          pane_name: pane.displayName,
+         },
+         (delta) => {
+           if (turnId !== turnIdRef.current) return;
+diff --git a/frontend/src/lib/api.ts b/frontend/src/lib/api.ts
+index a1a9403..613dc63 100644
+--- a/frontend/src/lib/api.ts
++++ b/frontend/src/lib/api.ts
+@@ -750,6 +750,7 @@ export const api = {
+       media_ids?: string[];
+       history_override?: { role: "user" | "assistant"; content: string }[];
+       client_title?: string;
++      pane_name?: string;
+     },
+     onDelta: (text: string) => void,
+     onMeta?: (meta: GrokStreamMeta) => void,

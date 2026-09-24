@@ -81,6 +81,7 @@ class ChatIn(BaseModel):
     media_ids: list[UUID] = Field(default_factory=list, max_length=5)
     history_override: list[HistoryTurn] | None = None
     client_title: str | None = Field(default=None, max_length=80)
+    pane_name: str | None = Field(default=None, max_length=80)
 
     @model_validator(mode="after")
     def require_text_or_files(self) -> "ChatIn":
@@ -1172,6 +1173,9 @@ def _chat(
         ops_turn=ops_turn,
         delegate_turn=delegate_turn,
     )
+    pane_note = junior_model.pane_mismatch_note(user_text, payload.pane_name)
+    if pane_note:
+        turn_extras.append(junior_model.PANE_MISMATCH_APPEND)
     extra_system = junior_model.standing_system(
         db,
         user,
@@ -1453,6 +1457,10 @@ def _chat(
                 open_meta["user_message_id"] = str(user_message_id)
             yield chat_service.encode_sse({key: value for key, value in open_meta.items() if value is not None})
             await asyncio.sleep(0)
+            if pane_note:
+                await emit_delta(pane_note)
+                yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
+                await asyncio.sleep(0)
             if will_voices:
                 voice_list = await asyncio.to_thread(tts_service.list_voices)
                 block = tts_service.format_voices_for_model(voice_list)

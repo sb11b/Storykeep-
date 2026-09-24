@@ -238,6 +238,91 @@ def is_cursor_task_turn(message: str) -> bool:
     return cursor_turn_mode(message) is not None
 
 
+_PANE_DEFAULT_RE = re.compile(r"^junior(?:\s+\d+)?$", re.I)
+_PANE_STORYKEEP_RE = re.compile(r"\b(?:story\s*keep|storykeep)\b", re.I)
+_PANE_ANDROID_RE = re.compile(r"\b(?:android|talk\s*/?\s*type)\b", re.I)
+_PANE_MERIDIAN_RE = re.compile(r"\bmeridian\b", re.I)
+_PANE_SCHOOL_RE = re.compile(r"\b(?:school(?:work)?|homework|dat|mat|ids|class)\b", re.I)
+_MESSAGE_STORYKEEP_RE = re.compile(
+    r"\b(?:story\s*keep|storykeep|railway|mail-overlay|grok-pane)\b|(?:frontend|backend)/",
+    re.I,
+)
+_MESSAGE_SCHOOL_RE = re.compile(
+    r"\b(?:homework|assignment|discussion post|essay|syllabus|ucertify|"
+    r"schoolwork|my class|dat|mat|ids)\b",
+    re.I,
+)
+_MESSAGE_MERIDIAN_RE = re.compile(r"\bmeridian\b", re.I)
+
+PROGRAM_LABELS = {
+    "storykeep": "StoryKeep",
+    "android": "Android",
+    "meridian": "Meridian",
+    "school": "Schoolwork",
+}
+
+PANE_MISMATCH_APPEND = """
+A one-line pane mismatch is already at the top of this reply. Do not repeat it. Answer the question.
+"""
+
+
+def pane_program(name: str) -> str | None:
+    """storykeep | android | meridian | school | None. Default Junior labels are unnamed."""
+    text = (name or "").strip()
+    if not text or _PANE_DEFAULT_RE.match(text):
+        return None
+    if _PANE_STORYKEEP_RE.search(text):
+        return "storykeep"
+    if _PANE_ANDROID_RE.search(text):
+        return "android"
+    if _PANE_MERIDIAN_RE.search(text):
+        return "meridian"
+    if _PANE_SCHOOL_RE.search(text):
+        return "school"
+    return None
+
+
+def message_program(message: str) -> str | None:
+    """Which program this turn belongs to, or None when it is general chat."""
+    text = (message or "").strip()
+    if not text:
+        return None
+    story = bool(
+        is_ops_turn(text)
+        or is_delegate_turn(text)
+        or is_cursor_task_turn(text)
+        or _MESSAGE_STORYKEEP_RE.search(text)
+    )
+    if is_android_project_turn(text) and not story:
+        return "android"
+    if _MESSAGE_MERIDIAN_RE.search(text) and not story:
+        return "meridian"
+    school = bool(_MESSAGE_SCHOOL_RE.search(text))
+    if story and school:
+        if is_cursor_task_turn(text) or is_delegate_turn(text) or is_ops_turn(text):
+            return "storykeep"
+        return "school"
+    if story:
+        return "storykeep"
+    if school:
+        return "school"
+    return None
+
+
+def pane_mismatch_note(message: str, pane_name: str | None) -> str | None:
+    """One line when a named pane does not match the work. Unnamed panes stay quiet."""
+    pane = pane_program(pane_name or "")
+    work = message_program(message)
+    if not pane or not work or pane == work:
+        return None
+    label = (pane_name or "").strip()
+    return (
+        f"This pane is named {label}, which is {PROGRAM_LABELS[pane]}. "
+        f"This message looks like {PROGRAM_LABELS[work]} work. "
+        f"Continue it in your {PROGRAM_LABELS[work]} pane.\n\n"
+    )
+
+
 def should_server_start_agent(message: str, *, configured: bool) -> bool:
     """Start a Cloud Agent before the model replies.
 

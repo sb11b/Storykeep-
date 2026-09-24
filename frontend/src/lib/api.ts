@@ -750,6 +750,7 @@ export const api = {
       media_ids?: string[];
       history_override?: { role: "user" | "assistant"; content: string }[];
       client_title?: string;
+      pane_name?: string;
     },
     onDelta: (text: string) => void,
     onMeta?: (meta: GrokStreamMeta) => void,

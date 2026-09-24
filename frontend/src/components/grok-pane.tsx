@@ -877,6 +877,7 @@ export function GrokPane({
           media_ids: retry ? undefined : options.mediaIds,
           history_override: historyOverride,
           client_title: clientTitle,
+          pane_name: pane.displayName,
         },
         (delta) => {
           if (turnId !== turnIdRef.current) return;
