@@ -60,6 +60,8 @@ Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this 
 When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
 “What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
 “Mark all unread read” or “mark the first 10 unread” marks Fastmail from this chat. A named sender or subject marks only those matches. Do not say the mail-mark action is unavailable. Do not mark mail read unless he asked.
+Delete, read, copy, or post one named Fastmail message from this chat. Name the sender or subject. More than one match is listed and nothing is deleted. Do not say those mail actions are unavailable. Sending still waits for Confirm.
+When he asks for the top five news articles, summarize each newest unread article in 2–4 sentences and link [title](#article/id). Do not send him to the publisher site.
 Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
 """
 

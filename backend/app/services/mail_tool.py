@@ -137,6 +137,162 @@ def format_mark_read(chosen: list[dict], *, marked: int, label: str, connected: 
     return "\n".join(lines)
 
 
+_MAIL_WORD_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|fastmail|message|messages)\b", re.I)
+_DELETE_RE = re.compile(r"\b(?:delete|trash|discard)\b", re.I)
+_COPY_RE = re.compile(r"\bcopy\b", re.I)
+_POST_RE = re.compile(r"\bpost\b", re.I)
+_READ_RE = re.compile(r"\b(?:read|open|show)\b", re.I)
+_BULK_RE = re.compile(r"\b(?:all|every)\b", re.I)
+_FIRST_RE = re.compile(r"\b(?:first|latest|newest)\b", re.I)
+_FROM_RE = re.compile(r"\bfrom\s+(.+)$", re.I)
+_SPECIFIC_STOP = re.compile(
+    r"\b(?:please|delete|trash|discard|read|open|show|copy|post|the|this|that|a|an|email|e-mail|mail|"
+    r"message|messages|inbox|fastmail|in|into|to|chat|unread|first|latest|newest|specific|my|me|about|regarding)\b",
+    re.I,
+)
+CHAT_BODY_CAP = 8_000
+
+
+def mail_action(message: str) -> str | None:
+    """delete, copy, post, or read for one named message. Mark-read stays on its own path."""
+    text = message or ""
+    if wants_mark_read(text) or not _MAIL_WORD_RE.search(text):
+        return None
+    if _DELETE_RE.search(text):
+        return "delete"
+    if _COPY_RE.search(text):
+        return "copy"
+    if _POST_RE.search(text):
+        return "post"
+    if _READ_RE.search(text):
+        return "read"
+    return None
+
+
+def _specific_needle(message: str) -> str:
+    text = message or ""
+    found = _FROM_RE.search(text)
+    if found:
+        raw = found.group(1)
+    else:
+        raw = _SPECIFIC_STOP.sub(" ", text)
+        raw = re.sub(r"\b\d{1,2}\b", " ", raw)
+    raw = re.sub(r"\b(?:in|into|to)\s+chat\b.*$", "", raw, flags=re.I)
+    raw = re.split(r"\b(?:email|e-mail|mail|message|messages|inbox)\b", raw, maxsplit=1, flags=re.I)[0]
+    return " ".join(raw.split()).strip(" .")
+
+
+def choose_specific(message: str, items: list[dict]) -> tuple[list[dict], str]:
+    """Return (rows, label). One row is actionable. Many rows are listed. vague deletes nothing."""
+    text = message or ""
+    needle = _specific_needle(text)
+    if needle.lower() in {"all", "every", "unread"}:
+        needle = ""
+    if mail_action(text) == "delete" and _BULK_RE.search(text) and len(needle) < 3 and not _FIRST_RE.search(text):
+        return [], "bulk"
+    if _FROM_RE.search(text):
+        low = needle.lower()
+        picked = [item for item in items if low and low in str(item.get("from") or "").lower()]
+        return picked, needle or "vague"
+    if _FIRST_RE.search(text) and len(needle) < 3:
+        return (items[:1], "first") if items else ([], "none")
+    if len(needle) < 3:
+        return [], "vague"
+    low = needle.lower()
+    picked = [
+        item
+        for item in items
+        if low in str(item.get("subject") or "").lower() or low in str(item.get("from") or "").lower()
+    ]
+    if _FIRST_RE.search(text):
+        return picked[:1], needle
+    return picked, needle
+
+
+def _who_subject(item: dict) -> tuple[str, str]:
+    who = str(item.get("from") or "(unknown)").strip() or "(unknown)"
+    subject = str(item.get("subject") or "(no subject)").strip() or "(no subject)"
+    return who, subject
+
+
+def _clip_body(body: str) -> str:
+    text = (body or "").strip() or "(no body)"
+    if len(text) > CHAT_BODY_CAP:
+        return text[:CHAT_BODY_CAP].rstrip() + "\n\n[Body truncated in chat.]"
+    return text
+
+
+def _format_one(action: str, item: dict, body: str) -> str:
+    who, subject = _who_subject(item)
+    when = str(item.get("date") or "").strip()
+    header = f"From: {who}\nSubject: {subject}"
+    if when:
+        header += f"\nDate: {when}"
+    clipped = _clip_body(body)
+    if action == "copy":
+        return f"Copied this message:\n\n```\n{header}\n\n{clipped}\n```"
+    if action == "post":
+        quoted = "\n".join(f"> {line}" if line else ">" for line in f"{header}\n\n{clipped}".splitlines())
+        return f"Posted in this chat:\n\n{quoted}"
+    return f"{header}\n\n{clipped}"
+
+
+def format_specific(action: str, chosen: list[dict], label: str, *, connected: bool, error: str | None = None, body: str = "") -> str:
+    if not connected:
+        return "Mail is not connected. Open Mail in StoryKeep."
+    if error:
+        return "Could not open that message this turn. Open Mail in StoryKeep and try again."
+    if label == "bulk":
+        return "Name one message. I will not delete every email."
+    if label == "vague":
+        return "Name the sender or subject."
+    if not chosen:
+        shown = label if label not in {"none", "first"} else "that"
+        return f"No message matched {shown}."
+    if len(chosen) != 1:
+        lines = [f"More than one message matched {label}. Name one:"]
+        for item in chosen[:8]:
+            who, subject = _who_subject(item)
+            lines.append(f"- {who} — {subject}")
+        extra = len(chosen) - 8
+        if extra > 0:
+            lines.append(f"- {extra} more")
+        return "\n".join(lines)
+    item = chosen[0]
+    who, subject = _who_subject(item)
+    if action == "delete":
+        return f"Deleted 1 message.\n- {who} — {subject}"
+    return _format_one(action, item, body)
+
+
+def specific_mail_reply(token: str, message: str) -> str:
+    from app.services import fastmail_jmap as jmap
+
+    action = mail_action(message)
+    if not action:
+        return "Name the sender or subject."
+    chosen, label = choose_specific(message, [])
+    if label in {"bulk", "vague"}:
+        return format_specific(action, chosen, label, connected=True)
+    unseen = bool(re.search(r"\bunread\b", message or "", re.I))
+    listed = jmap.list_emails(token, role="inbox", unseen=unseen, limit=50)
+    items = [item for item in (listed.get("items") or []) if isinstance(item, dict)]
+    chosen, label = choose_specific(message, items)
+    if label in {"bulk", "vague"} or len(chosen) != 1:
+        return format_specific(action, chosen, label, connected=True)
+    item = chosen[0]
+    if action == "delete":
+        jmap.destroy_emails(token, [str(item.get("id") or "")])
+        return format_specific(action, chosen, label, connected=True)
+    full = jmap.get_email(token, str(item.get("id") or ""))
+    body = str(full.get("body") or item.get("preview") or "")
+    merged = dict(item)
+    merged["from"] = full.get("from") or item.get("from")
+    merged["subject"] = full.get("subject") or item.get("subject")
+    merged["date"] = full.get("date") or item.get("date")
+    return format_specific(action, [merged], label, connected=True, body=body)
+
+
 def mark_read_reply(token: str, message: str) -> str:
     from app.services import fastmail_jmap as jmap
 

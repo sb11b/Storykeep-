@@ -313,6 +313,19 @@ def _body_from_email(row: dict[str, Any]) -> tuple[str, str]:
     return text, html[:BODY_CAP] if html else ""
 
 
+def destroy_emails(token: str, email_ids: list[str]) -> int:
+    """Destroy up to one message. Returns how many Fastmail destroyed."""
+    ids = [item.strip() for item in email_ids if isinstance(item, str) and item.strip()][:1]
+    if not ids:
+        return 0
+    session, acct, _boxes = mailboxes(token)
+    calls = _api_call(token, session, [["Email/set", {"accountId": acct, "destroy": ids}, "del"]])
+    destroyed = _result(calls, "Email/set", "del").get("destroyed")
+    if isinstance(destroyed, list):
+        return len(destroyed)
+    return len(ids)
+
+
 def mark_seen(token: str, email_ids: list[str]) -> int:
     """Set $seen on up to 50 inbox messages. Returns how many Fastmail updated."""
     ids = [item.strip() for item in email_ids if isinstance(item, str) and item.strip()][:LIST_CAP]

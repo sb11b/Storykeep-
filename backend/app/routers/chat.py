@@ -46,7 +46,13 @@ from app.services.include_chunk import resolve_include_slice
 from app.services.include_chunk import slice_id_from_meta
 from app.services.include_chunk import slice_meta as include_slice_meta
 from app.services.working_note import heading_from_instruction
-from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
+from app.services.junior_jobs import (
+    UNREAD_READER_SYSTEM,
+    attach_unread_catalog,
+    news_summary_reply,
+    unread_news_block,
+    wants_news_summary,
+)
 from app.services import web_search as search_tool
 from app.services import railway_tool
 from app.services import github_tool
@@ -963,8 +969,20 @@ def _chat(
     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     from app.services import morning_brief
 
+    mail_specific_text = None
+    if mail_tool.mail_action(user_text) and not is_locked(user):
+        if mail_service.has_token(db, user):
+            try:
+                mail_specific_text = mail_tool.specific_mail_reply(mail_service.require_token(db, user), user_text)
+            except Exception:
+                log_chat_exception("specific mail failed", user=user_id, conversation=conversation_id)
+                mail_specific_text = mail_tool.format_specific(
+                    "read", [], "", connected=True, error="failed"
+                )
+        else:
+            mail_specific_text = mail_tool.format_specific("read", [], "", connected=False)
     mark_read_text = None
-    if mail_tool.wants_mark_read(user_text) and not is_locked(user):
+    if mail_specific_text is None and mail_tool.wants_mark_read(user_text) and not is_locked(user):
         if mail_service.has_token(db, user):
             try:
                 mark_read_text = mail_tool.mark_read_reply(mail_service.require_token(db, user), user_text)
@@ -973,7 +991,25 @@ def _chat(
                 mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=True, error="failed")
         else:
             mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=False)
-    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user) and mark_read_text is None
+    news_summary_text = None
+    if (
+        wants_news_summary(user_text)
+        and not is_locked(user)
+        and mail_specific_text is None
+        and mark_read_text is None
+    ):
+        try:
+            news_summary_text = news_summary_reply(db, user.id, user_text)
+        except Exception:
+            log_chat_exception("news summary failed", user=user_id, conversation=conversation_id)
+            news_summary_text = "News summaries could not be loaded. Try again."
+    morning_turn = (
+        morning_brief.wants_morning(user_text)
+        and not is_locked(user)
+        and mark_read_text is None
+        and mail_specific_text is None
+        and news_summary_text is None
+    )
     morning_text = None
     if morning_turn:
         try:
@@ -981,7 +1017,13 @@ def _chat(
         except Exception:
             log_chat_exception("morning brief failed", user=user_id, conversation=conversation_id)
             morning_text = "School morning could not be loaded. Try again."
-    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn and mark_read_text is None
+    mail_unread = (
+        mail_tool.wants_unread_mail(user_text)
+        and not morning_turn
+        and mark_read_text is None
+        and mail_specific_text is None
+        and news_summary_text is None
+    )
     if mail_unread:
         resolved_model = chat_service.CURRENT_CHAT_MODEL
         resolved_reasoning = "low"
@@ -1481,9 +1523,43 @@ def _chat(
                 await emit_delta(pane_note)
                 yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
                 await asyncio.sleep(0)
+            if mail_specific_text:
+                await emit_delta(mail_specific_text)
+                yield chat_service.encode_sse({"delta": mail_specific_text, "stream_status": "writing"})
+                if persist and conversation_id:
+                    assistant_message_id = _persist_assistant("".join(assistant_parts))
+                    if assistant_message_id:
+                        yield chat_service.encode_sse(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": assistant_message_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                                "reasoning_effort": resolved_reasoning,
+                            }
+                        )
+                yield chat_service.encode_sse("[DONE]")
+                return
             if mark_read_text:
                 await emit_delta(mark_read_text)
                 yield chat_service.encode_sse({"delta": mark_read_text, "stream_status": "writing"})
+                if persist and conversation_id:
+                    assistant_message_id = _persist_assistant("".join(assistant_parts))
+                    if assistant_message_id:
+                        yield chat_service.encode_sse(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": assistant_message_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                                "reasoning_effort": resolved_reasoning,
+                            }
+                        )
+                yield chat_service.encode_sse("[DONE]")
+                return
+            if news_summary_text:
+                await emit_delta(news_summary_text)
+                yield chat_service.encode_sse({"delta": news_summary_text, "stream_status": "writing"})
                 if persist and conversation_id:
                     assistant_message_id = _persist_assistant("".join(assistant_parts))
                     if assistant_message_id:

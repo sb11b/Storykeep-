@@ -40,12 +40,15 @@ Use web_search for live pages. Quote what you found.
 If search does not work, reply with exactly: search failed
 Never say you cannot search, cannot browse, or do not have web access.
 Prefer StoryKeep Unread titles when they are included for my news.
+When an excerpt is attached, write a 2–4 sentence summary of that excerpt, then the reader link.
 When Unread items are listed, link each exact title as [title](#article/{article_id}) only. Never use a publisher URL as href.
 """
-UNREAD_READER_SYSTEM = """StoryKeep Unread items are attached with article_id, title, and feed.
-List the exact titles. Each title must be a markdown link [title](#article/{article_id}).
+UNREAD_READER_SYSTEM = """StoryKeep Unread items are attached with article_id, title, feed, and sometimes an excerpt.
+If an excerpt is attached, write a 2–4 sentence summary of that excerpt for each item, then the reader link [title](#article/{article_id}).
+If no excerpt is attached, list the exact titles as [title](#article/{article_id}) only.
 Never use a publisher URL as the href. Never invent ids. Stay in StoryKeep; do not send the reader to another site.
 """
+EXCERPT_CAP = 700
 UNREAD_TITLE_CAP = 40
 UNREAD_DEFAULT_LIMIT = 5
 PUBLISHER_MD_LINK_RE = re.compile(
@@ -220,6 +223,17 @@ def prompt_wants_my_news(prompt: str) -> bool:
     return prompt_wants_unread_catalog(prompt)
 
 
+_NEWS_SUMMARY_RE = re.compile(
+    r"\b(?:summar\w*|top\s*(?:five|5)|(?:five|5)\s+newest)\b.{0,80}\bnews\b"
+    r"|\bnews\b.{0,80}\b(?:summar\w*|top\s*(?:five|5)|(?:five|5)\s+newest)\b",
+    re.I | re.S,
+)
+
+
+def wants_news_summary(prompt: str) -> bool:
+    return bool(_NEWS_SUMMARY_RE.search(prompt or ""))
+
+
 def prompt_wants_unread_catalog(prompt: str) -> bool:
     text = prompt or ""
     return bool(
@@ -227,12 +241,13 @@ def prompt_wants_unread_catalog(prompt: str) -> bool:
         or UNREAD_RE.search(text)
         or FOX_FEED_RE.search(text)
         or NEWSMAX_FEED_RE.search(text)
+        or wants_news_summary(text)
     )
 
 
 def unread_limit_from_prompt(prompt: str, title: str = "") -> int:
     blob = f"{title}\n{prompt}"
-    if FIVE_NEWEST_RE.search(blob) or re.search(r"\btop\s*(?:five|5)\b", blob, re.I):
+    if FIVE_NEWEST_RE.search(blob) or re.search(r"\btop\s*(?:five|5)\b", blob, re.I) or wants_news_summary(blob):
         return 5
     if prompt_wants_unread_catalog(prompt):
         return UNREAD_DEFAULT_LIMIT
@@ -323,26 +338,116 @@ def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) -> 
     return [item["title"] for item in items[:limit]]
 
 
+def attach_excerpts(db: Session, items: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not items:
+        return items
+    ids: list[UUID] = []
+    for item in items:
+        try:
+            ids.append(UUID(str(item.get("article_id") or "")))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return items
+    rows = db.execute(select(Article.id, Article.summary, Article.content_text).where(Article.id.in_(ids))).all()
+    by_id: dict[str, str] = {}
+    for article_id, summary, content in rows:
+        text = " ".join(((summary or "").strip() or (content or "").strip()).split())
+        if len(text) > EXCERPT_CAP:
+            text = text[:EXCERPT_CAP].rstrip() + "…"
+        if text:
+            by_id[str(article_id)] = text
+    out: list[dict[str, str]] = []
+    for item in items:
+        nxt = dict(item)
+        excerpt = by_id.get(str(item.get("article_id") or ""))
+        if excerpt:
+            nxt["excerpt"] = excerpt
+        out.append(nxt)
+    return out
+
+
 def format_unread_news_block(items: list[dict[str, str]]) -> str:
     if not items:
         return "StoryKeep Unread has no titles right now."
-    lines = "\n".join(
-        f"- article_id: {item['article_id']} · feed: {item['feed']} · "
-        f"[{item['title']}](#article/{item['article_id']})"
-        for item in items
-    )
+    has_excerpt = any(item.get("excerpt") for item in items)
+    lines = []
+    for item in items:
+        line = (
+            f"- article_id: {item['article_id']} · feed: {item['feed']} · "
+            f"[{item['title']}](#article/{item['article_id']})"
+        )
+        if item.get("excerpt"):
+            line += f"\n  excerpt: {item['excerpt']}"
+        lines.append(line)
+    if has_excerpt:
+        how = (
+            "For each item write a 2–4 sentence summary from the excerpt, then the reader link "
+            "[title](#article/{article_id}). Do not use a publisher URL."
+        )
+    else:
+        how = (
+            "Each item has article_id, title, and feed. Print exact titles as "
+            "[title](#article/{article_id}) only."
+        )
     return (
         "StoryKeep Unread catalog (open in the StoryKeep reader, never a publisher URL):\n"
-        "Each item has article_id, title, and feed. Print exact titles as "
-        "[title](#article/{article_id}) only.\n"
-        f"{lines}"
+        f"{how}\n" + "\n".join(lines)
     )
+
+
+def sentence_summary(excerpt: str, sentences: int = 4) -> str:
+    text = " ".join((excerpt or "").split())
+    if not text:
+        return ""
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+    picked: list[str] = []
+    total = 0
+    for part in parts:
+        picked.append(part)
+        total += len(part)
+        if len(picked) >= sentences or total >= 500:
+            break
+    summary = " ".join(picked).strip()
+    if len(summary) > 600:
+        summary = summary[:600].rstrip() + "…"
+    return summary
+
+
+def format_news_summaries(items: list[dict[str, str]]) -> str:
+    shown = items[:5]
+    if not shown:
+        return "No unread news articles in StoryKeep right now."
+    lines = ["Five newest unread articles:"]
+    for item in shown:
+        title = item.get("title") or "Untitled"
+        link = f"[{title}](#article/{item['article_id']})"
+        summary = sentence_summary(item.get("excerpt") or "")
+        if not summary:
+            summary = "No excerpt stored for this article yet. Open it in the reader."
+        lines.append(f"\n{link}\n{summary}")
+    return "\n".join(lines)
+
+
+def summaries_look_thin(text: str, items: list[dict[str, str]]) -> bool:
+    rich = [item for item in items if item.get("excerpt")]
+    if not rich:
+        return False
+    return len(text or "") < 100 * len(rich)
+
+
+def news_summary_reply(db: Session, user_id: UUID, prompt: str) -> str:
+    items = unread_items(db, user_id, prompt or "my news")
+    return format_news_summaries(attach_excerpts(db, items)[:5])
 
 
 def unread_news_block(db: Session, user_id: UUID, prompt: str, title: str = "") -> str | None:
     if not prompt_wants_unread_catalog(prompt):
         return None
-    return format_unread_news_block(unread_items(db, user_id, prompt, title))
+    items = unread_items(db, user_id, prompt, title)
+    if unread_limit_from_prompt(prompt, title) <= 5:
+        items = attach_excerpts(db, items)
+    return format_unread_news_block(items)
 
 
 def reader_list_markdown(items: list[dict[str, str]]) -> str:
@@ -497,8 +602,13 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
     reasoning = job_reasoning(job)
     excerpt = _include_excerpt(db, user, job.include_article_id)
     user_line = f"[Junior job: {job.title}]\n\n{job.prompt.strip()}"
-    unread = unread_items(db, user.id, job.prompt, job.title) if prompt_wants_unread_catalog(job.prompt) else []
-    news = format_unread_news_block(unread) if prompt_wants_unread_catalog(job.prompt) else None
+    unread: list[dict[str, str]] = []
+    news = None
+    if prompt_wants_unread_catalog(job.prompt):
+        unread = unread_items(db, user.id, job.prompt, job.title)
+        if unread_limit_from_prompt(job.prompt, job.title) <= 5:
+            unread = attach_excerpts(db, unread)
+        news = format_unread_news_block(unread)
     if news:
         user_line = f"{user_line}\n\n{news}"
     history: list[dict] = []
@@ -566,7 +676,10 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
         error = str(exc)
         output = error
         logger.exception("Junior job failed id=%s", job.id)
-    output = chat_docx.strip_keep_notes_cta(ensure_reader_links(output, unread)) or output
+    output = ensure_reader_links(output, unread)
+    if summaries_look_thin(output, unread):
+        output = format_news_summaries(unread)
+    output = chat_docx.strip_keep_notes_cta(output) or output
     grok_store.append_message(db, conversation, role="user", content=user_line, set_title_from_user=False)
     assistant = grok_store.append_message(db, conversation, role="assistant", content=output)
     conversation.last_model = model

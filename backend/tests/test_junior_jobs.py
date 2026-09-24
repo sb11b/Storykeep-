@@ -96,13 +96,19 @@ class JuniorJobsTests(unittest.TestCase):
         fox.all.return_value = [(article_id, "DAT-200 quiz", "Fox News")]
         empty = MagicMock()
         empty.all.return_value = []
-        db.execute.side_effect = [fox, empty]
+        excerpts = MagicMock()
+        excerpts.all.return_value = [
+            (article_id, "The quiz opens Monday. Bring a pencil. Class meets in room 4.", None)
+        ]
+        db.execute.side_effect = [fox, empty, excerpts]
         block = unread_news_block(db, uuid4(), "What is my news today?")
         self.assertIn("StoryKeep Unread", block)
         self.assertIn("DAT-200 quiz", block)
         self.assertIn(f"article_id: {article_id}", block)
         self.assertIn("Fox News", block)
         self.assertIn(f"[DAT-200 quiz](#article/{article_id})", block)
+        self.assertIn("Bring a pencil", block)
+        self.assertIn("summary", block.lower())
         self.assertNotIn("http://", block or "")
         self.assertIsNone(unread_news_block(db, uuid4(), "what's on Reuters homepage"))
 
@@ -152,6 +158,28 @@ class JuniorJobsTests(unittest.TestCase):
         attached = attach_unread_catalog([{"role": "user", "content": "Five newest Unread Fox"}], block)
         self.assertIn("#article/", attached[0]["content"])
         self.assertIn("Exact Fox title", attached[0]["content"])
+
+    def test_top_five_news_summaries(self):
+        from app.services.junior_jobs import format_news_summaries, summaries_look_thin, wants_news_summary
+
+        self.assertTrue(wants_news_summary("summarize the top five most read news articles"))
+        self.assertFalse(wants_news_summary("what's on today"))
+        self.assertFalse(wants_news_summary("mark the email from Ada read"))
+        items = [
+            {
+                "article_id": "abc",
+                "title": "Senate vote",
+                "feed": "Fox News",
+                "excerpt": "The Senate voted Monday. The bill passed. Leaders spoke after the vote.",
+            }
+        ]
+        self.assertTrue(summaries_look_thin("See the list", items))
+        long = "The Senate voted Monday and the bill passed after a long debate. Leaders spoke. " * 3
+        self.assertFalse(summaries_look_thin(long, items))
+        text = format_news_summaries(items)
+        self.assertIn("The Senate voted Monday.", text)
+        self.assertIn("[Senate vote](#article/abc)", text)
+        self.assertNotIn("foxnews.com", text)
 
     @patch("app.services.junior_jobs.chat_service.complete_once")
     def test_job_without_search_omits_tools(self, complete):

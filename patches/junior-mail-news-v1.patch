@@ -1,0 +1,661 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 9b7b1a0..12594f0 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-mark-ten-v1", "time": "2026-09-24T16:55:00Z"}
++{"sha": "junior-mail-news-v1", "time": "2026-09-24T18:10:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index dcd18b0..8c71788 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -46,7 +46,13 @@ from app.services.include_chunk import resolve_include_slice
+ from app.services.include_chunk import slice_id_from_meta
+ from app.services.include_chunk import slice_meta as include_slice_meta
+ from app.services.working_note import heading_from_instruction
+-from app.services.junior_jobs import UNREAD_READER_SYSTEM, attach_unread_catalog, unread_news_block
++from app.services.junior_jobs import (
++    UNREAD_READER_SYSTEM,
++    attach_unread_catalog,
++    news_summary_reply,
++    unread_news_block,
++    wants_news_summary,
++)
+ from app.services import web_search as search_tool
+ from app.services import railway_tool
+ from app.services import github_tool
+@@ -963,8 +969,20 @@ def _chat(
+     resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
+     from app.services import morning_brief
+ 
++    mail_specific_text = None
++    if mail_tool.mail_action(user_text) and not is_locked(user):
++        if mail_service.has_token(db, user):
++            try:
++                mail_specific_text = mail_tool.specific_mail_reply(mail_service.require_token(db, user), user_text)
++            except Exception:
++                log_chat_exception("specific mail failed", user=user_id, conversation=conversation_id)
++                mail_specific_text = mail_tool.format_specific(
++                    "read", [], "", connected=True, error="failed"
++                )
++        else:
++            mail_specific_text = mail_tool.format_specific("read", [], "", connected=False)
+     mark_read_text = None
+-    if mail_tool.wants_mark_read(user_text) and not is_locked(user):
++    if mail_specific_text is None and mail_tool.wants_mark_read(user_text) and not is_locked(user):
+         if mail_service.has_token(db, user):
+             try:
+                 mark_read_text = mail_tool.mark_read_reply(mail_service.require_token(db, user), user_text)
+@@ -973,7 +991,25 @@ def _chat(
+                 mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=True, error="failed")
+         else:
+             mark_read_text = mail_tool.format_mark_read([], marked=0, label="", connected=False)
+-    morning_turn = morning_brief.wants_morning(user_text) and not is_locked(user) and mark_read_text is None
++    news_summary_text = None
++    if (
++        wants_news_summary(user_text)
++        and not is_locked(user)
++        and mail_specific_text is None
++        and mark_read_text is None
++    ):
++        try:
++            news_summary_text = news_summary_reply(db, user.id, user_text)
++        except Exception:
++            log_chat_exception("news summary failed", user=user_id, conversation=conversation_id)
++            news_summary_text = "News summaries could not be loaded. Try again."
++    morning_turn = (
++        morning_brief.wants_morning(user_text)
++        and not is_locked(user)
++        and mark_read_text is None
++        and mail_specific_text is None
++        and news_summary_text is None
++    )
+     morning_text = None
+     if morning_turn:
+         try:
+@@ -981,7 +1017,13 @@ def _chat(
+         except Exception:
+             log_chat_exception("morning brief failed", user=user_id, conversation=conversation_id)
+             morning_text = "School morning could not be loaded. Try again."
+-    mail_unread = mail_tool.wants_unread_mail(user_text) and not morning_turn and mark_read_text is None
++    mail_unread = (
++        mail_tool.wants_unread_mail(user_text)
++        and not morning_turn
++        and mark_read_text is None
++        and mail_specific_text is None
++        and news_summary_text is None
++    )
+     if mail_unread:
+         resolved_model = chat_service.CURRENT_CHAT_MODEL
+         resolved_reasoning = "low"
+@@ -1481,6 +1523,23 @@ def _chat(
+                 await emit_delta(pane_note)
+                 yield chat_service.encode_sse({"delta": pane_note, "stream_status": "writing"})
+                 await asyncio.sleep(0)
++            if mail_specific_text:
++                await emit_delta(mail_specific_text)
++                yield chat_service.encode_sse({"delta": mail_specific_text, "stream_status": "writing"})
++                if persist and conversation_id:
++                    assistant_message_id = _persist_assistant("".join(assistant_parts))
++                    if assistant_message_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": assistant_message_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             if mark_read_text:
+                 await emit_delta(mark_read_text)
+                 yield chat_service.encode_sse({"delta": mark_read_text, "stream_status": "writing"})
+@@ -1498,6 +1557,23 @@ def _chat(
+                         )
+                 yield chat_service.encode_sse("[DONE]")
+                 return
++            if news_summary_text:
++                await emit_delta(news_summary_text)
++                yield chat_service.encode_sse({"delta": news_summary_text, "stream_status": "writing"})
++                if persist and conversation_id:
++                    assistant_message_id = _persist_assistant("".join(assistant_parts))
++                    if assistant_message_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": assistant_message_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             if morning_text:
+                 await emit_delta(morning_text)
+                 yield chat_service.encode_sse({"delta": morning_text, "stream_status": "writing"})
+diff --git a/backend/app/services/fastmail_jmap.py b/backend/app/services/fastmail_jmap.py
+index 3b39d39..fda7854 100644
+--- a/backend/app/services/fastmail_jmap.py
++++ b/backend/app/services/fastmail_jmap.py
+@@ -313,6 +313,19 @@ def _body_from_email(row: dict[str, Any]) -> tuple[str, str]:
+     return text, html[:BODY_CAP] if html else ""
+ 
+ 
++def destroy_emails(token: str, email_ids: list[str]) -> int:
++    """Destroy up to one message. Returns how many Fastmail destroyed."""
++    ids = [item.strip() for item in email_ids if isinstance(item, str) and item.strip()][:1]
++    if not ids:
++        return 0
++    session, acct, _boxes = mailboxes(token)
++    calls = _api_call(token, session, [["Email/set", {"accountId": acct, "destroy": ids}, "del"]])
++    destroyed = _result(calls, "Email/set", "del").get("destroyed")
++    if isinstance(destroyed, list):
++        return len(destroyed)
++    return len(ids)
++
++
+ def mark_seen(token: str, email_ids: list[str]) -> int:
+     """Set $seen on up to 50 inbox messages. Returns how many Fastmail updated."""
+     ids = [item.strip() for item in email_ids if isinstance(item, str) and item.strip()][:LIST_CAP]
+diff --git a/backend/app/services/junior_jobs.py b/backend/app/services/junior_jobs.py
+index c3157cc..b4cb054 100644
+--- a/backend/app/services/junior_jobs.py
++++ b/backend/app/services/junior_jobs.py
+@@ -40,12 +40,15 @@ Use web_search for live pages. Quote what you found.
+ If search does not work, reply with exactly: search failed
+ Never say you cannot search, cannot browse, or do not have web access.
+ Prefer StoryKeep Unread titles when they are included for my news.
++When an excerpt is attached, write a 2–4 sentence summary of that excerpt, then the reader link.
+ When Unread items are listed, link each exact title as [title](#article/{article_id}) only. Never use a publisher URL as href.
+ """
+-UNREAD_READER_SYSTEM = """StoryKeep Unread items are attached with article_id, title, and feed.
+-List the exact titles. Each title must be a markdown link [title](#article/{article_id}).
++UNREAD_READER_SYSTEM = """StoryKeep Unread items are attached with article_id, title, feed, and sometimes an excerpt.
++If an excerpt is attached, write a 2–4 sentence summary of that excerpt for each item, then the reader link [title](#article/{article_id}).
++If no excerpt is attached, list the exact titles as [title](#article/{article_id}) only.
+ Never use a publisher URL as the href. Never invent ids. Stay in StoryKeep; do not send the reader to another site.
+ """
++EXCERPT_CAP = 700
+ UNREAD_TITLE_CAP = 40
+ UNREAD_DEFAULT_LIMIT = 5
+ PUBLISHER_MD_LINK_RE = re.compile(
+@@ -220,6 +223,17 @@ def prompt_wants_my_news(prompt: str) -> bool:
+     return prompt_wants_unread_catalog(prompt)
+ 
+ 
++_NEWS_SUMMARY_RE = re.compile(
++    r"\b(?:summar\w*|top\s*(?:five|5)|(?:five|5)\s+newest)\b.{0,80}\bnews\b"
++    r"|\bnews\b.{0,80}\b(?:summar\w*|top\s*(?:five|5)|(?:five|5)\s+newest)\b",
++    re.I | re.S,
++)
++
++
++def wants_news_summary(prompt: str) -> bool:
++    return bool(_NEWS_SUMMARY_RE.search(prompt or ""))
++
++
+ def prompt_wants_unread_catalog(prompt: str) -> bool:
+     text = prompt or ""
+     return bool(
+@@ -227,12 +241,13 @@ def prompt_wants_unread_catalog(prompt: str) -> bool:
+         or UNREAD_RE.search(text)
+         or FOX_FEED_RE.search(text)
+         or NEWSMAX_FEED_RE.search(text)
++        or wants_news_summary(text)
+     )
+ 
+ 
+ def unread_limit_from_prompt(prompt: str, title: str = "") -> int:
+     blob = f"{title}\n{prompt}"
+-    if FIVE_NEWEST_RE.search(blob) or re.search(r"\btop\s*(?:five|5)\b", blob, re.I):
++    if FIVE_NEWEST_RE.search(blob) or re.search(r"\btop\s*(?:five|5)\b", blob, re.I) or wants_news_summary(blob):
+         return 5
+     if prompt_wants_unread_catalog(prompt):
+         return UNREAD_DEFAULT_LIMIT
+@@ -323,26 +338,116 @@ def unread_titles(db: Session, user_id: UUID, limit: int = UNREAD_TITLE_CAP) ->
+     return [item["title"] for item in items[:limit]]
+ 
+ 
++def attach_excerpts(db: Session, items: list[dict[str, str]]) -> list[dict[str, str]]:
++    if not items:
++        return items
++    ids: list[UUID] = []
++    for item in items:
++        try:
++            ids.append(UUID(str(item.get("article_id") or "")))
++        except (TypeError, ValueError):
++            continue
++    if not ids:
++        return items
++    rows = db.execute(select(Article.id, Article.summary, Article.content_text).where(Article.id.in_(ids))).all()
++    by_id: dict[str, str] = {}
++    for article_id, summary, content in rows:
++        text = " ".join(((summary or "").strip() or (content or "").strip()).split())
++        if len(text) > EXCERPT_CAP:
++            text = text[:EXCERPT_CAP].rstrip() + "…"
++        if text:
++            by_id[str(article_id)] = text
++    out: list[dict[str, str]] = []
++    for item in items:
++        nxt = dict(item)
++        excerpt = by_id.get(str(item.get("article_id") or ""))
++        if excerpt:
++            nxt["excerpt"] = excerpt
++        out.append(nxt)
++    return out
++
++
+ def format_unread_news_block(items: list[dict[str, str]]) -> str:
+     if not items:
+         return "StoryKeep Unread has no titles right now."
+-    lines = "\n".join(
+-        f"- article_id: {item['article_id']} · feed: {item['feed']} · "
+-        f"[{item['title']}](#article/{item['article_id']})"
+-        for item in items
+-    )
++    has_excerpt = any(item.get("excerpt") for item in items)
++    lines = []
++    for item in items:
++        line = (
++            f"- article_id: {item['article_id']} · feed: {item['feed']} · "
++            f"[{item['title']}](#article/{item['article_id']})"
++        )
++        if item.get("excerpt"):
++            line += f"\n  excerpt: {item['excerpt']}"
++        lines.append(line)
++    if has_excerpt:
++        how = (
++            "For each item write a 2–4 sentence summary from the excerpt, then the reader link "
++            "[title](#article/{article_id}). Do not use a publisher URL."
++        )
++    else:
++        how = (
++            "Each item has article_id, title, and feed. Print exact titles as "
++            "[title](#article/{article_id}) only."
++        )
+     return (
+         "StoryKeep Unread catalog (open in the StoryKeep reader, never a publisher URL):\n"
+-        "Each item has article_id, title, and feed. Print exact titles as "
+-        "[title](#article/{article_id}) only.\n"
+-        f"{lines}"
++        f"{how}\n" + "\n".join(lines)
+     )
+ 
+ 
++def sentence_summary(excerpt: str, sentences: int = 4) -> str:
++    text = " ".join((excerpt or "").split())
++    if not text:
++        return ""
++    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
++    picked: list[str] = []
++    total = 0
++    for part in parts:
++        picked.append(part)
++        total += len(part)
++        if len(picked) >= sentences or total >= 500:
++            break
++    summary = " ".join(picked).strip()
++    if len(summary) > 600:
++        summary = summary[:600].rstrip() + "…"
++    return summary
++
++
++def format_news_summaries(items: list[dict[str, str]]) -> str:
++    shown = items[:5]
++    if not shown:
++        return "No unread news articles in StoryKeep right now."
++    lines = ["Five newest unread articles:"]
++    for item in shown:
++        title = item.get("title") or "Untitled"
++        link = f"[{title}](#article/{item['article_id']})"
++        summary = sentence_summary(item.get("excerpt") or "")
++        if not summary:
++            summary = "No excerpt stored for this article yet. Open it in the reader."
++        lines.append(f"\n{link}\n{summary}")
++    return "\n".join(lines)
++
++
++def summaries_look_thin(text: str, items: list[dict[str, str]]) -> bool:
++    rich = [item for item in items if item.get("excerpt")]
++    if not rich:
++        return False
++    return len(text or "") < 100 * len(rich)
++
++
++def news_summary_reply(db: Session, user_id: UUID, prompt: str) -> str:
++    items = unread_items(db, user_id, prompt or "my news")
++    return format_news_summaries(attach_excerpts(db, items)[:5])
++
++
+ def unread_news_block(db: Session, user_id: UUID, prompt: str, title: str = "") -> str | None:
+     if not prompt_wants_unread_catalog(prompt):
+         return None
+-    return format_unread_news_block(unread_items(db, user_id, prompt, title))
++    items = unread_items(db, user_id, prompt, title)
++    if unread_limit_from_prompt(prompt, title) <= 5:
++        items = attach_excerpts(db, items)
++    return format_unread_news_block(items)
+ 
+ 
+ def reader_list_markdown(items: list[dict[str, str]]) -> str:
+@@ -497,8 +602,13 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
+     reasoning = job_reasoning(job)
+     excerpt = _include_excerpt(db, user, job.include_article_id)
+     user_line = f"[Junior job: {job.title}]\n\n{job.prompt.strip()}"
+-    unread = unread_items(db, user.id, job.prompt, job.title) if prompt_wants_unread_catalog(job.prompt) else []
+-    news = format_unread_news_block(unread) if prompt_wants_unread_catalog(job.prompt) else None
++    unread: list[dict[str, str]] = []
++    news = None
++    if prompt_wants_unread_catalog(job.prompt):
++        unread = unread_items(db, user.id, job.prompt, job.title)
++        if unread_limit_from_prompt(job.prompt, job.title) <= 5:
++            unread = attach_excerpts(db, unread)
++        news = format_unread_news_block(unread)
+     if news:
+         user_line = f"{user_line}\n\n{news}"
+     history: list[dict] = []
+@@ -566,7 +676,10 @@ def execute_job(db: Session, job: JuniorJob, *, trigger: str) -> dict:
+         error = str(exc)
+         output = error
+         logger.exception("Junior job failed id=%s", job.id)
+-    output = chat_docx.strip_keep_notes_cta(ensure_reader_links(output, unread)) or output
++    output = ensure_reader_links(output, unread)
++    if summaries_look_thin(output, unread):
++        output = format_news_summaries(unread)
++    output = chat_docx.strip_keep_notes_cta(output) or output
+     grok_store.append_message(db, conversation, role="user", content=user_line, set_title_from_user=False)
+     assistant = grok_store.append_message(db, conversation, role="assistant", content=output)
+     conversation.last_model = model
+diff --git a/backend/app/services/junior_model.py b/backend/app/services/junior_model.py
+index 0227110..dcc96ca 100644
+--- a/backend/app/services/junior_model.py
++++ b/backend/app/services/junior_model.py
+@@ -60,6 +60,8 @@ Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this
+ When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
+ “What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
+ “Mark all unread read” or “mark the first 10 unread” marks Fastmail from this chat. A named sender or subject marks only those matches. Do not say the mail-mark action is unavailable. Do not mark mail read unless he asked.
++Delete, read, copy, or post one named Fastmail message from this chat. Name the sender or subject. More than one match is listed and nothing is deleted. Do not say those mail actions are unavailable. Sending still waits for Confirm.
++When he asks for the top five news articles, summarize each newest unread article in 2–4 sentences and link [title](#article/id). Do not send him to the publisher site.
+ Do not git-push from chat, deploy Android, or ask for tokens in chat. Never invent deploy or agent outcomes.
+ """
+ 
+diff --git a/backend/app/services/mail_tool.py b/backend/app/services/mail_tool.py
+index d0a9ae3..ed2a357 100644
+--- a/backend/app/services/mail_tool.py
++++ b/backend/app/services/mail_tool.py
+@@ -137,6 +137,162 @@ def format_mark_read(chosen: list[dict], *, marked: int, label: str, connected:
+     return "\n".join(lines)
+ 
+ 
++_MAIL_WORD_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|fastmail|message|messages)\b", re.I)
++_DELETE_RE = re.compile(r"\b(?:delete|trash|discard)\b", re.I)
++_COPY_RE = re.compile(r"\bcopy\b", re.I)
++_POST_RE = re.compile(r"\bpost\b", re.I)
++_READ_RE = re.compile(r"\b(?:read|open|show)\b", re.I)
++_BULK_RE = re.compile(r"\b(?:all|every)\b", re.I)
++_FIRST_RE = re.compile(r"\b(?:first|latest|newest)\b", re.I)
++_FROM_RE = re.compile(r"\bfrom\s+(.+)$", re.I)
++_SPECIFIC_STOP = re.compile(
++    r"\b(?:please|delete|trash|discard|read|open|show|copy|post|the|this|that|a|an|email|e-mail|mail|"
++    r"message|messages|inbox|fastmail|in|into|to|chat|unread|first|latest|newest|specific|my|me|about|regarding)\b",
++    re.I,
++)
++CHAT_BODY_CAP = 8_000
++
++
++def mail_action(message: str) -> str | None:
++    """delete, copy, post, or read for one named message. Mark-read stays on its own path."""
++    text = message or ""
++    if wants_mark_read(text) or not _MAIL_WORD_RE.search(text):
++        return None
++    if _DELETE_RE.search(text):
++        return "delete"
++    if _COPY_RE.search(text):
++        return "copy"
++    if _POST_RE.search(text):
++        return "post"
++    if _READ_RE.search(text):
++        return "read"
++    return None
++
++
++def _specific_needle(message: str) -> str:
++    text = message or ""
++    found = _FROM_RE.search(text)
++    if found:
++        raw = found.group(1)
++    else:
++        raw = _SPECIFIC_STOP.sub(" ", text)
++        raw = re.sub(r"\b\d{1,2}\b", " ", raw)
++    raw = re.sub(r"\b(?:in|into|to)\s+chat\b.*$", "", raw, flags=re.I)
++    raw = re.split(r"\b(?:email|e-mail|mail|message|messages|inbox)\b", raw, maxsplit=1, flags=re.I)[0]
++    return " ".join(raw.split()).strip(" .")
++
++
++def choose_specific(message: str, items: list[dict]) -> tuple[list[dict], str]:
++    """Return (rows, label). One row is actionable. Many rows are listed. vague deletes nothing."""
++    text = message or ""
++    needle = _specific_needle(text)
++    if needle.lower() in {"all", "every", "unread"}:
++        needle = ""
++    if mail_action(text) == "delete" and _BULK_RE.search(text) and len(needle) < 3 and not _FIRST_RE.search(text):
++        return [], "bulk"
++    if _FROM_RE.search(text):
++        low = needle.lower()
++        picked = [item for item in items if low and low in str(item.get("from") or "").lower()]
++        return picked, needle or "vague"
++    if _FIRST_RE.search(text) and len(needle) < 3:
++        return (items[:1], "first") if items else ([], "none")
++    if len(needle) < 3:
++        return [], "vague"
++    low = needle.lower()
++    picked = [
++        item
++        for item in items
++        if low in str(item.get("subject") or "").lower() or low in str(item.get("from") or "").lower()
++    ]
++    if _FIRST_RE.search(text):
++        return picked[:1], needle
++    return picked, needle
++
++
++def _who_subject(item: dict) -> tuple[str, str]:
++    who = str(item.get("from") or "(unknown)").strip() or "(unknown)"
++    subject = str(item.get("subject") or "(no subject)").strip() or "(no subject)"
++    return who, subject
++
++
++def _clip_body(body: str) -> str:
++    text = (body or "").strip() or "(no body)"
++    if len(text) > CHAT_BODY_CAP:
++        return text[:CHAT_BODY_CAP].rstrip() + "\n\n[Body truncated in chat.]"
++    return text
++
++
++def _format_one(action: str, item: dict, body: str) -> str:
++    who, subject = _who_subject(item)
++    when = str(item.get("date") or "").strip()
++    header = f"From: {who}\nSubject: {subject}"
++    if when:
++        header += f"\nDate: {when}"
++    clipped = _clip_body(body)
++    if action == "copy":
++        return f"Copied this message:\n\n```\n{header}\n\n{clipped}\n```"
++    if action == "post":
++        quoted = "\n".join(f"> {line}" if line else ">" for line in f"{header}\n\n{clipped}".splitlines())
++        return f"Posted in this chat:\n\n{quoted}"
++    return f"{header}\n\n{clipped}"
++
++
++def format_specific(action: str, chosen: list[dict], label: str, *, connected: bool, error: str | None = None, body: str = "") -> str:
++    if not connected:
++        return "Mail is not connected. Open Mail in StoryKeep."
++    if error:
++        return "Could not open that message this turn. Open Mail in StoryKeep and try again."
++    if label == "bulk":
++        return "Name one message. I will not delete every email."
++    if label == "vague":
++        return "Name the sender or subject."
++    if not chosen:
++        shown = label if label not in {"none", "first"} else "that"
++        return f"No message matched {shown}."
++    if len(chosen) != 1:
++        lines = [f"More than one message matched {label}. Name one:"]
++        for item in chosen[:8]:
++            who, subject = _who_subject(item)
++            lines.append(f"- {who} — {subject}")
++        extra = len(chosen) - 8
++        if extra > 0:
++            lines.append(f"- {extra} more")
++        return "\n".join(lines)
++    item = chosen[0]
++    who, subject = _who_subject(item)
++    if action == "delete":
++        return f"Deleted 1 message.\n- {who} — {subject}"
++    return _format_one(action, item, body)
++
++
++def specific_mail_reply(token: str, message: str) -> str:
++    from app.services import fastmail_jmap as jmap
++
++    action = mail_action(message)
++    if not action:
++        return "Name the sender or subject."
++    chosen, label = choose_specific(message, [])
++    if label in {"bulk", "vague"}:
++        return format_specific(action, chosen, label, connected=True)
++    unseen = bool(re.search(r"\bunread\b", message or "", re.I))
++    listed = jmap.list_emails(token, role="inbox", unseen=unseen, limit=50)
++    items = [item for item in (listed.get("items") or []) if isinstance(item, dict)]
++    chosen, label = choose_specific(message, items)
++    if label in {"bulk", "vague"} or len(chosen) != 1:
++        return format_specific(action, chosen, label, connected=True)
++    item = chosen[0]
++    if action == "delete":
++        jmap.destroy_emails(token, [str(item.get("id") or "")])
++        return format_specific(action, chosen, label, connected=True)
++    full = jmap.get_email(token, str(item.get("id") or ""))
++    body = str(full.get("body") or item.get("preview") or "")
++    merged = dict(item)
++    merged["from"] = full.get("from") or item.get("from")
++    merged["subject"] = full.get("subject") or item.get("subject")
++    merged["date"] = full.get("date") or item.get("date")
++    return format_specific(action, [merged], label, connected=True, body=body)
++
++
+ def mark_read_reply(token: str, message: str) -> str:
+     from app.services import fastmail_jmap as jmap
+ 
+diff --git a/backend/tests/test_junior_jobs.py b/backend/tests/test_junior_jobs.py
+index a7dc170..86a0df3 100644
+--- a/backend/tests/test_junior_jobs.py
++++ b/backend/tests/test_junior_jobs.py
+@@ -96,13 +96,19 @@ class JuniorJobsTests(unittest.TestCase):
+         fox.all.return_value = [(article_id, "DAT-200 quiz", "Fox News")]
+         empty = MagicMock()
+         empty.all.return_value = []
+-        db.execute.side_effect = [fox, empty]
++        excerpts = MagicMock()
++        excerpts.all.return_value = [
++            (article_id, "The quiz opens Monday. Bring a pencil. Class meets in room 4.", None)
++        ]
++        db.execute.side_effect = [fox, empty, excerpts]
+         block = unread_news_block(db, uuid4(), "What is my news today?")
+         self.assertIn("StoryKeep Unread", block)
+         self.assertIn("DAT-200 quiz", block)
+         self.assertIn(f"article_id: {article_id}", block)
+         self.assertIn("Fox News", block)
+         self.assertIn(f"[DAT-200 quiz](#article/{article_id})", block)
++        self.assertIn("Bring a pencil", block)
++        self.assertIn("summary", block.lower())
+         self.assertNotIn("http://", block or "")
+         self.assertIsNone(unread_news_block(db, uuid4(), "what's on Reuters homepage"))
+ 
+@@ -153,6 +159,28 @@ class JuniorJobsTests(unittest.TestCase):
+         self.assertIn("#article/", attached[0]["content"])
+         self.assertIn("Exact Fox title", attached[0]["content"])
+ 
++    def test_top_five_news_summaries(self):
++        from app.services.junior_jobs import format_news_summaries, summaries_look_thin, wants_news_summary
++
++        self.assertTrue(wants_news_summary("summarize the top five most read news articles"))
++        self.assertFalse(wants_news_summary("what's on today"))
++        self.assertFalse(wants_news_summary("mark the email from Ada read"))
++        items = [
++            {
++                "article_id": "abc",
++                "title": "Senate vote",
++                "feed": "Fox News",
++                "excerpt": "The Senate voted Monday. The bill passed. Leaders spoke after the vote.",
++            }
++        ]
++        self.assertTrue(summaries_look_thin("See the list", items))
++        long = "The Senate voted Monday and the bill passed after a long debate. Leaders spoke. " * 3
++        self.assertFalse(summaries_look_thin(long, items))
++        text = format_news_summaries(items)
++        self.assertIn("The Senate voted Monday.", text)
++        self.assertIn("[Senate vote](#article/abc)", text)
++        self.assertNotIn("foxnews.com", text)
++
+     @patch("app.services.junior_jobs.chat_service.complete_once")
+     def test_job_without_search_omits_tools(self, complete):
+         complete.return_value = {"text": "ok", "model": "grok-4.6", "reasoning": "low"}
+diff --git a/backend/tests/test_mark_read.py b/backend/tests/test_mark_read.py
+index 257835a..4b4459f 100644
+--- a/backend/tests/test_mark_read.py
++++ b/backend/tests/test_mark_read.py
+@@ -51,3 +51,51 @@ class MarkReadTests(unittest.TestCase):
+         self.assertEqual(label, "vague")
+         self.assertEqual(chosen, [])
+         self.assertIn("mark all unread read", mail_tool.format_mark_read(chosen, marked=0, label=label, connected=True))
++
++
++class SpecificMailTests(unittest.TestCase):
++    def test_action_does_not_steal_mark_read(self):
++        self.assertIsNone(mail_tool.mail_action("mark the email from Ada read"))
++        self.assertIsNone(mail_tool.mail_action("mark the first 10 unread"))
++        self.assertIsNone(mail_tool.mail_action("read this note"))
++        self.assertEqual(mail_tool.mail_action("read the email from Ada"), "read")
++        self.assertEqual(mail_tool.mail_action("copy the syllabus email"), "copy")
++        self.assertEqual(mail_tool.mail_action("post the email from Ada in chat"), "post")
++        self.assertEqual(mail_tool.mail_action("delete the email from Ada"), "delete")
++
++    def test_many_matches_do_not_delete(self):
++        items = [
++            {"id": "1", "from": "Ada Lovelace", "subject": "Syllabus"},
++            {"id": "2", "from": "Ada Lovelace", "subject": "Quiz"},
++        ]
++        chosen, label = mail_tool.choose_specific("delete the email from Ada", items)
++        self.assertEqual(len(chosen), 2)
++        self.assertIn("Name one", mail_tool.format_specific("delete", chosen, label, connected=True))
++
++    def test_bulk_delete_refuses(self):
++        self.assertEqual(mail_tool.choose_specific("delete all email", [{"id": "1"}])[1], "bulk")
++        self.assertIn("will not delete every", mail_tool.format_specific("delete", [], "bulk", connected=True))
++
++    def test_read_copy_post_one_message(self):
++        from unittest.mock import patch
++
++        item = {"id": "a", "from": "Ada", "subject": "Syllabus", "date": "2026-09-24T12:00:00Z", "preview": "short"}
++        full = {**item, "body": "Bring a pencil."}
++        with (
++            patch("app.services.fastmail_jmap.list_emails", return_value={"items": [item]}) as listed,
++            patch("app.services.fastmail_jmap.get_email", return_value=full) as got,
++            patch("app.services.fastmail_jmap.destroy_emails") as destroyed,
++        ):
++            read = mail_tool.specific_mail_reply("tok", "read the email from Ada")
++            copied = mail_tool.specific_mail_reply("tok", "copy the email from Ada")
++            posted = mail_tool.specific_mail_reply("tok", "post the email from Ada in chat")
++            deleted = mail_tool.specific_mail_reply("tok", "delete the email from Ada")
++        self.assertIn("Bring a pencil.", read)
++        self.assertIn("From: Ada", read)
++        self.assertIn("```", copied)
++        self.assertIn("Bring a pencil.", copied)
++        self.assertIn("> From: Ada", posted)
++        self.assertIn("Deleted 1 message.", deleted)
++        self.assertEqual(got.call_count, 3)
++        destroyed.assert_called_once()
++        self.assertTrue(listed.called)
