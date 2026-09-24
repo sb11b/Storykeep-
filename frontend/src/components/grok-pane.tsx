@@ -13,6 +13,7 @@ import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
 import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
+import { STS_REARM_AFTER_TURN_MS, shouldRearmSts } from "@/lib/junior-sts";
 import { wordIndexFromSelection } from "@/lib/tts-words";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
@@ -278,6 +279,8 @@ export function GrokPane({
     draftValueRef.current = pane.draft;
   }, [pane.draft]);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
   const [folders, setFolders] = useState<Folder[]>([]);
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice(defaultTtsVoiceId));
   const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
@@ -590,16 +593,29 @@ export function GrokPane({
   stopRef.current = listen.stop;
 
   const maybeRearmSts = useCallback(() => {
-    if (!stsModeOnRef.current) return;
-    if (ttsPausedRef.current) return;
-    if (sttPhaseRef.current !== "idle") return;
-    if (busy || inFlightRef.current) return;
-    const lp = listenPhaseRef.current;
-    if (lp === "loading" || lp === "playing" || lp === "paused") return;
+    if (
+      !shouldRearmSts({
+        stsModeOn: stsModeOnRef.current,
+        ttsPaused: ttsPausedRef.current,
+        sttPhase: sttPhaseRef.current,
+        busy: busyRef.current,
+        inFlight: inFlightRef.current,
+        listenPhase: listenPhaseRef.current,
+      })
+    ) {
+      return;
+    }
     console.log("junior-sts", { action: "rearm-request" });
     stsRearmRef.current?.();
-  }, [busy]);
+  }, []);
   maybeRearmStsRef.current = maybeRearmSts;
+
+  const scheduleStsRearm = useCallback(() => {
+    window.setTimeout(() => {
+      busyRef.current = false;
+      maybeRearmSts();
+    }, STS_REARM_AFTER_TURN_MS);
+  }, [maybeRearmSts]);
 
   useEffect(() => {
     if (pendingListenRef.current && listenTarget) {
@@ -668,21 +684,22 @@ export function GrokPane({
   }
 
   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
-  function requestAutoListen(messageId: string, markdown: string) {
-    if (!ttsEnabled || locked || panelOpenRef.current === false) return;
-    if (userStoppedTtsRef.current || sttPhaseRef.current !== "idle") return;
+  function requestAutoListen(messageId: string, markdown: string): boolean {
+    if (!ttsEnabled || locked || panelOpenRef.current === false) return false;
+    if (userStoppedTtsRef.current || sttPhaseRef.current !== "idle") return false;
     const resolved = readReplyText({
       trigger: null,
       body: bodyElementsRef.current.get(messageId) ?? null,
       markdown,
     });
     logReplyText("auto", resolved);
-    if (!resolved.chars) return;
+    if (!resolved.chars) return false;
     if (listen.isActive && listenTarget?.id !== messageId) {
       listen.stop();
     }
     pendingListenRef.current = true;
     setListenTarget({ id: messageId, trigger: null, script: resolved.text });
+    return true;
   }
 
   function handleListenPause() {
@@ -816,6 +833,7 @@ export function GrokPane({
     }));
 
     setBusy(true);
+    busyRef.current = true;
     let streamFailed = false;
     let streamedText = "";
     let conversationId: string | null = conversationIdForRequest(pane.conversationId);
@@ -1190,7 +1208,11 @@ export function GrokPane({
       abortingRef.current = false;
       setAborting(false);
       setBusy(false);
-      if (streamFailed) return;
+      busyRef.current = false;
+      if (streamFailed) {
+        scheduleStsRearm();
+        return;
+      }
       const hasReply =
         gotDeltaRef.current ||
         Boolean(streamedText.trim()) ||
@@ -1220,8 +1242,8 @@ export function GrokPane({
             toastActionError(error, "save encrypted reply", "Could not save the encrypted reply.");
           }
         }
-        requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
-        window.setTimeout(() => maybeRearmSts(), 120);
+        const queuedListen = requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
+        if (!queuedListen) scheduleStsRearm();
         return;
       }
       onUpdate((current) => ({
@@ -1240,6 +1262,7 @@ export function GrokPane({
             : item,
         ),
       }));
+      scheduleStsRearm();
     }
   }
 

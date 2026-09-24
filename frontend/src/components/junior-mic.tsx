@@ -3,6 +3,7 @@ import { LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
+import { nextStsRearmDeferMs, shouldRearmStsAfterMicTake } from "@/lib/junior-sts";
 import {
   MIC_PERMISSION_DENIED,
   MIN_CAPTURE_BYTES,
@@ -61,6 +62,8 @@ export function JuniorMicControls({
   const stsModeOnRef = useRef(false);
   const processingRef = useRef(false);
   const rearmStsRecordingRef = useRef<(() => void) | null>(null);
+  const rearmDeferTriesRef = useRef(0);
+  const rearmDeferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onPhaseChangeRef = useRef(onPhaseChange);
   const onStsModeChangeRef = useRef(onStsModeChange);
   const onStsSubmitRef = useRef(onStsSubmit);
@@ -107,6 +110,11 @@ export function JuniorMicControls({
 
   const cancelAll = useCallback(() => {
     console.log("junior-mic", { action: "cancel", mode: activeModeRef.current, stsMode: stsModeOnRef.current });
+    if (rearmDeferTimerRef.current != null) {
+      clearTimeout(rearmDeferTimerRef.current);
+      rearmDeferTimerRef.current = null;
+    }
+    rearmDeferTriesRef.current = 0;
     abortSessionOnly();
     setStsMode(false);
     emitPhase("idle", null);
@@ -169,18 +177,13 @@ export function JuniorMicControls({
   );
 
   const uploadStsTake = useCallback(
-    async (blob: Blob, trigger: "silence" | "button") => {
+    async (blob: Blob, trigger: "silence" | "button"): Promise<boolean> => {
       const mime = blob.type || pickRecorderMime() || "unknown";
       console.log("junior-mic", { action: "upload", mode: "sts", mime, bytes: blob.size, trigger });
       if (blob.size < MIN_CAPTURE_BYTES) {
         toast.error(`${NO_AUDIO_CAPTURED} (${formatSttBlobHint(blob)})`);
-        if (stsModeOnRef.current) {
-          emitPhase("idle", null);
-          void rearmStsRecordingRef.current?.();
-        } else {
-          emitPhase("idle", null);
-        }
-        return;
+        emitPhase("idle", null);
+        return false;
       }
       emitPhase("transcribing", "sts");
       const controller = new AbortController();
@@ -195,11 +198,12 @@ export function JuniorMicControls({
         if (!piece) {
           console.log("junior-mic", { action: "stt-empty", mode: "sts", trigger });
           onSttEmptyHintRef.current?.();
-          if (stsModeOnRef.current) void rearmStsRecordingRef.current?.();
-          return;
+          emitPhase("idle", null);
+          return false;
         }
         onStsSubmitRef.current(piece);
-        if (stsModeOnRef.current) emitPhase("idle", null);
+        emitPhase("idle", null);
+        return true;
       } catch (error) {
         if (isSttEmptyError(error)) {
           console.log("junior-mic", { action: "stt-empty", mode: "sts", trigger });
@@ -210,11 +214,11 @@ export function JuniorMicControls({
         } else if (!(error instanceof DOMException && error.name === "AbortError")) {
           toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
         }
-        if (stsModeOnRef.current) void rearmStsRecordingRef.current?.();
+        emitPhase("idle", null);
+        return false;
       } finally {
         uploadAbortRef.current = null;
-        if (!stsModeOnRef.current) emitPhase("idle", null);
-        else if (phaseRef.current === "transcribing") emitPhase("idle", null);
+        if (phaseRef.current === "transcribing") emitPhase("idle", null);
       }
     },
     [emitPhase],
@@ -229,9 +233,10 @@ export function JuniorMicControls({
       sessionRef.current = null;
       startingRef.current = false;
       console.log("junior-mic", { action: "stop", mode: "sts", trigger, hasSession: true });
+      let submittedTurn = false;
       try {
         const blob = await session.stop();
-        await uploadStsTake(blob, trigger);
+        submittedTurn = await uploadStsTake(blob, trigger);
       } catch (error) {
         console.log("junior-mic", {
           action: "stop-fail",
@@ -240,10 +245,13 @@ export function JuniorMicControls({
           message: error instanceof Error ? error.message : "STT failed",
         });
         toast.error(sttFailToast(0, error instanceof Error ? error.message : "STT failed"));
-        if (stsModeOnRef.current) void rearmStsRecordingRef.current?.();
-        else emitPhase("idle", null);
+        emitPhase("idle", null);
       } finally {
         processingRef.current = false;
+        if (shouldRearmStsAfterMicTake({ stsModeOn: stsModeOnRef.current, submittedTurn })) {
+          console.log("junior-mic", { action: "rearm-after-take", trigger, submittedTurn });
+          void rearmStsRecordingRef.current?.();
+        }
       }
     },
     [emitPhase, uploadStsTake],
@@ -325,10 +333,31 @@ export function JuniorMicControls({
 
   rearmStsRecordingRef.current = () => {
     if (!stsModeOnRef.current || !enabled) return;
-    if (phaseRef.current !== "idle" || sessionRef.current || startingRef.current || processingRef.current) {
+    if (sessionRef.current) {
+      console.log("junior-mic", { action: "rearm-skip", phase: phaseRef.current, reason: "has-session" });
+      return;
+    }
+    const blocked = phaseRef.current === "transcribing" || startingRef.current || processingRef.current;
+    if (blocked) {
+      const wait = nextStsRearmDeferMs(rearmDeferTriesRef.current);
+      console.log("junior-mic", { action: "rearm-skip", phase: phaseRef.current, deferMs: wait });
+      if (wait == null) {
+        rearmDeferTriesRef.current = 0;
+        return;
+      }
+      rearmDeferTriesRef.current += 1;
+      if (rearmDeferTimerRef.current != null) clearTimeout(rearmDeferTimerRef.current);
+      rearmDeferTimerRef.current = setTimeout(() => {
+        rearmDeferTimerRef.current = null;
+        rearmStsRecordingRef.current?.();
+      }, wait);
+      return;
+    }
+    if (phaseRef.current !== "idle") {
       console.log("junior-mic", { action: "rearm-skip", phase: phaseRef.current });
       return;
     }
+    rearmDeferTriesRef.current = 0;
     console.log("junior-mic", { action: "rearm", mode: "sts" });
     void startStsRecording();
   };
@@ -425,6 +454,7 @@ export function JuniorMicControls({
 
   useEffect(() => {
     return () => {
+      if (rearmDeferTimerRef.current != null) clearTimeout(rearmDeferTimerRef.current);
       uploadAbortRef.current?.abort();
       sessionRef.current?.abort();
       sessionRef.current = null;
