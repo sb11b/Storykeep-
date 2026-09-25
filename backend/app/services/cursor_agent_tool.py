@@ -24,7 +24,8 @@ CURSOR_ON_APPEND = """
 You can **start a real Cursor Cloud Agent** from chat (Steve's code twin — you spawn it; Cursor edits the repo in a cloud VM).
 - **cursor_start_agent**: creates a Cloud Agent with prompt text, repo URL, and starting ref main on sb11b/Storykeep-.
 - Cloud Agents commit on a **cursor/* branch**, not Steve's local main — the tool reply includes Ubuntu push steps and the agent URL.
-- Use ONLY when Steve explicitly asks to start/launch/open/spawn/run-in a Cursor or Cloud Agent — NOT when he only wants a copy-paste prompt block.
+- Use ONLY when Steve explicitly asks to start/launch/open/spawn/run-in a Cursor or Cloud Agent, or to send the next step — NOT when he only wants a copy-paste prompt block.
+- The API key is already configured. Never say the key is missing, and never tell Steve to copy a prompt into Cursor when he asked to start or send the work.
 - After the tool runs, give him the **agent URL** and the **Push to main (Ubuntu)** block from the tool data — do not bury instructions only in prose.
 - Delegate turns auto-open a PR to main when the agent finishes unless he says otherwise.
 - Tokens stay server-side; never echo CURSOR_API_KEY.
@@ -44,7 +45,8 @@ _START_RE = re.compile(
     r"spawn(?:\s+a)?\s+(?:cursor\s+)?(?:cloud\s+)?agent|"
     r"run(?:\s+this|\s+that|\s+it)?\s+in\s+(?:a\s+)?cursor\s+(?:cloud\s+)?agent|"
     r"delegate(?:\s+to)?\s+(?:a\s+)?cursor\s+(?:cloud\s+)?agent|"
-    r"cursor\s+(?:cloud\s+)?agent\s+task"
+    r"cursor\s+(?:cloud\s+)?agent\s+task|"
+    r"send(?:\s+(?:a|the))?\s+(?:cursor\s+)?(?:cloud\s+)?agent"
     r")\b",
     re.I,
 )
@@ -233,11 +235,62 @@ def polish_2_task(message: str) -> str | None:
     return None
 
 
+_NEXT_STEP_RE = re.compile(
+    r"\bsend(?:\s+the)?\s+next\s+step\b"
+    r"|\bgo ahead and send\b"
+    r"|\b(?:sequenced\s+)?#\s*4\b"
+    r"|\bsequenced\s+4\b",
+    re.I,
+)
+
+SEQ_4_TASK = """Sequenced #4 — next after junior-shared-clients-v1 on production (do not redo #2 or #3).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done:
+- Dockerfile copies backend/migrations → /app/migrations
+- Boot applies 001 then 002; missing files fail init
+- DATABASE_URL stays ${{Postgres.DATABASE_URL}}
+- /api/v1/junior/* require_user; demo 403; no new public routes
+- phone_client: venue phone, device junior-mobile, project junior-phone
+- windows_client: venue windows, device windows-overlay, project windows-overlay
+- Both post to /api/v1/junior/messages or /threads/{id}/messages
+- Health reports junior-shared-clients-v1
+
+Your job (#4):
+1. Harden the two clients only: retries/backoff on 401/403/5xx, clear user-visible errors, no silent drop of posts.
+2. Shared GET for threads/messages using the same auth rules; still no public routes.
+3. Keep SQL idempotent; no DROP TABLE.
+4. Extend smoke tests for retry/403 and GET paths. Keep existing tests green.
+5. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
+def _negated_at(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 40) : start]
+    return bool(_NEGATED_START_RE.search(prefix))
+
+
+def next_step_task(message: str) -> str | None:
+    text = message or ""
+    for match in _NEXT_STEP_RE.finditer(text):
+        if _negated_at(text, match.start()):
+            continue
+        return SEQ_4_TASK
+    return None
+
+
+def sequenced_task(message: str) -> str | None:
+    return polish_2_task(message) or next_step_task(message)
+
+
 def wants_start(message: str) -> bool:
     text = (message or "").strip()
     if not text:
         return False
-    if polish_2_task(text):
+    if sequenced_task(text):
         return True
     if wants_cursor_setup(text):
         return True

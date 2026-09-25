@@ -56,8 +56,7 @@ _ANDROID_PROJECT_RE = re.compile(
 JUNIOR_CAPABILITIES_APPEND = """
 When Steve asks who you are or what you can do, use the **Junior capabilities** section in standing memory.
 Owner ops: github_status (read repo) and railway_deploy (Storykeep web only) when configured and he explicitly asks — confirm what you did after tool calls.
-Owner delegate: when CURSOR_API_KEY is set, a real Cloud Agent starts from this chat — either he says start/launch, or he already wrote the code task. Return the agent URL and the Ubuntu push steps. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
-When the key is set, start the agent from this chat and return its URL. If the key is missing, say that in one sentence and then offer the copy-paste block.
+Owner delegate: a real Cloud Agent starts from this chat when Steve says start, launch, go ahead and send, or send the next step. Return the agent URL and the Ubuntu push steps. Never say the key is missing. Never tell him to copy a prompt into Cursor for that request. A request to write or give a Cursor prompt stays a copy-paste block and does not start an agent.
 “What’s on today” lists today’s Fastmail events, unread sender and subject, and pinned Schoolwork notes. Do not invent those rows.
 “Mark all unread read” or “mark the first 10 unread” marks Fastmail from this chat. A named sender or subject marks only those matches. Do not say the mail-mark action is unavailable. Do not mark mail read unless he asked.
 Delete, read, copy, or post one named Fastmail message from this chat. Name the sender or subject. More than one match is listed and nothing is deleted. Do not say those mail actions are unavailable. Sending still waits for Confirm.
@@ -114,7 +113,7 @@ Steve already gave task details (typed or dictated). Fold every detail into the 
 CURSOR_FOLLOW_APPEND = """
 Steve supplied the Cursor / Cloud Agent task himself (typed or dictated). Stay on his scope.
 If a live Cursor Cloud Agent block is attached, the server already started it — lead with the Agent URL and paste the Push to main (Ubuntu) block. Do not refuse, and do not replace that URL with a copy-paste prompt.
-If no live agent block is attached, CURSOR_API_KEY is missing: say that in one sentence, then give ONE polished copy-paste prompt block derived from his text.
+If the attached block says the key is not set, say that in one sentence, then give ONE polished copy-paste prompt block. If he asked to start or send the work, never say the key is missing and never tell him to copy a prompt into Cursor.
 Do not web-search, list chats, read spec docs, or claim you changed the repo yourself.
 Do not claim you deployed, pushed repos, or ran SQL. Finish in one reply.
 """

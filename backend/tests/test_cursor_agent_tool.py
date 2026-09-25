@@ -77,6 +77,20 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("junior-mobile", task)
         self.assertNotIn("no working create path", task.lower())
 
+    def test_send_next_step_starts_sequenced_four(self):
+        msg = "lets go ahead and send the next step"
+        self.assertTrue(cursor_agent_tool.wants_start(msg))
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        task = cursor_agent_tool.next_step_task(msg)
+        self.assertIsNotNone(task)
+        assert task is not None
+        self.assertIn("Sequenced #4", task)
+        self.assertIn("junior-phone", task)
+        self.assertIn("windows-overlay", task)
+        self.assertNotIn("no key", task.lower())
+        self.assertFalse(cursor_agent_tool.wants_start("do not send the next step"))
+        self.assertIsNone(cursor_agent_tool.next_step_task("do not send the next step"))
+
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")
     def test_start_agent_success(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:

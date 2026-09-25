@@ -489,6 +489,43 @@ class CursorStartPayloadTests(unittest.TestCase):
         self.assertIn("Sequenced #2 polish", start_agent.call_args.args[0])
         self.assertEqual(start_agent.call_args.kwargs["branch"], "main")
 
+    def test_send_next_step_starts_agent(self):
+        from app.services import cursor_agent_tool
+
+        app = _app()
+        outcome = cursor_agent_tool.CursorAgentOutcome(
+            True,
+            "Cursor Cloud Agent started.",
+            200,
+            "agent-4",
+            "https://cursor.com/agents/agent-4",
+            "run-4",
+        )
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
+            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+        ):
+            response = TestClient(app).post(
+                "/api/v1/chat",
+                json={
+                    "message": "lets go ahead and send the next step",
+                    "model": "auto",
+                    "reasoning_effort": "auto",
+                    "pane_name": "StoryKeep",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("no key", response.text.lower())
+        self.assertNotIn("copy this into cursor", response.text.lower())
+        self.assertIn("https://cursor.com/agents/agent-4", response.text)
+        self.assertTrue(start_agent.called)
+        self.assertIn("Sequenced #4", start_agent.call_args.args[0])
+        self.assertEqual(start_agent.call_args.kwargs["branch"], "main")
+        self.assertFalse(start_agent.call_args.kwargs["auto_create_pr"])
+
 
 if __name__ == "__main__":
     unittest.main()

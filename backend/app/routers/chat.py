@@ -1593,7 +1593,7 @@ def _chat(
                 yield chat_service.encode_sse("[DONE]")
                 return
             if will_cursor_start:
-                task_prompt = cursor_agent_tool.polish_2_task(user_text) or ""
+                task_prompt = cursor_agent_tool.sequenced_task(user_text) or ""
                 agent_source = task_prompt or user_text
                 pane_label = (payload.pane_name or "").strip()
                 if pane_label:
@@ -1610,7 +1610,11 @@ def _chat(
                             task_prompt,
                             branch=start_branch,
                             source_message=agent_source,
-                            auto_create_pr=True if delegate_turn else None,
+                            auto_create_pr=(
+                                False
+                                if cursor_agent_tool.next_step_task(user_text)
+                                else (True if delegate_turn else None)
+                            ),
                         )
                     )
                     while not start_task.done():
