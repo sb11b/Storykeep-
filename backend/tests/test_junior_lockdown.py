@@ -69,6 +69,7 @@ class JuniorSharedLockdownTests(unittest.TestCase):
         client = TestClient(app)
         for path in (
             "/api/v1/junior/threads",
+            "/api/v1/junior/messages",
             "/api/v1/junior/search?q=hello",
             "/api/v1/junior/memories",
             "/api/v1/junior/projects",

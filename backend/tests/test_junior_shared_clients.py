@@ -14,7 +14,13 @@ from fastapi.testclient import TestClient
 from app.database import get_db
 from app.deps import get_current_user
 from app.routers import junior_shared as shared_router
-from app.services.junior_shared_clients import phone_client, windows_client
+from app.services.junior_shared_clients import (
+    ERROR_FORBIDDEN,
+    ERROR_POST_DROPPED,
+    ERROR_SIGN_IN,
+    phone_client,
+    windows_client,
+)
 
 
 def _app(user=None):
@@ -69,16 +75,29 @@ class SharedClientSmokeTests(unittest.TestCase):
 
     def test_phone_and_windows_require_login(self):
         client = TestClient(_app())
-        self.assertEqual(phone_client(client).post_turn("from the phone").status_code, 401)
-        self.assertEqual(windows_client(client).post_turn("from the overlay").status_code, 401)
-        self.assertEqual(phone_client(client).project().status_code, 401)
-        self.assertEqual(windows_client(client).search("trailer").status_code, 401)
+        sleeps: list[float] = []
+        phone = phone_client(client, sleeper=sleeps.append)
+        windows = windows_client(client, sleeper=sleeps.append)
+        self.assertEqual(phone.post_turn("from the phone").status_code, 401)
+        self.assertEqual(windows.post_turn("from the overlay").status_code, 401)
+        self.assertEqual(phone.project().status_code, 401)
+        self.assertEqual(windows.search("trailer").status_code, 401)
+        self.assertEqual(phone.list_threads().status_code, 401)
+        self.assertEqual(windows.list_messages().status_code, 401)
 
     def test_demo_is_forbidden_for_both_clients(self):
         demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
         client = TestClient(_app(demo))
-        self.assertEqual(phone_client(client).post_turn("no").status_code, 403)
-        self.assertEqual(windows_client(client).open_thread("Overlay").status_code, 403)
+        phone = phone_client(client, sleeper=lambda _: None)
+        windows = windows_client(client, sleeper=lambda _: None)
+        phone_post = phone.post_turn("no")
+        self.assertEqual(phone_post.status_code, 403)
+        self.assertEqual(phone_post.error, ERROR_FORBIDDEN)
+        self.assertFalse(phone_post)
+        self.assertEqual(phone.last_failed_post["payload"]["text"], "no")
+        self.assertEqual(windows.open_thread("Overlay").status_code, 403)
+        self.assertEqual(phone.list_threads().status_code, 403)
+        self.assertEqual(windows.list_messages().error, ERROR_FORBIDDEN)
 
     def test_phone_posts_on_the_shared_messages_route(self):
         thread, user_msg = _turn("phone")
@@ -114,6 +133,102 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertEqual(client.venue, "phone")
         self.assertEqual(windows_client(object()).project_slug, "windows-overlay")
         self.assertEqual(windows_client(object()).venue, "windows")
+
+    def test_get_threads_and_messages_use_shared_routes(self):
+        now = datetime.now(timezone.utc)
+        thread_id = uuid.uuid4()
+        thread = SimpleNamespace(
+            id=thread_id,
+            title="Shared",
+            venue_last="phone",
+            status="open",
+            summary=None,
+            created_at=now,
+            updated_at=now,
+        )
+        message = SimpleNamespace(
+            id=uuid.uuid4(),
+            thread_id=thread_id,
+            role="user",
+            content="hello from the client",
+            venue="phone",
+            meta={},
+            created_at=now,
+        )
+        app = _app(_owner())
+        with (
+            patch("app.routers.junior_shared.store.list_threads", return_value=[thread]),
+            patch("app.routers.junior_shared.store.list_messages", return_value=[message]) as listed,
+            patch("app.routers.junior_shared.store.last_open_thread", return_value=thread),
+        ):
+            http = TestClient(app)
+            threads = phone_client(http, sleeper=lambda _: None).list_threads()
+            by_id = windows_client(http, sleeper=lambda _: None).list_messages(thread_id)
+            latest = phone_client(http, sleeper=lambda _: None).list_messages()
+        self.assertEqual(threads.status_code, 200)
+        self.assertEqual(threads.json()[0]["title"], "Shared")
+        self.assertEqual(by_id.status_code, 200)
+        self.assertEqual(by_id.json()[0]["content"], "hello from the client")
+        self.assertEqual(latest.status_code, 200)
+        self.assertEqual(listed.call_args.args[2], thread_id)
+
+    def test_retries_401_then_succeeds_without_dropping_the_post(self):
+        thread, user_msg = _turn("phone")
+        app = _app(_owner())
+        http = TestClient(app)
+        real_post = http.post
+        calls = {"n": 0}
+
+        def flaky_post(path, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return SimpleNamespace(status_code=401, text="Not authenticated", json=lambda: {"detail": "Not authenticated"})
+            return real_post(path, **kwargs)
+
+        http.post = flaky_post
+        sleeps: list[float] = []
+        with patch(
+            "app.routers.junior_shared.store.post_turn",
+            return_value=(thread, user_msg, None, "stubbed_no_key"),
+        ) as post_turn:
+            client = phone_client(http, sleeper=sleeps.append)
+            response = client.post_turn("retry me")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.error)
+        self.assertTrue(response)
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(sleeps, [0.25])
+        self.assertIsNone(client.last_failed_post)
+        self.assertEqual(post_turn.call_args.kwargs["content"], "retry me")
+
+    def test_retries_403_and_5xx_then_keeps_the_failed_post(self):
+        statuses = [403, 500, 503]
+        http = SimpleNamespace()
+
+        def flaky_post(path, **kwargs):
+            status = statuses.pop(0)
+            return SimpleNamespace(status_code=status, text="fail", json=lambda: {"detail": "fail"})
+
+        http.post = flaky_post
+        sleeps: list[float] = []
+        client = windows_client(http, sleeper=sleeps.append)
+        response = client.post_turn("keep this")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.error, ERROR_POST_DROPPED)
+        self.assertFalse(response)
+        self.assertEqual(sleeps, [0.25, 0.5])
+        self.assertEqual(client.last_error, ERROR_POST_DROPPED)
+        self.assertEqual(client.last_failed_post["payload"]["text"], "keep this")
+        self.assertEqual(client.last_failed_post["status_code"], 503)
+        self.assertEqual(client.last_failed_post["attempts"], 3)
+
+    def test_401_after_retries_is_a_visible_sign_in_error(self):
+        http = SimpleNamespace(post=lambda path, **kwargs: SimpleNamespace(status_code=401, text="", json=lambda: {}))
+        client = phone_client(http, sleeper=lambda _: None)
+        response = client.post_turn("held")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.error, ERROR_SIGN_IN)
+        self.assertEqual(client.last_failed_post["payload"]["text"], "held")
 
 
 if __name__ == "__main__":

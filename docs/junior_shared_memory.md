@@ -61,7 +61,7 @@ StoryKeep ships the two callers in `backend/app/services/junior_shared_clients.p
 | `phone_client` | `phone` | `junior-mobile` | `junior-phone` |
 | `windows_client` | `windows` | `windows-overlay` | `windows-overlay` |
 
-Both post to `POST /api/v1/junior/messages` (or `/threads/{id}/messages`). Login required. A demo account gets 403.
+Both post to `POST /api/v1/junior/messages` (or `/threads/{id}/messages`) and read with `GET /threads`, `GET /messages`, or `GET /threads/{id}/messages`. Login required. A demo account gets 403. Phone and Windows callers retry 401/403/5xx with backoff and keep a visible error plus the last unsaved post — they do not drop a failed turn silently.
 
 Seed project slug: `junior-phone` (kept for API stability). Display name **Junior mobile**. Repo: [https://cursor.com/codebase/steve-bitsko/junior-mobile](https://cursor.com/codebase/steve-bitsko/junior-mobile) (Expo phone client; `venue=phone`; StoryKeep `/api/v1/junior/*`).
 

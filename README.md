@@ -128,6 +128,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `POST` | `/api/v1/junior/threads` | Start a thread (`title`, `venue`). Optional `text` is the first turn. |
 | `GET` | `/api/v1/junior/threads/{id}/messages` | Full history |
 | `POST` | `/api/v1/junior/threads/{id}/messages` | Send a turn (`text` or `content`, `venue`, optional `meta`) |
+| `GET` | `/api/v1/junior/messages` | Same history; omit `thread_id` to read the last `open` thread |
 | `POST` | `/api/v1/junior/messages` | Same turn; omit `thread_id` to use last `open` thread (or create one) |
 | `POST` | `/api/v1/junior/threads/{id}/continue` | Resume a thread; with `text` this is another turn |
 | `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages |

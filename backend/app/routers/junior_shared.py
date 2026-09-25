@@ -87,6 +87,21 @@ def list_messages(
     return [JuniorSharedMessageOut.model_validate(row) for row in store.list_messages(db, user, thread_id)]
 
 
+@router.get("/messages", response_model=list[JuniorSharedMessageOut])
+def get_messages(
+    thread_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> list[JuniorSharedMessageOut]:
+    """Same auth as POST /messages. Omit thread_id to read the last open thread."""
+    if thread_id is None:
+        thread = store.last_open_thread(db, user)
+        if thread is None:
+            return []
+        thread_id = thread.id
+    return [JuniorSharedMessageOut.model_validate(row) for row in store.list_messages(db, user, thread_id)]
+
+
 @router.post("/threads/{thread_id}/messages", response_model=JuniorSharedMessagePostOut)
 def post_message(
     thread_id: UUID,
