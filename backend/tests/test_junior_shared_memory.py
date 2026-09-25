@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+import re
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_user
 from app.routers import junior_shared as shared_router
 from app.services import junior_shared_memory as store
 
@@ -34,25 +36,57 @@ def _app(user=None):
 
 
 class JuniorSharedRouteTests(unittest.TestCase):
+    SHARED_GETS = (
+        "/api/v1/junior/threads",
+        "/api/v1/junior/search?q=hello",
+        "/api/v1/junior/memories",
+        "/api/v1/junior/projects",
+        "/api/v1/junior/projects/storykeep",
+        "/api/v1/junior/agent-context?project=storykeep",
+    )
+
     def test_unauthenticated_401(self):
         app = FastAPI()
         app.include_router(shared_router.router, prefix="/api/v1")
         client = TestClient(app)
-        for path in (
-            "/api/v1/junior/threads",
-            "/api/v1/junior/search?q=hello",
-            "/api/v1/junior/memories",
-            "/api/v1/junior/projects",
-            "/api/v1/junior/agent-context?project=storykeep",
-        ):
+        for path in self.SHARED_GETS:
             response = client.get(path)
+            self.assertEqual(response.status_code, 401, path)
+        for path, body in (
+            ("/api/v1/junior/threads", {"title": "x", "venue": "storykeep"}),
+            ("/api/v1/junior/messages", {"text": "hi", "venue": "phone"}),
+            ("/api/v1/junior/memories", {"kind": "note", "content": "x"}),
+            ("/api/v1/junior/projects", {"slug": "storykeep", "display_name": "StoryKeep", "kind": "app"}),
+            ("/api/v1/junior/agents", {"project_slug": "storykeep", "prompt": "x"}),
+        ):
+            response = client.post(path, json=body)
             self.assertEqual(response.status_code, 401, path)
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
         client = TestClient(app)
-        response = client.get("/api/v1/junior/threads")
-        self.assertEqual(response.status_code, 403)
+        for path in self.SHARED_GETS:
+            response = client.get(path)
+            self.assertEqual(response.status_code, 403, path)
+        posted = client.post("/api/v1/junior/messages", json={"text": "hi", "venue": "phone"})
+        self.assertEqual(posted.status_code, 403)
+
+    def test_shared_routes_use_require_user(self):
+        self.assertTrue(any(dep.dependency is require_user for dep in shared_router.router.dependencies))
+        for route in shared_router.router.routes:
+            stack = list(getattr(route, "dependant").dependencies)
+            seen: set[object] = set()
+            found = False
+            while stack:
+                dep = stack.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                if getattr(dep, "call", None) is require_user:
+                    found = True
+                    break
+                stack.extend(getattr(dep, "dependencies", []) or [])
+            self.assertTrue(found, getattr(route, "path", route))
 
     def test_list_threads(self):
         now = datetime.now(timezone.utc)
@@ -302,6 +336,41 @@ class JuniorSharedServiceTests(unittest.TestCase):
         self.assertIn("REFERENCES users(id)", projects_sql)
         self.assertIn("kind IN ('app','api','overlay','infra','other')", projects_sql)
 
+    def test_junior_sql_files_are_idempotent(self):
+        root = Path(__file__).resolve().parents[1] / "migrations"
+        first = (root / "001_junior_memory.sql").read_text(encoding="utf-8")
+        second = (root / "002_junior_projects.sql").read_text(encoding="utf-8")
+        for name, sql in (("001_junior_memory.sql", first), ("002_junior_projects.sql", second)):
+            self.assertNotRegex(sql, r"(?im)^\s*DROP\s+TABLE")
+            self.assertNotRegex(sql, r"(?im)^\s*CREATE\s+TABLE\s+users\b")
+            creates = re.findall(
+                r"(?im)^\s*CREATE\s+(EXTENSION|TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?",
+                sql,
+            )
+            self.assertTrue(creates, name)
+            for kind, guard in creates:
+                self.assertTrue(guard.strip(), f"{name} CREATE {kind} must use IF NOT EXISTS")
+            for match in re.finditer(r"(?im)ADD\s+COLUMN\s+(IF\s+NOT\s+EXISTS\s+)?", sql):
+                self.assertTrue(match.group(1), f"{name} ADD COLUMN must use IF NOT EXISTS")
+        from app.main import _apply_sql_file
+
+        applied: list[str] = []
+        with patch("app.main._try_sql", side_effect=lambda stmt: applied.append(stmt)):
+            _apply_sql_file(root / "001_junior_memory.sql")
+            _apply_sql_file(root / "002_junior_projects.sql")
+            first_pass = list(applied)
+            applied.clear()
+            _apply_sql_file(root / "001_junior_memory.sql")
+            _apply_sql_file(root / "002_junior_projects.sql")
+            second_pass = list(applied)
+        self.assertEqual(first_pass, second_pass)
+        self.assertTrue(any("junior_threads" in stmt for stmt in first_pass))
+        self.assertTrue(any("junior_projects" in stmt for stmt in first_pass))
+        self.assertLess(
+            first_pass.index(next(stmt for stmt in first_pass if "junior_threads" in stmt)),
+            first_pass.index(next(stmt for stmt in first_pass if "junior_projects" in stmt)),
+        )
+
 
 class JuniorProjectAndAgentTests(unittest.TestCase):
     def test_list_and_upsert_projects(self):
@@ -416,19 +485,43 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         db.scalar.side_effect = [owner] + [None] * 20
         store.seed_owner_projects_and_decisions(db)
         added = [call.args[0] for call in db.add.call_args_list]
-        slugs = {getattr(item, "slug", None) for item in added}
-        self.assertIn("storykeep", slugs)
-        self.assertIn("junior-phone", slugs)
-        self.assertIn("windows-overlay", slugs)
+        slugs = {getattr(item, "slug", None) for item in added if getattr(item, "slug", None)}
+        self.assertEqual(slugs, {"storykeep", "junior-phone", "windows-overlay"})
+        self.assertEqual(store.OWNER_EMAIL, "angry.tune8751@fastmail.com")
         phone = next(item for item in store.SEED_PROJECTS if item["slug"] == "junior-phone")
         self.assertEqual(phone["repo_url"], "https://cursor.com/codebase/steve-bitsko/junior-mobile")
         self.assertEqual(phone["display_name"], "Junior mobile")
         self.assertEqual(phone["meta"].get("stack"), "expo")
         phone_row = next(item for item in added if getattr(item, "slug", None) == "junior-phone")
+        self.assertEqual(phone_row.display_name, "Junior mobile")
         self.assertEqual(phone_row.repo_url, "https://cursor.com/codebase/steve-bitsko/junior-mobile")
+        storykeep = next(item for item in added if getattr(item, "slug", None) == "storykeep")
+        overlay = next(item for item in added if getattr(item, "slug", None) == "windows-overlay")
+        self.assertEqual(storykeep.display_name, "StoryKeep")
+        self.assertEqual(overlay.display_name, "Windows overlay")
         decisions = [item.content for item in added if getattr(item, "kind", None) == "decision"]
         self.assertTrue(any("Railway Postgres" in text for text in decisions))
         self.assertTrue(any("venue=phone" in text for text in decisions))
+
+
+class JuniorSharedEnvSmokeTests(unittest.TestCase):
+    def test_container_copies_migrations_and_boot_applies_them(self):
+        repo = Path(__file__).resolve().parents[2]
+        root_docker = (repo / "Dockerfile").read_text(encoding="utf-8")
+        backend_docker = (repo / "backend" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY backend/migrations ./migrations", root_docker)
+        self.assertIn("COPY migrations ./migrations", backend_docker)
+        boot = inspect.getsource(__import__("app.main", fromlist=["_create_schema"])._create_schema)
+        self.assertIn('migrations / "001_junior_memory.sql"', boot)
+        self.assertIn('migrations / "002_junior_projects.sql"', boot)
+        self.assertLess(boot.index("001_junior_memory.sql"), boot.index("002_junior_projects.sql"))
+
+    def test_docs_keep_railway_postgres_database_url(self):
+        repo = Path(__file__).resolve().parents[2]
+        expected = "DATABASE_URL=${{Postgres.DATABASE_URL}}"
+        for rel in ("README.md", "docs/railway.md", "docs/START_HERE.md"):
+            text = (repo / rel).read_text(encoding="utf-8")
+            self.assertIn(expected, text, rel)
 
 
 if __name__ == "__main__":

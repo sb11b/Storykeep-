@@ -9,7 +9,7 @@ from app.deps import require_user
 from app.models import User
 from app.services import junior_memory as memory
 
-router = APIRouter(prefix="/junior", tags=["junior-memory"])
+router = APIRouter(prefix="/junior", tags=["junior-memory"], dependencies=[Depends(require_user)])
 
 
 class MemoryIn(BaseModel):

@@ -66,7 +66,7 @@ Railway injects `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_ENVIRONMENT
 
 After deploy, `GET /api/health` reports `cursor_delegate: configured` when `CURSOR_API_KEY` is set (never exposes the key).
 
-Junior shared chat-memory tables are created on API boot from `backend/migrations/001_junior_memory.sql` and `002_junior_projects.sql`. To apply them yourself against the Railway plugin (uses existing `DATABASE_URL`, no extra secrets):
+Junior shared chat-memory tables are created on API boot from `backend/migrations/001_junior_memory.sql` and `002_junior_projects.sql`. The Railway image copies that folder to `/app/migrations` (same `DATABASE_URL=${{Postgres.DATABASE_URL}}` as the rest of the app — no extra secrets). To apply them yourself against the Railway plugin:
 
 ```bash
 psql "$DATABASE_URL" -f backend/migrations/001_junior_memory.sql

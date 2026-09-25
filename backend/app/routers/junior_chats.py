@@ -11,7 +11,7 @@ from app.models import User
 from app.schemas import JuniorChatOut
 from app.services import chat_index
 
-router = APIRouter(prefix="/junior", tags=["junior-chats"])
+router = APIRouter(prefix="/junior", tags=["junior-chats"], dependencies=[Depends(require_user)])
 
 
 def _row_out(row: dict) -> JuniorChatOut:

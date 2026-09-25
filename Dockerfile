@@ -27,6 +27,8 @@ RUN apt-get update \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
+# Boot applies 001_junior_memory.sql then 002_junior_projects.sql from this path.
+COPY backend/migrations ./migrations
 COPY --from=web /web/out ./frontend_out
 COPY start.sh /start.sh
 # Windows checkouts can commit CRLF; strip before exec so Railway CLI deploys do not crash.

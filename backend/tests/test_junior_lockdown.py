@@ -67,8 +67,15 @@ class JuniorSharedLockdownTests(unittest.TestCase):
         app.dependency_overrides[get_db] = fake_db
         app.dependency_overrides[get_current_user] = lambda: demo
         client = TestClient(app)
-        response = client.get("/api/v1/junior/threads")
-        self.assertEqual(response.status_code, 403)
+        client = TestClient(app)
+        for path in (
+            "/api/v1/junior/threads",
+            "/api/v1/junior/memories",
+            "/api/v1/junior/projects",
+            "/api/v1/junior/agent-context?project=storykeep",
+        ):
+            response = client.get(path)
+            self.assertEqual(response.status_code, 403, path)
 
 
 class LoggingLockdownTests(unittest.TestCase):

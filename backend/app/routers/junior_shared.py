@@ -28,7 +28,11 @@ from app.schemas import (
 )
 from app.services import junior_shared_memory as store
 
-router = APIRouter(prefix="/junior", tags=["junior-shared-memory"])
+router = APIRouter(
+    prefix="/junior",
+    tags=["junior-shared-memory"],
+    dependencies=[Depends(require_user)],
+)
 
 
 def _turn_out(thread_id: UUID, user_row, junior_row, reply_status: str) -> JuniorSharedMessagePostOut:
