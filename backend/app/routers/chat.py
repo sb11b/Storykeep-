@@ -1750,10 +1750,10 @@ def _chat(
                     continue
                 first = not saw_text
                 await emit_delta(piece)
-                payload: dict[str, object] = {"delta": piece}
+                delta_event: dict[str, object] = {"delta": piece}
                 if first:
-                    payload["stream_status"] = "writing"
-                yield chat_service.encode_sse(payload)
+                    delta_event["stream_status"] = "writing"
+                yield chat_service.encode_sse(delta_event)
                 await asyncio.sleep(0)
             if cancelled.is_set() or await request.is_disconnected():
                 _persist_assistant("".join(assistant_parts))
@@ -1846,10 +1846,10 @@ def _chat(
                         continue
                     first = not saw_text
                     await emit_delta(piece)
-                    payload: dict[str, object] = {"delta": piece}
+                    delta_event: dict[str, object] = {"delta": piece}
                     if first:
-                        payload["stream_status"] = "writing"
-                    yield chat_service.encode_sse(payload)
+                        delta_event["stream_status"] = "writing"
+                    yield chat_service.encode_sse(delta_event)
                     await asyncio.sleep(0)
                 if cancelled.is_set() or await request.is_disconnected():
                     _persist_assistant("".join(assistant_parts))
@@ -1879,10 +1879,10 @@ def _chat(
                         continue
                     first = not saw_text
                     await emit_delta(piece)
-                    payload: dict[str, object] = {"delta": piece}
+                    delta_event: dict[str, object] = {"delta": piece}
                     if first:
-                        payload["stream_status"] = "writing"
-                    yield chat_service.encode_sse(payload)
+                        delta_event["stream_status"] = "writing"
+                    yield chat_service.encode_sse(delta_event)
                     await asyncio.sleep(0)
                 if cancelled.is_set() or await request.is_disconnected():
                     _persist_assistant("".join(assistant_parts))
@@ -1937,10 +1937,10 @@ def _chat(
                         continue
                     first = not saw_text
                     await emit_delta(piece)
-                    payload: dict[str, object] = {"delta": piece}
+                    delta_event: dict[str, object] = {"delta": piece}
                     if first:
-                        payload["stream_status"] = "writing"
-                    yield chat_service.encode_sse(payload)
+                        delta_event["stream_status"] = "writing"
+                    yield chat_service.encode_sse(delta_event)
                     await asyncio.sleep(0)
                 if cancelled.is_set() or await request.is_disconnected():
                     _persist_assistant("".join(assistant_parts))

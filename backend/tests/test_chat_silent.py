@@ -419,5 +419,41 @@ class StreamConnectStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pieces[1], "Hi")
 
 
+class CursorStartPayloadTests(unittest.TestCase):
+    def test_start_agent_can_read_pane_name(self):
+        from app.services import cursor_agent_tool
+
+        app = _app()
+        outcome = cursor_agent_tool.CursorAgentOutcome(
+            True,
+            "Cursor Cloud Agent started.",
+            200,
+            "agent-1",
+            "https://cursor.com/agents/agent-1",
+            "run-1",
+        )
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome),
+            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={
+                    "message": "start a cursor agent to fix the mail list",
+                    "model": "auto",
+                    "reasoning_effort": "auto",
+                    "pane_name": "Storykeep",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("cannot access local variable", response.text)
+        self.assertIn("Cursor Cloud Agent started", response.text)
+        self.assertIn("https://cursor.com/agents/agent-1", response.text)
+
+
 if __name__ == "__main__":
     unittest.main()
