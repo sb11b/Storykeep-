@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { encryptMessageBody } from "@/lib/message-crypto";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
-import { folderById } from "@/lib/folders";
+import { folderById, matchFolderByName } from "@/lib/folders";
 import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
   chatTimeoutToast,
@@ -72,6 +72,7 @@ import {
 } from "@/lib/include-chunk";
 import { isNoteShrinkMessage } from "@/lib/api-errors";
 import { headingFromInstruction } from "@/lib/work-in-junior";
+import { folderNameForFinishedChat, shelfForFinishedChat } from "@/lib/chat-filing";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
@@ -2048,21 +2049,38 @@ export function GrokPane({
 
   async function saveChat() {
     if (savingChat) return;
-    const filing = filingFromDropdowns(pane.noteDest, pane.noteFolderId, folders);
-    const dest = filing.dest;
-    const folderId = filing.folderId;
-    if (!dest) {
-      toast.error("Pick a shelf before saving this chat.");
-      document.getElementById(shelfSelectId)?.focus();
+    if (busy) {
+      toast.error("Wait until Junior finishes this reply, then save the chat.");
       return;
     }
-    saveLastFiling(dest, folderId);
-    patch({ noteDest: dest, noteFolderId: folderId });
     const turns = saveableThreadTurns(pane.messages);
     if (!turns.length) {
       toast.error("Nothing to save — this thread is empty.");
       return;
     }
+    const filing = filingFromDropdowns(pane.noteDest, pane.noteFolderId, folders);
+    let dest = filing.dest;
+    let folderId = filing.folderId;
+    if (!dest) {
+      toast.error("Pick a shelf before saving this chat.");
+      document.getElementById(shelfSelectId)?.focus();
+      return;
+    }
+    if (!folderId) {
+      dest = shelfForFinishedChat(pane.displayName, dest);
+      const folderName = folderNameForFinishedChat(pane.displayName);
+      const existing = matchFolderByName(folders, dest, folderName);
+      try {
+        const row = existing ?? (await api.createFolder(dest, folderName));
+        if (!existing) setFolders((current) => [...current, row]);
+        folderId = row.id;
+      } catch (error) {
+        toastErrorFromUnknown(error, "Could not create a folder for this chat");
+        return;
+      }
+    }
+    saveLastFiling(dest, folderId);
+    patch({ noteDest: dest, noteFolderId: folderId });
     const title = threadNoteTitle({
       conversationTitle: pane.conversationTitle,
       firstUserLine: turns.find((item) => item.role === "user")?.content,
@@ -2390,9 +2408,15 @@ export function GrokPane({
           size="sm"
           variant="outline"
           className="h-7"
-          disabled={!canSaveChat || savingChat}
+          disabled={!canSaveChat || savingChat || busy}
           aria-label="Save chat"
-          title={canSaveChat ? "Save this whole thread as a StoryKeep note" : "Nothing to save"}
+          title={
+            busy
+              ? "Wait until Junior finishes, then save this chat into a folder"
+              : canSaveChat
+                ? "Save this finished chat into the shelf and folder"
+                : "Nothing to save"
+          }
           onClick={() => void saveChat()}
         >
           <Save className="size-3.5" />

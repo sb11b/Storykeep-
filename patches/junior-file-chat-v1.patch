@@ -1,0 +1,143 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 68230be..1b07147 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-start-listen-v1", "time": "2026-09-24T18:30:00Z"}
++{"sha": "junior-file-chat-v1", "time": "2026-09-25T03:00:00Z"}
+diff --git a/frontend/src/components/grok-pane.tsx b/frontend/src/components/grok-pane.tsx
+index d2a5253..7a86e4a 100644
+--- a/frontend/src/components/grok-pane.tsx
++++ b/frontend/src/components/grok-pane.tsx
+@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
+ import { ApiError, api } from "@/lib/api";
+ import { encryptMessageBody } from "@/lib/message-crypto";
+ import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
+-import { folderById } from "@/lib/folders";
++import { folderById, matchFolderByName } from "@/lib/folders";
+ import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
+ import {
+   chatTimeoutToast,
+@@ -72,6 +72,7 @@ import {
+ } from "@/lib/include-chunk";
+ import { isNoteShrinkMessage } from "@/lib/api-errors";
+ import { headingFromInstruction } from "@/lib/work-in-junior";
++import { folderNameForFinishedChat, shelfForFinishedChat } from "@/lib/chat-filing";
+ import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
+ import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
+ import { postedSpendForTurn } from "@/lib/grok-auto-route";
+@@ -2048,21 +2049,38 @@ export function GrokPane({
+ 
+   async function saveChat() {
+     if (savingChat) return;
++    if (busy) {
++      toast.error("Wait until Junior finishes this reply, then save the chat.");
++      return;
++    }
++    const turns = saveableThreadTurns(pane.messages);
++    if (!turns.length) {
++      toast.error("Nothing to save — this thread is empty.");
++      return;
++    }
+     const filing = filingFromDropdowns(pane.noteDest, pane.noteFolderId, folders);
+-    const dest = filing.dest;
+-    const folderId = filing.folderId;
++    let dest = filing.dest;
++    let folderId = filing.folderId;
+     if (!dest) {
+       toast.error("Pick a shelf before saving this chat.");
+       document.getElementById(shelfSelectId)?.focus();
+       return;
+     }
++    if (!folderId) {
++      dest = shelfForFinishedChat(pane.displayName, dest);
++      const folderName = folderNameForFinishedChat(pane.displayName);
++      const existing = matchFolderByName(folders, dest, folderName);
++      try {
++        const row = existing ?? (await api.createFolder(dest, folderName));
++        if (!existing) setFolders((current) => [...current, row]);
++        folderId = row.id;
++      } catch (error) {
++        toastErrorFromUnknown(error, "Could not create a folder for this chat");
++        return;
++      }
++    }
+     saveLastFiling(dest, folderId);
+     patch({ noteDest: dest, noteFolderId: folderId });
+-    const turns = saveableThreadTurns(pane.messages);
+-    if (!turns.length) {
+-      toast.error("Nothing to save — this thread is empty.");
+-      return;
+-    }
+     const title = threadNoteTitle({
+       conversationTitle: pane.conversationTitle,
+       firstUserLine: turns.find((item) => item.role === "user")?.content,
+@@ -2390,9 +2408,15 @@ export function GrokPane({
+           size="sm"
+           variant="outline"
+           className="h-7"
+-          disabled={!canSaveChat || savingChat}
++          disabled={!canSaveChat || savingChat || busy}
+           aria-label="Save chat"
+-          title={canSaveChat ? "Save this whole thread as a StoryKeep note" : "Nothing to save"}
++          title={
++            busy
++              ? "Wait until Junior finishes, then save this chat into a folder"
++              : canSaveChat
++                ? "Save this finished chat into the shelf and folder"
++                : "Nothing to save"
++          }
+           onClick={() => void saveChat()}
+         >
+           <Save className="size-3.5" />
+diff --git a/frontend/src/lib/chat-filing.test.ts b/frontend/src/lib/chat-filing.test.ts
+new file mode 100644
+index 0000000..c90836b
+--- /dev/null
++++ b/frontend/src/lib/chat-filing.test.ts
+@@ -0,0 +1,22 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { folderNameForFinishedChat, shelfForFinishedChat } from "./chat-filing";
++
++test("a named pane becomes the folder on the selected shelf", () => {
++  assert.equal(folderNameForFinishedChat("Storykeep"), "Storykeep");
++  assert.equal(shelfForFinishedChat("Storykeep", "notes"), "notes");
++});
++
++test("a school pane with the default shelf files under Schoolwork", () => {
++  assert.equal(shelfForFinishedChat("Dat 325 School Work", "notes"), "schoolwork");
++  assert.equal(folderNameForFinishedChat("Dat 325 School Work"), "Dat 325 School Work");
++});
++
++test("an explicit shelf is kept", () => {
++  assert.equal(shelfForFinishedChat("Dat 325 School Work", "vault"), "vault");
++});
++
++test("a default Junior pane files into Junior chats", () => {
++  assert.equal(folderNameForFinishedChat("Junior"), "Junior chats");
++  assert.equal(folderNameForFinishedChat("Junior 2"), "Junior chats");
++});
+diff --git a/frontend/src/lib/chat-filing.ts b/frontend/src/lib/chat-filing.ts
+new file mode 100644
+index 0000000..5b614ae
+--- /dev/null
++++ b/frontend/src/lib/chat-filing.ts
+@@ -0,0 +1,17 @@
++import { asFilingDestination } from "@/lib/destinations";
++
++const SCHOOL_PANE = /\b(?:school(?:work)?|homework|dat|mat|ids|class)\b/i;
++const DEFAULT_PANE = /^junior(?:\s+\d+)?$/i;
++
++export function shelfForFinishedChat(paneName: string, selectedShelf: string): string {
++  const shelf = asFilingDestination(selectedShelf, "notes");
++  if (shelf !== "notes") return shelf;
++  if (SCHOOL_PANE.test(paneName || "")) return "schoolwork";
++  return shelf;
++}
++
++export function folderNameForFinishedChat(paneName: string): string {
++  const name = (paneName || "").trim().replace(/\s+/g, " ");
++  if (!name || DEFAULT_PANE.test(name)) return "Junior chats";
++  return name.slice(0, 80);
++}
