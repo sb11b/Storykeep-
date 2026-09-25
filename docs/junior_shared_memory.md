@@ -54,6 +54,15 @@ The phone app is **not** a second database. It is a client of this Memory API.
 
 There is no `/api/v1/junior/phone/*` namespace. Phone uses the same routes as StoryKeep and the Windows overlay.
 
+StoryKeep ships the two callers in `backend/app/services/junior_shared_clients.py`:
+
+| Client | venue | device_label | project slug |
+| --- | --- | --- | --- |
+| `phone_client` | `phone` | `junior-mobile` | `junior-phone` |
+| `windows_client` | `windows` | `windows-overlay` | `windows-overlay` |
+
+Both post to `POST /api/v1/junior/messages` (or `/threads/{id}/messages`). Login required. A demo account gets 403.
+
 Seed project slug: `junior-phone` (kept for API stability). Display name **Junior mobile**. Repo: [https://cursor.com/codebase/steve-bitsko/junior-mobile](https://cursor.com/codebase/steve-bitsko/junior-mobile) (Expo phone client; `venue=phone`; StoryKeep `/api/v1/junior/*`).
 
 ---
