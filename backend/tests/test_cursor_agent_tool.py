@@ -55,6 +55,17 @@ class CursorAgentToolTests(unittest.TestCase):
         msg = "Start cursor agent branch feature/android-voice on main repo"
         self.assertEqual(cursor_agent_tool.extract_branch(msg), "feature/android-voice")
 
+    def test_extract_branch_ignores_storykeep_product_name(self):
+        msg = (
+            "Shared Junior memory is live on StoryKeep production. "
+            "Start a cursor agent to record that the tables exist."
+        )
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+
+    def test_wants_start_ignores_negated_phrase(self):
+        msg = "Junior, this already happened. Do not start a Cursor agent for it."
+        self.assertFalse(cursor_agent_tool.wants_start(msg))
+
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")
     def test_start_agent_success(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:

@@ -1601,11 +1601,13 @@ def _chat(
                         f"Asked from the StoryKeep chat named {pane_label}. "
                         "Stay on the existing Storykeep repository. Do not create a new project."
                     )
+                start_branch = cursor_agent_tool.extract_branch(user_text)
                 try:
                     start_task = asyncio.create_task(
                         asyncio.to_thread(
                             cursor_agent_tool.start_agent,
                             "",
+                            branch=start_branch,
                             source_message=agent_source,
                             auto_create_pr=True if delegate_turn else None,
                         )
@@ -1641,7 +1643,7 @@ def _chat(
                         agent_id=agent_outcome.agent_id,
                         agent_url=agent_outcome.agent_url or "",
                         run_id=agent_outcome.run_id,
-                        starting_branch=cursor_agent_tool.extract_branch(user_text),
+                        starting_branch=start_branch,
                     )
                 note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
                 await emit_delta(note)

@@ -95,7 +95,26 @@ _BRANCH_SKIP = frozenset(
         "with",
         "and",
         "or",
+        "storykeep",
+        "storykeep-",
+        "production",
+        "repository",
+        "repo",
+        "github",
+        "railway",
+        "cursor",
+        "junior",
+        "chat",
+        "pane",
+        "project",
+        "existing",
+        "memory",
+        "mobile",
     },
+)
+_NEGATED_START_RE = re.compile(
+    r"(?:do\s+not|don't|dont|never|not)\s+$",
+    re.I,
 )
 _AUTO_PR_RE = re.compile(
     r"\b(?:auto[\s-]?create\s+pr|open\s+a\s+pr|create\s+(?:a\s+)?pull\s+request)\b",
@@ -195,7 +214,12 @@ def wants_start(message: str) -> bool:
         return False
     if wants_cursor_setup(text):
         return True
-    return bool(_START_RE.search(text))
+    for match in _START_RE.finditer(text):
+        prefix = text[max(0, match.start() - 32) : match.start()]
+        if _NEGATED_START_RE.search(prefix):
+            continue
+        return True
+    return False
 
 
 def extract_prompt(message: str) -> str:
