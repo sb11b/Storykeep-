@@ -19,7 +19,8 @@ import { restoreDraftAfterSilent } from "@/lib/silent-retry";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import { encryptMessageBody } from "@/lib/message-crypto";
+import { decryptStoredMessage, encryptMessageBody } from "@/lib/message-crypto";
+import { savedReplyFillsEmptyBubble } from "@/lib/saved-reply";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { folderById, matchFolderByName } from "@/lib/folders";
 import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
@@ -1288,6 +1289,50 @@ export function GrokPane({
         }
         requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
         window.setTimeout(() => maybeRearmSts(), 120);
+        return;
+      }
+      let recovered = "";
+      let recoveredId = "";
+      if (conversationId && persist) {
+        try {
+          const detail = await api.chatConversation(conversationId);
+          const last = [...detail.messages].reverse().find((item) => item.role === "assistant");
+          if (last) {
+            const saved = (await decryptStoredMessage(last)).trim();
+            const already = messagesRef.current.find((item) => item.id === last.id);
+            const alreadyShown =
+              Boolean(already && (already.content || "").trim()) &&
+              !isSilentEmptyChatDetail(already?.content || "");
+            if (!alreadyShown && savedReplyFillsEmptyBubble(streamedText, saved)) {
+              recovered = saved;
+              recoveredId = last.id;
+            }
+          }
+        } catch {
+          /* the bubble keeps the empty-reply sentence */
+        }
+      }
+      if (recovered) {
+        streamedText = recovered;
+        setStreamStatus(null);
+        onUpdate((current) => ({
+          ...current,
+          streamStatus: null,
+          messages: current.messages.map((item) =>
+            item.id === assistantId || item.id === recoveredId || (item.role === "assistant" && item.waiting)
+              ? {
+                  ...item,
+                  id: recoveredId || item.id,
+                  waiting: false,
+                  turnStatus: "done" as const,
+                  failed: false,
+                  error: null,
+                  content: recovered,
+                }
+              : item,
+          ),
+        }));
+        requestAutoListen(recoveredId || assistantId, recovered);
         return;
       }
       putSentBack(EMPTY_REPLY_BODY);
