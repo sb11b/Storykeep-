@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
+import com.storykeep.junior.system.MainSystemHost
 
 /**
  * UI-facing session. Talk rules live in [TalkSessionCore].
@@ -11,7 +12,7 @@ import androidx.lifecycle.ViewModel
  */
 class JuniorSession(
     private val storyStore: StoryStore = MemoryStoryStore(),
-) : ViewModel() {
+) : ViewModel(), MainSystemHost {
     private val core = TalkSessionCore()
 
     var bottomTab: BottomTab by mutableStateOf(BottomTab.Talk)
@@ -28,28 +29,28 @@ class JuniorSession(
     )
         private set
 
-    var entryMode: EntryMode by mutableStateOf(core.entryMode)
+    override var entryMode: EntryMode by mutableStateOf(core.entryMode)
         private set
 
-    var voiceState: VoiceState by mutableStateOf(core.voiceState)
+    override var voiceState: VoiceState by mutableStateOf(core.voiceState)
         private set
 
-    var listenOn: Boolean by mutableStateOf(core.listenOn)
+    override var listenOn: Boolean by mutableStateOf(core.listenOn)
         private set
 
-    var draft: String by mutableStateOf(core.draft)
+    override var draft: String by mutableStateOf(core.draft)
         private set
 
-    var lines: List<TranscriptLine> by mutableStateOf(core.lines)
+    override var lines: List<TranscriptLine> by mutableStateOf(core.lines)
         private set
 
-    var savedThisTurn: Boolean by mutableStateOf(core.savedThisTurn)
+    override var savedThisTurn: Boolean by mutableStateOf(core.savedThisTurn)
         private set
 
-    var talkAlive: Boolean by mutableStateOf(core.talkAlive)
+    override var talkAlive: Boolean by mutableStateOf(core.talkAlive)
         private set
 
-    var lastKillReason: TalkKillReason? by mutableStateOf(core.lastKillReason)
+    override var lastKillReason: TalkKillReason? by mutableStateOf(core.lastKillReason)
         private set
 
     val keyboardPreferred: Boolean
@@ -64,32 +65,32 @@ class JuniorSession(
         publish()
     }
 
-    fun updateDraft(value: String) {
+    override fun updateDraft(value: String) {
         core.updateDraft(value)
         publish()
     }
 
-    fun beginTyping() {
+    override fun beginTyping() {
         core.beginTyping()
         publish()
     }
 
-    fun toggleListen() {
+    override fun toggleListen() {
         core.toggleListen()
         publish()
     }
 
-    fun tapTalkControl() {
+    override fun tapTalkControl() {
         core.tapTalkControl()
         publish()
     }
 
-    fun sendTyped() {
+    override fun sendTyped() {
         core.sendTyped()
         publish()
     }
 
-    fun saveAsStory(): Boolean {
+    override fun saveAsStory(): Boolean {
         val body = core.transcriptBody().ifBlank { return false }
         stories = listOf(
             SavedStory(

@@ -145,7 +145,7 @@ S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 
 ## Android (Talk / Type shell)
 
-The Talk / Type shell lives in [`android/`](android/README.md): Kotlin, Jetpack Compose, min SDK 26. Three screens (Home, Conversation, Stories) with local stub Talk / Type / Save. Talk session core kills voice on Type, End, leave, lock, and network loss. No Grok Voice APIs. Open the `android` folder in Android Studio to run it.
+The Talk / Type shell lives in [`android/`](android/README.md): Kotlin, Jetpack Compose, min SDK 26. Three screens (Home, Conversation, Stories) with local stub Talk / Type / Save. The **`:system` library** is the main system component (`TalkSessionCore` + `MainSystem` Compose chrome). Talk dies on Type, End, leave, lock, and network loss. No Grok Voice APIs. Open the `android` folder in Android Studio to run it — it does not render in the Cursor editor.
 
 Railway still deploys the web app from the root `Dockerfile`. The Android module is not in that image.
 
