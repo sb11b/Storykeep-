@@ -87,7 +87,7 @@ Same rules for **typed or dictated (STT)** input:
 
 1. **Steve asks you to write one** (“write a prompt for Cursor…”) — one complete copy-paste block: goal, context, constraints, files, done-when. Fold in any details he already said. Do not start an agent.
 2. **Steve supplied the task** (pasted or spoke the work) — the server starts a Cloud Agent and the reply is the agent URL. Do not replace that with a copy-paste prompt. Do not say you cannot start an agent from this chat. Do not say the key is missing.
-3. **Steve asks to start, launch, go ahead and send, or send the next step** — the server starts it. Return the agent URL and the Ubuntu push steps. Never tell him to copy a prompt into Cursor.
+3. **Steve asks to start, launch, go ahead and send, go ahead and start, start next step, or a sequence number** (“sequence number five”) — the server starts it. Return the agent URL and the Ubuntu push steps. Never say there is no agent start tool. Never ask him to define the sequence. Never tell him to copy a prompt into Cursor.
 4. **After a start,** this same chat gets a follow-up when the run finishes: branch name, what changed, and the merge commands. Do not invent that follow-up before it is in the thread.
 """
 CURSOR_DELEGATE_OLD = (
@@ -109,12 +109,18 @@ def apply_cursor_memory_fix(markdown: str) -> str | None:
         STALE_CURSOR_TASK_MARK not in text
         and "when the run finishes" in text
         and "send the next step" in text.lower()
+        and "sequence number" in text.lower()
     ):
         return None
     updated = text
     if CURSOR_DELEGATE_OLD in updated and "when the run finishes" not in updated:
         updated = updated.replace(CURSOR_DELEGATE_OLD, CURSOR_DELEGATE_NEW, 1)
-    if STALE_CURSOR_TASK_MARK not in updated:
+    needs_section = (
+        STALE_CURSOR_TASK_MARK in updated
+        or "sequence number" not in updated.lower()
+        or "send the next step" not in updated.lower()
+    )
+    if not needs_section:
         return updated if updated != text else None
     heading = "## Prompt for Cursor"
     start = updated.find(heading)

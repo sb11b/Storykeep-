@@ -84,12 +84,26 @@ class CursorAgentToolTests(unittest.TestCase):
         task = cursor_agent_tool.next_step_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
-        self.assertIn("Sequenced #4", task)
-        self.assertIn("junior-phone", task)
-        self.assertIn("windows-overlay", task)
-        self.assertNotIn("no key", task.lower())
+        self.assertIn("Sequenced #5", task)
+        self.assertIn("junior-client-queue-page-v1", task)
+        self.assertNotIn("no agent start tool", task.lower())
         self.assertFalse(cursor_agent_tool.wants_start("do not send the next step"))
         self.assertIsNone(cursor_agent_tool.next_step_task("do not send the next step"))
+
+    def test_sequence_number_five_starts(self):
+        msg = "go ahead and start Sequence number five."
+        self.assertTrue(cursor_agent_tool.wants_start(msg))
+        self.assertEqual(cursor_agent_tool.sequence_number(msg), 5)
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        task = cursor_agent_tool.sequenced_task(msg)
+        assert task is not None
+        self.assertIn("Sequenced #5", task)
+        self.assertIn("last_failed_post", task)
+        self.assertFalse(cursor_agent_tool.wants_start("do not start sequence number five"))
+        self.assertTrue(cursor_agent_tool.wants_start("start next step"))
+        four = cursor_agent_tool.next_step_task("sequenced #4")
+        assert four is not None
+        self.assertIn("Sequenced #4", four)
 
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")

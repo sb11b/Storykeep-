@@ -24,8 +24,8 @@ CURSOR_ON_APPEND = """
 You can **start a real Cursor Cloud Agent** from chat (Steve's code twin — you spawn it; Cursor edits the repo in a cloud VM).
 - **cursor_start_agent**: creates a Cloud Agent with prompt text, repo URL, and starting ref main on sb11b/Storykeep-.
 - Cloud Agents commit on a **cursor/* branch**, not Steve's local main — the tool reply includes Ubuntu push steps and the agent URL.
-- Use ONLY when Steve explicitly asks to start/launch/open/spawn/run-in a Cursor or Cloud Agent, or to send the next step — NOT when he only wants a copy-paste prompt block.
-- The API key is already configured. Never say the key is missing, and never tell Steve to copy a prompt into Cursor when he asked to start or send the work.
+- Use when Steve asks to start, launch, send, or go ahead — including “sequence number five”, “start next step”, or “go ahead and start”. A request to write a prompt stays a copy-paste block.
+- The API key is already configured. Never say the key is missing, never say there is no agent start tool, and never ask Steve to define the sequence. Start it and return the agent URL.
 - After the tool runs, give him the **agent URL** and the **Push to main (Ubuntu)** block from the tool data — do not bury instructions only in prose.
 - Delegate turns auto-open a PR to main when the agent finishes unless he says otherwise.
 - Tokens stay server-side; never echo CURSOR_API_KEY.
@@ -235,11 +235,30 @@ def polish_2_task(message: str) -> str | None:
     return None
 
 
+_NUM_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_SEQ_MENTION_RE = re.compile(
+    r"\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b"
+    r"|\b(?:sequenced\s+)?#\s*(\d+)\b",
+    re.I,
+)
 _NEXT_STEP_RE = re.compile(
-    r"\bsend(?:\s+the)?\s+next\s+step\b"
-    r"|\bgo ahead and send\b"
-    r"|\b(?:sequenced\s+)?#\s*4\b"
-    r"|\bsequenced\s+4\b",
+    r"\b(?:send|start)(?:\s+the)?\s+next\s+step\b"
+    r"|\bgo ahead and (?:send|start)\b"
+    r"|\bmove on to the (?:next|nest) step\b"
+    r"|\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
     re.I,
 )
 
@@ -268,17 +287,84 @@ Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
 """
 
 
+SEQ_5_TASK = """Sequenced #5 — next after junior-client-robustness-v1 on GitHub main (do not redo #2, #3, or #4).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main (739bafb or newer). #4 is already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients retry 401/403/5xx with backoff
+- Failed writes keep a user-visible error and last_failed_post
+- Shared GET /api/v1/junior/threads, /messages, and /threads/{id}/messages
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-robustness-v1
+
+Your job (#5):
+1. Persist last_failed_post across client restart (local queue, same auth, no silent drop). Replay after a successful login.
+2. Surface the user-visible error in both clients (phone and windows overlay), not only in logs.
+3. Paginate shared GET (limit/cursor or before_id). Same require_user rules. Still no public routes.
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for queue replay, pagination, and 403. Keep existing tests green.
+6. Health stamp: junior-client-queue-page-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
 def _negated_at(text: str, start: int) -> bool:
-    prefix = text[max(0, start - 40) : start]
-    return bool(_NEGATED_START_RE.search(prefix))
+    prefix = text[max(0, start - 64) : start]
+    if _NEGATED_START_RE.search(prefix):
+        return True
+    return bool(re.search(r"\b(?:do\s+not|don't|dont|never)\b(?:\s+\w+){0,6}\s*$", prefix, re.I))
+
+
+def _parse_seq_num(raw: str) -> int | None:
+    token = (raw or "").strip().lower()
+    if token.isdigit():
+        return int(token)
+    return _NUM_WORDS.get(token)
+
+
+def sequence_number(message: str) -> int | None:
+    text = message or ""
+    for match in _SEQ_MENTION_RE.finditer(text):
+        if _negated_at(text, match.start()):
+            continue
+        raw = next((group for group in match.groups() if group), "")
+        number = _parse_seq_num(raw)
+        if number is not None:
+            return number
+    return None
+
+
+def _later_sequence_task(number: int, message: str) -> str:
+    spoken = " ".join((message or "").split())
+    return (
+        f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
+        "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, or #5. "
+        "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
+        "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
+        "Commit on a cursor/* branch and push that branch only.\n\n"
+        f"His request: {spoken}"
+    )
 
 
 def next_step_task(message: str) -> str | None:
     text = message or ""
+    number = sequence_number(text)
+    if number == 4:
+        return SEQ_4_TASK
+    if number == 5:
+        return SEQ_5_TASK
+    if number is not None and number > 5:
+        return _later_sequence_task(number, text)
+    if number == 2:
+        return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return SEQ_4_TASK
+        return SEQ_5_TASK
     return None
 
 

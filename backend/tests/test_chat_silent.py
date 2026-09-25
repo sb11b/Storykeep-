@@ -522,9 +522,44 @@ class CursorStartPayloadTests(unittest.TestCase):
         self.assertNotIn("copy this into cursor", response.text.lower())
         self.assertIn("https://cursor.com/agents/agent-4", response.text)
         self.assertTrue(start_agent.called)
-        self.assertIn("Sequenced #4", start_agent.call_args.args[0])
+        self.assertIn("Sequenced #5", start_agent.call_args.args[0])
         self.assertEqual(start_agent.call_args.kwargs["branch"], "main")
         self.assertFalse(start_agent.call_args.kwargs["auto_create_pr"])
+
+    def test_sequence_number_five_starts_agent(self):
+        from app.services import cursor_agent_tool
+
+        app = _app()
+        outcome = cursor_agent_tool.CursorAgentOutcome(
+            True,
+            "Cursor Cloud Agent started.",
+            200,
+            "agent-5",
+            "https://cursor.com/agents/agent-5",
+            "run-5",
+        )
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service, "enforce_rate_limit"),
+            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
+            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+        ):
+            response = TestClient(app).post(
+                "/api/v1/chat",
+                json={
+                    "message": "go ahead and start Sequence number five.",
+                    "model": "auto",
+                    "reasoning_effort": "auto",
+                    "pane_name": "StoryKeep",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        lowered = response.text.lower()
+        self.assertNotIn("no agent start tool", lowered)
+        self.assertNotIn("isn't defined", lowered)
+        self.assertIn("https://cursor.com/agents/agent-5", response.text)
+        self.assertIn("Sequenced #5", start_agent.call_args.args[0])
 
 
 if __name__ == "__main__":
