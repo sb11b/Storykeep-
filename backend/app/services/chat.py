@@ -499,6 +499,41 @@ def resolve_reasoning_for_request(
     return effort
 
 
+def pace_why(message: str) -> str:
+    """Short reason Auto lifted a turn off low."""
+    from app.services import junior_model
+    from app.services import tts as tts_service
+
+    text = message or ""
+    if junior_model.is_delegate_turn(text) or junior_model.is_cursor_task_turn(text):
+        return "it starts a Cloud Agent"
+    if junior_model.is_ops_turn(text):
+        return "it checks GitHub or Railway"
+    if junior_model.is_junior_feedback_turn(text):
+        return "it is feedback about Junior"
+    if tts_service.wants_voice_info(text):
+        return "it lists voices"
+    if _SCHOOL_CODE_RE.search(text):
+        return "it looks like school or code"
+    if _ANALYZE_RE.search(text):
+        return "it asks to analyze something"
+    return "the message needs a deeper pass"
+
+
+def pace_reason(message: str, effort: str, reasoning_choice: str | None = None) -> str:
+    """One line under the model chip: why this turn is fast or slow."""
+    level = (effort or "low").strip().lower() or "low"
+    choice = (reasoning_choice or "auto").strip().lower() or "auto"
+    if level == "low":
+        if choice in {"medium", "high", "xhigh"}:
+            return "Fast turn. A short message stays on low even if Reasoning is set higher."
+        return "Fast turn. Auto kept this on low."
+    speed = "Slow" if level in {"high", "xhigh"} else "Medium"
+    if choice == level:
+        return f"{speed} turn. You set Reasoning to {level}."
+    return f"{speed} turn. Auto used {level} because {pace_why(message)}."
+
+
 def model_label(choice: str, resolved: str | None = None) -> str:
     if choice == MODEL_AUTO:
         return f"Auto · {resolved}" if resolved else "Auto"

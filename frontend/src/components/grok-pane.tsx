@@ -94,6 +94,7 @@ export type ChatLine = {
   waiting?: boolean;
   turnStatus?: ChatTurnStatus | null;
   routeLabel?: string | null;
+  paceNote?: string | null;
   includeChip?: string | null;
   includeHasMore?: boolean;
   includeNextOffset?: number | null;
@@ -1076,6 +1077,15 @@ export function GrokPane({
                 ...next,
                 messages: next.messages.map((item) =>
                   item.id === targetId || item.id === assistantId ? { ...item, routeLabel: spend } : item,
+                ),
+              };
+            }
+            if (meta.pace_note) {
+              const paceId = meta.assistant_message_id || assistantId;
+              next = {
+                ...next,
+                messages: next.messages.map((item) =>
+                  item.id === paceId || item.id === assistantId ? { ...item, paceNote: meta.pace_note } : item,
                 ),
               };
             }
@@ -2506,6 +2516,7 @@ export function GrokPane({
                   onHistoryChanged?.();
                 }}
                 routeLabel={item.role === "assistant" ? item.routeLabel : null}
+                paceNote={item.role === "assistant" ? item.paceNote : null}
                 includeChip={item.includeChip}
                 onNextChunk={
                   item.role === "assistant" && item.id === lastAssistantId && item.includeHasMore && !busy

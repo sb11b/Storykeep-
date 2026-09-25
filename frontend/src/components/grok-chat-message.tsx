@@ -126,6 +126,7 @@ export function GrokChatMessage({
   activeWord,
   statusLine,
   routeLabel,
+  paceNote,
   includeChip,
   onNextChunk,
   wordEnabled = true,
@@ -166,6 +167,7 @@ export function GrokChatMessage({
   statusLine?: string | null;
   /** Auto routing, e.g. "4.6 · low". Not inside the Listen body. */
   routeLabel?: string | null;
+  paceNote?: string | null;
   includeChip?: string | null;
   onNextChunk?: () => void;
   wordEnabled?: boolean;
@@ -282,6 +284,11 @@ export function GrokChatMessage({
       {role === "assistant" && routeLabel ? (
         <p className="mb-1 text-[11px] text-muted-foreground" data-junior-route="" data-junior-spend="">
           {routeLabel}
+        </p>
+      ) : null}
+      {role === "assistant" && paceNote ? (
+        <p className="mb-1 text-[11px] text-muted-foreground" data-junior-pace="">
+          {paceNote}
         </p>
       ) : null}
       {includeChip ? (

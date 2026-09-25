@@ -33,6 +33,7 @@ export type GrokStreamMeta = {
   model?: string;
   model_choice?: string;
   reasoning_effort?: string;
+  pace_note?: string;
   stream_status?: string;
   partial?: boolean;
   include_chip?: string;
@@ -73,6 +74,7 @@ type StreamPayload = {
   model?: string;
   model_choice?: string;
   reasoning_effort?: string;
+  pace_note?: string;
   stream_status?: string;
   include_chip?: string;
   include_label?: string;
@@ -155,6 +157,7 @@ function parseSsePart(
     parsed.model ||
     parsed.model_choice ||
     parsed.reasoning_effort ||
+    parsed.pace_note ||
     parsed.stream_status ||
     parsed.partial ||
     parsed.include_chip ||
@@ -173,6 +176,7 @@ function parseSsePart(
       model: parsed.model,
       model_choice: parsed.model_choice,
       reasoning_effort: parsed.reasoning_effort,
+      pace_note: parsed.pace_note,
       stream_status: parsed.stream_status,
       partial: parsed.partial,
       include_chip: parsed.include_chip,

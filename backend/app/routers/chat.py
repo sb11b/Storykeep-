@@ -1508,6 +1508,7 @@ def _chat(
                 "model": resolved_model,
                 "model_choice": model_choice,
                 "reasoning_effort": resolved_reasoning,
+                "pace_note": chat_service.pace_reason(route_message, resolved_reasoning, reasoning_choice),
                 "first_byte_timeout_ms": int(first_byte_timeout * 1000),
                 "idle_after_ms": int(chat_service.chat_idle_after_token_sec(output_tokens) * 1000),
                 "max_output_tokens": output_tokens,

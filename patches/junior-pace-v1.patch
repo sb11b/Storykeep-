@@ -1,0 +1,207 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 1b07147..3a6b5b3 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-file-chat-v1", "time": "2026-09-25T03:00:00Z"}
++{"sha": "junior-pace-v1", "time": "2026-09-25T03:15:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index c89d884..1841aca 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -1508,6 +1508,7 @@ def _chat(
+                 "model": resolved_model,
+                 "model_choice": model_choice,
+                 "reasoning_effort": resolved_reasoning,
++                "pace_note": chat_service.pace_reason(route_message, resolved_reasoning, reasoning_choice),
+                 "first_byte_timeout_ms": int(first_byte_timeout * 1000),
+                 "idle_after_ms": int(chat_service.chat_idle_after_token_sec(output_tokens) * 1000),
+                 "max_output_tokens": output_tokens,
+diff --git a/backend/app/services/chat.py b/backend/app/services/chat.py
+index 925e7a0..02caf57 100644
+--- a/backend/app/services/chat.py
++++ b/backend/app/services/chat.py
+@@ -499,6 +499,41 @@ def resolve_reasoning_for_request(
+     return effort
+ 
+ 
++def pace_why(message: str) -> str:
++    """Short reason Auto lifted a turn off low."""
++    from app.services import junior_model
++    from app.services import tts as tts_service
++
++    text = message or ""
++    if junior_model.is_delegate_turn(text) or junior_model.is_cursor_task_turn(text):
++        return "it starts a Cloud Agent"
++    if junior_model.is_ops_turn(text):
++        return "it checks GitHub or Railway"
++    if junior_model.is_junior_feedback_turn(text):
++        return "it is feedback about Junior"
++    if tts_service.wants_voice_info(text):
++        return "it lists voices"
++    if _SCHOOL_CODE_RE.search(text):
++        return "it looks like school or code"
++    if _ANALYZE_RE.search(text):
++        return "it asks to analyze something"
++    return "the message needs a deeper pass"
++
++
++def pace_reason(message: str, effort: str, reasoning_choice: str | None = None) -> str:
++    """One line under the model chip: why this turn is fast or slow."""
++    level = (effort or "low").strip().lower() or "low"
++    choice = (reasoning_choice or "auto").strip().lower() or "auto"
++    if level == "low":
++        if choice in {"medium", "high", "xhigh"}:
++            return "Fast turn. A short message stays on low even if Reasoning is set higher."
++        return "Fast turn. Auto kept this on low."
++    speed = "Slow" if level in {"high", "xhigh"} else "Medium"
++    if choice == level:
++        return f"{speed} turn. You set Reasoning to {level}."
++    return f"{speed} turn. Auto used {level} because {pace_why(message)}."
++
++
+ def model_label(choice: str, resolved: str | None = None) -> str:
+     if choice == MODEL_AUTO:
+         return f"Auto · {resolved}" if resolved else "Auto"
+diff --git a/backend/tests/test_pace_reason.py b/backend/tests/test_pace_reason.py
+new file mode 100644
+index 0000000..def7f86
+--- /dev/null
++++ b/backend/tests/test_pace_reason.py
+@@ -0,0 +1,32 @@
++from __future__ import annotations
++
++import unittest
++
++from app.services.chat import pace_reason
++
++
++class PaceReasonTests(unittest.TestCase):
++    def test_short_chat_stays_fast(self):
++        text = pace_reason("hello", "low", "auto")
++        self.assertIn("Fast turn", text)
++        self.assertIn("low", text)
++
++    def test_manual_xhigh_on_a_short_line_explains_the_clamp(self):
++        text = pace_reason("hello", "low", "xhigh")
++        self.assertIn("Fast turn", text)
++        self.assertIn("stays on low", text)
++
++    def test_school_turn_explains_xhigh(self):
++        message = "This is a long homework assignment for DAT-325. " * 8
++        text = pace_reason(message, "xhigh", "auto")
++        self.assertIn("Slow turn", text)
++        self.assertIn("school or code", text)
++
++    def test_manual_high_says_the_dropdown(self):
++        text = pace_reason("Tell me about the reading.", "high", "high")
++        self.assertIn("Slow turn", text)
++        self.assertIn("You set Reasoning to high", text)
++
++    def test_cursor_start_explains_the_agent(self):
++        text = pace_reason("start a cursor agent to fix the mail list", "xhigh", "auto")
++        self.assertIn("Cloud Agent", text)
+diff --git a/frontend/src/components/grok-chat-message.tsx b/frontend/src/components/grok-chat-message.tsx
+index b840da7..37f9144 100644
+--- a/frontend/src/components/grok-chat-message.tsx
++++ b/frontend/src/components/grok-chat-message.tsx
+@@ -126,6 +126,7 @@ export function GrokChatMessage({
+   activeWord,
+   statusLine,
+   routeLabel,
++  paceNote,
+   includeChip,
+   onNextChunk,
+   wordEnabled = true,
+@@ -166,6 +167,7 @@ export function GrokChatMessage({
+   statusLine?: string | null;
+   /** Auto routing, e.g. "4.6 · low". Not inside the Listen body. */
+   routeLabel?: string | null;
++  paceNote?: string | null;
+   includeChip?: string | null;
+   onNextChunk?: () => void;
+   wordEnabled?: boolean;
+@@ -284,6 +286,11 @@ export function GrokChatMessage({
+           {routeLabel}
+         </p>
+       ) : null}
++      {role === "assistant" && paceNote ? (
++        <p className="mb-1 text-[11px] text-muted-foreground" data-junior-pace="">
++          {paceNote}
++        </p>
++      ) : null}
+       {includeChip ? (
+         <p className="mb-1 inline-flex max-w-full items-center rounded-full border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+           {includeChip}
+diff --git a/frontend/src/components/grok-pane.tsx b/frontend/src/components/grok-pane.tsx
+index 7a86e4a..41c0c11 100644
+--- a/frontend/src/components/grok-pane.tsx
++++ b/frontend/src/components/grok-pane.tsx
+@@ -94,6 +94,7 @@ export type ChatLine = {
+   waiting?: boolean;
+   turnStatus?: ChatTurnStatus | null;
+   routeLabel?: string | null;
++  paceNote?: string | null;
+   includeChip?: string | null;
+   includeHasMore?: boolean;
+   includeNextOffset?: number | null;
+@@ -1079,6 +1080,15 @@ export function GrokPane({
+                 ),
+               };
+             }
++            if (meta.pace_note) {
++              const paceId = meta.assistant_message_id || assistantId;
++              next = {
++                ...next,
++                messages: next.messages.map((item) =>
++                  item.id === paceId || item.id === assistantId ? { ...item, paceNote: meta.pace_note } : item,
++                ),
++              };
++            }
+             return next;
+           });
+           if (meta.conversation_id || meta.assistant_message_id) onHistoryChanged?.();
+@@ -2506,6 +2516,7 @@ export function GrokPane({
+                   onHistoryChanged?.();
+                 }}
+                 routeLabel={item.role === "assistant" ? item.routeLabel : null}
++                paceNote={item.role === "assistant" ? item.paceNote : null}
+                 includeChip={item.includeChip}
+                 onNextChunk={
+                   item.role === "assistant" && item.id === lastAssistantId && item.includeHasMore && !busy
+diff --git a/frontend/src/lib/grok-stream.ts b/frontend/src/lib/grok-stream.ts
+index 25e84e0..cc72fd8 100644
+--- a/frontend/src/lib/grok-stream.ts
++++ b/frontend/src/lib/grok-stream.ts
+@@ -33,6 +33,7 @@ export type GrokStreamMeta = {
+   model?: string;
+   model_choice?: string;
+   reasoning_effort?: string;
++  pace_note?: string;
+   stream_status?: string;
+   partial?: boolean;
+   include_chip?: string;
+@@ -73,6 +74,7 @@ type StreamPayload = {
+   model?: string;
+   model_choice?: string;
+   reasoning_effort?: string;
++  pace_note?: string;
+   stream_status?: string;
+   include_chip?: string;
+   include_label?: string;
+@@ -155,6 +157,7 @@ function parseSsePart(
+     parsed.model ||
+     parsed.model_choice ||
+     parsed.reasoning_effort ||
++    parsed.pace_note ||
+     parsed.stream_status ||
+     parsed.partial ||
+     parsed.include_chip ||
+@@ -173,6 +176,7 @@ function parseSsePart(
+       model: parsed.model,
+       model_choice: parsed.model_choice,
+       reasoning_effort: parsed.reasoning_effort,
++      pace_note: parsed.pace_note,
+       stream_status: parsed.stream_status,
+       partial: parsed.partial,
+       include_chip: parsed.include_chip,
