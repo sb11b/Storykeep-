@@ -110,7 +110,7 @@ Durable history for StoryKeep, the phone app, and the Windows overlay lives in *
 
 **Apply the migration**
 
-1. Automatic: API boot runs `001_junior_memory.sql` then `002_junior_projects.sql` from `_create_schema`.
+1. Automatic: the container includes `backend/migrations` (`COPY` → `/app/migrations`). API boot runs `001_junior_memory.sql` then `002_junior_projects.sql` from `_create_schema`. Same `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
 2. Manual on Railway Postgres (psql against the plugin URL — never commit that URL):
 
 ```bash

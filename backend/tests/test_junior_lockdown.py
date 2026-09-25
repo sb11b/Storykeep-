@@ -70,6 +70,14 @@ class JuniorSharedLockdownTests(unittest.TestCase):
         response = client.get("/api/v1/junior/threads")
         self.assertEqual(response.status_code, 403)
 
+    def test_junior_prefix_stays_on_require_user(self):
+        from app.routers import junior_jobs, junior_memory
+
+        for module in (chats_router, shared_router, junior_jobs, junior_memory):
+            source = inspect.getsource(module)
+            self.assertIn("Depends(require_user)", source, module.__name__)
+            self.assertNotIn("Depends(get_current_user)", source, module.__name__)
+
 
 class LoggingLockdownTests(unittest.TestCase):
     def test_request_logging_never_logs_body(self):

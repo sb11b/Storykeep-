@@ -247,6 +247,7 @@ def _create_schema() -> None:
         "created_at TIMESTAMPTZ DEFAULT now(), "
         "updated_at TIMESTAMPTZ DEFAULT now())"
     )
+    # Image: COPY backend/migrations ./migrations → /app/migrations (same DATABASE_URL).
     migrations = Path(__file__).resolve().parents[1] / "migrations"
     _apply_sql_file(migrations / "001_junior_memory.sql")
     _apply_sql_file(migrations / "002_junior_projects.sql")
