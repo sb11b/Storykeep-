@@ -1591,6 +1591,74 @@ def _chat(
                         )
                 yield chat_service.encode_sse("[DONE]")
                 return
+            if will_cursor_start:
+                agent_source = user_text
+                pane_label = (payload.pane_name or "").strip()
+                if pane_label:
+                    agent_source = (
+                        f"{user_text}\n\n"
+                        f"Asked from the StoryKeep chat named {pane_label}. "
+                        "Stay on the existing Storykeep repository. Do not create a new project."
+                    )
+                try:
+                    start_task = asyncio.create_task(
+                        asyncio.to_thread(
+                            cursor_agent_tool.start_agent,
+                            "",
+                            source_message=agent_source,
+                            auto_create_pr=True if delegate_turn else None,
+                        )
+                    )
+                    while not start_task.done():
+                        if cancelled.is_set() or await request.is_disconnected():
+                            cancelled.set()
+                            start_task.cancel()
+                            return
+                        try:
+                            await asyncio.wait_for(asyncio.shield(start_task), timeout=8.0)
+                        except asyncio.TimeoutError:
+                            yield chat_service.SSE_PADDING
+                            yield chat_service.encode_sse(
+                                {"heartbeat": True, "stream_status": "starting_agent"}
+                            )
+                            await asyncio.sleep(0)
+                    agent_outcome = start_task.result()
+                except Exception:
+                    log_chat_exception("cursor start failed", user=user_id, conversation=conversation_id)
+                    agent_outcome = cursor_agent_tool.CursorAgentOutcome(
+                        False,
+                        "Cursor Cloud Agent create failed: the start did not finish.",
+                        502,
+                    )
+                already_started_agent = agent_outcome.ok
+                if agent_outcome.ok and agent_outcome.agent_id and persist and conversation_id:
+                    from app.services.cursor_agent_watch import record_watch
+
+                    record_watch(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        agent_id=agent_outcome.agent_id,
+                        agent_url=agent_outcome.agent_url or "",
+                        run_id=agent_outcome.run_id,
+                        starting_branch=cursor_agent_tool.extract_branch(user_text),
+                    )
+                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
+                await emit_delta(note)
+                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+                if persist and conversation_id:
+                    assistant_message_id = _persist_assistant("".join(assistant_parts))
+                    if assistant_message_id:
+                        yield chat_service.encode_sse(
+                            {
+                                "conversation_id": str(conversation_id),
+                                "assistant_message_id": assistant_message_id,
+                                "model": resolved_model,
+                                "model_choice": model_choice,
+                                "reasoning_effort": resolved_reasoning,
+                            }
+                        )
+                yield chat_service.encode_sse("[DONE]")
+                return
             if will_voices:
                 voice_list = await asyncio.to_thread(tts_service.list_voices)
                 block = tts_service.format_voices_for_model(voice_list)
@@ -1656,60 +1724,6 @@ def _chat(
                     railway_tool.format_status_for_model,
                 )
                 extra = f"{extra}\n{block}" if extra else block
-            if will_cursor_start:
-                start_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        cursor_agent_tool.start_agent,
-                        "",
-                        source_message=user_text,
-                        auto_create_pr=True if delegate_turn else None,
-                    )
-                )
-                while not start_task.done():
-                    if cancelled.is_set() or await request.is_disconnected():
-                        cancelled.set()
-                        start_task.cancel()
-                        return
-                    try:
-                        await asyncio.wait_for(asyncio.shield(start_task), timeout=8.0)
-                    except asyncio.TimeoutError:
-                        yield chat_service.SSE_PADDING
-                        yield chat_service.encode_sse(
-                            {"heartbeat": True, "stream_status": "starting_agent"}
-                        )
-                        await asyncio.sleep(0)
-                agent_outcome = start_task.result()
-                already_started_agent = agent_outcome.ok
-                if agent_outcome.ok and agent_outcome.agent_id and persist and conversation_id:
-                    from app.services.cursor_agent_watch import record_watch
-
-                    record_watch(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        agent_id=agent_outcome.agent_id,
-                        agent_url=agent_outcome.agent_url or "",
-                        run_id=agent_outcome.run_id,
-                        starting_branch=cursor_agent_tool.extract_branch(user_text),
-                    )
-                block = cursor_agent_tool.format_start_for_model(agent_outcome)
-                extra = f"{extra}\n{block}" if extra else block
-                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
-                await emit_delta(note)
-                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
-                if persist and conversation_id:
-                    assistant_message_id = _persist_assistant("".join(assistant_parts))
-                    if assistant_message_id:
-                        yield chat_service.encode_sse(
-                            {
-                                "conversation_id": str(conversation_id),
-                                "assistant_message_id": assistant_message_id,
-                                "model": resolved_model,
-                                "model_choice": model_choice,
-                                "reasoning_effort": resolved_reasoning,
-                            }
-                        )
-                yield chat_service.encode_sse("[DONE]")
-                return
             stream = _stream_xai(extra, tools)
             async for piece in stream:
                 if piece is chat_service.STREAM_HEARTBEAT:

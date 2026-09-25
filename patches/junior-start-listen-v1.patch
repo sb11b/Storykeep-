@@ -1,0 +1,307 @@
+diff --git a/backend/app/build-info.json b/backend/app/build-info.json
+index 12594f0..68230be 100644
+--- a/backend/app/build-info.json
++++ b/backend/app/build-info.json
+@@ -1 +1 @@
+-{"sha": "junior-mail-news-v1", "time": "2026-09-24T18:10:00Z"}
++{"sha": "junior-start-listen-v1", "time": "2026-09-24T18:30:00Z"}
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index 8c71788..c89d884 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -1591,6 +1591,74 @@ def _chat(
+                         )
+                 yield chat_service.encode_sse("[DONE]")
+                 return
++            if will_cursor_start:
++                agent_source = user_text
++                pane_label = (payload.pane_name or "").strip()
++                if pane_label:
++                    agent_source = (
++                        f"{user_text}\n\n"
++                        f"Asked from the StoryKeep chat named {pane_label}. "
++                        "Stay on the existing Storykeep repository. Do not create a new project."
++                    )
++                try:
++                    start_task = asyncio.create_task(
++                        asyncio.to_thread(
++                            cursor_agent_tool.start_agent,
++                            "",
++                            source_message=agent_source,
++                            auto_create_pr=True if delegate_turn else None,
++                        )
++                    )
++                    while not start_task.done():
++                        if cancelled.is_set() or await request.is_disconnected():
++                            cancelled.set()
++                            start_task.cancel()
++                            return
++                        try:
++                            await asyncio.wait_for(asyncio.shield(start_task), timeout=8.0)
++                        except asyncio.TimeoutError:
++                            yield chat_service.SSE_PADDING
++                            yield chat_service.encode_sse(
++                                {"heartbeat": True, "stream_status": "starting_agent"}
++                            )
++                            await asyncio.sleep(0)
++                    agent_outcome = start_task.result()
++                except Exception:
++                    log_chat_exception("cursor start failed", user=user_id, conversation=conversation_id)
++                    agent_outcome = cursor_agent_tool.CursorAgentOutcome(
++                        False,
++                        "Cursor Cloud Agent create failed: the start did not finish.",
++                        502,
++                    )
++                already_started_agent = agent_outcome.ok
++                if agent_outcome.ok and agent_outcome.agent_id and persist and conversation_id:
++                    from app.services.cursor_agent_watch import record_watch
++
++                    record_watch(
++                        user_id=user_id,
++                        conversation_id=conversation_id,
++                        agent_id=agent_outcome.agent_id,
++                        agent_url=agent_outcome.agent_url or "",
++                        run_id=agent_outcome.run_id,
++                        starting_branch=cursor_agent_tool.extract_branch(user_text),
++                    )
++                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
++                await emit_delta(note)
++                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
++                if persist and conversation_id:
++                    assistant_message_id = _persist_assistant("".join(assistant_parts))
++                    if assistant_message_id:
++                        yield chat_service.encode_sse(
++                            {
++                                "conversation_id": str(conversation_id),
++                                "assistant_message_id": assistant_message_id,
++                                "model": resolved_model,
++                                "model_choice": model_choice,
++                                "reasoning_effort": resolved_reasoning,
++                            }
++                        )
++                yield chat_service.encode_sse("[DONE]")
++                return
+             if will_voices:
+                 voice_list = await asyncio.to_thread(tts_service.list_voices)
+                 block = tts_service.format_voices_for_model(voice_list)
+@@ -1656,60 +1724,6 @@ def _chat(
+                     railway_tool.format_status_for_model,
+                 )
+                 extra = f"{extra}\n{block}" if extra else block
+-            if will_cursor_start:
+-                start_task = asyncio.create_task(
+-                    asyncio.to_thread(
+-                        cursor_agent_tool.start_agent,
+-                        "",
+-                        source_message=user_text,
+-                        auto_create_pr=True if delegate_turn else None,
+-                    )
+-                )
+-                while not start_task.done():
+-                    if cancelled.is_set() or await request.is_disconnected():
+-                        cancelled.set()
+-                        start_task.cancel()
+-                        return
+-                    try:
+-                        await asyncio.wait_for(asyncio.shield(start_task), timeout=8.0)
+-                    except asyncio.TimeoutError:
+-                        yield chat_service.SSE_PADDING
+-                        yield chat_service.encode_sse(
+-                            {"heartbeat": True, "stream_status": "starting_agent"}
+-                        )
+-                        await asyncio.sleep(0)
+-                agent_outcome = start_task.result()
+-                already_started_agent = agent_outcome.ok
+-                if agent_outcome.ok and agent_outcome.agent_id and persist and conversation_id:
+-                    from app.services.cursor_agent_watch import record_watch
+-
+-                    record_watch(
+-                        user_id=user_id,
+-                        conversation_id=conversation_id,
+-                        agent_id=agent_outcome.agent_id,
+-                        agent_url=agent_outcome.agent_url or "",
+-                        run_id=agent_outcome.run_id,
+-                        starting_branch=cursor_agent_tool.extract_branch(user_text),
+-                    )
+-                block = cursor_agent_tool.format_start_for_model(agent_outcome)
+-                extra = f"{extra}\n{block}" if extra else block
+-                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
+-                await emit_delta(note)
+-                yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
+-                if persist and conversation_id:
+-                    assistant_message_id = _persist_assistant("".join(assistant_parts))
+-                    if assistant_message_id:
+-                        yield chat_service.encode_sse(
+-                            {
+-                                "conversation_id": str(conversation_id),
+-                                "assistant_message_id": assistant_message_id,
+-                                "model": resolved_model,
+-                                "model_choice": model_choice,
+-                                "reasoning_effort": resolved_reasoning,
+-                            }
+-                        )
+-                yield chat_service.encode_sse("[DONE]")
+-                return
+             stream = _stream_xai(extra, tools)
+             async for piece in stream:
+                 if piece is chat_service.STREAM_HEARTBEAT:
+diff --git a/backend/app/services/mail_tool.py b/backend/app/services/mail_tool.py
+index ed2a357..4331331 100644
+--- a/backend/app/services/mail_tool.py
++++ b/backend/app/services/mail_tool.py
+@@ -61,9 +61,39 @@ _MARK_ACT_RE = re.compile(r"\bmark\b.{0,60}\b(?:unread|read)\b", re.I)
+ _MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread|fastmail)\b", re.I)
+ _MARK_ALL_RE = re.compile(r"\ball\b|\bunread\s+(?:mail|e-mail|email|inbox|messages)\b", re.I)
+ _MARK_FROM_RE = re.compile(r"\bfrom\s+(.+?)\s+(?:as\s+)?read\b", re.I)
+-_MARK_LIMIT_RE = re.compile(r"\b(?:first|top)\s+(\d{1,2})\b|\bmark\s+(\d{1,2})\s+unread\b", re.I)
++_NUMBER_WORDS = {
++    "one": 1,
++    "two": 2,
++    "three": 3,
++    "four": 4,
++    "five": 5,
++    "six": 6,
++    "seven": 7,
++    "eight": 8,
++    "nine": 9,
++    "ten": 10,
++    "eleven": 11,
++    "twelve": 12,
++    "thirteen": 13,
++    "fourteen": 14,
++    "fifteen": 15,
++    "sixteen": 16,
++    "seventeen": 17,
++    "eighteen": 18,
++    "nineteen": 19,
++    "twenty": 20,
++    "thirty": 30,
++    "forty": 40,
++    "fifty": 50,
++}
++_NUMBER_WORD_ALT = "|".join(_NUMBER_WORDS)
++_MARK_LIMIT_RE = re.compile(
++    rf"\b(?:first|top)\s+(\d{{1,2}}|{_NUMBER_WORD_ALT})\b"
++    rf"|\bmark\s+(\d{{1,2}}|{_NUMBER_WORD_ALT})\s+(?:unread|emails?|e-mails?|messages?)\b",
++    re.I,
++)
+ _MARK_STOP = re.compile(
+-    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read|fastmail|first|top)\b",
++    r"\b(?:please|mark|the|this|that|it|them|emails?|e-mails?|mail|messages?|as|unread|inbox|read|fastmail|first|top)\b",
+     re.I,
+ )
+ 
+@@ -77,8 +107,13 @@ def _mark_limit(message: str) -> int | None:
+     found = _MARK_LIMIT_RE.search(message or "")
+     if not found:
+         return None
+-    raw = found.group(1) or found.group(2)
+-    count = int(raw)
++    raw = (found.group(1) or found.group(2) or "").strip().lower()
++    if raw.isdigit():
++        count = int(raw)
++    else:
++        count = _NUMBER_WORDS.get(raw)
++        if count is None:
++            return None
+     return max(1, min(50, count))
+ 
+ 
+@@ -100,6 +135,7 @@ def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
+         return _cap_rows(text, picked), needle
+     cleaned = _MARK_STOP.sub(" ", text)
+     cleaned = re.sub(r"\b\d{1,2}\b", " ", cleaned)
++    cleaned = re.sub(rf"\b(?:{_NUMBER_WORD_ALT})\b", " ", cleaned, flags=re.I)
+     needle = " ".join(cleaned.split()).strip(" .")
+     if len(needle) < 3:
+         if _mark_limit(text) is not None or _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):
+diff --git a/backend/tests/test_mark_read.py b/backend/tests/test_mark_read.py
+index 4b4459f..5f57989 100644
+--- a/backend/tests/test_mark_read.py
++++ b/backend/tests/test_mark_read.py
+@@ -11,6 +11,7 @@ class MarkReadTests(unittest.TestCase):
+         self.assertTrue(mail_tool.wants_mark_read("mark the email from Ada read"))
+         self.assertFalse(mail_tool.wants_mark_read("mark this note read"))
+         self.assertTrue(mail_tool.wants_mark_read("mark the first 10 unread"))
++        self.assertTrue(mail_tool.wants_mark_read("mark the first ten emails unread"))
+         self.assertFalse(mail_tool.wants_mark_read("what's on today"))
+ 
+     def test_first_ten_unread(self):
+@@ -20,6 +21,10 @@ class MarkReadTests(unittest.TestCase):
+         self.assertEqual(len(chosen), 10)
+         self.assertEqual(chosen[0]["id"], "0")
+         self.assertEqual(chosen[-1]["id"], "9")
++        spoken, spoken_label = mail_tool.choose_mark_read("mark the first ten emails unread", items)
++        self.assertEqual(spoken_label, "all")
++        self.assertEqual(len(spoken), 10)
++        self.assertEqual(spoken[0]["id"], "0")
+ 
+     def test_all_unread(self):
+         items = [{"id": "1", "from": "Ada", "subject": "Syllabus"}]
+diff --git a/frontend/src/components/grok-pane.tsx b/frontend/src/components/grok-pane.tsx
+index 14e6291..d2a5253 100644
+--- a/frontend/src/components/grok-pane.tsx
++++ b/frontend/src/components/grok-pane.tsx
+@@ -326,6 +326,9 @@ export function GrokPane({
+   const pendingFromHereRef = useRef<number | null>(null);
+   const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
+   const listenTargetRef = useRef<ListenTarget | null>(null);
++  /** Reply that arrived while the mic was still busy. Spoken once the mic is idle. */
++  const pendingAutoListenRef = useRef<{ id: string; markdown: string } | null>(null);
++  const requestAutoListenRef = useRef<(messageId: string, markdown: string) => void>(() => {});
+   /** User paused/stopped TTS; skip auto-speak until Listen or From here. */
+   const userStoppedTtsRef = useRef(false);
+   const streamAssistantIdRef = useRef<string | null>(null);
+@@ -671,7 +674,12 @@ export function GrokPane({
+   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
+   function requestAutoListen(messageId: string, markdown: string) {
+     if (!ttsEnabled || locked || panelOpenRef.current === false) return;
+-    if (userStoppedTtsRef.current || sttPhaseRef.current !== "idle") return;
++    if (userStoppedTtsRef.current) return;
++    if (sttPhaseRef.current !== "idle") {
++      pendingAutoListenRef.current = { id: messageId, markdown };
++      return;
++    }
++    pendingAutoListenRef.current = null;
+     const resolved = readReplyText({
+       trigger: null,
+       body: bodyElementsRef.current.get(messageId) ?? null,
+@@ -685,6 +693,7 @@ export function GrokPane({
+     pendingListenRef.current = true;
+     setListenTarget({ id: messageId, trigger: null, script: resolved.text });
+   }
++  requestAutoListenRef.current = requestAutoListen;
+ 
+   function handleListenPause() {
+     userStoppedTtsRef.current = true;
+@@ -1271,6 +1280,8 @@ export function GrokPane({
+         return;
+       }
+       putSentBack(EMPTY_REPLY_BODY);
++      setStreamStatus(null);
++      const spoken = streamedText.trim() || EMPTY_REPLY_BODY;
+       onUpdate((current) => ({
+         ...current,
+         streamStatus: null,
+@@ -1287,6 +1298,7 @@ export function GrokPane({
+             : item,
+         ),
+       }));
++      requestAutoListen(streamAssistantIdRef.current || assistantId, spoken);
+     }
+   }
+ 
+@@ -1686,6 +1698,13 @@ export function GrokPane({
+       if (phase === "listening") clearSttEmptyHint();
+       setSttPhase(phase);
+       setMicMode(mode);
++      if (phase === "idle") {
++        const pending = pendingAutoListenRef.current;
++        if (pending) {
++          pendingAutoListenRef.current = null;
++          requestAutoListenRef.current(pending.id, pending.markdown);
++        }
++      }
+     },
+     [clearSttEmptyHint],
+   );

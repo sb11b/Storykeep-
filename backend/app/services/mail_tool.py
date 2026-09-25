@@ -61,9 +61,39 @@ _MARK_ACT_RE = re.compile(r"\bmark\b.{0,60}\b(?:unread|read)\b", re.I)
 _MARK_MAIL_RE = re.compile(r"\b(?:mail|e-mail|email|inbox|unread|fastmail)\b", re.I)
 _MARK_ALL_RE = re.compile(r"\ball\b|\bunread\s+(?:mail|e-mail|email|inbox|messages)\b", re.I)
 _MARK_FROM_RE = re.compile(r"\bfrom\s+(.+?)\s+(?:as\s+)?read\b", re.I)
-_MARK_LIMIT_RE = re.compile(r"\b(?:first|top)\s+(\d{1,2})\b|\bmark\s+(\d{1,2})\s+unread\b", re.I)
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+}
+_NUMBER_WORD_ALT = "|".join(_NUMBER_WORDS)
+_MARK_LIMIT_RE = re.compile(
+    rf"\b(?:first|top)\s+(\d{{1,2}}|{_NUMBER_WORD_ALT})\b"
+    rf"|\bmark\s+(\d{{1,2}}|{_NUMBER_WORD_ALT})\s+(?:unread|emails?|e-mails?|messages?)\b",
+    re.I,
+)
 _MARK_STOP = re.compile(
-    r"\b(?:please|mark|the|this|that|it|them|email|e-mail|mail|message|messages|as|unread|inbox|read|fastmail|first|top)\b",
+    r"\b(?:please|mark|the|this|that|it|them|emails?|e-mails?|mail|messages?|as|unread|inbox|read|fastmail|first|top)\b",
     re.I,
 )
 
@@ -77,8 +107,13 @@ def _mark_limit(message: str) -> int | None:
     found = _MARK_LIMIT_RE.search(message or "")
     if not found:
         return None
-    raw = found.group(1) or found.group(2)
-    count = int(raw)
+    raw = (found.group(1) or found.group(2) or "").strip().lower()
+    if raw.isdigit():
+        count = int(raw)
+    else:
+        count = _NUMBER_WORDS.get(raw)
+        if count is None:
+            return None
     return max(1, min(50, count))
 
 
@@ -100,6 +135,7 @@ def choose_mark_read(message: str, items: list[dict]) -> tuple[list[dict], str]:
         return _cap_rows(text, picked), needle
     cleaned = _MARK_STOP.sub(" ", text)
     cleaned = re.sub(r"\b\d{1,2}\b", " ", cleaned)
+    cleaned = re.sub(rf"\b(?:{_NUMBER_WORD_ALT})\b", " ", cleaned, flags=re.I)
     needle = " ".join(cleaned.split()).strip(" .")
     if len(needle) < 3:
         if _mark_limit(text) is not None or _MARK_ALL_RE.search(text) or re.search(r"\bunread\b", text, re.I):

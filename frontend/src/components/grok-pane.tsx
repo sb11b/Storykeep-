@@ -326,6 +326,9 @@ export function GrokPane({
   const pendingFromHereRef = useRef<number | null>(null);
   const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
   const listenTargetRef = useRef<ListenTarget | null>(null);
+  /** Reply that arrived while the mic was still busy. Spoken once the mic is idle. */
+  const pendingAutoListenRef = useRef<{ id: string; markdown: string } | null>(null);
+  const requestAutoListenRef = useRef<(messageId: string, markdown: string) => void>(() => {});
   /** User paused/stopped TTS; skip auto-speak until Listen or From here. */
   const userStoppedTtsRef = useRef(false);
   const streamAssistantIdRef = useRef<string | null>(null);
@@ -671,7 +674,12 @@ export function GrokPane({
   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
   function requestAutoListen(messageId: string, markdown: string) {
     if (!ttsEnabled || locked || panelOpenRef.current === false) return;
-    if (userStoppedTtsRef.current || sttPhaseRef.current !== "idle") return;
+    if (userStoppedTtsRef.current) return;
+    if (sttPhaseRef.current !== "idle") {
+      pendingAutoListenRef.current = { id: messageId, markdown };
+      return;
+    }
+    pendingAutoListenRef.current = null;
     const resolved = readReplyText({
       trigger: null,
       body: bodyElementsRef.current.get(messageId) ?? null,
@@ -685,6 +693,7 @@ export function GrokPane({
     pendingListenRef.current = true;
     setListenTarget({ id: messageId, trigger: null, script: resolved.text });
   }
+  requestAutoListenRef.current = requestAutoListen;
 
   function handleListenPause() {
     userStoppedTtsRef.current = true;
@@ -1271,6 +1280,8 @@ export function GrokPane({
         return;
       }
       putSentBack(EMPTY_REPLY_BODY);
+      setStreamStatus(null);
+      const spoken = streamedText.trim() || EMPTY_REPLY_BODY;
       onUpdate((current) => ({
         ...current,
         streamStatus: null,
@@ -1287,6 +1298,7 @@ export function GrokPane({
             : item,
         ),
       }));
+      requestAutoListen(streamAssistantIdRef.current || assistantId, spoken);
     }
   }
 
@@ -1686,6 +1698,13 @@ export function GrokPane({
       if (phase === "listening") clearSttEmptyHint();
       setSttPhase(phase);
       setMicMode(mode);
+      if (phase === "idle") {
+        const pending = pendingAutoListenRef.current;
+        if (pending) {
+          pendingAutoListenRef.current = null;
+          requestAutoListenRef.current(pending.id, pending.markdown);
+        }
+      }
     },
     [clearSttEmptyHint],
   );
