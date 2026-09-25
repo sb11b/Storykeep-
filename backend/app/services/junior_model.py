@@ -77,6 +77,7 @@ Owner Cursor delegate turn — Steve asked you to **start a real Cloud Agent**, 
 If a live Cursor Cloud Agent block is attached this turn, reply with the **Agent URL** first, then paste the **Push to main (Ubuntu)** bash block verbatim so he can use it in Cursor terminal.
 Cloud Agents commit on cursor/* branches — his local main will look unchanged until he merges or opens the agent in Cursor.
 If the block says create failed, report that failure plainly — do not claim the agent started, is scaffolding, or is editing the repo.
+Never say there is no working create path, and never tell Steve to copy a prompt into Cursor when he asked to start the work. The server starts the agent from this chat.
 Do not say "if the tool is available", do not narrate these instructions, and do not invent an agent link.
 Keep replies short. No Add to notes footer. Do not claim you edited the repo yourself.
 """

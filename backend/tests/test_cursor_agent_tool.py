@@ -66,6 +66,17 @@ class CursorAgentToolTests(unittest.TestCase):
         msg = "Junior, this already happened. Do not start a Cursor agent for it."
         self.assertFalse(cursor_agent_tool.wants_start(msg))
 
+    def test_sequenced_polish_starts_on_main(self):
+        msg = "go ahead and start sequenced #2 polish"
+        self.assertTrue(cursor_agent_tool.wants_start(msg))
+        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        task = cursor_agent_tool.polish_2_task(msg)
+        self.assertIsNotNone(task)
+        assert task is not None
+        self.assertIn("sb11b/Storykeep-", task)
+        self.assertIn("junior-mobile", task)
+        self.assertNotIn("no working create path", task.lower())
+
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")
     def test_start_agent_success(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:

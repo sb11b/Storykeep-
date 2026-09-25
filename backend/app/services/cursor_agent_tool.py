@@ -208,10 +208,37 @@ def wants_cursor_setup(message: str) -> bool:
     return bool(_SETUP_RE.search(message or ""))
 
 
+_POLISH_2_RE = re.compile(
+    r"\b(?:go ahead and\s+)?(?:start|begin|launch|do)\b.{0,80}(?:sequenced\s+)?#?\s*2\b.{0,40}\bpolish\b"
+    r"|\b(?:sequenced\s+)?#?\s*2\s+polish\b",
+    re.I | re.S,
+)
+
+POLISH_2_TASK = """Sequenced #2 polish only, on GitHub main of sb11b/Storykeep- (StoryKeep).
+
+The shared Junior memory slice is already deployed from GitHub main. Do not merge Cursor PR #2 on steve-bitsko/Storykeep. Do not re-run migrations. Do not change the owner email (angry.tune8751@fastmail.com).
+
+Polish the shared-memory API that is already in this repo:
+- Auth: /api/v1/junior/* stays behind require_user. Demo accounts stay 403.
+- Env: the container must include backend/migrations so boot can apply 001_junior_memory.sql then 002_junior_projects.sql. DATABASE_URL stays ${{Postgres.DATABASE_URL}}.
+- Smoke: tests that those two SQL files are idempotent, and that the owner seed writes storykeep, junior-phone (display Junior mobile, repo https://cursor.com/codebase/steve-bitsko/junior-mobile), and windows-overlay.
+
+Stay on this repository. The starting ref is main. Commit on a cursor/* branch. Do not create a new project.
+"""
+
+
+def polish_2_task(message: str) -> str | None:
+    if _POLISH_2_RE.search(message or ""):
+        return POLISH_2_TASK
+    return None
+
+
 def wants_start(message: str) -> bool:
     text = (message or "").strip()
     if not text:
         return False
+    if polish_2_task(text):
+        return True
     if wants_cursor_setup(text):
         return True
     for match in _START_RE.finditer(text):

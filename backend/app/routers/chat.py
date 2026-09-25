@@ -1593,11 +1593,12 @@ def _chat(
                 yield chat_service.encode_sse("[DONE]")
                 return
             if will_cursor_start:
-                agent_source = user_text
+                task_prompt = cursor_agent_tool.polish_2_task(user_text) or ""
+                agent_source = task_prompt or user_text
                 pane_label = (payload.pane_name or "").strip()
                 if pane_label:
                     agent_source = (
-                        f"{user_text}\n\n"
+                        f"{agent_source}\n\n"
                         f"Asked from the StoryKeep chat named {pane_label}. "
                         "Stay on the existing Storykeep repository. Do not create a new project."
                     )
@@ -1606,7 +1607,7 @@ def _chat(
                     start_task = asyncio.create_task(
                         asyncio.to_thread(
                             cursor_agent_tool.start_agent,
-                            "",
+                            task_prompt,
                             branch=start_branch,
                             source_message=agent_source,
                             auto_create_pr=True if delegate_turn else None,
