@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import JuniorMemory, User
 from app.services.demo_lock import is_locked
 
-OWNER_EMAIL = "stevebitsko@duck.com"
+OWNER_EMAIL = "angry.tune8751@fastmail.com"
 MEMORY_ATTACH_CHARS = 8_000
 MEMORY_SAVE_CHARS = 100_000
 SEED_PATH = Path(__file__).resolve().parents[1] / "data" / "steve_junior_memory.md"

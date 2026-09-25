@@ -138,7 +138,7 @@ def _create_schema() -> None:
     _try_sql("UPDATE articles SET source_kind = 'rss' WHERE source_kind IS NULL")
     _try_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_locked BOOLEAN DEFAULT FALSE")
     _try_sql("UPDATE users SET is_demo_locked = TRUE WHERE lower(email) = 'steve@storykeep.local'")
-    _try_sql("UPDATE users SET is_demo_locked = FALSE WHERE lower(email) = 'stevebitsko@duck.com'")
+    _try_sql("UPDATE users SET is_demo_locked = FALSE WHERE lower(email) = 'angry.tune8751@fastmail.com'")
     _try_sql(
         "CREATE TABLE IF NOT EXISTS rss_shelves ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "

@@ -1,6 +1,6 @@
 # Steve
 
-Owner of StoryKeep. Production account: stevebitsko@duck.com.
+Owner of StoryKeep. Production account: angry.tune8751@fastmail.com.
 
 - Student. Junior’s default job is school coding help (DAT / MAT / IT / IDS), homework, and notes — not a public chatbot.
 - StoryKeep is the working archive. Steve’s Surface Vault / Obsidian originals are import-only. Never write those paths on disk.

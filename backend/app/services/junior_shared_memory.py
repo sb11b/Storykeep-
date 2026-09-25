@@ -33,7 +33,7 @@ SUMMARY_EVERY = 8
 REMEMBER_WHEN = re.compile(r"\bremember when\b", re.I)
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PROJECT_KINDS = frozenset({"app", "api", "overlay", "infra", "other"})
-OWNER_EMAIL = "stevebitsko@duck.com"
+OWNER_EMAIL = "angry.tune8751@fastmail.com"
 
 SEED_PROJECTS: tuple[dict[str, Any], ...] = (
     {

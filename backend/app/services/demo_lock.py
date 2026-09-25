@@ -13,7 +13,7 @@ LOCKED_DEMO_EMAILS = frozenset(
     }
 )
 
-PROTECTED_EMAILS = frozenset({"stevebitsko@duck.com"})
+PROTECTED_EMAILS = frozenset({"angry.tune8751@fastmail.com"})
 
 
 def email_is_locked(email: str | None) -> bool:

@@ -118,7 +118,7 @@ psql "$DATABASE_URL" -f backend/migrations/001_junior_memory.sql
 psql "$DATABASE_URL" -f backend/migrations/002_junior_projects.sql
 ```
 
-Owner boot seed (`stevebitsko@duck.com`): projects `storykeep`, `junior-phone` (Junior mobile — [origin repo](https://cursor.com/codebase/steve-bitsko/junior-mobile)), `windows-overlay`, plus decision memories (Postgres is source of truth; xAI is inference; three venues; Cursor agents use a context pack).
+Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-phone` (Junior mobile — [origin repo](https://cursor.com/codebase/steve-bitsko/junior-mobile)), `windows-overlay`, plus decision memories (Postgres is source of truth; xAI is inference; three venues; Cursor agents use a context pack).
 
 **Endpoints** (cookie or Bearer; prefix `/api/v1`)
 
@@ -168,7 +168,7 @@ One service plus Railway PostgreSQL. The image serves the API and the web UI on 
 3. On the web service, set `DATABASE_URL=${{Postgres.DATABASE_URL}}`
 4. Generate a public domain
 
-Demo login after first boot is closed. Use your own account (`stevebitsko@duck.com` on production).
+Demo login after first boot is closed. Use your own account (`angry.tune8751@fastmail.com` on production).
 
 Step-by-step notes, optional `SECRET_KEY`, and backup caveats: [`docs/railway.md`](docs/railway.md).
 

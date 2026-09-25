@@ -86,7 +86,7 @@ Junior can start Cursor agents with a **full picture** — repo + memory — not
                                     not call Cursor)
 ```
 
-### Seed projects (owner `stevebitsko@duck.com` on API boot)
+### Seed projects (owner `angry.tune8751@fastmail.com` on API boot)
 
 | slug | kind | repo_url | notes |
 | --- | --- | --- | --- |

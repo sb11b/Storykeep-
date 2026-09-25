@@ -12,7 +12,7 @@ class DemoLockTests(unittest.TestCase):
     def test_published_demo_email_is_locked(self):
         self.assertTrue(email_is_locked("steve@storykeep.local"))
         self.assertTrue(email_is_locked("Steve@Storykeep.local"))
-        self.assertFalse(email_is_locked("stevebitsko@duck.com"))
+        self.assertFalse(email_is_locked("angry.tune8751@fastmail.com"))
         self.assertFalse(email_is_locked("reader@example.com"))
 
     def test_flag_or_email_locks_user(self):
@@ -20,7 +20,7 @@ class DemoLockTests(unittest.TestCase):
         self.assertTrue(is_locked(demo))
         flagged = SimpleNamespace(email="temp@example.com", is_demo_locked=True)
         self.assertTrue(is_locked(flagged))
-        live = SimpleNamespace(email="stevebitsko@duck.com", is_demo_locked=True)
+        live = SimpleNamespace(email="angry.tune8751@fastmail.com", is_demo_locked=True)
         self.assertFalse(is_locked(live))
 
     def test_reject_locked(self):
@@ -28,7 +28,7 @@ class DemoLockTests(unittest.TestCase):
             reject_locked(SimpleNamespace(email="steve@storykeep.local", is_demo_locked=True))
         self.assertEqual(caught.exception.status_code, 403)
         self.assertEqual(caught.exception.detail, "Demo account closed")
-        reject_locked(SimpleNamespace(email="stevebitsko@duck.com", is_demo_locked=False))
+        reject_locked(SimpleNamespace(email="angry.tune8751@fastmail.com", is_demo_locked=False))
 
     def test_reject_authentication_for_session(self):
         with self.assertRaises(HTTPException) as caught:

@@ -6,7 +6,7 @@ Railway reads **GitHub**, not Origin. The GitHub repo `sb11b/Storykeep-` is empt
 
 https://cursor.com/codebase/steve-bitsko/Storykeep
 
-Login after it is online with your own StoryKeep account (production: `stevebitsko@duck.com`). The public demo login is closed.
+Login after it is online with your own StoryKeep account (production: `angry.tune8751@fastmail.com`). The public demo login is closed.
 
 ---
 

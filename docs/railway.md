@@ -79,7 +79,7 @@ Generate a domain on the web service (**Settings → Networking → Generate dom
 
 ## 4. First login
 
-The public demo account is closed. Create or use your own account on the sign-in screen. Production uses `stevebitsko@duck.com`.
+The public demo account is closed. Create or use your own account on the sign-in screen. Production uses `angry.tune8751@fastmail.com`.
 
 Create your own account from the same screen if you prefer. Feeds keep importing in the background for a minute after deploy.
 
