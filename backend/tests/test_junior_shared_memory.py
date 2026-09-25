@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+import re
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -11,9 +13,44 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_user
 from app.routers import junior_shared as shared_router
 from app.services import junior_shared_memory as store
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
+JUNIOR_SQL = (
+    MIGRATIONS / "001_junior_memory.sql",
+    MIGRATIONS / "002_junior_projects.sql",
+)
+
+
+def _sql_statements(raw: str) -> list[str]:
+    statement: list[str] = []
+    out: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--"):
+            continue
+        statement.append(line)
+        if stripped.endswith(";"):
+            sql = "\n".join(statement).strip()
+            statement = []
+            if sql:
+                out.append(sql)
+    return out
+
+
+def _assert_idempotent_sql(test: unittest.TestCase, raw: str, path: Path) -> None:
+    statements = _sql_statements(raw)
+    test.assertGreater(len(statements), 0, path)
+    for sql in statements:
+        compact = re.sub(r"\s+", " ", sql).upper()
+        test.assertFalse(compact.startswith("DROP "), f"{path}: {sql}")
+        if compact.startswith("CREATE "):
+            test.assertIn("IF NOT EXISTS", compact, f"{path}: {sql}")
+        if "ADD COLUMN" in compact:
+            test.assertIn("IF NOT EXISTS", compact, f"{path}: {sql}")
 
 
 def _owner():
@@ -47,12 +84,34 @@ class JuniorSharedRouteTests(unittest.TestCase):
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 401, path)
+        self.assertEqual(client.post("/api/v1/junior/messages", json={"text": "hi", "venue": "phone"}).status_code, 401)
+        self.assertEqual(client.post("/api/v1/junior/agents", json={"project_slug": "storykeep", "prompt": "go"}).status_code, 401)
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
         client = TestClient(app)
-        response = client.get("/api/v1/junior/threads")
-        self.assertEqual(response.status_code, 403)
+        for method, path in (
+            ("GET", "/api/v1/junior/threads"),
+            ("GET", "/api/v1/junior/search?q=hello"),
+            ("GET", "/api/v1/junior/memories"),
+            ("GET", "/api/v1/junior/projects"),
+            ("GET", "/api/v1/junior/agent-context?project=storykeep"),
+            ("POST", "/api/v1/junior/messages"),
+            ("POST", "/api/v1/junior/agents"),
+        ):
+            response = client.request(method, path, json={"text": "hi", "venue": "phone", "project_slug": "storykeep", "prompt": "go"})
+            self.assertEqual(response.status_code, 403, path)
+
+    def test_shared_routes_use_require_user(self):
+        for route in shared_router.router.routes:
+            endpoint = getattr(route, "endpoint", None)
+            if endpoint is None:
+                continue
+            params = inspect.signature(endpoint).parameters
+            self.assertIn("user", params, route.path)
+            default = params["user"].default
+            self.assertIsNotNone(default)
+            self.assertIs(getattr(default, "dependency", None), require_user, route.path)
 
     def test_list_threads(self):
         now = datetime.now(timezone.utc)
@@ -284,7 +343,7 @@ class JuniorSharedServiceTests(unittest.TestCase):
         db.add.assert_called()
 
     def test_migration_reuses_users_and_has_fts(self):
-        path = Path(__file__).resolve().parents[1] / "migrations" / "001_junior_memory.sql"
+        path = JUNIOR_SQL[0]
         sql = path.read_text(encoding="utf-8")
         self.assertIn("REFERENCES users(id)", sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS users", sql)
@@ -294,13 +353,41 @@ class JuniorSharedServiceTests(unittest.TestCase):
         self.assertIn("title_tsv", sql)
         self.assertIn("to_tsvector", sql)
         self.assertIn("threads  → junior_threads", sql)
-        projects_sql = (Path(__file__).resolve().parents[1] / "migrations" / "002_junior_projects.sql").read_text(
-            encoding="utf-8"
-        )
+        projects_sql = JUNIOR_SQL[1].read_text(encoding="utf-8")
         self.assertIn("junior_projects", projects_sql)
         self.assertIn("junior_agent_runs", projects_sql)
         self.assertIn("REFERENCES users(id)", projects_sql)
         self.assertIn("kind IN ('app','api','overlay','infra','other')", projects_sql)
+
+    def test_junior_sql_files_are_idempotent(self):
+        for path in JUNIOR_SQL:
+            raw = path.read_text(encoding="utf-8")
+            _assert_idempotent_sql(self, raw, path)
+            first = _sql_statements(raw)
+            second = _sql_statements(raw)
+            self.assertEqual(first, second, path)
+            self.assertTrue(all(stmt.endswith(";") for stmt in first), path)
+
+    def test_boot_applies_junior_sql_in_order(self):
+        from app import main as app_main
+
+        source = inspect.getsource(app_main._create_schema)
+        memory_at = source.find('"001_junior_memory.sql"')
+        projects_at = source.find('"002_junior_projects.sql"')
+        self.assertGreater(memory_at, -1)
+        self.assertGreater(projects_at, memory_at)
+        self.assertIn("required=True", source)
+
+    def test_container_includes_migrations_and_keeps_postgres_url(self):
+        root_docker = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        backend_docker = (REPO_ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY backend/migrations ./migrations", root_docker)
+        self.assertIn("COPY migrations ./migrations", backend_docker)
+        railway = (REPO_ROOT / "docs" / "railway.md").read_text(encoding="utf-8")
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("DATABASE_URL=${{Postgres.DATABASE_URL}}", railway)
+        self.assertIn("DATABASE_URL=${{Postgres.DATABASE_URL}}", readme)
+        self.assertEqual(store.OWNER_EMAIL, "angry.tune8751@fastmail.com")
 
 
 class JuniorProjectAndAgentTests(unittest.TestCase):
@@ -412,20 +499,27 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
     def test_seed_writes_projects_and_decisions(self):
         owner = _owner()
         owner.email = store.OWNER_EMAIL
+        self.assertEqual(owner.email, "angry.tune8751@fastmail.com")
         db = MagicMock()
         db.scalar.side_effect = [owner] + [None] * 20
         store.seed_owner_projects_and_decisions(db)
         added = [call.args[0] for call in db.add.call_args_list]
         slugs = {getattr(item, "slug", None) for item in added}
-        self.assertIn("storykeep", slugs)
-        self.assertIn("junior-phone", slugs)
-        self.assertIn("windows-overlay", slugs)
-        phone = next(item for item in store.SEED_PROJECTS if item["slug"] == "junior-phone")
-        self.assertEqual(phone["repo_url"], "https://cursor.com/codebase/steve-bitsko/junior-mobile")
-        self.assertEqual(phone["display_name"], "Junior mobile")
-        self.assertEqual(phone["meta"].get("stack"), "expo")
+        self.assertEqual({"storykeep", "junior-phone", "windows-overlay"}, slugs & {"storykeep", "junior-phone", "windows-overlay"})
+        by_slug = {item["slug"]: item for item in store.SEED_PROJECTS}
+        self.assertEqual(set(by_slug), {"storykeep", "junior-phone", "windows-overlay"})
+        self.assertEqual(by_slug["storykeep"]["display_name"], "StoryKeep")
+        self.assertEqual(by_slug["junior-phone"]["display_name"], "Junior mobile")
+        self.assertEqual(by_slug["junior-phone"]["repo_url"], "https://cursor.com/codebase/steve-bitsko/junior-mobile")
+        self.assertEqual(by_slug["junior-phone"]["meta"].get("stack"), "expo")
+        self.assertEqual(by_slug["windows-overlay"]["display_name"], "Windows overlay")
         phone_row = next(item for item in added if getattr(item, "slug", None) == "junior-phone")
+        self.assertEqual(phone_row.display_name, "Junior mobile")
         self.assertEqual(phone_row.repo_url, "https://cursor.com/codebase/steve-bitsko/junior-mobile")
+        storykeep_row = next(item for item in added if getattr(item, "slug", None) == "storykeep")
+        overlay_row = next(item for item in added if getattr(item, "slug", None) == "windows-overlay")
+        self.assertEqual(storykeep_row.slug, "storykeep")
+        self.assertEqual(overlay_row.slug, "windows-overlay")
         decisions = [item.content for item in added if getattr(item, "kind", None) == "decision"]
         self.assertTrue(any("Railway Postgres" in text for text in decisions))
         self.assertTrue(any("venue=phone" in text for text in decisions))

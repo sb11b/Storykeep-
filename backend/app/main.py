@@ -248,14 +248,17 @@ def _create_schema() -> None:
         "updated_at TIMESTAMPTZ DEFAULT now())"
     )
     migrations = Path(__file__).resolve().parents[1] / "migrations"
-    _apply_sql_file(migrations / "001_junior_memory.sql")
-    _apply_sql_file(migrations / "002_junior_projects.sql")
+    for name in ("001_junior_memory.sql", "002_junior_projects.sql"):
+        _apply_sql_file(migrations / name, required=True)
 
 
-def _apply_sql_file(path: Path) -> None:
+def _apply_sql_file(path: Path, required: bool = False) -> None:
     """Run a Postgres migration script statement-by-statement (Railway boot + local)."""
     if not path.is_file():
-        logger.warning("Migration file missing: %s", path)
+        message = f"Migration file missing: {path}"
+        if required:
+            raise FileNotFoundError(message)
+        logger.warning(message)
         return
     try:
         raw = path.read_text(encoding="utf-8")

@@ -20,7 +20,7 @@ Design sketch columns and CHECKs are the source of truth. This repo **reuses exi
 
 Follow-up tables (not in the original sketch): `junior_projects`, `junior_agent_runs`.
 
-Runnable SQL:
+Runnable SQL (copied into the container as `/app/migrations` so boot can apply them):
 
 - `backend/migrations/001_junior_memory.sql`
 - `backend/migrations/002_junior_projects.sql`
