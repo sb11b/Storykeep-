@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from app.deps import get_current_user, require_user
 from app.routers import auth as auth_router
 from app.routers import junior_chats as chats_router
+from app.routers import junior_shared as shared_router
 from app.services.demo_lock import reject_authentication
 
 
@@ -51,6 +52,22 @@ class JuniorChatsLockdownTests(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: demo
         client = TestClient(app)
         response = client.get("/api/v1/junior/chats")
+        self.assertEqual(response.status_code, 403)
+
+
+class JuniorSharedLockdownTests(unittest.TestCase):
+    def test_demo_cannot_list_shared_threads(self):
+        app = FastAPI()
+        app.include_router(shared_router.router, prefix="/api/v1")
+        demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
+
+        def fake_db():
+            yield MagicMock()
+
+        app.dependency_overrides[get_db] = fake_db
+        app.dependency_overrides[get_current_user] = lambda: demo
+        client = TestClient(app)
+        response = client.get("/api/v1/junior/threads")
         self.assertEqual(response.status_code, 403)
 
 

@@ -17,6 +17,7 @@ This is the Phase 1–2 slice: FastAPI + PostgreSQL backend and a web library yo
 - Full-text search across titles, authors, summaries, and stored bodies
 - **Primary backup:** dated Export JSON bundle (`archive.json` + note media in one zip) or database dump; uploaded to Backblaze B2 when configured
 - **Junior memory:** one owner note (Junior full screen → Memory). Attached as a short system section on Junior requests (first 8k). Demo never sees or edits it. Do not dump it into reply footers.
+- **Junior shared chat memory:** Railway Postgres tables (`junior_threads`, `junior_thread_messages`, `junior_memories`, `junior_sessions`, `junior_projects`, `junior_agent_runs`) plus `/api/v1/junior/threads|search|memories|projects|agent-context|agents` so StoryKeep, the phone app (`venue=phone`), and the Windows overlay share one history and can hand Cursor agents a project + memory pack. Distinct from the standing Memory note.
 - **Junior live search:** owner chat can call `web_search` in the same thread (xAI live search). Current events, prices, docs, and “look this up” get cited public URLs. Demo has no search tool. Missing key → “Search unavailable, retry later.”
 - **Thin export** from a Junior reply: Word (`.docx`), Markdown, and `.txt`. Code fences keep Copy.
 - **Calendar:** Fastmail CalDAV (per-user app password or API token, encrypted on the server). Library **Calendar** is week/month. Junior proposes an event; Confirm writes it.
@@ -87,6 +88,58 @@ Steve: use Railway (`railway up --service storykeep`) after `NEXT_OUTPUT=export 
 | `GITHUB_REPO` | Repo slug for Junior GitHub tools, default `sb11b/Storykeep-`. |
 
 The Junior bubble is a movable panel. Replies stay in the session until **Add to notes**, which creates or updates a StoryKeep addition (`guid storykeep-note:` / `StoryKeep/Additions/`). It never overwrites `Steve's Surface Vault/**`. Chat is capped at 120 requests per hour per user (`CHAT_REQUESTS_PER_HOUR`). **Image** (next to the paperclip) generates a picture from the typed prompt via the xAI image API (`XAI_API_KEY` on the server only), stores it as owner-only media, and keeps it in the thread. Image gen is 10 per hour (`IMAGINE_REQUESTS_PER_HOUR`). Demo accounts cannot use chat or Imagine. Dictation uses streaming STT at `$0.20/hr` via the server.
+
+## Junior shared chat memory
+
+Durable history for StoryKeep, the phone app, and the Windows overlay lives in **Railway Postgres** — not in xAI. Design sketch: [`docs/junior_shared_memory.md`](docs/junior_shared_memory.md). `XAI_API_KEY` is inference only. User turns are always saved; a Junior reply is generated with last N messages + `summary` + facts when the key is set (`reply_status=ok`). Missing key → `stubbed_no_key`. xAI errors do not roll back the user row (`xai_error`).
+
+**Env:** same `DATABASE_URL` as the rest of StoryKeep (Railway: `DATABASE_URL=${{Postgres.DATABASE_URL}}`). Same `SECRET_KEY` / session cookie (`sk_access`) or `Authorization: Bearer` JWT. Every query is scoped to the signed-in user (`require_user`). Closed demo accounts get 401/403. Do not put DB or xAI secrets in git.
+
+**Tables** (reuses existing `users`; does not create a second user store):
+
+| Table | Role |
+| --- | --- |
+| `junior_threads` | One conversation + FTS on title/summary |
+| `junior_thread_messages` | Turns (`user` / `junior` / `system`) + FTS on content |
+| `junior_memories` | Durable facts (`profile` / `preference` / `decision` / `note`) |
+| `junior_sessions` | Last-seen venue/device |
+| `junior_projects` | Repo/app registry (slug unique per user) |
+| `junior_agent_runs` | Cursor-agent launch attempts (`context_ready` stub) |
+
+`junior_memory` (singular) remains the one standing markdown note at `GET/PUT /api/v1/junior/memory`.
+
+**Apply the migration**
+
+1. Automatic: API boot runs `001_junior_memory.sql` then `002_junior_projects.sql` from `_create_schema`.
+2. Manual on Railway Postgres (psql against the plugin URL — never commit that URL):
+
+```bash
+psql "$DATABASE_URL" -f backend/migrations/001_junior_memory.sql
+psql "$DATABASE_URL" -f backend/migrations/002_junior_projects.sql
+```
+
+Owner boot seed (`stevebitsko@duck.com`): projects `storykeep`, `junior-phone` (Junior mobile — [origin repo](https://cursor.com/codebase/steve-bitsko/junior-mobile)), `windows-overlay`, plus decision memories (Postgres is source of truth; xAI is inference; three venues; Cursor agents use a context pack).
+
+**Endpoints** (cookie or Bearer; prefix `/api/v1`)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/junior/threads` | List recent threads for the signed-in user |
+| `POST` | `/api/v1/junior/threads` | Start a thread (`title`, `venue`). Optional `text` is the first turn. |
+| `GET` | `/api/v1/junior/threads/{id}/messages` | Full history |
+| `POST` | `/api/v1/junior/threads/{id}/messages` | Send a turn (`text` or `content`, `venue`, optional `meta`) |
+| `POST` | `/api/v1/junior/messages` | Same turn; omit `thread_id` to use last `open` thread (or create one) |
+| `POST` | `/api/v1/junior/threads/{id}/continue` | Resume a thread; with `text` this is another turn |
+| `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages |
+| `GET` | `/api/v1/junior/memories` | Durable facts (`?kind=` optional) |
+| `POST` | `/api/v1/junior/memories` | Add a fact, or update when `id` is set |
+| `GET` | `/api/v1/junior/projects` | List project registry |
+| `GET` | `/api/v1/junior/projects/{slug}` | One project |
+| `POST` | `/api/v1/junior/projects` | Upsert by slug |
+| `GET` | `/api/v1/junior/agent-context?project=&q=` | Pack for a Cursor agent (project + thread + memories + search) |
+| `POST` | `/api/v1/junior/agents` | Record a launch (`context_ready`); does not call Cursor |
+
+Venues: `storykeep`, `phone`, `windows`, `voice`. **Phone is first-class** (`venue=phone` on the same routes — no separate phone DB). Overlay uses `venue=windows`. Message `meta` can hold overlay screen/OCR or voice extras (`screen`, `voice`, `dictation_target`). See [`docs/junior_shared_memory.md`](docs/junior_shared_memory.md).
 
 S3 is optional. Without credentials, backups stay in `backend/var/backups/`.
 

@@ -19,7 +19,7 @@ from app.http_limits import PAYLOAD_THREAD_TOO_LARGE, PAYLOAD_TOO_LARGE, LimitCh
 from app.request_logging import JuniorRequestLogMiddleware
 from app.database import Base, SessionLocal, engine
 from app.models import Feed
-from app.routers import articles, auth, backups, calendar, chat, feeds, junior_chats, junior_jobs, junior_memory, library, mail, overlay, school, stt, sync, tts
+from app.routers import articles, auth, backups, calendar, chat, feeds, junior_chats, junior_jobs, junior_memory, junior_shared, library, mail, overlay, school, stt, sync, tts
 from app.seed import seed_demo
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -247,6 +247,32 @@ def _create_schema() -> None:
         "created_at TIMESTAMPTZ DEFAULT now(), "
         "updated_at TIMESTAMPTZ DEFAULT now())"
     )
+    migrations = Path(__file__).resolve().parents[1] / "migrations"
+    _apply_sql_file(migrations / "001_junior_memory.sql")
+    _apply_sql_file(migrations / "002_junior_projects.sql")
+
+
+def _apply_sql_file(path: Path) -> None:
+    """Run a Postgres migration script statement-by-statement (Railway boot + local)."""
+    if not path.is_file():
+        logger.warning("Migration file missing: %s", path)
+        return
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        logger.exception("Could not read %s", path)
+        return
+    statement: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--"):
+            continue
+        statement.append(line)
+        if stripped.endswith(";"):
+            sql = "\n".join(statement).strip()
+            statement = []
+            if sql:
+                _try_sql(sql)
 
 
 def _seed_in_background() -> None:
@@ -258,6 +284,9 @@ def _seed_in_background() -> None:
 
         seed_steve_memory(db)
         refresh_cursor_memory(db)
+        from app.services.junior_shared_memory import seed_owner_projects_and_decisions
+
+        seed_owner_projects_and_decisions(db)
         db.commit()
     except Exception:
         logger.exception("Seed failed")
@@ -454,6 +483,7 @@ app.include_router(chat.router, prefix=API)
 app.include_router(school.router, prefix=API)
 app.include_router(junior_jobs.router, prefix=API)
 app.include_router(junior_memory.router, prefix=API)
+app.include_router(junior_shared.router, prefix=API)
 app.include_router(junior_chats.router, prefix=API)
 app.include_router(stt.router, prefix=API)
 app.include_router(calendar.router, prefix=API)

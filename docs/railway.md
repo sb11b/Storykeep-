@@ -66,6 +66,15 @@ Railway injects `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_ENVIRONMENT
 
 After deploy, `GET /api/health` reports `cursor_delegate: configured` when `CURSOR_API_KEY` is set (never exposes the key).
 
+Junior shared chat-memory tables are created on API boot from `backend/migrations/001_junior_memory.sql` and `002_junior_projects.sql`. To apply them yourself against the Railway plugin (uses existing `DATABASE_URL`, no extra secrets):
+
+```bash
+psql "$DATABASE_URL" -f backend/migrations/001_junior_memory.sql
+psql "$DATABASE_URL" -f backend/migrations/002_junior_projects.sql
+```
+
+Endpoints include threads/messages/search/memories plus `GET/POST /api/v1/junior/projects`, `GET /api/v1/junior/agent-context?project=`, `POST /api/v1/junior/agents`. Phone uses `venue=phone` on the same routes. See [`docs/junior_shared_memory.md`](junior_shared_memory.md).
+
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 
 ## 4. First login

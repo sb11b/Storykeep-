@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Computed,
     Date,
     DateTime,
@@ -589,6 +590,158 @@ class CursorAgentWatch(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JuniorThread(Base):
+    """Cross-client Junior conversation (StoryKeep, phone, Windows overlay)."""
+
+    __tablename__ = "junior_threads"
+    __table_args__ = (
+        CheckConstraint(
+            "venue_last IN ('storykeep','phone','windows','voice')",
+            name="junior_threads_venue_last_check",
+        ),
+        CheckConstraint("status IN ('open','archived')", name="junior_threads_status_check"),
+        Index("junior_threads_user_updated_idx", "user_id", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str | None] = mapped_column(Text)
+    venue_last: Mapped[str] = mapped_column(Text, nullable=False, default="storykeep", server_default="storykeep")
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="open", server_default="open")
+    summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    title_tsv: Mapped[str | None] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('english', coalesce(title,'') || ' ' || coalesce(summary,''))",
+            persisted=True,
+        ),
+    )
+
+    messages: Mapped[list["JuniorThreadMessage"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="JuniorThreadMessage.created_at, JuniorThreadMessage.id",
+    )
+
+
+class JuniorThreadMessage(Base):
+    __tablename__ = "junior_thread_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user','junior','system')", name="junior_thread_messages_role_check"),
+        CheckConstraint(
+            "venue IN ('storykeep','phone','windows','voice')",
+            name="junior_thread_messages_venue_check",
+        ),
+        Index("junior_thread_messages_thread_created_idx", "thread_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("junior_threads.id", ondelete="CASCADE")
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    venue: Mapped[str] = mapped_column(Text, nullable=False)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    content_tsv: Mapped[str | None] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', content)", persisted=True),
+    )
+
+    thread: Mapped[JuniorThread] = relationship(back_populates="messages")
+
+
+class JuniorMemoryFact(Base):
+    """Durable fact Junior should know across threads. Not the standing markdown note."""
+
+    __tablename__ = "junior_memories"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('profile','preference','decision','note')",
+            name="junior_memories_kind_check",
+        ),
+        Index("junior_memories_user_idx", "user_id", "kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="note", server_default="note")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_thread: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("junior_threads.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JuniorSession(Base):
+    """Last-seen venue/device for overlay and phone."""
+
+    __tablename__ = "junior_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "venue IN ('storykeep','phone','windows','voice')",
+            name="junior_sessions_venue_check",
+        ),
+        Index("junior_sessions_user_venue_idx", "user_id", "venue", "last_seen_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    venue: Mapped[str] = mapped_column(Text, nullable=False)
+    device_label: Mapped[str | None] = mapped_column(Text)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JuniorProject(Base):
+    """Repo/app Junior can hand to a Cursor agent (not StoryKeep-only)."""
+
+    __tablename__ = "junior_projects"
+    __table_args__ = (
+        UniqueConstraint("user_id", "slug", name="junior_projects_user_slug_key"),
+        CheckConstraint(
+            "kind IN ('app','api','overlay','infra','other')",
+            name="junior_projects_kind_check",
+        ),
+        Index("junior_projects_user_slug_idx", "user_id", "slug"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="other", server_default="other")
+    repo_url: Mapped[str | None] = mapped_column(Text)
+    default_branch: Mapped[str] = mapped_column(Text, nullable=False, default="main", server_default="main")
+    notes: Mapped[str | None] = mapped_column(Text)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JuniorAgentRun(Base):
+    """Record of a Cursor-agent launch attempt. This slice stores context only."""
+
+    __tablename__ = "junior_agent_runs"
+    __table_args__ = (Index("junior_agent_runs_user_created_idx", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    project_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="context_ready", server_default="context_ready")
+    cursor_agent_id: Mapped[str | None] = mapped_column(Text)
+    thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("junior_threads.id", ondelete="SET NULL")
+    )
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class JuniorMemory(Base):

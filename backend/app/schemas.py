@@ -758,3 +758,174 @@ class GrokConversationPatchIn(BaseModel):
     recap_question: bool | None = None
     saved_note_id: uuid.UUID | None = None
     pinned: bool | None = None
+
+
+class JuniorSharedThreadIn(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+    venue: str | None = Field(default="storykeep", max_length=16)
+    status: str | None = Field(default="open", max_length=16)
+    text: str | None = Field(default=None, max_length=32000)
+    content: str | None = Field(default=None, max_length=32000)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    device_label: str | None = Field(default=None, max_length=120)
+
+
+class JuniorSharedThreadOut(BaseModel):
+    id: uuid.UUID
+    title: str | None = None
+    venue_last: str
+    status: str
+    summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JuniorSharedMessageIn(BaseModel):
+    content: str | None = Field(default=None, max_length=32000)
+    text: str | None = Field(default=None, max_length=32000)
+    thread_id: uuid.UUID | None = None
+    venue: str | None = Field(default="storykeep", max_length=16)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    device_label: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def require_text_or_content(self) -> "JuniorSharedMessageIn":
+        body = (self.content or self.text or "").strip()
+        if not body:
+            raise ValueError("text or content is required")
+        self.content = body
+        return self
+
+    @property
+    def body(self) -> str:
+        return (self.content or "").strip()
+
+
+class JuniorSharedMessageOut(BaseModel):
+    id: uuid.UUID
+    thread_id: uuid.UUID
+    role: str
+    content: str
+    venue: str
+    meta: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JuniorSharedMessagePostOut(BaseModel):
+    thread_id: uuid.UUID
+    user_message: JuniorSharedMessageOut
+    junior_message: JuniorSharedMessageOut | None = None
+    reply_status: str
+    detail: str | None = None
+
+
+class JuniorSharedContinueIn(BaseModel):
+    content: str | None = Field(default=None, max_length=32000)
+    text: str | None = Field(default=None, max_length=32000)
+    venue: str | None = Field(default="storykeep", max_length=16)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    device_label: str | None = Field(default=None, max_length=120)
+
+    @property
+    def body(self) -> str:
+        return (self.content or self.text or "").strip()
+
+
+class JuniorSharedContinueOut(BaseModel):
+    thread: JuniorSharedThreadOut
+    messages: list[JuniorSharedMessageOut] = Field(default_factory=list)
+    user_message: JuniorSharedMessageOut | None = None
+    junior_message: JuniorSharedMessageOut | None = None
+    reply_status: str | None = None
+    detail: str | None = None
+
+
+class JuniorSharedSearchHitOut(BaseModel):
+    thread_id: uuid.UUID
+    thread_title: str | None = None
+    message_id: uuid.UUID
+    snippet: str
+    venue: str
+    created_at: datetime
+    rank: float = 0
+
+
+class JuniorSharedMemoryIn(BaseModel):
+    id: uuid.UUID | None = None
+    kind: str | None = Field(default="note", max_length=24)
+    content: str = Field(min_length=1, max_length=8000)
+    source_thread: uuid.UUID | None = None
+
+
+class JuniorSharedMemoryOut(BaseModel):
+    id: uuid.UUID
+    kind: str
+    content: str
+    source_thread: uuid.UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JuniorProjectIn(BaseModel):
+    slug: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=120)
+    kind: str | None = Field(default="other", max_length=16)
+    repo_url: str | None = Field(default=None, max_length=400)
+    default_branch: str | None = Field(default="main", max_length=80)
+    notes: str | None = Field(default=None, max_length=4000)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class JuniorProjectOut(BaseModel):
+    id: uuid.UUID
+    slug: str
+    display_name: str
+    kind: str
+    repo_url: str | None = None
+    default_branch: str
+    notes: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JuniorAgentContextOut(BaseModel):
+    project: JuniorProjectOut
+    thread_summary: str | None = None
+    recent_messages: list[JuniorSharedMessageOut] = Field(default_factory=list)
+    memories: list[JuniorSharedMemoryOut] = Field(default_factory=list)
+    search_hits: list[JuniorSharedSearchHitOut] = Field(default_factory=list)
+    launch_hint: str
+
+
+class JuniorAgentLaunchIn(BaseModel):
+    project_slug: str = Field(min_length=1, max_length=64)
+    prompt: str = Field(min_length=1, max_length=32000)
+    thread_id: uuid.UUID | None = None
+    q: str | None = Field(default=None, max_length=200)
+
+
+class JuniorAgentRunOut(BaseModel):
+    id: uuid.UUID
+    project_slug: str
+    prompt: str
+    status: str
+    cursor_agent_id: str | None = None
+    thread_id: uuid.UUID | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JuniorAgentLaunchOut(BaseModel):
+    run: JuniorAgentRunOut
+    context: JuniorAgentContextOut
+    called_cursor_api: bool = False
