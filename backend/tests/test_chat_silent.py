@@ -522,7 +522,7 @@ class CursorStartPayloadTests(unittest.TestCase):
         self.assertNotIn("copy this into cursor", response.text.lower())
         self.assertIn("https://cursor.com/agents/agent-4", response.text)
         self.assertTrue(start_agent.called)
-        self.assertIn("Sequenced #7", start_agent.call_args.args[0])
+        self.assertIn("Sequenced #10", start_agent.call_args.args[0])
         self.assertEqual(start_agent.call_args.kwargs["branch"], "main")
         self.assertFalse(start_agent.call_args.kwargs["auto_create_pr"])
 

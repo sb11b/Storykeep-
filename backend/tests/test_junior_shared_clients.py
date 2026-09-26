@@ -107,8 +107,8 @@ def _windows(http):
 
 
 class SharedClientSmokeTests(unittest.TestCase):
-    def test_health_stamp_is_queue_page_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-queue-multi-v1")
+    def test_health_stamp_is_memory_write_v1(self):
+        self.assertEqual(HEALTH_STAMP, "junior-client-memory-write-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -394,8 +394,8 @@ class SharedClientSmokeTests(unittest.TestCase):
             "app.routers.junior_shared.store.post_turn",
             return_value=(thread, user_msg, None, "stubbed_no_key"),
         ), patch(
-            "app.routers.junior_shared.store.list_messages",
-            return_value=[user_msg],
+            "app.routers.junior_shared.store.list_messages_page",
+            return_value=([user_msg], None),
         ):
             response = _phone(TestClient(app)).continue_thread(thread.id, text="from the phone")
         self.assertEqual(response.status_code, 200)
@@ -461,6 +461,43 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertIn("cannot use Junior shared memory", overlay.surface_status()["user_visible_error"])
         self.assertEqual(phone.surface_status()["last_failed_post"]["text"], "from the phone")
         self.assertEqual(overlay.surface_status()["last_failed_post"]["text"], "from the overlay")
+
+    def test_memory_writes_queue_and_replay(self):
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                phone_client(fail, queue_path=path).upsert_memory(
+                    "Prefers short replies",
+                    kind="preference",
+                )
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertIn("did not save this memory", ctx.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "memory")
+        self.assertEqual(restarted.last_failed_post["content"], "Prefers short replies")
+
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(replay_http.calls, [("POST", "/api/v1/junior/memories")])
+        self.assertFalse(path.exists())
+
+    def test_continue_passes_page_params_and_403(self):
+        http = _ScriptedHttp([200, 403, 403, 403])
+        thread_id = uuid.uuid4()
+        overlay = _windows(http)
+        overlay.continue_thread(thread_id, text="page this", limit=2, cursor="msg-1")
+        self.assertEqual(http.calls[0], ("POST", f"/api/v1/junior/threads/{thread_id}/continue"))
+        self.assertEqual(http.params[0], {"limit": 2, "cursor": "msg-1"})
+
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).upsert_memory("blocked")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not save this memory", ctx.exception.user_message)
 
 
 if __name__ == "__main__":
