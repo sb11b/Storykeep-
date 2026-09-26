@@ -88,6 +88,10 @@ class JuniorSharedRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 401, path)
         self.assertEqual(client.post("/api/v1/junior/messages", json={"text": "hi", "venue": "phone"}).status_code, 401)
         self.assertEqual(client.post("/api/v1/junior/agents", json={"project_slug": "storykeep", "prompt": "go"}).status_code, 401)
+        self.assertEqual(
+            client.post("/api/v1/junior/memories", json={"kind": "note", "content": "keep"}).status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -102,8 +106,19 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", "/api/v1/junior/agents"),
             ("POST", "/api/v1/junior/messages"),
             ("POST", "/api/v1/junior/agents"),
+            ("POST", "/api/v1/junior/memories"),
         ):
-            response = client.request(method, path, json={"text": "hi", "venue": "phone", "project_slug": "storykeep", "prompt": "go"})
+            response = client.request(
+                method,
+                path,
+                json={
+                    "text": "hi",
+                    "venue": "phone",
+                    "project_slug": "storykeep",
+                    "prompt": "go",
+                    "content": "keep",
+                },
+            )
             self.assertEqual(response.status_code, 403, path)
 
     def test_shared_routes_use_require_user(self):
@@ -202,12 +217,20 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(loose.json()["thread_id"], str(thread_id))
 
         with patch("app.routers.junior_shared.store.thread_owned", return_value=thread), patch(
-            "app.routers.junior_shared.store.list_messages", return_value=[user_msg]
-        ):
-            resumed = TestClient(app).post(f"/api/v1/junior/threads/{thread_id}/continue", json={})
+            "app.routers.junior_shared.store.list_messages_page",
+            return_value=([user_msg], str(user_msg.id)),
+        ) as history:
+            resumed = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/continue",
+                params={"limit": 1, "cursor": str(user_msg.id)},
+                json={},
+            )
         self.assertEqual(resumed.status_code, 200)
         self.assertEqual(resumed.json()["thread"]["id"], str(thread_id))
         self.assertEqual(len(resumed.json()["messages"]), 1)
+        self.assertEqual(resumed.headers.get("x-next-cursor"), str(user_msg.id))
+        self.assertEqual(history.call_args.kwargs["limit"], 1)
+        self.assertEqual(history.call_args.kwargs["cursor"], str(user_msg.id))
 
     def test_search_and_memories(self):
         now = datetime.now(timezone.utc)

@@ -262,26 +262,26 @@ _NEXT_STEP_RE = re.compile(
     re.I,
 )
 
-SEQ_4_TASK = """Sequenced #4 — next after junior-shared-clients-v1 on production (do not redo #2 or #3).
+SEQ_9_TASK = """Sequenced #9 — next after junior-client-agents-page-v1 (do not redo #2, #3, #4, #5, #6, #7, or #8).
 
 Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
 
-Already done:
-- Dockerfile copies backend/migrations → /app/migrations
-- Boot applies 001 then 002; missing files fail init
-- DATABASE_URL stays ${{Postgres.DATABASE_URL}}
-- /api/v1/junior/* require_user; demo 403; no new public routes
-- phone_client: venue phone, device junior-mobile, project junior-phone
-- windows_client: venue windows, device windows-overlay, project windows-overlay
-- Both post to /api/v1/junior/messages or /threads/{id}/messages
-- Health reports junior-shared-clients-v1
+Already done on main:
+- Phone and Windows clients keep a FIFO of failed posts and replay in order after the same login
+- Shared GET /search and /memories take limit plus cursor or before_id
+- Both clients POST /threads/{id}/continue for resume; failed continue posts stay on the queue
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-queue-multi-v1
+#7 and #8 live on their cursor/* branches (projects page, agent-context GET, POST /projects and /agents, GET /agents). Do not redo them.
 
-Your job (#4):
-1. Harden the two clients only: retries/backoff on 401/403/5xx, clear user-visible errors, no silent drop of posts.
-2. Shared GET for threads/messages using the same auth rules; still no public routes.
-3. Keep SQL idempotent; no DROP TABLE.
-4. Extend smoke tests for retry/403 and GET paths. Keep existing tests green.
-5. Commit on a cursor/* branch and push that branch only.
+Your job (#9):
+1. Both clients POST /memories. Failed writes stay on the FIFO and replay on that same route. Same auth rule. No silent drop.
+2. Paginate POST /threads/{id}/continue history (limit/cursor or before_id; X-Next-Cursor). Same require_user rules. Still no public routes.
+3. Both clients pass those page params on continue. Failed continue posts stay on the queue.
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for memory replay, continue pagination, and 403. Keep existing tests green.
+6. Health stamp: junior-client-memory-write-v1
+7. Commit on a cursor/* branch and push that branch only.
 
 Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
 """
@@ -330,6 +330,31 @@ Your job (#7):
 5. Extend smoke tests for continue replay, project pagination, agent-context, and 403. Keep existing tests green.
 6. Health stamp: junior-client-context-page-v1
 7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
+SEQ_4_TASK = """Sequenced #4 — next after junior-shared-clients-v1 on production (do not redo #2 or #3).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done:
+- Dockerfile copies backend/migrations → /app/migrations
+- Boot applies 001 then 002; missing files fail init
+- DATABASE_URL stays ${{Postgres.DATABASE_URL}}
+- /api/v1/junior/* require_user; demo 403; no new public routes
+- phone_client: venue phone, device junior-mobile, project junior-phone
+- windows_client: venue windows, device windows-overlay, project windows-overlay
+- Both post to /api/v1/junior/messages or /threads/{id}/messages
+- Health reports junior-shared-clients-v1
+
+Your job (#4):
+1. Harden the two clients only: retries/backoff on 401/403/5xx, clear user-visible errors, no silent drop of posts.
+2. Shared GET for threads/messages using the same auth rules; still no public routes.
+3. Keep SQL idempotent; no DROP TABLE.
+4. Extend smoke tests for retry/403 and GET paths. Keep existing tests green.
+5. Commit on a cursor/* branch and push that branch only.
 
 Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
 """
@@ -413,7 +438,7 @@ def _later_sequence_task(number: int, message: str) -> str:
     return (
         f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
         "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
-        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, or #8. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, or #9. "
         "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
         "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
         "Commit on a cursor/* branch and push that branch only.\n\n"
@@ -434,14 +459,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_7_TASK
     if number == 8:
         return SEQ_8_TASK
-    if number is not None and number > 8:
+    if number == 9:
+        return SEQ_9_TASK
+    if number is not None and number > 9:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(9, text)
+        return _later_sequence_task(10, text)
     return None
 
 

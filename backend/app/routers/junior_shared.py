@@ -175,9 +175,13 @@ def post_turn(
 @router.post("/threads/{thread_id}/continue", response_model=JuniorSharedContinueOut)
 def continue_thread(
     thread_id: UUID,
+    response: Response,
     payload: JuniorSharedContinueIn | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
 ) -> JuniorSharedContinueOut:
     thread = store.thread_owned(db, user, thread_id)
     user_row = junior_row = None
@@ -199,7 +203,10 @@ def continue_thread(
         db.refresh(user_row)
         if junior_row is not None:
             db.refresh(junior_row)
-    history = store.list_messages(db, user, thread.id)
+    history, next_cursor = store.list_messages_page(
+        db, user, thread.id, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
     return JuniorSharedContinueOut(
         thread=JuniorSharedThreadOut.model_validate(thread),
         messages=[JuniorSharedMessageOut.model_validate(row) for row in history],

@@ -130,7 +130,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `POST` | `/api/v1/junior/threads/{id}/messages` | Send a turn (`text` or `content`, `venue`, optional `meta`) |
 | `GET` | `/api/v1/junior/messages` | Recent messages for the signed-in user (same page params; optional `thread_id`) |
 | `POST` | `/api/v1/junior/messages` | Same turn; omit `thread_id` to use last `open` thread (or create one) |
-| `POST` | `/api/v1/junior/threads/{id}/continue` | Resume a thread; with `text` this is another turn |
+| `POST` | `/api/v1/junior/threads/{id}/continue` | Resume a thread; with `text` this is another turn (`limit`, `cursor` or `before_id` on history) |
 | `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/memories` | Durable facts (`?kind=` optional; same page params) |
 | `POST` | `/api/v1/junior/memories` | Add a fact, or update when `id` is set |
