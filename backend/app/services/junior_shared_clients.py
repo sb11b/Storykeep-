@@ -32,7 +32,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-queue-multi-v1"
+HEALTH_STAMP = "junior-client-context-page-v1"
 
 
 class SharedMemoryError(Exception):
@@ -238,7 +238,7 @@ class SharedMemoryClient:
                     remaining.pop(0)
                     self.queue.replace(remaining)
                     continue
-                last_response = self.post_turn(text, thread_id=post.get("thread_id"))
+                last_response = self._replay_one(post, text)
                 remaining.pop(0)
                 self.queue.replace(remaining)
             self.last_user_error = None
@@ -257,14 +257,38 @@ class SharedMemoryClient:
         finally:
             self._replaying = False
 
-    def _remember_write_failure(self, exc: SharedMemoryError, body: dict[str, Any]) -> None:
+    def _queued_kind(self, post: dict[str, Any]) -> str:
+        kind = str(post.get("kind") or "").strip().lower()
+        if kind:
+            return kind
+        path = str(post.get("path") or "")
+        if "/continue" in path:
+            return "continue"
+        return "message"
+
+    def _replay_one(self, post: dict[str, Any], text: str) -> Any:
+        thread_id = post.get("thread_id")
+        if self._queued_kind(post) == "continue" and thread_id:
+            return self.continue_thread(thread_id, text=text)
+        return self.post_turn(text, thread_id=thread_id)
+
+    def _remember_write_failure(
+        self,
+        exc: SharedMemoryError,
+        body: dict[str, Any],
+        *,
+        path: str,
+    ) -> None:
         self.last_user_error = exc.user_message
         if self._replaying:
             return
+        kind = "continue" if "/continue" in path else "message"
         queued = {
             "text": body.get("text"),
             "title": body.get("title"),
             "thread_id": body.get("thread_id"),
+            "path": path,
+            "kind": kind,
             "venue": self.venue,
             "device_label": self.device_label,
             "action": exc.action,
@@ -332,7 +356,7 @@ class SharedMemoryClient:
         try:
             response = self._request(method, path, action=action, **kwargs)
         except SharedMemoryError as exc:
-            self._remember_write_failure(exc, body)
+            self._remember_write_failure(exc, body, path=path)
             raise
         self._clear_write_failure()
         return response
@@ -472,6 +496,38 @@ class SharedMemoryClient:
             f"{API_PREFIX}/memories",
             action="load memories",
             **({"params": params} if params else {}),
+        )
+
+    def get_projects(
+        self,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id)
+        return self._read(
+            f"{API_PREFIX}/projects",
+            action="load projects",
+            **({"params": params} if params else {}),
+        )
+
+    def get_agent_context(
+        self,
+        project_slug: str | None = None,
+        *,
+        q: str | None = None,
+        thread_id: UUID | str | None = None,
+    ) -> Any:
+        params: dict[str, Any] = {"project": project_slug or self.project_slug}
+        if q:
+            params["q"] = q
+        if thread_id is not None:
+            params["thread_id"] = str(thread_id)
+        return self._read(
+            f"{API_PREFIX}/agent-context",
+            action="load agent context",
+            params=params,
         )
 
     def continue_thread(self, thread_id: UUID | str, text: str | None = None) -> Any:

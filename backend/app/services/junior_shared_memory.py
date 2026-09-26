@@ -737,8 +737,43 @@ def normalize_kind_project(value: str | None) -> str:
 
 
 def list_projects(db: Session, user: User) -> list[JuniorProject]:
-    stmt = select(JuniorProject).where(JuniorProject.user_id == user.id).order_by(JuniorProject.slug.asc())
-    return list(db.scalars(stmt))
+    rows, _ = list_projects_page(db, user, limit=PAGE_MAX)
+    return rows
+
+
+def list_projects_page(
+    db: Session,
+    user: User,
+    *,
+    limit: int | None = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[JuniorProject], str | None]:
+    cap = clamp_page_limit(limit)
+    stmt = select(JuniorProject).where(JuniorProject.user_id == user.id)
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorProject).where(
+                JuniorProject.user_id == user.id, JuniorProject.id == marker
+            )
+        )
+        if ref is not None:
+            stmt = stmt.where(
+                or_(
+                    JuniorProject.slug > ref.slug,
+                    and_(
+                        JuniorProject.slug == ref.slug,
+                        JuniorProject.id > ref.id,
+                    ),
+                )
+            )
+    stmt = stmt.order_by(JuniorProject.slug.asc(), JuniorProject.id.asc()).limit(cap + 1)
+    rows = list(db.scalars(stmt))
+    has_more = len(rows) > cap
+    page = rows[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return page, next_cursor
 
 
 def get_project(db: Session, user: User, slug: str) -> JuniorProject:

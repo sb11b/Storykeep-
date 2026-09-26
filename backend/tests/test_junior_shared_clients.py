@@ -107,8 +107,8 @@ def _windows(http):
 
 
 class SharedClientSmokeTests(unittest.TestCase):
-    def test_health_stamp_is_queue_page_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-queue-multi-v1")
+    def test_health_stamp_is_context_page_v1(self):
+        self.assertEqual(HEALTH_STAMP, "junior-client-context-page-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -408,6 +408,8 @@ class SharedClientSmokeTests(unittest.TestCase):
                 overlay.continue_thread(thread.id, text="must stay queued")
         self.assertEqual(ctx.exception.status_code, 403)
         self.assertEqual(overlay.last_failed_post["text"], "must stay queued")
+        self.assertEqual(overlay.last_failed_post["kind"], "continue")
+        self.assertIn("/continue", overlay.last_failed_post["path"])
         self.assertEqual(overlay.surface_status()["queue_depth"], 1)
 
     def test_fifo_queue_keeps_two_failed_posts_and_replays_in_order(self):
@@ -461,6 +463,47 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertIn("cannot use Junior shared memory", overlay.surface_status()["user_visible_error"])
         self.assertEqual(phone.surface_status()["last_failed_post"]["text"], "from the phone")
         self.assertEqual(overlay.surface_status()["last_failed_post"]["text"], "from the overlay")
+
+    def test_continue_replay_uses_continue_route(self):
+        path = _queue_path()
+        thread_id = uuid.uuid4()
+        http = _ScriptedHttp([403, 403, 403])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError):
+                phone_client(http, queue_path=path).continue_thread(thread_id, text="resume this")
+        self.assertTrue(path.is_file())
+
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            replay_http.calls,
+            [("POST", f"/api/v1/junior/threads/{thread_id}/continue")],
+        )
+        self.assertFalse(path.exists())
+
+    def test_projects_and_agent_context_pass_params(self):
+        http = _ScriptedHttp([200, 200, 403, 403, 403])
+        phone = _phone(http)
+        phone.get_projects(limit=2, cursor="proj-1")
+        self.assertEqual(http.calls[0], ("GET", "/api/v1/junior/projects"))
+        self.assertEqual(http.params[0], {"limit": 2, "cursor": "proj-1"})
+
+        overlay = _windows(http)
+        thread_id = uuid.uuid4()
+        overlay.get_agent_context("storykeep", q="finance", thread_id=thread_id)
+        self.assertEqual(http.calls[1], ("GET", "/api/v1/junior/agent-context"))
+        self.assertEqual(http.params[1]["project"], "storykeep")
+        self.assertEqual(http.params[1]["q"], "finance")
+        self.assertEqual(http.params[1]["thread_id"], str(thread_id))
+
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).get_agent_context()
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not load agent context", ctx.exception.user_message)
 
 
 if __name__ == "__main__":

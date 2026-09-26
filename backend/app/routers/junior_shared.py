@@ -276,10 +276,18 @@ def _context_out(pack: dict) -> JuniorAgentContextOut:
 
 @router.get("/projects", response_model=list[JuniorProjectOut])
 def list_projects(
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
 ) -> list[JuniorProjectOut]:
-    return [JuniorProjectOut.model_validate(row) for row in store.list_projects(db, user)]
+    rows, next_cursor = store.list_projects_page(
+        db, user, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorProjectOut.model_validate(row) for row in rows]
 
 
 @router.get("/projects/{slug}", response_model=JuniorProjectOut)

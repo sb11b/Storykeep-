@@ -487,10 +487,22 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
             updated_at=now,
         )
         app = _app()
-        with patch("app.routers.junior_shared.store.list_projects", return_value=[row]):
+        with patch("app.routers.junior_shared.store.list_projects_page", return_value=([row], None)):
             listed = TestClient(app).get("/api/v1/junior/projects")
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()[0]["slug"], "storykeep")
+
+        with patch(
+            "app.routers.junior_shared.store.list_projects_page",
+            return_value=([row], str(row.id)),
+        ) as paged:
+            page = TestClient(app).get(
+                "/api/v1/junior/projects",
+                params={"limit": 1, "cursor": str(row.id)},
+            )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers.get("x-next-cursor"), str(row.id))
+        self.assertEqual(paged.call_args.kwargs["limit"], 1)
 
         with patch("app.routers.junior_shared.store.upsert_project", return_value=row):
             saved = TestClient(app).post(

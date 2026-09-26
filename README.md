@@ -134,7 +134,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/memories` | Durable facts (`?kind=` optional; same page params) |
 | `POST` | `/api/v1/junior/memories` | Add a fact, or update when `id` is set |
-| `GET` | `/api/v1/junior/projects` | List project registry |
+| `GET` | `/api/v1/junior/projects` | List project registry (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/projects/{slug}` | One project |
 | `POST` | `/api/v1/junior/projects` | Upsert by slug |
 | `GET` | `/api/v1/junior/agent-context?project=&q=` | Pack for a Cursor agent (project + thread + memories + search) |
