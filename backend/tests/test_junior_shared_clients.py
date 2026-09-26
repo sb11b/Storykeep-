@@ -107,8 +107,8 @@ def _windows(http):
 
 
 class SharedClientSmokeTests(unittest.TestCase):
-    def test_health_stamp_is_memory_write_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-memory-write-v1")
+    def test_health_stamp_is_sessions_page_v1(self):
+        self.assertEqual(HEALTH_STAMP, "junior-client-sessions-page-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -126,6 +126,7 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertIn("/api/v1/junior/threads", junior)
         self.assertIn("/api/v1/junior/messages", junior)
         self.assertIn("/api/v1/junior/agents", junior)
+        self.assertIn("/api/v1/junior/sessions", junior)
         self.assertTrue(any("/threads/{thread_id}/messages" in path for path in junior))
 
     def test_phone_and_windows_require_login(self):
@@ -595,6 +596,40 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 403)
         self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
         self.assertIn("did not save this memory", ctx.exception.user_message)
+
+    def test_sessions_pass_page_params_and_403(self):
+        http = _ScriptedHttp([200, 403, 403, 403])
+        overlay = _windows(http)
+        overlay.get_sessions(limit=2, cursor="sess-1", venue="windows")
+        self.assertEqual(http.calls[0], ("GET", "/api/v1/junior/sessions"))
+        self.assertEqual(http.params[0], {"limit": 2, "cursor": "sess-1", "venue": "windows"})
+
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).get_sessions()
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not load sessions", ctx.exception.user_message)
+
+    def test_session_heartbeat_queues_and_replays(self):
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                phone_client(fail, queue_path=path).touch_session()
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertIn("did not record this session", ctx.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "session")
+        self.assertEqual(restarted.last_failed_post["venue"], "phone")
+        self.assertEqual(restarted.last_failed_post["device_label"], "junior-mobile")
+
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(replay_http.calls, [("POST", "/api/v1/junior/sessions")])
+        self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

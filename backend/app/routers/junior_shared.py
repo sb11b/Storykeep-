@@ -19,6 +19,8 @@ from app.schemas import (
     JuniorSharedContinueOut,
     JuniorSharedMemoryIn,
     JuniorSharedMemoryOut,
+    JuniorSessionIn,
+    JuniorSessionOut,
     JuniorSharedMessageIn,
     JuniorSharedMessageOut,
     JuniorSharedMessagePostOut,
@@ -268,6 +270,36 @@ def upsert_memory(
     db.commit()
     db.refresh(row)
     return JuniorSharedMemoryOut.model_validate(row)
+
+
+@router.get("/sessions", response_model=list[JuniorSessionOut])
+def list_sessions(
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+    venue: str | None = Query(default=None, max_length=24),
+) -> list[JuniorSessionOut]:
+    rows, next_cursor = store.list_sessions_page(
+        db, user, limit=limit, cursor=cursor, before_id=before_id, venue=venue
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSessionOut.model_validate(row) for row in rows]
+
+
+@router.post("/sessions", response_model=JuniorSessionOut)
+def heartbeat_session(
+    payload: JuniorSessionIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSessionOut:
+    incoming = payload or JuniorSessionIn()
+    row = store.touch_session(db, user, incoming.venue, incoming.device_label)
+    db.commit()
+    db.refresh(row)
+    return JuniorSessionOut.model_validate(row)
 
 
 def _context_out(pack: dict) -> JuniorAgentContextOut:

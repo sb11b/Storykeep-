@@ -83,6 +83,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             "/api/v1/junior/projects",
             "/api/v1/junior/agent-context?project=storykeep",
             "/api/v1/junior/agents",
+            "/api/v1/junior/sessions",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 401, path)
@@ -90,6 +91,10 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(client.post("/api/v1/junior/agents", json={"project_slug": "storykeep", "prompt": "go"}).status_code, 401)
         self.assertEqual(
             client.post("/api/v1/junior/memories", json={"kind": "note", "content": "keep"}).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.post("/api/v1/junior/sessions", json={"venue": "phone", "device_label": "junior-mobile"}).status_code,
             401,
         )
 
@@ -104,9 +109,11 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", "/api/v1/junior/projects"),
             ("GET", "/api/v1/junior/agent-context?project=storykeep"),
             ("GET", "/api/v1/junior/agents"),
+            ("GET", "/api/v1/junior/sessions"),
             ("POST", "/api/v1/junior/messages"),
             ("POST", "/api/v1/junior/agents"),
             ("POST", "/api/v1/junior/memories"),
+            ("POST", "/api/v1/junior/sessions"),
         ):
             response = client.request(
                 method,
@@ -627,6 +634,43 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             store.normalize_slug("Story Keep")
         self.assertEqual(caught.exception.status_code, 400)
+
+    def test_list_and_touch_sessions(self):
+        now = datetime.now(timezone.utc)
+        row = SimpleNamespace(
+            id=uuid.uuid4(),
+            venue="phone",
+            device_label="junior-mobile",
+            last_seen_at=now,
+            created_at=now,
+        )
+        app = _app()
+        with patch("app.routers.junior_shared.store.list_sessions_page", return_value=([row], None)):
+            listed = TestClient(app).get("/api/v1/junior/sessions")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["venue"], "phone")
+
+        with patch(
+            "app.routers.junior_shared.store.list_sessions_page",
+            return_value=([row], str(row.id)),
+        ) as paged:
+            page = TestClient(app).get(
+                "/api/v1/junior/sessions",
+                params={"limit": 1, "cursor": str(row.id), "venue": "phone"},
+            )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers.get("x-next-cursor"), str(row.id))
+        self.assertEqual(paged.call_args.kwargs["limit"], 1)
+        self.assertEqual(paged.call_args.kwargs["venue"], "phone")
+
+        with patch("app.routers.junior_shared.store.touch_session", return_value=row) as touched:
+            saved = TestClient(app).post(
+                "/api/v1/junior/sessions",
+                json={"venue": "phone", "device_label": "junior-mobile"},
+            )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["device_label"], "junior-mobile")
+        self.assertEqual(touched.call_args.args[2], "phone")
 
     def test_seed_writes_projects_and_decisions(self):
         owner = _owner()

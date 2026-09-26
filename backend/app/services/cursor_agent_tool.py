@@ -262,6 +262,31 @@ _NEXT_STEP_RE = re.compile(
     re.I,
 )
 
+SEQ_10_TASK = """Sequenced #10 — next after junior-client-memory-write-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, or #9).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #7, #8, and #9 are already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients POST /memories; failed writes replay on that route
+- POST /threads/{id}/continue history pages with limit/cursor or before_id
+- GET /projects, /agents, /search, /memories, /threads, /messages page the same way
+- Clients POST /projects and /agents with FIFO replay
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-memory-write-v1
+
+Your job (#10):
+1. Both clients POST /sessions (heartbeat). Failed writes stay on the FIFO and replay on that same route. Same auth rule. No silent drop.
+2. Paginate GET /sessions (limit/cursor or before_id). Same require_user rules. Still no public routes.
+3. Both clients call GET /sessions (same auth).
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for session replay, session pagination, and 403. Keep existing tests green.
+6. Health stamp: junior-client-sessions-page-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
 SEQ_9_TASK = """Sequenced #9 — next after junior-client-agents-page-v1 (do not redo #2, #3, #4, #5, #6, #7, or #8).
 
 Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
@@ -461,14 +486,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_8_TASK
     if number == 9:
         return SEQ_9_TASK
-    if number is not None and number > 9:
+    if number == 10:
+        return SEQ_10_TASK
+    if number is not None and number > 10:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(10, text)
+        return _later_sequence_task(11, text)
     return None
 
 

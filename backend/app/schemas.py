@@ -872,6 +872,21 @@ class JuniorSharedMemoryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JuniorSessionIn(BaseModel):
+    venue: str | None = Field(default=None, max_length=24)
+    device_label: str | None = Field(default=None, max_length=120)
+
+
+class JuniorSessionOut(BaseModel):
+    id: uuid.UUID
+    venue: str
+    device_label: str | None = None
+    last_seen_at: datetime
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class JuniorProjectIn(BaseModel):
     slug: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=120)

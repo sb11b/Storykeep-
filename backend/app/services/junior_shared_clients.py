@@ -35,7 +35,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-memory-write-v1"
+HEALTH_STAMP = "junior-client-sessions-page-v1"
 
 
 class SharedMemoryError(Exception):
@@ -274,6 +274,8 @@ class SharedMemoryClient:
             return "project"
         if path.rstrip("/").endswith("/memories"):
             return "memory"
+        if path.rstrip("/").endswith("/sessions"):
+            return "session"
         return "message"
 
     def _replay_one(self, post: dict[str, Any], text: str) -> Any:
@@ -305,6 +307,8 @@ class SharedMemoryClient:
                 kind=post.get("memory_kind") or post.get("fact_kind"),
                 source_thread=post.get("source_thread"),
             )
+        if kind == "session":
+            return self.touch_session(device_label=post.get("device_label"))
         return self.post_turn(text, thread_id=thread_id)
 
     def _remember_write_failure(
@@ -325,6 +329,8 @@ class SharedMemoryClient:
             kind = "project"
         elif path.rstrip("/").endswith("/memories"):
             kind = "memory"
+        elif path.rstrip("/").endswith("/sessions"):
+            kind = "session"
         else:
             kind = "message"
         queued = {
@@ -349,7 +355,7 @@ class SharedMemoryClient:
             "path": path,
             "kind": kind,
             "venue": self.venue,
-            "device_label": self.device_label,
+            "device_label": body.get("device_label") or self.device_label,
             "action": exc.action,
             "user_message": exc.user_message,
             "status_code": exc.status_code,
@@ -539,6 +545,36 @@ class SharedMemoryClient:
         params = self._page_params(limit=limit, cursor=cursor, before_id=before_id) or {}
         params["q"] = query
         return self._read(f"{API_PREFIX}/search", action="search", params=params)
+
+    def get_sessions(
+        self,
+        *,
+        venue: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id) or {}
+        if venue:
+            params["venue"] = venue
+        return self._read(
+            f"{API_PREFIX}/sessions",
+            action="load sessions",
+            **({"params": params} if params else {}),
+        )
+
+    def touch_session(self, *, device_label: str | None = None) -> Any:
+        body: dict[str, Any] = {
+            "venue": self.venue,
+            "device_label": device_label or self.device_label,
+        }
+        return self._write(
+            "post",
+            f"{API_PREFIX}/sessions",
+            action="record this session",
+            body=body,
+            json=body,
+        )
 
     def get_memories(
         self,

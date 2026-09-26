@@ -385,31 +385,74 @@ def list_recent_messages_page(
     return page, next_cursor
 
 
-def touch_session(db: Session, user: User, venue: str, device_label: str | None) -> None:
+def touch_session(db: Session, user: User, venue: str, device_label: str | None) -> JuniorSession:
     now = datetime.now(timezone.utc)
+    venue_value = normalize_venue(venue)
     label = _clean_text(device_label, max_len=120, required=False) or None
     existing = db.scalar(
         select(JuniorSession)
         .where(
             JuniorSession.user_id == user.id,
-            JuniorSession.venue == venue,
+            JuniorSession.venue == venue_value,
             JuniorSession.device_label.is_(None) if label is None else JuniorSession.device_label == label,
         )
         .order_by(JuniorSession.last_seen_at.desc())
         .limit(1)
     )
     if existing is None:
-        db.add(
-            JuniorSession(
-                user_id=user.id,
-                venue=venue,
-                device_label=label,
-                last_seen_at=now,
-                created_at=now,
+        row = JuniorSession(
+            user_id=user.id,
+            venue=venue_value,
+            device_label=label,
+            last_seen_at=now,
+            created_at=now,
+        )
+        db.add(row)
+        db.flush()
+        return row
+    existing.last_seen_at = now
+    db.flush()
+    return existing
+
+
+def list_sessions_page(
+    db: Session,
+    user: User,
+    *,
+    limit: int | None = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+    venue: str | None = None,
+) -> tuple[list[JuniorSession], str | None]:
+    cap = clamp_page_limit(limit)
+    stmt = select(JuniorSession).where(JuniorSession.user_id == user.id)
+    if venue:
+        stmt = stmt.where(JuniorSession.venue == normalize_venue(venue))
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorSession).where(
+                JuniorSession.user_id == user.id, JuniorSession.id == marker
             )
         )
-        return
-    existing.last_seen_at = now
+        if ref is not None:
+            stmt = stmt.where(
+                or_(
+                    JuniorSession.last_seen_at < ref.last_seen_at,
+                    and_(
+                        JuniorSession.last_seen_at == ref.last_seen_at,
+                        JuniorSession.id < ref.id,
+                    ),
+                )
+            )
+    stmt = stmt.order_by(
+        JuniorSession.last_seen_at.desc(), JuniorSession.id.desc()
+    ).limit(cap + 1)
+    rows = list(db.scalars(stmt))
+    has_more = len(rows) > cap
+    page = rows[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return page, next_cursor
 
 
 def recent_thread_context(db: Session, thread: JuniorThread) -> list[JuniorThreadMessage]:
