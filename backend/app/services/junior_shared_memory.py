@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -164,15 +164,88 @@ def resolve_thread(
     return create_thread(db, user, title=None, venue=venue)
 
 
-def list_threads(db: Session, user: User, *, limit: int = 50) -> list[JuniorThread]:
-    cap = max(1, min(int(limit or 50), 100))
-    stmt = (
-        select(JuniorThread)
-        .where(JuniorThread.user_id == user.id)
-        .order_by(JuniorThread.updated_at.desc())
-        .limit(cap)
-    )
-    return list(db.scalars(stmt))
+PAGE_MAX = 100
+PAGE_DEFAULT = 50
+
+
+def clamp_page_limit(limit: int | None, *, default: int = PAGE_DEFAULT) -> int:
+    if limit is None:
+        return default
+    return max(1, min(int(limit), PAGE_MAX))
+
+
+def _as_uuid(value: UUID | str | None) -> UUID | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def paginate_items(
+    items: list[Any],
+    *,
+    limit: int | None = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+    id_attr: str = "id",
+) -> tuple[list[Any], str | None]:
+    """In-memory page: skip the marker id, then take `limit`. Used by tests and clients."""
+    cap = clamp_page_limit(limit)
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    rows = list(items)
+    if marker is not None:
+        ids = [getattr(item, id_attr) for item in rows]
+        if marker in ids:
+            rows = rows[ids.index(marker) + 1 :]
+    page = rows[:cap]
+    next_cursor = str(getattr(page[-1], id_attr)) if len(rows) > cap and page else None
+    return page, next_cursor
+
+
+def list_threads(
+    db: Session,
+    user: User,
+    *,
+    limit: int = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> list[JuniorThread]:
+    rows, _ = list_threads_page(db, user, limit=limit, cursor=cursor, before_id=before_id)
+    return rows
+
+
+def list_threads_page(
+    db: Session,
+    user: User,
+    *,
+    limit: int = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[JuniorThread], str | None]:
+    cap = clamp_page_limit(limit)
+    stmt = select(JuniorThread).where(JuniorThread.user_id == user.id)
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorThread).where(JuniorThread.user_id == user.id, JuniorThread.id == marker)
+        )
+        if ref is not None:
+            stmt = stmt.where(
+                or_(
+                    JuniorThread.updated_at < ref.updated_at,
+                    and_(JuniorThread.updated_at == ref.updated_at, JuniorThread.id < ref.id),
+                )
+            )
+    stmt = stmt.order_by(JuniorThread.updated_at.desc(), JuniorThread.id.desc()).limit(cap + 1)
+    rows = list(db.scalars(stmt))
+    has_more = len(rows) > cap
+    page = rows[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return page, next_cursor
 
 
 def create_thread(
@@ -197,14 +270,112 @@ def create_thread(
     return row
 
 
-def list_messages(db: Session, user: User, thread_id: UUID) -> list[JuniorThreadMessage]:
+def list_messages(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    limit: int | None = None,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> list[JuniorThreadMessage]:
+    rows, _ = list_messages_page(
+        db, user, thread_id, limit=limit, cursor=cursor, before_id=before_id
+    )
+    return rows
+
+
+def list_messages_page(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    limit: int | None = None,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[JuniorThreadMessage], str | None]:
     thread_owned(db, user, thread_id)
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if limit is None and marker is None:
+        stmt = (
+            select(JuniorThreadMessage)
+            .where(JuniorThreadMessage.thread_id == thread_id)
+            .order_by(JuniorThreadMessage.created_at.asc(), JuniorThreadMessage.id.asc())
+        )
+        return list(db.scalars(stmt)), None
+
+    cap = clamp_page_limit(limit)
+    filters = [JuniorThreadMessage.thread_id == thread_id]
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorThreadMessage).where(
+                JuniorThreadMessage.thread_id == thread_id,
+                JuniorThreadMessage.id == marker,
+            )
+        )
+        if ref is not None:
+            filters.append(
+                or_(
+                    JuniorThreadMessage.created_at < ref.created_at,
+                    and_(
+                        JuniorThreadMessage.created_at == ref.created_at,
+                        JuniorThreadMessage.id < ref.id,
+                    ),
+                )
+            )
     stmt = (
         select(JuniorThreadMessage)
-        .where(JuniorThreadMessage.thread_id == thread_id)
-        .order_by(JuniorThreadMessage.created_at.asc(), JuniorThreadMessage.id.asc())
+        .where(*filters)
+        .order_by(JuniorThreadMessage.created_at.desc(), JuniorThreadMessage.id.desc())
+        .limit(cap + 1)
     )
-    return list(db.scalars(stmt))
+    newest_first = list(db.scalars(stmt))
+    has_more = len(newest_first) > cap
+    page = list(reversed(newest_first[:cap]))
+    next_cursor = str(page[0].id) if has_more and page else None
+    return page, next_cursor
+
+
+def list_recent_messages_page(
+    db: Session,
+    user: User,
+    *,
+    limit: int = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+    thread_id: UUID | None = None,
+) -> tuple[list[JuniorThreadMessage], str | None]:
+    if thread_id is not None:
+        return list_messages_page(
+            db, user, thread_id, limit=limit, cursor=cursor, before_id=before_id
+        )
+    cap = clamp_page_limit(limit)
+    stmt = (
+        select(JuniorThreadMessage)
+        .join(JuniorThread, JuniorThreadMessage.thread_id == JuniorThread.id)
+        .where(JuniorThread.user_id == user.id)
+    )
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(select(JuniorThreadMessage).where(JuniorThreadMessage.id == marker))
+        if ref is not None:
+            stmt = stmt.where(
+                or_(
+                    JuniorThreadMessage.created_at < ref.created_at,
+                    and_(
+                        JuniorThreadMessage.created_at == ref.created_at,
+                        JuniorThreadMessage.id < ref.id,
+                    ),
+                )
+            )
+    stmt = stmt.order_by(
+        JuniorThreadMessage.created_at.desc(), JuniorThreadMessage.id.desc()
+    ).limit(cap + 1)
+    newest_first = list(db.scalars(stmt))
+    has_more = len(newest_first) > cap
+    page = newest_first[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return page, next_cursor
 
 
 def touch_session(db: Session, user: User, venue: str, device_label: str | None) -> None:

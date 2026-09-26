@@ -516,6 +516,7 @@ def _build_info() -> dict[str, str]:
 
 def health_payload() -> dict[str, str]:
     from app.services import chat as chat_service
+    from app.services.junior_shared_clients import HEALTH_STAMP
 
     body = {
         "status": "ok",
@@ -523,6 +524,7 @@ def health_payload() -> dict[str, str]:
         "junior_max_response_words": str(chat_service.JUNIOR_MAX_RESPONSE_WORDS),
         "junior_max_output_tokens": str(chat_service.resolved_max_output_tokens()),
         "cursor_delegate": "configured" if settings.cursor_configured else "missing",
+        "junior_clients": HEALTH_STAMP,
     }
     snap = rss.last_fetch_snapshot()
     if snap:

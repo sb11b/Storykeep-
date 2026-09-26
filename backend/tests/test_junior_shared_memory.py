@@ -77,6 +77,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
         client = TestClient(app)
         for path in (
             "/api/v1/junior/threads",
+            "/api/v1/junior/messages",
             "/api/v1/junior/search?q=hello",
             "/api/v1/junior/memories",
             "/api/v1/junior/projects",
@@ -92,6 +93,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
         client = TestClient(app)
         for method, path in (
             ("GET", "/api/v1/junior/threads"),
+            ("GET", "/api/v1/junior/messages"),
             ("GET", "/api/v1/junior/search?q=hello"),
             ("GET", "/api/v1/junior/memories"),
             ("GET", "/api/v1/junior/projects"),
@@ -125,13 +127,23 @@ class JuniorSharedRouteTests(unittest.TestCase):
             updated_at=now,
         )
         app = _app()
-        with patch("app.routers.junior_shared.store.list_threads", return_value=[thread]):
-            response = TestClient(app).get("/api/v1/junior/threads")
+        with patch(
+            "app.routers.junior_shared.store.list_threads_page",
+            return_value=([thread], None),
+        ) as listed:
+            response = TestClient(app).get(
+                "/api/v1/junior/threads",
+                params={"limit": 1, "before_id": str(thread.id)},
+            )
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(len(body), 1)
         self.assertEqual(body[0]["title"], "Equipment finance")
         self.assertEqual(body[0]["venue_last"], "phone")
+        self.assertEqual(response.headers.get("x-has-more"), "false")
+        listed.assert_called_once()
+        self.assertEqual(listed.call_args.kwargs["limit"], 1)
+        self.assertEqual(str(listed.call_args.kwargs["before_id"]), str(thread.id))
 
     def test_create_thread_and_post_message(self):
         now = datetime.now(timezone.utc)
@@ -388,6 +400,18 @@ class JuniorSharedServiceTests(unittest.TestCase):
         self.assertIn("DATABASE_URL=${{Postgres.DATABASE_URL}}", railway)
         self.assertIn("DATABASE_URL=${{Postgres.DATABASE_URL}}", readme)
         self.assertEqual(store.OWNER_EMAIL, "angry.tune8751@fastmail.com")
+
+    def test_paginate_items_uses_before_id_and_limit(self):
+        rows = [SimpleNamespace(id=uuid.uuid4()) for _ in range(5)]
+        page, next_cursor = store.paginate_items(rows, limit=2)
+        self.assertEqual(page, rows[:2])
+        self.assertEqual(next_cursor, str(rows[1].id))
+        page2, next2 = store.paginate_items(rows, limit=2, before_id=rows[1].id)
+        self.assertEqual(page2, rows[2:4])
+        self.assertEqual(next2, str(rows[3].id))
+        last, done = store.paginate_items(rows, limit=2, cursor=rows[3].id)
+        self.assertEqual(last, rows[4:])
+        self.assertIsNone(done)
 
 
 class JuniorProjectAndAgentTests(unittest.TestCase):

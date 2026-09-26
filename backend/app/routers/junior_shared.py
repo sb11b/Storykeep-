@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -41,12 +41,26 @@ def _turn_out(thread_id: UUID, user_row, junior_row, reply_status: str) -> Junio
     )
 
 
+def _page_headers(response: Response, next_cursor: str | None) -> None:
+    response.headers["X-Has-More"] = "true" if next_cursor else "false"
+    if next_cursor:
+        response.headers["X-Next-Cursor"] = next_cursor
+
+
 @router.get("/threads", response_model=list[JuniorSharedThreadOut])
 def list_threads(
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
 ) -> list[JuniorSharedThreadOut]:
-    return [JuniorSharedThreadOut.model_validate(row) for row in store.list_threads(db, user)]
+    rows, next_cursor = store.list_threads_page(
+        db, user, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedThreadOut.model_validate(row) for row in rows]
 
 
 @router.post("/threads")
@@ -81,10 +95,18 @@ def create_thread(
 @router.get("/threads/{thread_id}/messages", response_model=list[JuniorSharedMessageOut])
 def list_messages(
     thread_id: UUID,
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
 ) -> list[JuniorSharedMessageOut]:
-    return [JuniorSharedMessageOut.model_validate(row) for row in store.list_messages(db, user, thread_id)]
+    rows, next_cursor = store.list_messages_page(
+        db, user, thread_id, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedMessageOut.model_validate(row) for row in rows]
 
 
 @router.post("/threads/{thread_id}/messages", response_model=JuniorSharedMessagePostOut)
@@ -108,6 +130,23 @@ def post_message(
     if junior_row is not None:
         db.refresh(junior_row)
     return _turn_out(thread.id, user_row, junior_row, reply_status)
+
+
+@router.get("/messages", response_model=list[JuniorSharedMessageOut])
+def list_recent_messages(
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+    thread_id: UUID | None = Query(default=None),
+) -> list[JuniorSharedMessageOut]:
+    rows, next_cursor = store.list_recent_messages_page(
+        db, user, limit=limit, cursor=cursor, before_id=before_id, thread_id=thread_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedMessageOut.model_validate(row) for row in rows]
 
 
 @router.post("/messages", response_model=JuniorSharedMessagePostOut)
