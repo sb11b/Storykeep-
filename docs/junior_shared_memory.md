@@ -48,7 +48,7 @@ The phone app is **not** a second database. It is a client of this Memory API.
 | --- | --- |
 | Auth | Same StoryKeep user (`sk_access` or `Authorization: Bearer`). Same `user_id`. |
 | Venue | Set `venue=phone` on `POST /threads`, `/messages`, `/threads/{id}/messages`. `venue_last` on the thread becomes `phone`. |
-| Resume | `GET /threads` then `GET /threads/{id}/messages` or `GET /messages`, or `GET /search?q=` then `POST /threads/{id}/continue` (or keep posting to that thread). Those GETs take `limit` plus `cursor` or `before_id`. History is server-side; a failed post is queued locally until replay. |
+| Resume | `GET /threads` then `GET /threads/{id}/messages` or `GET /messages`, or `GET /search?q=` then `POST /threads/{id}/continue` (or keep posting to that thread). Those GETs (and `/search`, `/memories`) take `limit` plus `cursor` or `before_id`. History is server-side; failed posts stay on a local FIFO until replay. |
 | Sessions | Optional `device_label` updates `junior_sessions` so overlay/phone last-seen is visible. |
 | Voice | Finalized utterances still POST as messages with `venue=voice` (or `phone` if the app treats the turn as typed). Live audio stays on the device. |
 
@@ -61,7 +61,7 @@ StoryKeep ships the two callers in `backend/app/services/junior_shared_clients.p
 | `phone_client` | `phone` | `junior-mobile` | `junior-phone` |
 | `windows_client` | `windows` | `windows-overlay` | `windows-overlay` |
 
-Both post to `POST /api/v1/junior/messages` (or `/threads/{id}/messages`) and read with `GET /threads`, `GET /messages`, and `GET /threads/{id}/messages` (`limit` plus `cursor` or `before_id`; `X-Next-Cursor` when another page exists). Login required. A demo account gets 403. The callers retry 401/403/5xx (and transport errors) with backoff, then raise a short user-visible error on the phone and Windows overlay surfaces — a failed post is never dropped silently. `last_failed_post` is written to a local queue and replayed after a successful login with the same auth.
+Both post to `POST /api/v1/junior/messages` (or `/threads/{id}/messages`) and resume with `POST /threads/{id}/continue`. They read with `GET /threads`, `GET /messages`, `GET /threads/{id}/messages`, `GET /search`, and `GET /memories` (`limit` plus `cursor` or `before_id`; `X-Next-Cursor` when another page exists). Login required. A demo account gets 403. The callers retry 401/403/5xx (and transport errors) with backoff, then raise a short user-visible error on the phone and Windows overlay surfaces — a failed post is never dropped silently. Failed writes stay on a local FIFO and replay in order after a successful login with the same auth.
 
 Seed project slug: `junior-phone` (kept for API stability). Display name **Junior mobile**. Repo: [https://cursor.com/codebase/steve-bitsko/junior-mobile](https://cursor.com/codebase/steve-bitsko/junior-mobile) (Expo phone client; `venue=phone`; StoryKeep `/api/v1/junior/*`).
 

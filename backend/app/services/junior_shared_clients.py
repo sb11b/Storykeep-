@@ -5,9 +5,9 @@ overlay-only URL. `venue` and `device_label` are what mark the client.
 
 Writes retry on 401/403/5xx (and transport errors) with backoff. A failed
 post never disappears: callers get a `SharedMemoryError` with a short
-user-visible message after the last attempt, and `last_failed_post` is
-written to a local queue so it survives a client restart. After a
-successful login the same client replays that post with the same auth.
+user-visible message after the last attempt, and failed writes go on a
+local FIFO queue so they survive a client restart. After a successful
+login the same client replays queued posts in order with the same auth.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-queue-page-v1"
+HEALTH_STAMP = "junior-client-queue-multi-v1"
 
 
 class SharedMemoryError(Exception):
@@ -85,42 +85,67 @@ def next_page_cursor(response: Any) -> str | None:
 
 
 class LocalPostQueue:
-    """One persisted failed write. Survives process restart. Never drops silently."""
+    """FIFO of persisted failed writes. Survives process restart. Never drops silently."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        self._last: dict[str, Any] | None = None
+        self._posts: list[dict[str, Any]] = []
         self.load()
 
-    def load(self) -> dict[str, Any] | None:
+    def load(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
-            self._last = None
-            return None
+            self._posts = []
+            return self._posts
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
-            self._last = None
-            return None
-        self._last = raw if isinstance(raw, dict) else None
-        return self._last
+            self._posts = []
+            return self._posts
+        if isinstance(raw, list):
+            self._posts = [item for item in raw if isinstance(item, dict)]
+        elif isinstance(raw, dict):
+            nested = raw.get("posts")
+            if isinstance(nested, list):
+                self._posts = [item for item in nested if isinstance(item, dict)]
+            elif raw:
+                self._posts = [raw]
+            else:
+                self._posts = []
+        else:
+            self._posts = []
+        return self._posts
+
+    @property
+    def failed_posts(self) -> list[dict[str, Any]]:
+        return list(self._posts)
 
     @property
     def last_failed_post(self) -> dict[str, Any] | None:
-        return self._last
+        return self._posts[0] if self._posts else None
 
     def save(self, post: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = dict(post)
-        self.path.write_text(json.dumps(payload, default=str), encoding="utf-8")
-        self._last = payload
+        self._posts.append(payload)
+        self._persist()
+
+    def replace(self, posts: list[dict[str, Any]]) -> None:
+        self._posts = [dict(item) for item in posts if isinstance(item, dict)]
+        self._persist()
 
     def clear(self) -> None:
+        self._posts = []
         if self.path.is_file():
             try:
                 self.path.unlink()
             except OSError:
                 pass
-        self._last = None
+
+    def _persist(self) -> None:
+        if not self._posts:
+            self.clear()
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({"posts": self._posts}, default=str), encoding="utf-8")
 
 
 def _status_code(response: Any) -> int | None:
@@ -152,6 +177,11 @@ class SharedMemoryClient:
         self.queue = queue or LocalPostQueue(queue_path or default_queue_path(venue))
         self.last_user_error: str | None = None
         self._auth_key: str | None = None
+        self._replaying = False
+
+    @property
+    def failed_posts(self) -> list[dict[str, Any]]:
+        return self.queue.failed_posts
 
     @property
     def last_failed_post(self) -> dict[str, Any] | None:
@@ -161,8 +191,8 @@ class SharedMemoryClient:
     def user_visible_error(self) -> str | None:
         if self.last_user_error:
             return self.last_user_error
-        post = self.last_failed_post
-        if post:
+        posts = self.failed_posts
+        for post in reversed(posts):
             message = post.get("user_message")
             if isinstance(message, str) and message:
                 return message
@@ -175,6 +205,8 @@ class SharedMemoryClient:
             "device_label": self.device_label,
             "user_visible_error": self.user_visible_error,
             "last_failed_post": self.last_failed_post,
+            "failed_posts": self.failed_posts,
+            "queue_depth": len(self.failed_posts),
         }
 
     def mark_authenticated(self, auth_key: str) -> None:
@@ -185,23 +217,50 @@ class SharedMemoryClient:
         return self.replay_failed_post()
 
     def replay_failed_post(self) -> Any | None:
-        post = self.last_failed_post
-        if not post:
+        pending = self.failed_posts
+        if not pending:
             return None
-        queued_auth = post.get("auth_key")
-        if queued_auth and self._auth_key and queued_auth != self._auth_key:
-            self.last_user_error = (
-                "Queued message is for a different sign-in. Junior did not drop it."
-            )
-            return None
-        text = str(post.get("text") or "")
-        if not text.strip():
-            return None
-        thread_id = post.get("thread_id")
-        return self.post_turn(text, thread_id=thread_id)
+        last_response: Any | None = None
+        remaining = list(pending)
+        self._replaying = True
+        try:
+            while remaining:
+                post = remaining[0]
+                queued_auth = post.get("auth_key")
+                if queued_auth and self._auth_key and queued_auth != self._auth_key:
+                    self.last_user_error = (
+                        "Queued message is for a different sign-in. Junior did not drop it."
+                    )
+                    self.queue.replace(remaining)
+                    return None
+                text = str(post.get("text") or "")
+                if not text.strip():
+                    remaining.pop(0)
+                    self.queue.replace(remaining)
+                    continue
+                last_response = self.post_turn(text, thread_id=post.get("thread_id"))
+                remaining.pop(0)
+                self.queue.replace(remaining)
+            self.last_user_error = None
+            return last_response
+        except SharedMemoryError as exc:
+            self.last_user_error = exc.user_message
+            if remaining:
+                remaining[0] = {
+                    **remaining[0],
+                    "user_message": exc.user_message,
+                    "status_code": exc.status_code,
+                    "auth_key": self._auth_key,
+                }
+                self.queue.replace(remaining)
+            raise
+        finally:
+            self._replaying = False
 
     def _remember_write_failure(self, exc: SharedMemoryError, body: dict[str, Any]) -> None:
         self.last_user_error = exc.user_message
+        if self._replaying:
+            return
         queued = {
             "text": body.get("text"),
             "title": body.get("title"),
@@ -217,7 +276,8 @@ class SharedMemoryClient:
 
     def _clear_write_failure(self) -> None:
         self.last_user_error = None
-        self.queue.clear()
+        if self._replaying:
+            return
 
     def _request(
         self,
@@ -385,8 +445,56 @@ class SharedMemoryClient:
             **({"params": params} if params else {}),
         )
 
-    def search(self, query: str) -> Any:
-        return self._read(f"{API_PREFIX}/search", action="search", params={"q": query})
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id) or {}
+        params["q"] = query
+        return self._read(f"{API_PREFIX}/search", action="search", params=params)
+
+    def get_memories(
+        self,
+        *,
+        kind: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id) or {}
+        if kind:
+            params["kind"] = kind
+        return self._read(
+            f"{API_PREFIX}/memories",
+            action="load memories",
+            **({"params": params} if params else {}),
+        )
+
+    def continue_thread(self, thread_id: UUID | str, text: str | None = None) -> Any:
+        body: dict[str, Any] = {
+            "venue": self.venue,
+            "device_label": self.device_label,
+        }
+        if text:
+            body["text"] = text
+            queued = {**body, "thread_id": str(thread_id)}
+            return self._write(
+                "post",
+                f"{API_PREFIX}/threads/{thread_id}/continue",
+                action="save this message",
+                body=queued,
+                json=body,
+            )
+        return self._request(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}/continue",
+            action="load messages",
+            json=body,
+        )
 
     def project(self) -> Any:
         return self._read(

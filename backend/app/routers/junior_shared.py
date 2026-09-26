@@ -212,20 +212,36 @@ def continue_thread(
 
 @router.get("/search", response_model=list[JuniorSharedSearchHitOut])
 def search_memory(
+    response: Response,
     q: str = Query(min_length=1, max_length=200),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
 ) -> list[JuniorSharedSearchHitOut]:
-    return [JuniorSharedSearchHitOut.model_validate(hit) for hit in store.search(db, user, q)]
+    hits, next_cursor = store.search_page(
+        db, user, q, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedSearchHitOut.model_validate(hit) for hit in hits]
 
 
 @router.get("/memories", response_model=list[JuniorSharedMemoryOut])
 def list_memories(
+    response: Response,
     kind: str | None = Query(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
 ) -> list[JuniorSharedMemoryOut]:
-    return [JuniorSharedMemoryOut.model_validate(row) for row in store.list_memories(db, user, kind=kind)]
+    rows, next_cursor = store.list_memories_page(
+        db, user, kind=kind, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedMemoryOut.model_validate(row) for row in rows]
 
 
 @router.post("/memories", response_model=JuniorSharedMemoryOut)

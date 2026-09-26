@@ -185,6 +185,12 @@ def _as_uuid(value: UUID | str | None) -> UUID | None:
         return None
 
 
+def _item_id(item: Any, id_attr: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(id_attr)
+    return getattr(item, id_attr, None)
+
+
 def paginate_items(
     items: list[Any],
     *,
@@ -198,11 +204,12 @@ def paginate_items(
     marker = _as_uuid(before_id) or _as_uuid(cursor)
     rows = list(items)
     if marker is not None:
-        ids = [getattr(item, id_attr) for item in rows]
+        ids = [_as_uuid(_item_id(item, id_attr)) for item in rows]
         if marker in ids:
             rows = rows[ids.index(marker) + 1 :]
     page = rows[:cap]
-    next_cursor = str(getattr(page[-1], id_attr)) if len(rows) > cap and page else None
+    next_id = _item_id(page[-1], id_attr) if len(rows) > cap and page else None
+    next_cursor = str(next_id) if next_id is not None else None
     return page, next_cursor
 
 
@@ -587,8 +594,21 @@ def post_turn(
 
 
 def search(db: Session, user: User, query: str, *, limit: int = 25) -> list[dict[str, Any]]:
+    hits, _ = search_page(db, user, query, limit=limit)
+    return hits
+
+
+def search_page(
+    db: Session,
+    user: User,
+    query: str,
+    *,
+    limit: int | None = 25,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
     q = _clean_text(query, max_len=200)
-    cap = max(1, min(int(limit or 25), 50))
+    cap = clamp_page_limit(limit, default=25)
     tsquery = func.plainto_tsquery("english", q)
     msg_rank = func.ts_rank_cd(JuniorThreadMessage.content_tsv, tsquery)
     thread_rank = func.ts_rank_cd(JuniorThread.title_tsv, tsquery)
@@ -602,8 +622,8 @@ def search(db: Session, user: User, query: str, *, limit: int = 25) -> list[dict
                 JuniorThread.title_tsv.op("@@")(tsquery),
             ),
         )
-        .order_by((msg_rank + thread_rank).desc(), JuniorThread.updated_at.desc())
-        .limit(cap)
+        .order_by((msg_rank + thread_rank).desc(), JuniorThread.updated_at.desc(), JuniorThreadMessage.id.desc())
+        .limit(PAGE_MAX)
     )
     hits: list[dict[str, Any]] = []
     for thread, message, rank in db.execute(stmt):
@@ -619,15 +639,50 @@ def search(db: Session, user: User, query: str, *, limit: int = 25) -> list[dict
                 "rank": float(rank or 0),
             }
         )
-    return hits
+    return paginate_items(hits, limit=cap, cursor=cursor, before_id=before_id, id_attr="message_id")
 
 
 def list_memories(db: Session, user: User, *, kind: str | None = None) -> list[JuniorMemoryFact]:
+    rows, _ = list_memories_page(db, user, kind=kind)
+    return rows
+
+
+def list_memories_page(
+    db: Session,
+    user: User,
+    *,
+    kind: str | None = None,
+    limit: int | None = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[JuniorMemoryFact], str | None]:
+    cap = clamp_page_limit(limit)
     stmt = select(JuniorMemoryFact).where(JuniorMemoryFact.user_id == user.id)
     if kind:
         stmt = stmt.where(JuniorMemoryFact.kind == normalize_kind(kind))
-    stmt = stmt.order_by(JuniorMemoryFact.updated_at.desc())
-    return list(db.scalars(stmt))
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorMemoryFact).where(
+                JuniorMemoryFact.user_id == user.id, JuniorMemoryFact.id == marker
+            )
+        )
+        if ref is not None:
+            stmt = stmt.where(
+                or_(
+                    JuniorMemoryFact.updated_at < ref.updated_at,
+                    and_(
+                        JuniorMemoryFact.updated_at == ref.updated_at,
+                        JuniorMemoryFact.id < ref.id,
+                    ),
+                )
+            )
+    stmt = stmt.order_by(JuniorMemoryFact.updated_at.desc(), JuniorMemoryFact.id.desc()).limit(cap + 1)
+    rows = list(db.scalars(stmt))
+    has_more = len(rows) > cap
+    page = rows[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return page, next_cursor
 
 
 def upsert_memory(

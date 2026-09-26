@@ -108,7 +108,7 @@ def _windows(http):
 
 class SharedClientSmokeTests(unittest.TestCase):
     def test_health_stamp_is_queue_page_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-queue-page-v1")
+        self.assertEqual(HEALTH_STAMP, "junior-client-queue-multi-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -364,6 +364,79 @@ class SharedClientSmokeTests(unittest.TestCase):
         phone.get_recent_messages(limit=4, cursor="msg-9")
         self.assertEqual(http.calls[2], ("GET", "/api/v1/junior/messages"))
         self.assertEqual(http.params[2], {"limit": 4, "cursor": "msg-9"})
+
+    def test_search_and_memories_pass_page_params(self):
+        http = _ScriptedHttp([200, 200, 403, 403, 403])
+        phone = _phone(http)
+        phone.search("trailer", limit=2, cursor="msg-1")
+        self.assertEqual(http.calls[0], ("GET", "/api/v1/junior/search"))
+        self.assertEqual(http.params[0], {"q": "trailer", "limit": 2, "cursor": "msg-1"})
+
+        overlay = _windows(http)
+        overlay.get_memories(kind="note", limit=3, before_id="mem-9")
+        self.assertEqual(http.calls[1], ("GET", "/api/v1/junior/memories"))
+        self.assertEqual(http.params[1]["limit"], 3)
+        self.assertEqual(http.params[1]["kind"], "note")
+
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).search("blocked")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+
+    def test_continue_posts_on_shared_resume_route(self):
+        thread, user_msg = _turn("phone")
+        app = _app(_owner())
+        with patch(
+            "app.routers.junior_shared.store.thread_owned",
+            return_value=thread,
+        ), patch(
+            "app.routers.junior_shared.store.post_turn",
+            return_value=(thread, user_msg, None, "stubbed_no_key"),
+        ), patch(
+            "app.routers.junior_shared.store.list_messages",
+            return_value=[user_msg],
+        ):
+            response = _phone(TestClient(app)).continue_thread(thread.id, text="from the phone")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user_message"]["venue"], "phone")
+
+        http = _ScriptedHttp([403, 403, 403])
+        overlay = _windows(http)
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                overlay.continue_thread(thread.id, text="must stay queued")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(overlay.last_failed_post["text"], "must stay queued")
+        self.assertEqual(overlay.surface_status()["queue_depth"], 1)
+
+    def test_fifo_queue_keeps_two_failed_posts_and_replays_in_order(self):
+        path = _queue_path()
+        first = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError):
+                phone_client(first, queue_path=path).post_turn("first keep")
+        second = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError):
+                phone_client(second, queue_path=path).post_turn("second keep")
+
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual([post["text"] for post in restarted.failed_posts], ["first keep", "second keep"])
+        self.assertEqual(restarted.last_failed_post["text"], "first keep")
+        self.assertEqual(restarted.surface_status()["queue_depth"], 2)
+
+        replay_http = _ScriptedHttp([200, 200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            replay_http.calls,
+            [("POST", "/api/v1/junior/messages"), ("POST", "/api/v1/junior/messages")],
+        )
+        self.assertEqual([call[1] for call in replay_http.calls], ["/api/v1/junior/messages"] * 2)
+        self.assertFalse(path.exists())
+        self.assertEqual(replayed.failed_posts, [])
 
     def test_both_clients_surface_queue_errors_not_only_logs(self):
         path_phone = _queue_path()

@@ -287,6 +287,29 @@ Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
 """
 
 
+SEQ_6_TASK = """Sequenced #6 — next after junior-client-queue-page-v1 on GitHub main (do not redo #2, #3, #4, or #5).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #5 is already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients persist last_failed_post and replay after the same login
+- Shared GET /threads, /messages, and /threads/{id}/messages take limit plus cursor or before_id
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-queue-page-v1
+
+Your job (#6):
+1. Local queue is a FIFO of failed posts (not only the last one). Replay in order after login. Same auth rule. No silent drop.
+2. Paginate GET /search and GET /memories (limit/cursor or before_id). Same require_user rules. Still no public routes.
+3. Both clients call POST /threads/{id}/continue for resume (same auth). Failed continue posts stay on the queue.
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for multi-item replay, search/memory pagination, continue, and 403. Keep existing tests green.
+6. Health stamp: junior-client-queue-multi-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
 SEQ_5_TASK = """Sequenced #5 — next after junior-client-robustness-v1 on GitHub main (do not redo #2, #3, or #4).
 
 Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main (739bafb or newer). #4 is already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
@@ -342,7 +365,7 @@ def _later_sequence_task(number: int, message: str) -> str:
     return (
         f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
         "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
-        "Do not say there is no agent start tool. Do not redo #2, #3, #4, or #5. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, or #6. "
         "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
         "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
         "Commit on a cursor/* branch and push that branch only.\n\n"
@@ -357,14 +380,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_4_TASK
     if number == 5:
         return SEQ_5_TASK
-    if number is not None and number > 5:
+    if number == 6:
+        return SEQ_6_TASK
+    if number is not None and number > 6:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return SEQ_5_TASK
+        return _later_sequence_task(7, text)
     return None
 
 

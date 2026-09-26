@@ -227,12 +227,12 @@ class JuniorSharedRouteTests(unittest.TestCase):
             updated_at=now,
         )
         app = _app()
-        with patch("app.routers.junior_shared.store.search", return_value=[hit]):
+        with patch("app.routers.junior_shared.store.search_page", return_value=([hit], None)):
             searched = TestClient(app).get("/api/v1/junior/search", params={"q": "equipment finance"})
         self.assertEqual(searched.status_code, 200)
         self.assertEqual(searched.json()[0]["snippet"], "equipment finance")
 
-        with patch("app.routers.junior_shared.store.list_memories", return_value=[fact]):
+        with patch("app.routers.junior_shared.store.list_memories_page", return_value=([fact], None)):
             listed = TestClient(app).get("/api/v1/junior/memories")
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()[0]["kind"], "preference")
@@ -412,6 +412,63 @@ class JuniorSharedServiceTests(unittest.TestCase):
         last, done = store.paginate_items(rows, limit=2, cursor=rows[3].id)
         self.assertEqual(last, rows[4:])
         self.assertIsNone(done)
+
+    def test_paginate_items_accepts_dict_message_ids(self):
+        ids = [uuid.uuid4() for _ in range(3)]
+        hits = [{"message_id": item, "snippet": str(i)} for i, item in enumerate(ids)]
+        page, next_cursor = store.paginate_items(hits, limit=1, id_attr="message_id")
+        self.assertEqual(page[0]["snippet"], "0")
+        self.assertEqual(next_cursor, str(ids[0]))
+        page2, done = store.paginate_items(hits, limit=2, cursor=ids[0], id_attr="message_id")
+        self.assertEqual([hit["snippet"] for hit in page2], ["1", "2"])
+        self.assertIsNone(done)
+
+    def test_search_and_memories_routes_page(self):
+        now = datetime.now(timezone.utc)
+        message_id = uuid.uuid4()
+        hit = {
+            "thread_id": uuid.uuid4(),
+            "thread_title": "Trailer",
+            "message_id": message_id,
+            "snippet": "remember the trailer",
+            "venue": "phone",
+            "created_at": now,
+            "rank": 1.0,
+        }
+        memory = SimpleNamespace(
+            id=uuid.uuid4(),
+            kind="note",
+            content="keep this",
+            source_thread=None,
+            created_at=now,
+            updated_at=now,
+        )
+        app = _app()
+        with patch(
+            "app.routers.junior_shared.store.search_page",
+            return_value=([hit], str(message_id)),
+        ) as searched:
+            response = TestClient(app).get(
+                "/api/v1/junior/search",
+                params={"q": "trailer", "limit": 1, "cursor": str(message_id)},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["snippet"], "remember the trailer")
+        self.assertEqual(response.headers.get("x-next-cursor"), str(message_id))
+        self.assertEqual(searched.call_args.kwargs["limit"], 1)
+
+        with patch(
+            "app.routers.junior_shared.store.list_memories_page",
+            return_value=([memory], str(memory.id)),
+        ) as listed:
+            memories = TestClient(app).get(
+                "/api/v1/junior/memories",
+                params={"limit": 1, "before_id": str(memory.id)},
+            )
+        self.assertEqual(memories.status_code, 200)
+        self.assertEqual(memories.json()[0]["content"], "keep this")
+        self.assertEqual(memories.headers.get("x-next-cursor"), str(memory.id))
+        self.assertEqual(listed.call_args.kwargs["limit"], 1)
 
 
 class JuniorProjectAndAgentTests(unittest.TestCase):
