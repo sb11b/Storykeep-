@@ -287,6 +287,30 @@ Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
 """
 
 
+SEQ_8_TASK = """Sequenced #8 — next after junior-client-context-page-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, or #7).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #7 is already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients replay queued continue posts through POST /threads/{id}/continue
+- Shared GET /projects takes limit plus cursor or before_id
+- Both clients call GET /projects and GET /agent-context
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-context-page-v1
+
+Your job (#8):
+1. Both clients POST /projects and POST /agents. Failed writes stay on the FIFO and replay on those same routes. Same auth rule. No silent drop.
+2. Paginate GET /agents (limit/cursor or before_id). Same require_user rules. Still no public routes.
+3. Both clients call GET /agents (same auth).
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for project/agent replay, agent-run pagination, and 403. Keep existing tests green.
+6. Health stamp: junior-client-agents-page-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
 SEQ_7_TASK = """Sequenced #7 — next after junior-client-queue-multi-v1 on GitHub main (do not redo #2, #3, #4, #5, or #6).
 
 Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #6 is already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
@@ -389,7 +413,7 @@ def _later_sequence_task(number: int, message: str) -> str:
     return (
         f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
         "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
-        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, or #7. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, or #8. "
         "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
         "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
         "Commit on a cursor/* branch and push that branch only.\n\n"
@@ -408,14 +432,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_6_TASK
     if number == 7:
         return SEQ_7_TASK
-    if number is not None and number > 7:
+    if number == 8:
+        return SEQ_8_TASK
+    if number is not None and number > 8:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(8, text)
+        return _later_sequence_task(9, text)
     return None
 
 

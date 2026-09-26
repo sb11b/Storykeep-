@@ -885,6 +885,50 @@ def build_agent_context(
     }
 
 
+def list_agent_runs(db: Session, user: User) -> list[JuniorAgentRun]:
+    rows, _ = list_agent_runs_page(db, user, limit=PAGE_MAX)
+    return rows
+
+
+def list_agent_runs_page(
+    db: Session,
+    user: User,
+    *,
+    limit: int | None = PAGE_DEFAULT,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+    project_slug: str | None = None,
+) -> tuple[list[JuniorAgentRun], str | None]:
+    cap = clamp_page_limit(limit)
+    stmt = select(JuniorAgentRun).where(JuniorAgentRun.user_id == user.id)
+    slug = (project_slug or "").strip().lower()
+    if slug:
+        stmt = stmt.where(JuniorAgentRun.project_slug == normalize_slug(slug))
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorAgentRun).where(
+                JuniorAgentRun.user_id == user.id, JuniorAgentRun.id == marker
+            )
+        )
+        if ref is not None:
+            stmt = stmt.where(
+                or_(
+                    JuniorAgentRun.created_at < ref.created_at,
+                    and_(
+                        JuniorAgentRun.created_at == ref.created_at,
+                        JuniorAgentRun.id < ref.id,
+                    ),
+                )
+            )
+    stmt = stmt.order_by(JuniorAgentRun.created_at.desc(), JuniorAgentRun.id.desc()).limit(cap + 1)
+    rows = list(db.scalars(stmt))
+    has_more = len(rows) > cap
+    page = rows[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return page, next_cursor
+
+
 def record_agent_run(
     db: Session,
     user: User,

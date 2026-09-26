@@ -82,6 +82,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             "/api/v1/junior/memories",
             "/api/v1/junior/projects",
             "/api/v1/junior/agent-context?project=storykeep",
+            "/api/v1/junior/agents",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 401, path)
@@ -98,6 +99,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", "/api/v1/junior/memories"),
             ("GET", "/api/v1/junior/projects"),
             ("GET", "/api/v1/junior/agent-context?project=storykeep"),
+            ("GET", "/api/v1/junior/agents"),
             ("POST", "/api/v1/junior/messages"),
             ("POST", "/api/v1/junior/agents"),
         ):
@@ -583,6 +585,20 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertIsNone(out["run"]["cursor_agent_id"])
         self.assertFalse(out["called_cursor_api"])
         self.assertEqual(out["context"]["project"]["slug"], "storykeep")
+
+        with patch(
+            "app.routers.junior_shared.store.list_agent_runs_page",
+            return_value=([run], str(run.id)),
+        ) as listed:
+            page = TestClient(app).get(
+                "/api/v1/junior/agents",
+                params={"limit": 1, "cursor": str(run.id), "project": "storykeep"},
+            )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.json()[0]["status"], "context_ready")
+        self.assertEqual(page.headers.get("x-next-cursor"), str(run.id))
+        self.assertEqual(listed.call_args.kwargs["limit"], 1)
+        self.assertEqual(listed.call_args.kwargs["project_slug"], "storykeep")
 
     def test_invalid_slug(self):
         with self.assertRaises(HTTPException) as caught:

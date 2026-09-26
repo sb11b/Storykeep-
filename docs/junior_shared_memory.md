@@ -109,7 +109,8 @@ Boot also seeds durable **decisions** in `junior_memories`: Railway Postgres is 
 
 1. `GET /api/v1/junior/projects` — pick a slug (or upsert one).
 2. `GET /api/v1/junior/agent-context?project=storykeep&q=` — pack is `{ project, thread_summary, recent_messages, memories, search_hits, launch_hint }`. Thread is last `open` (or `thread_id=`).
-3. `POST /api/v1/junior/agents` `{ project_slug, prompt, thread_id? }` — rebuilds that pack, inserts `junior_agent_runs` with `status=context_ready`, **does not** call the Cursor Cloud Agents API in this slice (`called_cursor_api: false`, `cursor_agent_id` null).
+3. `GET /api/v1/junior/agents` — that user’s recorded runs (`limit`, `cursor` or `before_id`, optional `project=`).
+4. `POST /api/v1/junior/agents` `{ project_slug, prompt, thread_id? }` — rebuilds that pack, inserts `junior_agent_runs` with `status=context_ready`, **does not** call the Cursor Cloud Agents API in this slice (`called_cursor_api: false`, `cursor_agent_id` null).
 
 Use `launch_hint` + the pack as the agent prompt context so a StoryKeep-only paste is not the whole brief.
 

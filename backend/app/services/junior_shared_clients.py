@@ -8,6 +8,8 @@ post never disappears: callers get a `SharedMemoryError` with a short
 user-visible message after the last attempt, and failed writes go on a
 local FIFO queue so they survive a client restart. After a successful
 login the same client replays queued posts in order with the same auth.
+Failed project upserts and agent-launch stubs replay on POST /projects and
+POST /agents. GET /agents is paginated like the other lists.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-context-page-v1"
+HEALTH_STAMP = "junior-client-agents-page-v1"
 
 
 class SharedMemoryError(Exception):
@@ -233,8 +235,9 @@ class SharedMemoryClient:
                     )
                     self.queue.replace(remaining)
                     return None
-                text = str(post.get("text") or "")
-                if not text.strip():
+                kind = self._queued_kind(post)
+                text = str(post.get("text") or post.get("prompt") or "")
+                if kind in {"message", "continue"} and not text.strip():
                     remaining.pop(0)
                     self.queue.replace(remaining)
                     continue
@@ -264,12 +267,34 @@ class SharedMemoryClient:
         path = str(post.get("path") or "")
         if "/continue" in path:
             return "continue"
+        if path.rstrip("/").endswith("/agents"):
+            return "agent"
+        if path.rstrip("/").endswith("/projects"):
+            return "project"
         return "message"
 
     def _replay_one(self, post: dict[str, Any], text: str) -> Any:
+        kind = self._queued_kind(post)
         thread_id = post.get("thread_id")
-        if self._queued_kind(post) == "continue" and thread_id:
+        if kind == "continue" and thread_id:
             return self.continue_thread(thread_id, text=text)
+        if kind == "project":
+            return self.upsert_project(
+                str(post.get("slug") or self.project_slug),
+                display_name=str(post.get("display_name") or post.get("title") or self.project_slug),
+                kind=post.get("project_kind") or post.get("kind_value"),
+                repo_url=post.get("repo_url"),
+                default_branch=post.get("default_branch"),
+                notes=post.get("notes"),
+                meta=post.get("meta") if isinstance(post.get("meta"), dict) else None,
+            )
+        if kind == "agent":
+            return self.launch_agent(
+                str(post.get("prompt") or text),
+                project_slug=str(post.get("project_slug") or self.project_slug),
+                thread_id=thread_id,
+                q=post.get("q"),
+            )
         return self.post_turn(text, thread_id=thread_id)
 
     def _remember_write_failure(
@@ -282,11 +307,28 @@ class SharedMemoryClient:
         self.last_user_error = exc.user_message
         if self._replaying:
             return
-        kind = "continue" if "/continue" in path else "message"
+        if "/continue" in path:
+            kind = "continue"
+        elif path.rstrip("/").endswith("/agents"):
+            kind = "agent"
+        elif path.rstrip("/").endswith("/projects"):
+            kind = "project"
+        else:
+            kind = "message"
         queued = {
-            "text": body.get("text"),
-            "title": body.get("title"),
+            "text": body.get("text") or body.get("prompt"),
+            "title": body.get("title") or body.get("display_name"),
             "thread_id": body.get("thread_id"),
+            "slug": body.get("slug"),
+            "display_name": body.get("display_name"),
+            "project_kind": body.get("kind"),
+            "repo_url": body.get("repo_url"),
+            "default_branch": body.get("default_branch"),
+            "notes": body.get("notes"),
+            "meta": body.get("meta"),
+            "prompt": body.get("prompt"),
+            "project_slug": body.get("project_slug"),
+            "q": body.get("q"),
             "path": path,
             "kind": kind,
             "venue": self.venue,
@@ -509,6 +551,80 @@ class SharedMemoryClient:
         return self._read(
             f"{API_PREFIX}/projects",
             action="load projects",
+            **({"params": params} if params else {}),
+        )
+
+    def upsert_project(
+        self,
+        slug: str | None = None,
+        *,
+        display_name: str | None = None,
+        kind: str | None = None,
+        repo_url: str | None = None,
+        default_branch: str | None = None,
+        notes: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "slug": slug or self.project_slug,
+            "display_name": display_name or self.project_slug,
+        }
+        if kind:
+            body["kind"] = kind
+        if repo_url is not None:
+            body["repo_url"] = repo_url
+        if default_branch is not None:
+            body["default_branch"] = default_branch
+        if notes is not None:
+            body["notes"] = notes
+        if meta is not None:
+            body["meta"] = meta
+        return self._write(
+            "post",
+            f"{API_PREFIX}/projects",
+            action="save this project",
+            body=body,
+            json=body,
+        )
+
+    def launch_agent(
+        self,
+        prompt: str,
+        *,
+        project_slug: str | None = None,
+        thread_id: UUID | str | None = None,
+        q: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "project_slug": project_slug or self.project_slug,
+            "prompt": prompt,
+        }
+        if thread_id is not None:
+            body["thread_id"] = str(thread_id)
+        if q:
+            body["q"] = q
+        return self._write(
+            "post",
+            f"{API_PREFIX}/agents",
+            action="record this agent launch",
+            body=body,
+            json=body,
+        )
+
+    def get_agent_runs(
+        self,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+        project: str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id) or {}
+        if project:
+            params["project"] = project
+        return self._read(
+            f"{API_PREFIX}/agents",
+            action="load agent runs",
             **({"params": params} if params else {}),
         )
 

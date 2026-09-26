@@ -321,6 +321,23 @@ def upsert_project(
     return JuniorProjectOut.model_validate(row)
 
 
+@router.get("/agents", response_model=list[JuniorAgentRunOut])
+def list_agent_runs(
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+    project: str | None = Query(default=None, max_length=64),
+) -> list[JuniorAgentRunOut]:
+    rows, next_cursor = store.list_agent_runs_page(
+        db, user, limit=limit, cursor=cursor, before_id=before_id, project_slug=project
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorAgentRunOut.model_validate(row) for row in rows]
+
+
 @router.get("/agent-context", response_model=JuniorAgentContextOut)
 def agent_context(
     project: str = Query(min_length=1, max_length=64),

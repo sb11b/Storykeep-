@@ -104,7 +104,7 @@ Durable history for StoryKeep, the phone app, and the Windows overlay lives in *
 | `junior_memories` | Durable facts (`profile` / `preference` / `decision` / `note`) |
 | `junior_sessions` | Last-seen venue/device |
 | `junior_projects` | Repo/app registry (slug unique per user) |
-| `junior_agent_runs` | Cursor-agent launch attempts (`context_ready` stub) |
+| `junior_agent_runs` | Cursor-agent launch attempts (`context_ready` stub; listed at `GET /agents`) |
 
 `junior_memory` (singular) remains the one standing markdown note at `GET/PUT /api/v1/junior/memory`.
 
@@ -138,6 +138,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/projects/{slug}` | One project |
 | `POST` | `/api/v1/junior/projects` | Upsert by slug |
 | `GET` | `/api/v1/junior/agent-context?project=&q=` | Pack for a Cursor agent (project + thread + memories + search) |
+| `GET` | `/api/v1/junior/agents` | Agent-run list (`limit`, `cursor` or `before_id`; optional `project`) |
 | `POST` | `/api/v1/junior/agents` | Record a launch (`context_ready`); does not call Cursor |
 
 Venues: `storykeep`, `phone`, `windows`, `voice`. **Phone is first-class** (`venue=phone` on the same routes — no separate phone DB). Overlay uses `venue=windows`. Message `meta` can hold overlay screen/OCR or voice extras (`screen`, `voice`, `dictation_target`). See [`docs/junior_shared_memory.md`](docs/junior_shared_memory.md).

@@ -107,8 +107,8 @@ def _windows(http):
 
 
 class SharedClientSmokeTests(unittest.TestCase):
-    def test_health_stamp_is_context_page_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-context-page-v1")
+    def test_health_stamp_is_agents_page_v1(self):
+        self.assertEqual(HEALTH_STAMP, "junior-client-agents-page-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -125,6 +125,7 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertFalse(any(path.endswith("/windows") or "/windows/" in path for path in junior))
         self.assertIn("/api/v1/junior/threads", junior)
         self.assertIn("/api/v1/junior/messages", junior)
+        self.assertIn("/api/v1/junior/agents", junior)
         self.assertTrue(any("/threads/{thread_id}/messages" in path for path in junior))
 
     def test_phone_and_windows_require_login(self):
@@ -504,6 +505,59 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 403)
         self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
         self.assertIn("did not load agent context", ctx.exception.user_message)
+
+    def test_project_and_agent_writes_queue_and_replay(self):
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500, 500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as project_err:
+                phone_client(fail, queue_path=path).upsert_project(
+                    "storykeep",
+                    display_name="StoryKeep",
+                    kind="app",
+                )
+        self.assertEqual(project_err.exception.status_code, 500)
+        self.assertIn("did not save this project", project_err.exception.user_message)
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as agent_err:
+                phone_client(fail, queue_path=path).launch_agent(
+                    "Fix the memory API",
+                    project_slug="storykeep",
+                )
+        self.assertEqual(agent_err.exception.status_code, 500)
+        self.assertIn("did not record this agent launch", agent_err.exception.user_message)
+
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual([post["kind"] for post in restarted.failed_posts], ["project", "agent"])
+        self.assertEqual(restarted.last_failed_post["slug"], "storykeep")
+        self.assertEqual(restarted.failed_posts[1]["prompt"], "Fix the memory API")
+
+        replay_http = _ScriptedHttp([200, 200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            replay_http.calls,
+            [
+                ("POST", "/api/v1/junior/projects"),
+                ("POST", "/api/v1/junior/agents"),
+            ],
+        )
+        self.assertFalse(path.exists())
+
+    def test_agent_runs_pass_page_params_and_403(self):
+        http = _ScriptedHttp([200, 403, 403, 403])
+        overlay = _windows(http)
+        overlay.get_agent_runs(limit=2, cursor="run-1", project="storykeep")
+        self.assertEqual(http.calls[0], ("GET", "/api/v1/junior/agents"))
+        self.assertEqual(http.params[0], {"limit": 2, "cursor": "run-1", "project": "storykeep"})
+
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).get_agent_runs()
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not load agent runs", ctx.exception.user_message)
 
 
 if __name__ == "__main__":
