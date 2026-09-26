@@ -8,6 +8,7 @@ post never disappears: callers get a `SharedMemoryError` with a short
 user-visible message after the last attempt, and failed writes go on a
 local FIFO queue so they survive a client restart. After a successful
 login the same client replays queued posts in order with the same auth.
+Failed memory writes replay on POST /memories. Continue history is paginated.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-queue-multi-v1"
+HEALTH_STAMP = "junior-client-memory-write-v1"
 
 
 class SharedMemoryError(Exception):
@@ -233,12 +234,13 @@ class SharedMemoryClient:
                     )
                     self.queue.replace(remaining)
                     return None
-                text = str(post.get("text") or "")
-                if not text.strip():
+                kind = self._queued_kind(post)
+                text = str(post.get("text") or post.get("content") or "")
+                if kind in {"message", "continue"} and not text.strip():
                     remaining.pop(0)
                     self.queue.replace(remaining)
                     continue
-                last_response = self.post_turn(text, thread_id=post.get("thread_id"))
+                last_response = self._replay_one(post, text)
                 remaining.pop(0)
                 self.queue.replace(remaining)
             self.last_user_error = None
@@ -257,14 +259,48 @@ class SharedMemoryClient:
         finally:
             self._replaying = False
 
-    def _remember_write_failure(self, exc: SharedMemoryError, body: dict[str, Any]) -> None:
+    def _queued_kind(self, post: dict[str, Any]) -> str:
+        kind = str(post.get("kind") or "").strip().lower()
+        if kind:
+            return kind
+        path = str(post.get("path") or "")
+        if path.rstrip("/").endswith("/memories"):
+            return "memory"
+        return "message"
+
+    def _replay_one(self, post: dict[str, Any], text: str) -> Any:
+        kind = self._queued_kind(post)
+        if kind == "memory":
+            return self.upsert_memory(
+                str(post.get("content") or text),
+                memory_id=post.get("id") or post.get("memory_id"),
+                kind=post.get("memory_kind") or post.get("fact_kind"),
+                source_thread=post.get("source_thread"),
+            )
+        return self.post_turn(text, thread_id=post.get("thread_id"))
+
+    def _remember_write_failure(
+        self,
+        exc: SharedMemoryError,
+        body: dict[str, Any],
+        *,
+        path: str,
+    ) -> None:
         self.last_user_error = exc.user_message
         if self._replaying:
             return
+        kind = "memory" if path.rstrip("/").endswith("/memories") else "message"
         queued = {
-            "text": body.get("text"),
+            "text": body.get("text") or body.get("content"),
+            "content": body.get("content") or body.get("text"),
             "title": body.get("title"),
             "thread_id": body.get("thread_id"),
+            "id": body.get("id"),
+            "memory_id": body.get("id"),
+            "memory_kind": body.get("kind"),
+            "source_thread": body.get("source_thread"),
+            "path": path,
+            "kind": kind,
             "venue": self.venue,
             "device_label": self.device_label,
             "action": exc.action,
@@ -332,7 +368,7 @@ class SharedMemoryClient:
         try:
             response = self._request(method, path, action=action, **kwargs)
         except SharedMemoryError as exc:
-            self._remember_write_failure(exc, body)
+            self._remember_write_failure(exc, body, path=path)
             raise
         self._clear_write_failure()
         return response
@@ -474,11 +510,44 @@ class SharedMemoryClient:
             **({"params": params} if params else {}),
         )
 
-    def continue_thread(self, thread_id: UUID | str, text: str | None = None) -> Any:
+    def upsert_memory(
+        self,
+        content: str,
+        *,
+        memory_id: UUID | str | None = None,
+        kind: str | None = None,
+        source_thread: UUID | str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"content": content}
+        if memory_id is not None:
+            body["id"] = str(memory_id)
+        if kind:
+            body["kind"] = kind
+        if source_thread is not None:
+            body["source_thread"] = str(source_thread)
+        return self._write(
+            "post",
+            f"{API_PREFIX}/memories",
+            action="save this memory",
+            body=body,
+            json=body,
+        )
+
+    def continue_thread(
+        self,
+        thread_id: UUID | str,
+        text: str | None = None,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
         body: dict[str, Any] = {
             "venue": self.venue,
             "device_label": self.device_label,
         }
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id)
+        extra = {"params": params} if params else {}
         if text:
             body["text"] = text
             queued = {**body, "thread_id": str(thread_id)}
@@ -488,12 +557,14 @@ class SharedMemoryClient:
                 action="save this message",
                 body=queued,
                 json=body,
+                **extra,
             )
         return self._request(
             "post",
             f"{API_PREFIX}/threads/{thread_id}/continue",
             action="load messages",
             json=body,
+            **extra,
         )
 
     def project(self) -> Any:

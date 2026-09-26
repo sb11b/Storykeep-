@@ -84,7 +84,7 @@ class CursorAgentToolTests(unittest.TestCase):
         task = cursor_agent_tool.next_step_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
-        self.assertIn("Sequenced #7", task)
+        self.assertIn("Sequenced #10", task)
         self.assertNotIn("cannot start an agent", task.lower())
         self.assertNotIn("isn't defined", task.lower())
         self.assertFalse(cursor_agent_tool.wants_start("do not send the next step"))
@@ -93,6 +93,18 @@ class CursorAgentToolTests(unittest.TestCase):
         assert six is not None
         self.assertIn("Sequenced #6", six)
         self.assertIn("junior-client-queue-multi-v1", six)
+        seven = cursor_agent_tool.next_step_task("go ahead and start sequenced #7")
+        assert seven is not None
+        self.assertIn("Sequenced #7", seven)
+        self.assertIn("junior-client-context-page-v1", seven)
+        eight = cursor_agent_tool.next_step_task("go ahead and start sequenced #8")
+        assert eight is not None
+        self.assertIn("Sequenced #8", eight)
+        self.assertIn("junior-client-agents-page-v1", eight)
+        nine = cursor_agent_tool.next_step_task("go ahead and start sequenced #9")
+        assert nine is not None
+        self.assertIn("Sequenced #9", nine)
+        self.assertIn("junior-client-memory-write-v1", nine)
 
     def test_sequence_number_five_starts(self):
         msg = "go ahead and start Sequence number five."
@@ -112,6 +124,18 @@ class CursorAgentToolTests(unittest.TestCase):
         assert six is not None
         self.assertIn("Sequenced #6", six)
         self.assertIn("junior-client-queue-multi-v1", six)
+        seven = cursor_agent_tool.sequenced_task("sequenced #7")
+        assert seven is not None
+        self.assertIn("Sequenced #7", seven)
+        self.assertIn("junior-client-context-page-v1", seven)
+        eight = cursor_agent_tool.sequenced_task("sequenced #8")
+        assert eight is not None
+        self.assertIn("Sequenced #8", eight)
+        self.assertIn("junior-client-agents-page-v1", eight)
+        nine = cursor_agent_tool.sequenced_task("sequenced #9")
+        assert nine is not None
+        self.assertIn("Sequenced #9", nine)
+        self.assertIn("junior-client-memory-write-v1", nine)
 
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")
