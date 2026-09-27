@@ -111,6 +111,13 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/agents/{uuid.uuid4()}",
+                json={"status": "launched"},
+            ).status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -133,6 +140,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("POST", "/api/v1/junior/memories"),
             ("POST", "/api/v1/junior/sessions"),
             ("POST", "/api/v1/junior/projects/storykeep"),
+            ("POST", f"/api/v1/junior/agents/{uuid.uuid4()}"),
         ):
             response = client.request(
                 method,
@@ -365,6 +373,20 @@ class JuniorSharedServiceTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             store.agent_run_owned(db, owner, uuid.uuid4())
         self.assertEqual(caught.exception.status_code, 404)
+
+    def test_update_agent_run_rejects_unknown_status(self):
+        owner = _owner()
+        run_id = uuid.uuid4()
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(
+            id=run_id,
+            user_id=owner.id,
+            status="context_ready",
+            cursor_agent_id=None,
+        )
+        with self.assertRaises(HTTPException) as caught:
+            store.update_agent_run(db, owner, run_id, status="nope")
+        self.assertEqual(caught.exception.status_code, 400)
 
     def test_reply_stub_without_key(self):
         owner = _owner()
@@ -727,6 +749,18 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(one.status_code, 200)
         self.assertEqual(one.json()["status"], "context_ready")
         self.assertEqual(str(owned.call_args.args[2]), str(run.id))
+
+        updated = SimpleNamespace(**{**run.__dict__, "status": "launched", "cursor_agent_id": "bc-14"})
+        with patch("app.routers.junior_shared.store.update_agent_run", return_value=updated) as patched:
+            written = TestClient(app).post(
+                f"/api/v1/junior/agents/{run.id}",
+                json={"status": "launched", "cursor_agent_id": "bc-14"},
+            )
+        self.assertEqual(written.status_code, 200)
+        self.assertEqual(written.json()["status"], "launched")
+        self.assertEqual(written.json()["cursor_agent_id"], "bc-14")
+        self.assertEqual(str(patched.call_args.args[2]), str(run.id))
+        self.assertEqual(patched.call_args.kwargs["status"], "launched")
 
     def test_invalid_slug(self):
         with self.assertRaises(HTTPException) as caught:

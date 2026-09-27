@@ -144,6 +144,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/agent-context?project=&q=` | Pack for a Cursor agent (project + thread + memories + search) |
 | `GET` | `/api/v1/junior/agents` | Agent-run list (`limit`, `cursor` or `before_id`; optional `project`) |
 | `GET` | `/api/v1/junior/agents/{id}` | One agent run the signed-in user owns |
+| `POST` | `/api/v1/junior/agents/{id}` | Update an owned run (`status`, `cursor_agent_id`) |
 | `POST` | `/api/v1/junior/agents` | Record a launch (`context_ready`); does not call Cursor |
 | `GET` | `/api/v1/junior/sessions` | Last-seen venue/device (`limit`, `cursor` or `before_id`; optional `venue`) |
 | `POST` | `/api/v1/junior/sessions` | Heartbeat for this venue/device |

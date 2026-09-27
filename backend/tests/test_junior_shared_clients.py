@@ -108,7 +108,7 @@ def _windows(http):
 
 class SharedClientSmokeTests(unittest.TestCase):
     def test_health_stamp_is_agent_get_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-ubuntu-paste-v1")
+        self.assertEqual(HEALTH_STAMP, "junior-client-project-get-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -183,6 +183,11 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertEqual(one_run.exception.status_code, 401)
         self.assertIn("did not load this agent run", one_run.exception.user_message)
 
+        with self.assertRaises(SharedMemoryError) as one_project:
+            _windows(client).get_project("storykeep")
+        self.assertEqual(one_project.exception.status_code, 401)
+        self.assertIn("did not load this project", one_project.exception.user_message)
+
     def test_demo_is_forbidden_for_both_clients(self):
         demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
         client = TestClient(_app(demo))
@@ -235,6 +240,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _windows(client).update_project("storykeep", display_name="StoryKeep")
         self.assertEqual(project_updated.exception.status_code, 403)
         self.assertIn("did not update this project", project_updated.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as one_project:
+            _phone(client).get_project("storykeep")
+        self.assertEqual(one_project.exception.status_code, 403)
+        self.assertIn("did not load this project", one_project.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as run_updated:
+            _windows(client).update_agent_run(uuid.uuid4(), status="launched")
+        self.assertEqual(run_updated.exception.status_code, 403)
+        self.assertIn("did not update this agent run", run_updated.exception.user_message)
 
     def test_phone_posts_on_the_shared_messages_route(self):
         thread, user_msg = _turn("phone")
@@ -778,6 +793,42 @@ class SharedClientSmokeTests(unittest.TestCase):
         response = replayed.replay_after_login("owner-session")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(replay_http.calls, [("POST", "/api/v1/junior/projects/junior-phone")])
+        self.assertFalse(path.exists())
+
+    def test_get_project_403(self):
+        http = _ScriptedHttp([403, 403, 403])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).get_project("storykeep")
+        self.assertEqual(http.calls[0], ("GET", "/api/v1/junior/projects/storykeep"))
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not load this project", ctx.exception.user_message)
+
+    def test_agent_update_queues_and_replays(self):
+        path = _queue_path()
+        run_id = uuid.uuid4()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                phone_client(fail, queue_path=path).update_agent_run(
+                    run_id,
+                    status="launched",
+                    cursor_agent_id="bc-test-run",
+                )
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertIn("did not update this agent run", ctx.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "agent_update")
+        self.assertEqual(restarted.last_failed_post["status"], "launched")
+        self.assertEqual(restarted.last_failed_post["cursor_agent_id"], "bc-test-run")
+        self.assertEqual(restarted.last_failed_post["run_id"], str(run_id))
+
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(replay_http.calls, [("POST", f"/api/v1/junior/agents/{run_id}")])
         self.assertFalse(path.exists())
 
 

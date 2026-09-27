@@ -13,6 +13,7 @@ from app.schemas import (
     JuniorAgentLaunchIn,
     JuniorAgentLaunchOut,
     JuniorAgentRunOut,
+    JuniorAgentUpdateIn,
     JuniorProjectIn,
     JuniorProjectOut,
     JuniorSharedContinueIn,
@@ -445,6 +446,26 @@ def get_agent_run(
     user: User = Depends(require_user),
 ) -> JuniorAgentRunOut:
     return JuniorAgentRunOut.model_validate(store.agent_run_owned(db, user, run_id))
+
+
+@router.post("/agents/{run_id}", response_model=JuniorAgentRunOut)
+def update_agent_run(
+    run_id: UUID,
+    payload: JuniorAgentUpdateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentRunOut:
+    fields = payload.model_fields_set
+    row = store.update_agent_run(
+        db,
+        user,
+        run_id,
+        status=payload.status if "status" in fields else None,
+        cursor_agent_id=payload.cursor_agent_id if "cursor_agent_id" in fields else None,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorAgentRunOut.model_validate(row)
 
 
 @router.get("/agent-context", response_model=JuniorAgentContextOut)

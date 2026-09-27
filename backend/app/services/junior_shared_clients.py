@@ -14,6 +14,7 @@ is paginated like the other lists. Continue history is paginated.
 Failed thread creates replay on POST /threads. GET /threads/{id} loads one thread.
 Failed thread updates replay on POST /threads/{id}. GET /memories/{id} loads one memory.
 Failed project updates replay on POST /projects/{slug}. GET /agents/{id} loads one agent run.
+Failed agent-run updates replay on POST /agents/{id}. GET /projects/{slug} loads one project.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-ubuntu-paste-v1"
+HEALTH_STAMP = "junior-client-project-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -92,6 +93,13 @@ def _is_project_update_path(path: str) -> bool:
     if cleaned.endswith("/projects"):
         return False
     return "/projects/" in cleaned
+
+
+def _is_agent_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    if cleaned.endswith("/agents"):
+        return False
+    return "/agents/" in cleaned
 
 
 def next_page_cursor(response: Any) -> str | None:
@@ -287,6 +295,8 @@ class SharedMemoryClient:
             return "continue"
         if path.rstrip("/").endswith("/agents"):
             return "agent"
+        if _is_agent_update_path(path):
+            return "agent_update"
         if path.rstrip("/").endswith("/projects"):
             return "project"
         if _is_project_update_path(path):
@@ -350,6 +360,14 @@ class SharedMemoryClient:
                 notes=post.get("notes"),
                 meta=post.get("meta") if isinstance(post.get("meta"), dict) else None,
             )
+        if kind == "agent_update":
+            run_id = post.get("run_id") or post.get("id")
+            if run_id:
+                return self.update_agent_run(
+                    run_id,
+                    status=post.get("status"),
+                    cursor_agent_id=post.get("cursor_agent_id"),
+                )
         return self.post_turn(text, thread_id=thread_id)
 
     def _remember_write_failure(
@@ -366,6 +384,8 @@ class SharedMemoryClient:
             kind = "continue"
         elif path.rstrip("/").endswith("/agents"):
             kind = "agent"
+        elif _is_agent_update_path(path):
+            kind = "agent_update"
         elif path.rstrip("/").endswith("/projects"):
             kind = "project"
         elif _is_project_update_path(path):
@@ -385,6 +405,8 @@ class SharedMemoryClient:
             "content": body.get("content") or body.get("text"),
             "title": body.get("title") or body.get("display_name"),
             "status": body.get("status"),
+            "run_id": body.get("run_id") or body.get("id"),
+            "cursor_agent_id": body.get("cursor_agent_id"),
             "thread_id": body.get("thread_id"),
             "slug": body.get("slug"),
             "display_name": body.get("display_name"),
@@ -760,6 +782,33 @@ class SharedMemoryClient:
             action="load this agent run",
         )
 
+    def update_agent_run(
+        self,
+        run_id: UUID | str,
+        *,
+        status: str | None = None,
+        cursor_agent_id: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"run_id": str(run_id)}
+        if status is not None:
+            body["status"] = status
+        if cursor_agent_id is not None:
+            body["cursor_agent_id"] = cursor_agent_id
+        return self._write(
+            "post",
+            f"{API_PREFIX}/agents/{run_id}",
+            action="update this agent run",
+            body=body,
+            json={key: value for key, value in body.items() if key != "run_id"},
+        )
+
+    def get_project(self, slug: str | None = None) -> Any:
+        target = slug or self.project_slug
+        return self._read(
+            f"{API_PREFIX}/projects/{target}",
+            action="load this project",
+        )
+
     def upsert_memory(
         self,
         content: str,
@@ -877,10 +926,7 @@ class SharedMemoryClient:
         )
 
     def project(self) -> Any:
-        return self._read(
-            f"{API_PREFIX}/projects/{self.project_slug}",
-            action="load the project",
-        )
+        return self.get_project(self.project_slug)
 
 
 def phone_client(

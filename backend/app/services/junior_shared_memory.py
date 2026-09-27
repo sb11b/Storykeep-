@@ -25,6 +25,7 @@ VENUES = frozenset({"storykeep", "phone", "windows", "voice"})
 ROLES = frozenset({"user", "junior", "system"})
 MEMORY_KINDS = frozenset({"profile", "preference", "decision", "note"})
 THREAD_STATUSES = frozenset({"open", "archived"})
+AGENT_STATUSES = frozenset({"context_ready", "launched", "failed", "done"})
 TITLE_MAX = 120
 CONTENT_MAX = 32_000
 MEMORY_CONTENT_MAX = 8_000
@@ -987,6 +988,26 @@ def agent_run_owned(db: Session, user: User, run_id: UUID) -> JuniorAgentRun:
     row = db.get(JuniorAgentRun, run_id)
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+    return row
+
+
+def update_agent_run(
+    db: Session,
+    user: User,
+    run_id: UUID,
+    *,
+    status: str | None = None,
+    cursor_agent_id: str | None = None,
+) -> JuniorAgentRun:
+    row = agent_run_owned(db, user, run_id)
+    if status is not None:
+        cleaned = _clean_text(status, max_len=40).lower()
+        if cleaned not in AGENT_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid agent status")
+        row.status = cleaned
+    if cursor_agent_id is not None:
+        row.cursor_agent_id = _clean_text(cursor_agent_id, max_len=80, required=False) or None
+    db.flush()
     return row
 
 

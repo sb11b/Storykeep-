@@ -928,6 +928,11 @@ class JuniorAgentLaunchIn(BaseModel):
     q: str | None = Field(default=None, max_length=200)
 
 
+class JuniorAgentUpdateIn(BaseModel):
+    status: str | None = Field(default=None, max_length=40)
+    cursor_agent_id: str | None = Field(default=None, max_length=80)
+
+
 class JuniorAgentRunOut(BaseModel):
     id: uuid.UUID
     project_slug: str
