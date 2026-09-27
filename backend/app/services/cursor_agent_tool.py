@@ -271,10 +271,11 @@ _NUM_WORDS = {
     "fifteen": 15,
     "sixteen": 16,
     "seventeen": 17,
+    "eighteen": 18,
 }
 _SEQ_MENTION_RE = re.compile(
     r"\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b"
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen)\b"
     r"|\b(?:sequenced\s+)?#\s*(\d+)\b",
     re.I,
 )
@@ -283,9 +284,33 @@ _NEXT_STEP_RE = re.compile(
     r"|\bgo ahead and (?:send|start)\b"
     r"|\bmove on to the (?:next|nest) step\b"
     r"|\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b",
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen)\b",
     re.I,
 )
+
+SEQ_18_TASK = """Sequenced #18 — next after junior-client-search-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, or #17).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, and #17 are already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients POST /agents/{id}; failed updates replay on that route
+- GET /search/{id} loads one owner search hit
+- POST /threads, /threads/{id}, /sessions, /sessions/{id}, /memories, /projects, /agents, /messages/{id}, and continue history already page and replay
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-search-get-v1
+
+Your job (#18):
+1. Both clients POST /search/{id} to update an existing search hit. Failed writes stay on the FIFO and replay on that same route (not GET /search). Same auth rule. No silent drop.
+2. Add GET /agent-context/{project} for one context pack. Same require_user rules. Still no public routes.
+3. Both clients call GET /agent-context/{project} (same auth).
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for search-update replay, single-context GET, and 403. Keep existing tests green.
+6. Health stamp: junior-client-context-get-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
 
 SEQ_17_TASK = """Sequenced #17 — next after junior-client-project-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, or #16).
 
@@ -658,7 +683,7 @@ def _later_sequence_task(number: int, message: str) -> str:
     return (
         f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
         "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
-        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, or #16. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, or #17. "
         "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
         "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
         "Commit on a cursor/* branch and push that branch only.\n\n"
@@ -697,14 +722,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_16_TASK
     if number == 17:
         return SEQ_17_TASK
-    if number is not None and number > 17:
+    if number == 18:
+        return SEQ_18_TASK
+    if number is not None and number > 18:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(18, text)
+        return _later_sequence_task(19, text)
     return None
 
 

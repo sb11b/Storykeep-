@@ -18,6 +18,7 @@ Failed memory updates replay on POST /memories/{id}. GET /sessions/{id} loads on
 Failed session updates replay on POST /sessions/{id}. GET /messages/{id} loads one message.
 Failed message updates replay on POST /messages/{id}. GET /projects/{slug} loads one project.
 Failed agent updates replay on POST /agents/{id}. GET /search/{id} loads one search hit.
+Failed search updates replay on POST /search/{id}. GET /agent-context/{project} loads one context pack.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-search-get-v1"
+HEALTH_STAMP = "junior-client-context-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -126,6 +127,13 @@ def _is_agent_update_path(path: str) -> bool:
     if cleaned.endswith("/agents"):
         return False
     return "/agents/" in cleaned
+
+
+def _is_search_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    if cleaned.endswith("/search"):
+        return False
+    return "/search/" in cleaned
 
 
 def next_page_cursor(response: Any) -> str | None:
@@ -323,6 +331,8 @@ class SharedMemoryClient:
             return "agent"
         if _is_agent_update_path(path):
             return "agent_update"
+        if _is_search_update_path(path):
+            return "search_update"
         if path.rstrip("/").endswith("/projects"):
             return "project"
         if _is_project_update_path(path):
@@ -375,6 +385,14 @@ class SharedMemoryClient:
                     cursor_agent_id=post.get("cursor_agent_id"),
                     thread_id=thread_id,
                     meta=post.get("meta") if isinstance(post.get("meta"), dict) else None,
+                )
+        if kind == "search_update":
+            message_id = post.get("id") or post.get("message_id")
+            if message_id:
+                return self.update_search_hit(
+                    message_id,
+                    str(post.get("content") or post.get("text") or post.get("snippet") or text),
+                    venue=post.get("venue"),
                 )
         if kind == "memory":
             return self.upsert_memory(
@@ -447,6 +465,8 @@ class SharedMemoryClient:
             kind = "agent"
         elif _is_agent_update_path(path):
             kind = "agent_update"
+        elif _is_search_update_path(path):
+            kind = "search_update"
         elif path.rstrip("/").endswith("/projects"):
             kind = "project"
         elif _is_project_update_path(path):
@@ -474,7 +494,7 @@ class SharedMemoryClient:
             "status": body.get("status"),
             "thread_id": body.get("thread_id"),
             "session_id": body.get("session_id") or body.get("id"),
-            "message_id": body.get("id") if kind == "message_update" else None,
+            "message_id": body.get("id") if kind in {"message_update", "search_update"} else None,
             "slug": body.get("slug"),
             "display_name": body.get("display_name"),
             "project_kind": body.get("kind") if kind == "project" else None,
@@ -715,6 +735,27 @@ class SharedMemoryClient:
         return self._read(
             f"{API_PREFIX}/search/{message_id}",
             action="load this search hit",
+        )
+
+    def update_search_hit(
+        self,
+        message_id: UUID | str,
+        content: str,
+        *,
+        venue: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "id": str(message_id),
+            "content": content,
+        }
+        if venue is not None:
+            body["venue"] = venue
+        return self._write(
+            "post",
+            f"{API_PREFIX}/search/{message_id}",
+            action="update this search hit",
+            body=body,
+            json={key: value for key, value in body.items() if key != "id"},
         )
 
     def get_sessions(
@@ -1046,6 +1087,25 @@ class SharedMemoryClient:
             f"{API_PREFIX}/agent-context",
             action="load agent context",
             params=params,
+        )
+
+    def get_context(
+        self,
+        project_slug: str | None = None,
+        *,
+        q: str | None = None,
+        thread_id: UUID | str | None = None,
+    ) -> Any:
+        target = project_slug or self.project_slug
+        params: dict[str, Any] = {}
+        if q:
+            params["q"] = q
+        if thread_id is not None:
+            params["thread_id"] = str(thread_id)
+        return self._read(
+            f"{API_PREFIX}/agent-context/{target}",
+            action="load this agent context",
+            **({"params": params} if params else {}),
         )
 
     def continue_thread(

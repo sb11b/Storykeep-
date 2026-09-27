@@ -25,6 +25,7 @@ from app.schemas import (
     JuniorSharedMessageIn,
     JuniorSharedMessageOut,
     JuniorSharedMessagePostOut,
+    JuniorSharedSearchHitIn,
     JuniorSharedSearchHitOut,
     JuniorSharedThreadIn,
     JuniorSharedThreadOut,
@@ -306,6 +307,26 @@ def get_search_hit(
     return JuniorSharedSearchHitOut.model_validate(store.search_hit_owned(db, user, message_id))
 
 
+@router.post("/search/{message_id}", response_model=JuniorSharedSearchHitOut)
+def update_search_hit(
+    message_id: UUID,
+    payload: JuniorSharedSearchHitIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedSearchHitOut:
+    fields = payload.model_fields_set
+    hit = store.update_search_hit(
+        db,
+        user,
+        message_id,
+        content=payload.body or None,
+        venue=payload.venue if "venue" in fields else None,
+        set_venue="venue" in fields,
+    )
+    db.commit()
+    return JuniorSharedSearchHitOut.model_validate(hit)
+
+
 @router.get("/memories", response_model=list[JuniorSharedMemoryOut])
 def list_memories(
     response: Response,
@@ -573,6 +594,18 @@ def update_agent_run(
 @router.get("/agent-context", response_model=JuniorAgentContextOut)
 def agent_context(
     project: str = Query(min_length=1, max_length=64),
+    q: str | None = Query(default=None, max_length=200),
+    thread_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentContextOut:
+    pack = store.build_agent_context(db, user, project_slug=project, query=q, thread_id=thread_id)
+    return _context_out(pack)
+
+
+@router.get("/agent-context/{project}", response_model=JuniorAgentContextOut)
+def get_agent_context(
+    project: str,
     q: str | None = Query(default=None, max_length=200),
     thread_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
