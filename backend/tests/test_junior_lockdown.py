@@ -79,6 +79,7 @@ class JuniorSharedLockdownTests(unittest.TestCase):
             f"/api/v1/junior/threads/{uuid.uuid4()}",
             f"/api/v1/junior/memories/{uuid.uuid4()}",
             f"/api/v1/junior/agents/{uuid.uuid4()}",
+            f"/api/v1/junior/sessions/{uuid.uuid4()}",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 403, path)

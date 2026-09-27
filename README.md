@@ -136,6 +136,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/memories` | Durable facts (`?kind=` optional; same page params) |
 | `GET` | `/api/v1/junior/memories/{id}` | One memory the signed-in user owns |
+| `POST` | `/api/v1/junior/memories/{id}` | Update an existing memory (404 if missing) |
 | `POST` | `/api/v1/junior/memories` | Add a fact, or update when `id` is set |
 | `GET` | `/api/v1/junior/projects` | List project registry (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/projects/{slug}` | One project |
@@ -146,6 +147,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/agents/{id}` | One agent run the signed-in user owns |
 | `POST` | `/api/v1/junior/agents` | Record a launch (`context_ready`); does not call Cursor |
 | `GET` | `/api/v1/junior/sessions` | Last-seen venue/device (`limit`, `cursor` or `before_id`; optional `venue`) |
+| `GET` | `/api/v1/junior/sessions/{id}` | One session the signed-in user owns |
 | `POST` | `/api/v1/junior/sessions` | Heartbeat for this venue/device |
 
 Venues: `storykeep`, `phone`, `windows`, `voice`. **Phone is first-class** (`venue=phone` on the same routes — no separate phone DB). Overlay uses `venue=windows`. Message `meta` can hold overlay screen/OCR or voice extras (`screen`, `voice`, `dictation_target`). See [`docs/junior_shared_memory.md`](docs/junior_shared_memory.md).

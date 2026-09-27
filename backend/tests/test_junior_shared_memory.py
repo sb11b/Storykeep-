@@ -87,6 +87,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             f"/api/v1/junior/threads/{uuid.uuid4()}",
             f"/api/v1/junior/memories/{uuid.uuid4()}",
             f"/api/v1/junior/agents/{uuid.uuid4()}",
+            f"/api/v1/junior/sessions/{uuid.uuid4()}",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 401, path)
@@ -111,6 +112,13 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/memories/{uuid.uuid4()}",
+                json={"kind": "note", "content": "keep"},
+            ).status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -127,10 +135,12 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", f"/api/v1/junior/threads/{uuid.uuid4()}"),
             ("GET", f"/api/v1/junior/memories/{uuid.uuid4()}"),
             ("GET", f"/api/v1/junior/agents/{uuid.uuid4()}"),
+            ("GET", f"/api/v1/junior/sessions/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}"),
             ("POST", "/api/v1/junior/messages"),
             ("POST", "/api/v1/junior/agents"),
             ("POST", "/api/v1/junior/memories"),
+            ("POST", f"/api/v1/junior/memories/{uuid.uuid4()}"),
             ("POST", "/api/v1/junior/sessions"),
             ("POST", "/api/v1/junior/projects/storykeep"),
         ):
@@ -329,6 +339,24 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(one.json()["content"], "Prefers short replies")
         self.assertEqual(str(owned.call_args.args[2]), str(fact.id))
 
+        revised = SimpleNamespace(
+            id=fact.id,
+            kind="preference",
+            content="Prefers shorter replies",
+            source_thread=None,
+            created_at=now,
+            updated_at=now,
+        )
+        with patch("app.routers.junior_shared.store.update_memory", return_value=revised) as updated:
+            changed = TestClient(app).post(
+                f"/api/v1/junior/memories/{fact.id}",
+                json={"kind": "preference", "content": "Prefers shorter replies"},
+            )
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(changed.json()["content"], "Prefers shorter replies")
+        self.assertEqual(str(updated.call_args.args[2]), str(fact.id))
+        self.assertEqual(updated.call_args.kwargs["content"], "Prefers shorter replies")
+
 
 class JuniorSharedServiceTests(unittest.TestCase):
     def test_invalid_venue_and_kind(self):
@@ -364,6 +392,15 @@ class JuniorSharedServiceTests(unittest.TestCase):
         db.get.return_value = SimpleNamespace(id=uuid.uuid4(), user_id=other)
         with self.assertRaises(HTTPException) as caught:
             store.agent_run_owned(db, owner, uuid.uuid4())
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_session_owned_is_404_for_other_user(self):
+        owner = _owner()
+        other = uuid.uuid4()
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(id=uuid.uuid4(), user_id=other)
+        with self.assertRaises(HTTPException) as caught:
+            store.session_owned(db, owner, uuid.uuid4())
         self.assertEqual(caught.exception.status_code, 404)
 
     def test_reply_stub_without_key(self):
@@ -769,6 +806,12 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["device_label"], "junior-mobile")
         self.assertEqual(touched.call_args.args[2], "phone")
+
+        with patch("app.routers.junior_shared.store.session_owned", return_value=row) as owned:
+            one = TestClient(app).get(f"/api/v1/junior/sessions/{row.id}")
+        self.assertEqual(one.status_code, 200)
+        self.assertEqual(one.json()["venue"], "phone")
+        self.assertEqual(str(owned.call_args.args[2]), str(row.id))
 
     def test_seed_writes_projects_and_decisions(self):
         owner = _owner()

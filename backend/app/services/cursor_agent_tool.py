@@ -267,10 +267,11 @@ _NUM_WORDS = {
     "eleven": 11,
     "twelve": 12,
     "thirteen": 13,
+    "fourteen": 14,
 }
 _SEQ_MENTION_RE = re.compile(
     r"\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen)\b"
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen)\b"
     r"|\b(?:sequenced\s+)?#\s*(\d+)\b",
     re.I,
 )
@@ -279,9 +280,34 @@ _NEXT_STEP_RE = re.compile(
     r"|\bgo ahead and (?:send|start)\b"
     r"|\bmove on to the (?:next|nest) step\b"
     r"|\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen)\b",
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen)\b",
     re.I,
 )
+
+SEQ_14_TASK = """Sequenced #14 — next after junior-client-agent-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, or #13).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #7, #8, #9, #10, #11, #12, and #13 are already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients POST /projects/{slug}; failed updates replay on that route
+- GET /agents/{id} loads one owner agent run
+- POST /threads/{id} updates title/status; GET /memories/{id} loads one memory
+- POST /sessions, /memories, /projects, /agents, and continue history already page and replay
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-agent-get-v1 (later main also has junior-ubuntu-paste-v1)
+
+Your job (#14):
+1. Both clients POST /memories/{id} to update an existing memory. Failed writes stay on the FIFO and replay on that same route (not POST /memories). Same auth rule. No silent drop.
+2. Add GET /sessions/{id} for one session. Same require_user rules. Still no public routes.
+3. Both clients call GET /sessions/{id} (same auth).
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for memory-update replay, single-session GET, and 403. Keep existing tests green.
+6. Health stamp: junior-client-session-get-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
 
 SEQ_13_TASK = """Sequenced #13 — next after junior-client-memory-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, or #12).
 
@@ -589,14 +615,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_12_TASK
     if number == 13:
         return SEQ_13_TASK
-    if number is not None and number > 13:
+    if number == 14:
+        return SEQ_14_TASK
+    if number is not None and number > 14:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(14, text)
+        return _later_sequence_task(15, text)
     return None
 
 

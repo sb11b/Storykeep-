@@ -14,6 +14,7 @@ is paginated like the other lists. Continue history is paginated.
 Failed thread creates replay on POST /threads. GET /threads/{id} loads one thread.
 Failed thread updates replay on POST /threads/{id}. GET /memories/{id} loads one memory.
 Failed project updates replay on POST /projects/{slug}. GET /agents/{id} loads one agent run.
+Failed memory updates replay on POST /memories/{id}. GET /sessions/{id} loads one session.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-ubuntu-paste-v1"
+HEALTH_STAMP = "junior-client-session-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -92,6 +93,13 @@ def _is_project_update_path(path: str) -> bool:
     if cleaned.endswith("/projects"):
         return False
     return "/projects/" in cleaned
+
+
+def _is_memory_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    if cleaned.endswith("/memories"):
+        return False
+    return "/memories/" in cleaned
 
 
 def next_page_cursor(response: Any) -> str | None:
@@ -293,6 +301,8 @@ class SharedMemoryClient:
             return "project_update"
         if path.rstrip("/").endswith("/memories"):
             return "memory"
+        if _is_memory_update_path(path):
+            return "memory_update"
         if path.rstrip("/").endswith("/sessions"):
             return "session"
         if path.rstrip("/").endswith("/threads"):
@@ -327,6 +337,13 @@ class SharedMemoryClient:
             return self.upsert_memory(
                 str(post.get("content") or text),
                 memory_id=post.get("id") or post.get("memory_id"),
+                kind=post.get("memory_kind") or post.get("fact_kind"),
+                source_thread=post.get("source_thread"),
+            )
+        if kind == "memory_update":
+            return self.update_memory(
+                post.get("id") or post.get("memory_id"),
+                content=str(post.get("content") or text),
                 kind=post.get("memory_kind") or post.get("fact_kind"),
                 source_thread=post.get("source_thread"),
             )
@@ -372,6 +389,8 @@ class SharedMemoryClient:
             kind = "project_update"
         elif path.rstrip("/").endswith("/memories"):
             kind = "memory"
+        elif _is_memory_update_path(path):
+            kind = "memory_update"
         elif path.rstrip("/").endswith("/sessions"):
             kind = "session"
         elif path.rstrip("/").endswith("/threads"):
@@ -397,8 +416,8 @@ class SharedMemoryClient:
             "project_slug": body.get("project_slug"),
             "q": body.get("q"),
             "id": body.get("id"),
-            "memory_id": body.get("id"),
-            "memory_kind": body.get("kind") if kind == "memory" else None,
+            "memory_id": body.get("id") or body.get("memory_id"),
+            "memory_kind": body.get("kind") if kind in {"memory", "memory_update"} else None,
             "source_thread": body.get("source_thread"),
             "path": path,
             "kind": kind,
@@ -654,6 +673,36 @@ class SharedMemoryClient:
         return self._read(
             f"{API_PREFIX}/memories/{memory_id}",
             action="load this memory",
+        )
+
+    def update_memory(
+        self,
+        memory_id: UUID | str,
+        *,
+        content: str,
+        kind: str | None = None,
+        source_thread: UUID | str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "id": str(memory_id),
+            "content": content,
+        }
+        if kind:
+            body["kind"] = kind
+        if source_thread is not None:
+            body["source_thread"] = str(source_thread)
+        return self._write(
+            "post",
+            f"{API_PREFIX}/memories/{memory_id}",
+            action="update this memory",
+            body=body,
+            json={key: value for key, value in body.items() if key != "id"},
+        )
+
+    def get_session(self, session_id: UUID | str) -> Any:
+        return self._read(
+            f"{API_PREFIX}/sessions/{session_id}",
+            action="load this session",
         )
 
     def get_memories(
