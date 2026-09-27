@@ -84,6 +84,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             "/api/v1/junior/agent-context?project=storykeep",
             "/api/v1/junior/agents",
             "/api/v1/junior/sessions",
+            f"/api/v1/junior/memories/{uuid.uuid4()}",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 401, path)
@@ -95,6 +96,10 @@ class JuniorSharedRouteTests(unittest.TestCase):
         )
         self.assertEqual(
             client.post("/api/v1/junior/sessions", json={"venue": "phone", "device_label": "junior-mobile"}).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.post(f"/api/v1/junior/threads/{uuid.uuid4()}", json={"status": "archived"}).status_code,
             401,
         )
 
@@ -110,6 +115,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", "/api/v1/junior/agent-context?project=storykeep"),
             ("GET", "/api/v1/junior/agents"),
             ("GET", "/api/v1/junior/sessions"),
+            ("GET", f"/api/v1/junior/memories/{uuid.uuid4()}"),
+            ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}"),
             ("POST", "/api/v1/junior/messages"),
             ("POST", "/api/v1/junior/agents"),
             ("POST", "/api/v1/junior/memories"),
@@ -239,6 +246,26 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(history.call_args.kwargs["limit"], 1)
         self.assertEqual(history.call_args.kwargs["cursor"], str(user_msg.id))
 
+        archived = SimpleNamespace(
+            id=thread_id,
+            title="Closed chat",
+            venue_last="storykeep",
+            status="archived",
+            summary=None,
+            created_at=now,
+            updated_at=now,
+        )
+        with patch("app.routers.junior_shared.store.update_thread", return_value=archived) as updated:
+            closed = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}",
+                json={"title": "Closed chat", "status": "archived"},
+            )
+        self.assertEqual(closed.status_code, 200)
+        self.assertEqual(closed.json()["status"], "archived")
+        self.assertEqual(closed.json()["title"], "Closed chat")
+        self.assertEqual(str(updated.call_args.args[2]), str(thread_id))
+        self.assertEqual(updated.call_args.kwargs["status_value"], "archived")
+
     def test_search_and_memories(self):
         now = datetime.now(timezone.utc)
         hit = {
@@ -277,6 +304,12 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["content"], "Prefers short replies")
 
+        with patch("app.routers.junior_shared.store.memory_owned", return_value=fact) as owned:
+            one = TestClient(app).get(f"/api/v1/junior/memories/{fact.id}")
+        self.assertEqual(one.status_code, 200)
+        self.assertEqual(one.json()["content"], "Prefers short replies")
+        self.assertEqual(str(owned.call_args.args[2]), str(fact.id))
+
 
 class JuniorSharedServiceTests(unittest.TestCase):
     def test_invalid_venue_and_kind(self):
@@ -294,6 +327,15 @@ class JuniorSharedServiceTests(unittest.TestCase):
         db.get.return_value = SimpleNamespace(id=uuid.uuid4(), user_id=other)
         with self.assertRaises(HTTPException) as caught:
             store.thread_owned(db, owner, uuid.uuid4())
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_memory_owned_is_404_for_other_user(self):
+        owner = _owner()
+        other = uuid.uuid4()
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(id=uuid.uuid4(), user_id=other)
+        with self.assertRaises(HTTPException) as caught:
+            store.memory_owned(db, owner, uuid.uuid4())
         self.assertEqual(caught.exception.status_code, 404)
 
     def test_reply_stub_without_key(self):

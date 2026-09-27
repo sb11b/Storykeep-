@@ -141,6 +141,31 @@ def thread_owned(db: Session, user: User, thread_id: UUID) -> JuniorThread:
     return row
 
 
+def memory_owned(db: Session, user: User, memory_id: UUID) -> JuniorMemoryFact:
+    row = db.get(JuniorMemoryFact, memory_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found")
+    return row
+
+
+def update_thread(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    title: str | None = None,
+    status_value: str | None = None,
+) -> JuniorThread:
+    row = thread_owned(db, user, thread_id)
+    if title is not None:
+        row.title = _clean_text(title, max_len=TITLE_MAX, required=False) or None
+    if status_value is not None:
+        row.status = normalize_status(status_value)
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return row
+
+
 def last_open_thread(db: Session, user: User) -> JuniorThread | None:
     return db.scalar(
         select(JuniorThread)

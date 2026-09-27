@@ -107,8 +107,8 @@ def _windows(http):
 
 
 class SharedClientSmokeTests(unittest.TestCase):
-    def test_health_stamp_is_sessions_page_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-sessions-page-v1")
+    def test_health_stamp_is_memory_get_v1(self):
+        self.assertEqual(HEALTH_STAMP, "junior-client-memory-get-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -128,6 +128,8 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertIn("/api/v1/junior/agents", junior)
         self.assertIn("/api/v1/junior/sessions", junior)
         self.assertTrue(any("/threads/{thread_id}/messages" in path for path in junior))
+        self.assertTrue(any(path.endswith("/threads/{thread_id}") for path in junior))
+        self.assertTrue(any(path.endswith("/memories/{memory_id}") for path in junior))
 
     def test_phone_and_windows_require_login(self):
         client = TestClient(_app())
@@ -164,6 +166,11 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).get_recent_messages()
         self.assertEqual(recent.exception.status_code, 401)
 
+        with self.assertRaises(SharedMemoryError) as one_memory:
+            _windows(client).get_memory(uuid.uuid4())
+        self.assertEqual(one_memory.exception.status_code, 401)
+        self.assertIn("did not load this memory", one_memory.exception.user_message)
+
     def test_demo_is_forbidden_for_both_clients(self):
         demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
         client = TestClient(_app(demo))
@@ -190,6 +197,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).get_recent_messages(limit=5)
         self.assertEqual(recent.exception.status_code, 403)
         self.assertIn("cannot use Junior shared memory", recent.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as one_memory:
+            _windows(client).get_memory(uuid.uuid4())
+        self.assertEqual(one_memory.exception.status_code, 403)
+        self.assertIn("did not load this memory", one_memory.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as updated:
+            _phone(client).update_thread(uuid.uuid4(), status="archived")
+        self.assertEqual(updated.exception.status_code, 403)
+        self.assertIn("did not update this thread", updated.exception.user_message)
 
     def test_phone_posts_on_the_shared_messages_route(self):
         thread, user_msg = _turn("phone")
@@ -629,6 +646,43 @@ class SharedClientSmokeTests(unittest.TestCase):
         response = replayed.replay_after_login("owner-session")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(replay_http.calls, [("POST", "/api/v1/junior/sessions")])
+        self.assertFalse(path.exists())
+
+    def test_get_memory_403(self):
+        http = _ScriptedHttp([403, 403, 403])
+        memory_id = uuid.uuid4()
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _phone(http).get_memory(memory_id)
+        self.assertEqual(http.calls[0], ("GET", f"/api/v1/junior/memories/{memory_id}"))
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not load this memory", ctx.exception.user_message)
+
+    def test_thread_update_queues_and_replays(self):
+        path = _queue_path()
+        thread_id = uuid.uuid4()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                phone_client(fail, queue_path=path).update_thread(
+                    thread_id,
+                    title="Closed chat",
+                    status="archived",
+                )
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertIn("did not update this thread", ctx.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "thread_update")
+        self.assertEqual(restarted.last_failed_post["title"], "Closed chat")
+        self.assertEqual(restarted.last_failed_post["status"], "archived")
+        self.assertEqual(restarted.last_failed_post["thread_id"], str(thread_id))
+
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(replay_http.calls, [("POST", f"/api/v1/junior/threads/{thread_id}")])
         self.assertFalse(path.exists())
 
 

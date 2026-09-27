@@ -94,6 +94,25 @@ def create_thread(
     return JuniorSharedThreadOut.model_validate(row)
 
 
+@router.post("/threads/{thread_id}", response_model=JuniorSharedThreadOut)
+def update_thread(
+    thread_id: UUID,
+    payload: JuniorSharedThreadIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedThreadOut:
+    row = store.update_thread(
+        db,
+        user,
+        thread_id,
+        title=payload.title if "title" in payload.model_fields_set else None,
+        status_value=payload.status if "status" in payload.model_fields_set else None,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorSharedThreadOut.model_validate(row)
+
+
 @router.get("/threads/{thread_id}/messages", response_model=list[JuniorSharedMessageOut])
 def list_messages(
     thread_id: UUID,
@@ -251,6 +270,15 @@ def list_memories(
     )
     _page_headers(response, next_cursor)
     return [JuniorSharedMemoryOut.model_validate(row) for row in rows]
+
+
+@router.get("/memories/{memory_id}", response_model=JuniorSharedMemoryOut)
+def get_memory(
+    memory_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMemoryOut:
+    return JuniorSharedMemoryOut.model_validate(store.memory_owned(db, user, memory_id))
 
 
 @router.post("/memories", response_model=JuniorSharedMemoryOut)

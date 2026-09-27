@@ -76,6 +76,7 @@ class JuniorSharedLockdownTests(unittest.TestCase):
             "/api/v1/junior/agent-context?project=storykeep",
             "/api/v1/junior/agents",
             "/api/v1/junior/sessions",
+            f"/api/v1/junior/memories/{uuid.uuid4()}",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 403, path)

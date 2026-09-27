@@ -11,6 +11,8 @@ login the same client replays queued posts in order with the same auth.
 Failed project upserts and agent-launch stubs replay on POST /projects and
 POST /agents. Failed memory writes replay on POST /memories. GET /agents
 is paginated like the other lists. Continue history is paginated.
+Failed thread updates replay on POST /threads/{id}. GET /memories/{id}
+loads one memory.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-sessions-page-v1"
+HEALTH_STAMP = "junior-client-memory-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -276,6 +278,8 @@ class SharedMemoryClient:
             return "memory"
         if path.rstrip("/").endswith("/sessions"):
             return "session"
+        if "/threads/" in path and "/messages" not in path and "/continue" not in path:
+            return "thread_update"
         return "message"
 
     def _replay_one(self, post: dict[str, Any], text: str) -> Any:
@@ -309,6 +313,12 @@ class SharedMemoryClient:
             )
         if kind == "session":
             return self.touch_session(device_label=post.get("device_label"))
+        if kind == "thread_update" and thread_id:
+            return self.update_thread(
+                thread_id,
+                title=post.get("title"),
+                status=post.get("status"),
+            )
         return self.post_turn(text, thread_id=thread_id)
 
     def _remember_write_failure(
@@ -331,12 +341,15 @@ class SharedMemoryClient:
             kind = "memory"
         elif path.rstrip("/").endswith("/sessions"):
             kind = "session"
+        elif "/threads/" in path and "/messages" not in path and "/continue" not in path:
+            kind = "thread_update"
         else:
             kind = "message"
         queued = {
             "text": body.get("text") or body.get("content") or body.get("prompt"),
             "content": body.get("content") or body.get("text"),
             "title": body.get("title") or body.get("display_name"),
+            "status": body.get("status"),
             "thread_id": body.get("thread_id"),
             "slug": body.get("slug"),
             "display_name": body.get("display_name"),
@@ -465,6 +478,26 @@ class SharedMemoryClient:
             json=body,
         )
 
+    def update_thread(
+        self,
+        thread_id: UUID | str,
+        *,
+        title: str | None = None,
+        status: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"thread_id": str(thread_id)}
+        if title is not None:
+            body["title"] = title
+        if status is not None:
+            body["status"] = status
+        return self._write(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}",
+            action="update this thread",
+            body=body,
+            json={key: value for key, value in body.items() if key != "thread_id"},
+        )
+
     def post_turn(self, text: str, *, thread_id: UUID | str | None = None) -> Any:
         body: dict[str, Any] = {
             "text": text,
@@ -574,6 +607,12 @@ class SharedMemoryClient:
             action="record this session",
             body=body,
             json=body,
+        )
+
+    def get_memory(self, memory_id: UUID | str) -> Any:
+        return self._read(
+            f"{API_PREFIX}/memories/{memory_id}",
+            action="load this memory",
         )
 
     def get_memories(
