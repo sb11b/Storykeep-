@@ -90,6 +90,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
             f"/api/v1/junior/sessions/{uuid.uuid4()}",
             f"/api/v1/junior/messages/{uuid.uuid4()}",
             f"/api/v1/junior/search/{uuid.uuid4()}",
+            "/api/v1/junior/agent-context/storykeep",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 401, path)
@@ -143,6 +144,13 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/search/{uuid.uuid4()}",
+                json={"content": "revised snippet"},
+            ).status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -163,6 +171,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", f"/api/v1/junior/messages/{uuid.uuid4()}"),
             ("GET", "/api/v1/junior/projects/storykeep"),
             ("GET", f"/api/v1/junior/search/{uuid.uuid4()}"),
+            ("GET", "/api/v1/junior/agent-context/storykeep"),
+            ("POST", f"/api/v1/junior/search/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/sessions/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/messages/{uuid.uuid4()}"),
@@ -381,6 +391,17 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(one_hit.json()["snippet"], "equipment finance")
         self.assertEqual(str(owned_hit.call_args.args[2]), str(hit["message_id"]))
 
+        revised = {**hit, "snippet": "revised snippet"}
+        with patch("app.routers.junior_shared.store.update_search_hit", return_value=revised) as updated_hit:
+            patched = TestClient(app).post(
+                f"/api/v1/junior/search/{hit['message_id']}",
+                json={"content": "revised snippet"},
+            )
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(patched.json()["snippet"], "revised snippet")
+        self.assertEqual(str(updated_hit.call_args.args[2]), str(hit["message_id"]))
+        self.assertEqual(updated_hit.call_args.kwargs["content"], "revised snippet")
+
         with patch("app.routers.junior_shared.store.list_memories_page", return_value=([fact], None)):
             listed = TestClient(app).get("/api/v1/junior/memories")
         self.assertEqual(listed.status_code, 200)
@@ -486,6 +507,18 @@ class JuniorSharedServiceTests(unittest.TestCase):
         db.get.side_effect = [message, SimpleNamespace(id=message.thread_id, user_id=other, title="x")]
         with self.assertRaises(HTTPException) as caught:
             store.search_hit_owned(db, owner, message.id)
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_update_search_hit_is_404_for_other_user(self):
+        owner = _owner()
+        other = uuid.uuid4()
+        db = MagicMock()
+        db.get.side_effect = [
+            SimpleNamespace(id=uuid.uuid4(), thread_id=uuid.uuid4()),
+            SimpleNamespace(id=uuid.uuid4(), user_id=other),
+        ]
+        with self.assertRaises(HTTPException) as caught:
+            store.update_search_hit(db, owner, uuid.uuid4(), content="revised snippet")
         self.assertEqual(caught.exception.status_code, 404)
 
     def test_invalid_agent_status(self):
@@ -827,6 +860,13 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(body["thread_summary"], "pick up finance")
         self.assertEqual(body["recent_messages"][0]["venue"], "phone")
         self.assertIn("source of truth", body["memories"][0]["content"])
+
+        with patch("app.routers.junior_shared.store.build_agent_context", return_value=pack) as built:
+            one_ctx = TestClient(app).get("/api/v1/junior/agent-context/storykeep", params={"q": "finance"})
+        self.assertEqual(one_ctx.status_code, 200)
+        self.assertEqual(one_ctx.json()["project"]["slug"], "storykeep")
+        self.assertEqual(built.call_args.kwargs["project_slug"], "storykeep")
+        self.assertEqual(built.call_args.kwargs["query"], "finance")
         self.assertIn("storykeep", body["launch_hint"])
 
         run = SimpleNamespace(

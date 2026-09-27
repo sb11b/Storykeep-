@@ -788,6 +788,26 @@ def search_hit_owned(db: Session, user: User, message_id: UUID) -> dict[str, Any
     }
 
 
+def update_search_hit(
+    db: Session,
+    user: User,
+    message_id: UUID,
+    *,
+    content: str | None = None,
+    venue: str | None = None,
+    set_venue: bool = False,
+) -> dict[str, Any]:
+    update_message(
+        db,
+        user,
+        message_id,
+        content=content,
+        venue=venue,
+        set_venue=set_venue,
+    )
+    return search_hit_owned(db, user, message_id)
+
+
 def list_memories(db: Session, user: User, *, kind: str | None = None) -> list[JuniorMemoryFact]:
     rows, _ = list_memories_page(db, user, kind=kind)
     return rows
