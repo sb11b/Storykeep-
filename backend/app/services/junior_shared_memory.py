@@ -779,7 +779,10 @@ def search_page(
     cursor: UUID | str | None = None,
     before_id: UUID | str | None = None,
     thread_id: UUID | None = None,
+    thread_ids: list[UUID] | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
+    if thread_ids is not None and not thread_ids:
+        return [], None
     q = _clean_text(query, max_len=200)
     cap = clamp_page_limit(limit, default=25)
     tsquery = func.plainto_tsquery("english", q)
@@ -794,6 +797,8 @@ def search_page(
     ]
     if thread_id is not None:
         filters.append(JuniorThread.id == thread_id)
+    if thread_ids is not None:
+        filters.append(JuniorThread.id.in_(thread_ids))
     stmt = (
         select(JuniorThread, JuniorThreadMessage, msg_rank)
         .join(JuniorThreadMessage, JuniorThreadMessage.thread_id == JuniorThread.id)
@@ -1095,6 +1100,31 @@ def list_projects_page(
     page = rows[:cap]
     next_cursor = str(page[-1].id) if has_more and page else None
     return page, next_cursor
+
+
+def project_search_thread_ids(db: Session, user: User, project: JuniorProject) -> list[UUID]:
+    """Threads tied to this project: pinned context thread, then agent-run threads."""
+    ids: list[UUID] = []
+    seen: set[UUID] = set()
+    meta = project.meta if isinstance(project.meta, dict) else {}
+    pinned = _as_uuid(meta.get("context_thread_id"))
+    if pinned is not None:
+        thread = db.get(JuniorThread, pinned)
+        if thread is not None and thread.user_id == user.id and pinned not in seen:
+            seen.add(pinned)
+            ids.append(pinned)
+    runs = db.scalars(
+        select(JuniorAgentRun.thread_id).where(
+            JuniorAgentRun.user_id == user.id,
+            JuniorAgentRun.project_slug == project.slug,
+            JuniorAgentRun.thread_id.is_not(None),
+        )
+    )
+    for thread_id in runs:
+        if thread_id is not None and thread_id not in seen:
+            seen.add(thread_id)
+            ids.append(thread_id)
+    return ids
 
 
 def get_project(db: Session, user: User, slug: str) -> JuniorProject:
