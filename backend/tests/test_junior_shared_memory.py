@@ -1137,6 +1137,36 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(str(project_run.call_args.args[3]), str(run.id))
         self.assertEqual(project_run.call_args.kwargs["status_value"], "launched")
 
+        thread_id = uuid.uuid4()
+        threaded = SimpleNamespace(
+            id=run.id,
+            project_slug="storykeep",
+            prompt="Fix the memory API",
+            status="context_ready",
+            cursor_agent_id=None,
+            thread_id=thread_id,
+            created_at=now,
+        )
+        with patch("app.routers.junior_shared.store.thread_agent_owned", return_value=threaded) as owned_thread:
+            on_thread = TestClient(app).get(f"/api/v1/junior/threads/{thread_id}/agents/{run.id}")
+        self.assertEqual(on_thread.status_code, 200)
+        self.assertEqual(on_thread.json()["project_slug"], "storykeep")
+        self.assertEqual(str(owned_thread.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(owned_thread.call_args.args[3]), str(run.id))
+
+        with patch(
+            "app.routers.junior_shared.store.update_thread_agent", return_value=launched_run
+        ) as thread_run:
+            thread_changed = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/agents/{run.id}",
+                json={"status": "launched", "prompt": "Keep going"},
+            )
+        self.assertEqual(thread_changed.status_code, 200)
+        self.assertEqual(thread_changed.json()["status"], "launched")
+        self.assertEqual(str(thread_run.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(thread_run.call_args.args[3]), str(run.id))
+        self.assertEqual(thread_run.call_args.kwargs["status_value"], "launched")
+
     def test_invalid_slug(self):
         with self.assertRaises(HTTPException) as caught:
             store.normalize_slug("Story Keep")
