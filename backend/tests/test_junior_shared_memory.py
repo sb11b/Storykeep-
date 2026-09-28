@@ -165,6 +165,17 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/threads/{uuid.uuid4()}/messages/{uuid.uuid4()}",
+                json={"text": "revised in thread", "venue": "phone"},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.get(f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}").status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -188,6 +199,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", "/api/v1/junior/agent-context/storykeep"),
             ("POST", "/api/v1/junior/agent-context/storykeep"),
             ("GET", f"/api/v1/junior/threads/{uuid.uuid4()}/messages/{uuid.uuid4()}"),
+            ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}/messages/{uuid.uuid4()}"),
+            ("GET", f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/search/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/sessions/{uuid.uuid4()}"),
@@ -375,6 +388,19 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(changed.json()["content"], "revised turn")
         self.assertEqual(str(patched.call_args.args[2]), str(user_msg.id))
         self.assertEqual(patched.call_args.kwargs["content"], "revised turn")
+
+        with patch(
+            "app.routers.junior_shared.store.update_thread_message", return_value=revised
+        ) as nested_update:
+            nested_changed = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/messages/{user_msg.id}",
+                json={"text": "revised turn", "venue": "phone"},
+            )
+        self.assertEqual(nested_changed.status_code, 200)
+        self.assertEqual(nested_changed.json()["content"], "revised turn")
+        self.assertEqual(str(nested_update.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(nested_update.call_args.args[3]), str(user_msg.id))
+        self.assertEqual(nested_update.call_args.kwargs["content"], "revised turn")
 
         with patch("app.routers.junior_shared.store.update_thread", return_value=archived) as updated:
             closed = TestClient(app).post(
@@ -935,6 +961,13 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(one.status_code, 200)
         self.assertEqual(one.json()["status"], "context_ready")
         self.assertEqual(str(owned.call_args.args[2]), str(run.id))
+
+        with patch("app.routers.junior_shared.store.project_agent_owned", return_value=run) as scoped:
+            scoped_run = TestClient(app).get(f"/api/v1/junior/projects/storykeep/agents/{run.id}")
+        self.assertEqual(scoped_run.status_code, 200)
+        self.assertEqual(scoped_run.json()["project_slug"], "storykeep")
+        self.assertEqual(scoped.call_args.args[2], "storykeep")
+        self.assertEqual(str(scoped.call_args.args[3]), str(run.id))
 
         launched_run = SimpleNamespace(
             id=run.id,

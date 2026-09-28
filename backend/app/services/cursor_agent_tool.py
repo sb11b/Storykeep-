@@ -273,10 +273,16 @@ _NUM_WORDS = {
     "seventeen": 17,
     "eighteen": 18,
     "nineteen": 19,
+    "twenty": 20,
+    "twenty-one": 21,
 }
+_SEQ_WORD = (
+    r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+    r"sixteen|seventeen|eighteen|nineteen|twenty-one|twenty"
+)
 _SEQ_MENTION_RE = re.compile(
     r"\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\b"
+    rf"(\d+|{_SEQ_WORD})\b"
     r"|\b(?:sequenced\s+)?#\s*(\d+)\b",
     re.I,
 )
@@ -285,9 +291,35 @@ _NEXT_STEP_RE = re.compile(
     r"|\bgo ahead and (?:send|start)\b"
     r"|\bmove on to the (?:next|nest) step\b"
     r"|\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\b",
+    rf"(?:\d+|{_SEQ_WORD})\b",
     re.I,
 )
+
+SEQ_20_TASK = """Sequenced #20 — next after junior-client-thread-message-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, or #19).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, and #19 are already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients POST /agent-context/{slug}; failed updates replay on that route
+- GET /threads/{id}/messages/{id} loads one thread message
+- POST /threads, /threads/{id}, /sessions, /sessions/{id}, /memories, /messages/{id}, /projects, /agents, and continue history already page and replay
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-thread-message-get-v1
+
+Your job (#20):
+1. Both clients POST /threads/{id}/messages/{id} to update an existing thread message. Failed writes stay on the FIFO and replay on that same route (not POST /messages/{id}). Same auth rule. No silent drop.
+2. Add GET /projects/{slug}/agents/{id} for one agent run in that project. Same require_user rules. Still no public routes.
+3. Both clients call GET /projects/{slug}/agents/{id} (same auth).
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for thread-message-update replay, project-agent GET, and 403. Keep existing tests green.
+6. Health stamp: junior-client-project-agent-get-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
+
+
 
 SEQ_19_TASK = """Sequenced #19 — next after junior-client-context-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, or #18).
 
@@ -708,7 +740,7 @@ def _later_sequence_task(number: int, message: str) -> str:
     return (
         f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
         "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
-        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, or #18. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, or #19. "
         "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
         "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
         "Commit on a cursor/* branch and push that branch only.\n\n"
@@ -751,14 +783,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_18_TASK
     if number == 19:
         return SEQ_19_TASK
-    if number is not None and number > 19:
+    if number == 20:
+        return SEQ_20_TASK
+    if number is not None and number > 20:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(20, text)
+        return _later_sequence_task(21, text)
     return None
 
 

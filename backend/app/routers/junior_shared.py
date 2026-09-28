@@ -154,6 +154,31 @@ def get_thread_message(
     )
 
 
+@router.post("/threads/{thread_id}/messages/{message_id}", response_model=JuniorSharedMessageOut)
+def update_thread_message(
+    thread_id: UUID,
+    message_id: UUID,
+    payload: JuniorSharedMessageIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMessageOut:
+    fields = payload.model_fields_set
+    row = store.update_thread_message(
+        db,
+        user,
+        thread_id,
+        message_id,
+        content=payload.body or None,
+        venue=payload.venue if "venue" in fields else None,
+        meta=payload.meta if "meta" in fields else None,
+        set_venue="venue" in fields,
+        set_meta="meta" in fields,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorSharedMessageOut.model_validate(row)
+
+
 @router.post("/threads/{thread_id}/messages", response_model=JuniorSharedMessagePostOut)
 def post_message(
     thread_id: UUID,
@@ -505,6 +530,16 @@ def get_project(
     user: User = Depends(require_user),
 ) -> JuniorProjectOut:
     return JuniorProjectOut.model_validate(store.get_project(db, user, slug))
+
+
+@router.get("/projects/{slug}/agents/{run_id}", response_model=JuniorAgentRunOut)
+def get_project_agent(
+    slug: str,
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentRunOut:
+    return JuniorAgentRunOut.model_validate(store.project_agent_owned(db, user, slug, run_id))
 
 
 @router.post("/projects/{slug}", response_model=JuniorProjectOut)

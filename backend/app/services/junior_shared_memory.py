@@ -188,6 +188,51 @@ def update_message(
     set_meta: bool = False,
 ) -> JuniorThreadMessage:
     row = message_owned(db, user, message_id)
+    return _apply_message_update(
+        db,
+        row,
+        content=content,
+        venue=venue,
+        meta=meta,
+        set_venue=set_venue,
+        set_meta=set_meta,
+    )
+
+
+def update_thread_message(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    message_id: UUID,
+    *,
+    content: str | None = None,
+    venue: str | None = None,
+    meta: dict[str, Any] | None = None,
+    set_venue: bool = False,
+    set_meta: bool = False,
+) -> JuniorThreadMessage:
+    row = thread_message_owned(db, user, thread_id, message_id)
+    return _apply_message_update(
+        db,
+        row,
+        content=content,
+        venue=venue,
+        meta=meta,
+        set_venue=set_venue,
+        set_meta=set_meta,
+    )
+
+
+def _apply_message_update(
+    db: Session,
+    row: JuniorThreadMessage,
+    *,
+    content: str | None = None,
+    venue: str | None = None,
+    meta: dict[str, Any] | None = None,
+    set_venue: bool = False,
+    set_meta: bool = False,
+) -> JuniorThreadMessage:
     if content is not None:
         row.content = _clean_text(content, max_len=CONTENT_MAX)
     if set_venue and venue is not None:
@@ -1155,6 +1200,14 @@ def update_agent_context(
 def agent_run_owned(db: Session, user: User, run_id: UUID) -> JuniorAgentRun:
     row = db.get(JuniorAgentRun, run_id)
     if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+    return row
+
+
+def project_agent_owned(db: Session, user: User, slug: str, run_id: UUID) -> JuniorAgentRun:
+    project = get_project(db, user, slug)
+    row = agent_run_owned(db, user, run_id)
+    if row.project_slug != project.slug:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
     return row
 
