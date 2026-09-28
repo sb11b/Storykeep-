@@ -110,7 +110,7 @@ def _windows(http):
 
 class SharedClientSmokeTests(unittest.TestCase):
     def test_health_stamp_matches_build(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-thread-search-page-v1")
+        self.assertEqual(HEALTH_STAMP, "junior-client-project-search-page-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -145,6 +145,7 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("/threads/{thread_id}/agents") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/search/{message_id}") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/search") for path in junior))
+        self.assertTrue(any(path.endswith("/projects/{slug}/search") for path in junior))
 
     def test_phone_and_windows_require_login(self):
         client = TestClient(_app())
@@ -275,6 +276,11 @@ class SharedClientSmokeTests(unittest.TestCase):
             _windows(client).get_thread_search(uuid.uuid4(), "notes")
         self.assertEqual(thread_search_page.exception.status_code, 401)
         self.assertIn("did not load these thread search hits", thread_search_page.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as project_search_page:
+            _phone(client).get_project_search("storykeep", "notes")
+        self.assertEqual(project_search_page.exception.status_code, 401)
+        self.assertIn("did not load these project search hits", project_search_page.exception.user_message)
 
     def test_demo_is_forbidden_for_both_clients(self):
         demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
@@ -473,6 +479,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).search_thread(uuid.uuid4(), "notes")
         self.assertEqual(thread_searched.exception.status_code, 403)
         self.assertIn("did not run this thread search", thread_searched.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as project_search_page:
+            _windows(client).get_project_search("storykeep", "notes")
+        self.assertEqual(project_search_page.exception.status_code, 403)
+        self.assertIn("did not load these project search hits", project_search_page.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as project_searched:
+            _phone(client).search_project("storykeep", "notes")
+        self.assertEqual(project_searched.exception.status_code, 403)
+        self.assertIn("did not run this project search", project_searched.exception.user_message)
 
     def test_phone_posts_on_the_shared_messages_route(self):
         thread, user_msg = _turn("phone")
@@ -1567,6 +1583,41 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertEqual(replay_http.json_bodies[0]["q"], "notes")
         self.assertNotIn(("GET", "/api/v1/junior/search"), replay_http.calls)
         self.assertFalse(any(call[1].endswith(f"/search/{thread_id}") for call in replay_http.calls))
+        self.assertFalse(path.exists())
+
+    def test_project_search_page_403_and_replay(self):
+        http = _ScriptedHttp([200, 403, 403, 403])
+        page = _phone(http).get_project_search("storykeep", "notes", limit=2, cursor="abc")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(http.calls[0], ("GET", "/api/v1/junior/projects/storykeep/search"))
+        self.assertEqual(http.params[0], {"limit": 2, "cursor": "abc", "q": "notes"})
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _windows(http).get_project_search("storykeep", "notes")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("did not load these project search hits", ctx.exception.user_message)
+
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as searched:
+                phone_client(fail, queue_path=path).search_project("storykeep", "notes")
+        self.assertIn("did not run this project search", searched.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "project_search")
+        self.assertEqual(restarted.last_failed_post["q"], "notes")
+        self.assertEqual(restarted.last_failed_post["slug"], "storykeep")
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            replay_http.calls,
+            [("POST", "/api/v1/junior/projects/storykeep/search")],
+        )
+        self.assertEqual(replay_http.json_bodies[0]["q"], "notes")
+        self.assertNotIn(("GET", "/api/v1/junior/search"), replay_http.calls)
+        self.assertNotIn(("POST", "/api/v1/junior/threads/storykeep/search"), replay_http.calls)
         self.assertFalse(path.exists())
 
 

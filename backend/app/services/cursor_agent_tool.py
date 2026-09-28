@@ -282,10 +282,11 @@ _NUM_WORDS = {
     "twenty-six": 26,
     "twenty-seven": 27,
     "twenty-eight": 28,
+    "twenty-nine": 29,
 }
 _SEQ_MENTION_RE = re.compile(
     r"\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b"
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-nine|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b"
     r"|\b(?:sequenced\s+)?#\s*(\d+)\b",
     re.I,
 )
@@ -294,9 +295,33 @@ _NEXT_STEP_RE = re.compile(
     r"|\bgo ahead and (?:send|start)\b"
     r"|\bmove on to the (?:next|nest) step\b"
     r"|\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b",
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-nine|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b",
     re.I,
 )
+
+SEQ_29_TASK = """Sequenced #29 — next after junior-client-thread-search-page-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #20, #21, #22, #23, #24, #25, #26, #27, or #28).
+
+Repo: github.com/sb11b/Storykeep- only. Branch from current GitHub main. #7 through #28 are already on main. Do not merge steve-bitsko Cursor PR #2. Do not change the owner email (angry.tune8751@fastmail.com). Do not git-push to main. Do not re-run SQL migrations. Do not open a pull request.
+
+Already done on main:
+- Phone and Windows clients POST /threads/{id}/search; failed searches replay on that route
+- GET /threads/{id}/search pages search hits on that thread
+- POST /threads/{id}/search/{id} and GET /threads/{id}/search/{id} already exist
+- require_user; demo 403; no new public routes
+- Health stamp junior-client-thread-search-page-v1
+
+Your job (#29):
+1. Both clients POST /projects/{slug}/search to run a search on that project. Failed writes stay on the FIFO and replay on that same route (not GET /search, not POST /threads/{id}/search, and not POST /search/{id}). Same auth rule. No silent drop.
+2. Add GET /projects/{slug}/search to page search hits on that project (q plus limit/cursor or before_id). Hits are messages on the project's pinned thread and on threads with an agent run for that slug. Same require_user rules. 404 if the project is missing. Still no public routes.
+3. Both clients call GET /projects/{slug}/search (same auth).
+4. Keep SQL idempotent; no DROP TABLE. No new public routes.
+5. Extend smoke tests for project-search replay, project-search page GET, and 403. Keep existing tests green.
+6. Health stamp: junior-client-project-search-page-v1
+7. Commit on a cursor/* branch and push that branch only.
+
+Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
+"""
+
 
 SEQ_28_TASK = """Sequenced #28 — next after junior-client-thread-search-get-v1 on GitHub main (do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #20, #21, #22, #23, #24, #25, #26, or #27).
 
@@ -931,7 +956,7 @@ def _later_sequence_task(number: int, message: str) -> str:
     return (
         f"Sequenced #{number} on GitHub main of sb11b/Storykeep- (StoryKeep). "
         "Steve asked to start this sequence. Do not refuse. Do not ask him to define it. "
-        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #20, #21, #22, #23, #24, #25, #26, #27, or #28. "
+        "Do not say there is no agent start tool. Do not redo #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #20, #21, #22, #23, #24, #25, #26, #27, #28, or #29. "
         "Do not merge steve-bitsko Cursor PR #2. Do not change the owner email. "
         "Do not git-push to main. Do not re-run SQL. Do not open a pull request. "
         "Commit on a cursor/* branch and push that branch only.\n\n"
@@ -992,14 +1017,16 @@ def next_step_task(message: str) -> str | None:
         return SEQ_27_TASK
     if number == 28:
         return SEQ_28_TASK
-    if number is not None and number > 28:
+    if number == 29:
+        return SEQ_29_TASK
+    if number is not None and number > 29:
         return _later_sequence_task(number, text)
     if number == 2:
         return None
     for match in _NEXT_STEP_RE.finditer(text):
         if _negated_at(text, match.start()):
             continue
-        return _later_sequence_task(29, text)
+        return _later_sequence_task(30, text)
     return None
 
 
