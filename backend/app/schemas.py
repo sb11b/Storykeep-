@@ -830,6 +830,8 @@ class JuniorSharedContinueIn(BaseModel):
     venue: str | None = Field(default="storykeep", max_length=16)
     meta: dict[str, Any] = Field(default_factory=dict)
     device_label: str | None = Field(default=None, max_length=120)
+    title: str | None = Field(default=None, max_length=120)
+    status: str | None = Field(default=None, max_length=16)
 
     @property
     def body(self) -> str:

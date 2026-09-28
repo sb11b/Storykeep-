@@ -310,6 +310,16 @@ def continue_thread(
     user_row = junior_row = None
     reply_status = None
     incoming = payload or JuniorSharedContinueIn()
+    fields = incoming.model_fields_set
+    pack_update = "title" in fields or "status" in fields
+    if pack_update:
+        thread = store.update_thread(
+            db,
+            user,
+            thread_id,
+            title=incoming.title if "title" in fields else None,
+            status_value=incoming.status if "status" in fields else None,
+        )
     body = incoming.body
     if body:
         thread, user_row, junior_row, reply_status = store.post_turn(
@@ -326,6 +336,9 @@ def continue_thread(
         db.refresh(user_row)
         if junior_row is not None:
             db.refresh(junior_row)
+    elif pack_update:
+        db.commit()
+        db.refresh(thread)
     history, next_cursor = store.list_messages_page(
         db, user, thread.id, limit=limit, cursor=cursor, before_id=before_id
     )
@@ -551,6 +564,16 @@ def get_project(
     user: User = Depends(require_user),
 ) -> JuniorProjectOut:
     return JuniorProjectOut.model_validate(store.get_project(db, user, slug))
+
+
+@router.get("/projects/{slug}/agents/{run_id}", response_model=JuniorAgentRunOut)
+def get_project_agent(
+    slug: str,
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentRunOut:
+    return JuniorAgentRunOut.model_validate(store.project_agent_owned(db, user, slug, run_id))
 
 
 @router.post("/projects/{slug}", response_model=JuniorProjectOut)

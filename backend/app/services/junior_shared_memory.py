@@ -1184,6 +1184,14 @@ def agent_run_owned(db: Session, user: User, run_id: UUID) -> JuniorAgentRun:
     return row
 
 
+def project_agent_owned(db: Session, user: User, slug: str, run_id: UUID) -> JuniorAgentRun:
+    project = get_project(db, user, slug)
+    row = agent_run_owned(db, user, run_id)
+    if normalize_slug(row.project_slug) != project.slug:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+    return row
+
+
 def normalize_agent_status(value: str | None) -> str:
     token = (value or "").strip().lower()
     if token not in AGENT_STATUSES:

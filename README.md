@@ -137,7 +137,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `POST` | `/api/v1/junior/messages/{id}` | Update an existing message (404 if missing) |
 | `POST` | `/api/v1/junior/messages` | Same turn; omit `thread_id` to use last `open` thread (or create one) |
 | `GET` | `/api/v1/junior/threads/{id}/continue` | Continue history for that thread (`limit`, `cursor` or `before_id`) |
-| `POST` | `/api/v1/junior/threads/{id}/continue` | Resume a thread; with `text` this is another turn (`limit`, `cursor` or `before_id` on history) |
+| `POST` | `/api/v1/junior/threads/{id}/continue` | Resume a thread; with `text` this is another turn. With `title` or `status` and no `text`, update the continue pack (`limit`, `cursor` or `before_id` on history) |
 | `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/search/{id}` | One search hit the signed-in user owns |
 | `POST` | `/api/v1/junior/search/{id}` | Update an existing search hit (404 if missing) |
@@ -147,6 +147,7 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `POST` | `/api/v1/junior/memories/{id}` | Update an existing memory (404 if missing) |
 | `GET` | `/api/v1/junior/projects` | List project registry (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/projects/{slug}` | One project |
+| `GET` | `/api/v1/junior/projects/{slug}/agents/{id}` | One agent run recorded for that project |
 | `POST` | `/api/v1/junior/projects` | Upsert by slug |
 | `POST` | `/api/v1/junior/projects/{slug}` | Update an existing project (404 if missing) |
 | `GET` | `/api/v1/junior/agent-context?project=&q=` | Pack for a Cursor agent (project + thread + memories + search) |

@@ -75,10 +75,12 @@ class _ScriptedHttp:
         self.outcomes = list(outcomes)
         self.calls: list[tuple[str, str]] = []
         self.params: list[dict] = []
+        self.json: list[dict] = []
 
     def _next(self, method: str, path: str, **kwargs) -> SimpleNamespace:
         self.calls.append((method, path))
         self.params.append(kwargs.get("params") or {})
+        self.json.append(kwargs.get("json") or {})
         if not self.outcomes:
             raise AssertionError("unexpected extra HTTP call")
         outcome = self.outcomes.pop(0)
@@ -107,8 +109,8 @@ def _windows(http):
 
 
 class SharedClientSmokeTests(unittest.TestCase):
-    def test_health_stamp_is_continue_get_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-continue-get-v1")
+    def test_health_stamp_is_project_agent_get_v1(self):
+        self.assertEqual(HEALTH_STAMP, "junior-client-project-agent-get-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -138,6 +140,7 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("/agent-context/{slug}") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/messages/{message_id}") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/continue") for path in junior))
+        self.assertTrue(any(path.endswith("/projects/{slug}/agents/{run_id}") for path in junior))
 
     def test_phone_and_windows_require_login(self):
         client = TestClient(_app())
@@ -228,6 +231,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).get_continue(uuid.uuid4())
         self.assertEqual(continue_page.exception.status_code, 401)
         self.assertIn("did not load this continue", continue_page.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as continue_updated:
+            _windows(client).update_continue(uuid.uuid4(), title="Pinned pack", status="archived")
+        self.assertEqual(continue_updated.exception.status_code, 401)
+        self.assertIn("did not update this continue", continue_updated.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as project_agent:
+            _phone(client).get_project_agent(uuid.uuid4(), "storykeep")
+        self.assertEqual(project_agent.exception.status_code, 401)
+        self.assertIn("did not load this project agent", project_agent.exception.user_message)
 
     def test_demo_is_forbidden_for_both_clients(self):
         demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
@@ -351,6 +364,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _windows(client).get_continue(uuid.uuid4())
         self.assertEqual(continue_page.exception.status_code, 403)
         self.assertIn("did not load this continue", continue_page.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as continue_updated:
+            _phone(client).update_continue(uuid.uuid4(), title="Pinned pack")
+        self.assertEqual(continue_updated.exception.status_code, 403)
+        self.assertIn("did not update this continue", continue_updated.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as project_agent:
+            _windows(client).get_project_agent(uuid.uuid4(), "storykeep")
+        self.assertEqual(project_agent.exception.status_code, 403)
+        self.assertIn("did not load this project agent", project_agent.exception.user_message)
 
     def test_phone_posts_on_the_shared_messages_route(self):
         thread, user_msg = _turn("phone")
@@ -1147,6 +1170,45 @@ class SharedClientSmokeTests(unittest.TestCase):
             replay_http.calls,
             [("POST", f"/api/v1/junior/threads/{thread_id}/messages/{message_id}")],
         )
+        self.assertFalse(path.exists())
+
+    def test_get_project_agent_403(self):
+        http = _ScriptedHttp([200, 403, 403, 403])
+        run_id = uuid.uuid4()
+        _phone(http).get_project_agent(run_id, "storykeep")
+        self.assertEqual(http.calls[0], ("GET", f"/api/v1/junior/projects/storykeep/agents/{run_id}"))
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _windows(http).get_project_agent(run_id)
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("cannot use Junior shared memory", ctx.exception.user_message)
+        self.assertIn("did not load this project agent", ctx.exception.user_message)
+
+    def test_continue_update_queues_and_replays(self):
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500])
+        thread_id = uuid.uuid4()
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                phone_client(fail, queue_path=path).update_continue(
+                    thread_id, title="Pinned pack", status="archived"
+                )
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertIn("did not update this continue", ctx.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "continue_update")
+        self.assertEqual(restarted.last_failed_post["title"], "Pinned pack")
+        self.assertEqual(restarted.last_failed_post["status"], "archived")
+        self.assertEqual(restarted.last_failed_post["thread_id"], str(thread_id))
+
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(replay_http.calls, [("POST", f"/api/v1/junior/threads/{thread_id}/continue")])
+        self.assertEqual(replay_http.json[0]["title"], "Pinned pack")
+        self.assertEqual(replay_http.json[0]["status"], "archived")
+        self.assertNotIn("text", replay_http.json[0])
         self.assertFalse(path.exists())
 
 

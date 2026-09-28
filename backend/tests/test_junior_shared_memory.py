@@ -176,6 +176,17 @@ class JuniorSharedRouteTests(unittest.TestCase):
             client.get(f"/api/v1/junior/threads/{uuid.uuid4()}/continue").status_code,
             401,
         )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/threads/{uuid.uuid4()}/continue",
+                json={"title": "Pinned pack", "status": "archived"},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.get(f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}").status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -201,6 +212,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("GET", f"/api/v1/junior/threads/{uuid.uuid4()}/messages/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}/messages/{uuid.uuid4()}"),
             ("GET", f"/api/v1/junior/threads/{uuid.uuid4()}/continue"),
+            ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}/continue"),
+            ("GET", f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/search/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/sessions/{uuid.uuid4()}"),
@@ -386,6 +399,33 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(continue_page.call_args.kwargs["limit"], 1)
         self.assertEqual(continue_page.call_args.kwargs["cursor"], str(user_msg.id))
 
+        pinned = SimpleNamespace(
+            id=thread_id,
+            title="Pinned pack",
+            venue_last="storykeep",
+            status="archived",
+            summary=None,
+            created_at=now,
+            updated_at=now,
+        )
+        with patch("app.routers.junior_shared.store.thread_owned", return_value=thread), patch(
+            "app.routers.junior_shared.store.update_thread", return_value=pinned
+        ) as packed, patch(
+            "app.routers.junior_shared.store.list_messages_page",
+            return_value=([user_msg], None),
+        ), patch("app.routers.junior_shared.store.post_turn") as posted:
+            updated_pack = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/continue",
+                json={"title": "Pinned pack", "status": "archived"},
+            )
+        self.assertEqual(updated_pack.status_code, 200)
+        self.assertEqual(updated_pack.json()["thread"]["title"], "Pinned pack")
+        self.assertEqual(updated_pack.json()["thread"]["status"], "archived")
+        self.assertIsNone(updated_pack.json()["user_message"])
+        self.assertFalse(posted.called)
+        self.assertEqual(packed.call_args.kwargs["title"], "Pinned pack")
+        self.assertEqual(packed.call_args.kwargs["status_value"], "archived")
+
         revised = SimpleNamespace(
             id=user_msg.id,
             thread_id=user_msg.thread_id,
@@ -554,6 +594,18 @@ class JuniorSharedServiceTests(unittest.TestCase):
         ]
         with self.assertRaises(HTTPException) as caught:
             store.message_owned(db, owner, uuid.uuid4())
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_project_agent_owned_is_404_when_slug_mismatches(self):
+        owner = _owner()
+        run_id = uuid.uuid4()
+        project = SimpleNamespace(slug="storykeep")
+        run = SimpleNamespace(id=run_id, user_id=owner.id, project_slug="junior-phone")
+        with patch("app.services.junior_shared_memory.get_project", return_value=project), patch(
+            "app.services.junior_shared_memory.agent_run_owned", return_value=run
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                store.project_agent_owned(MagicMock(), owner, "storykeep", run_id)
         self.assertEqual(caught.exception.status_code, 404)
 
     def test_update_thread_message_is_404_when_thread_mismatches(self):
@@ -992,6 +1044,13 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(one.status_code, 200)
         self.assertEqual(one.json()["status"], "context_ready")
         self.assertEqual(str(owned.call_args.args[2]), str(run.id))
+
+        with patch("app.routers.junior_shared.store.project_agent_owned", return_value=run) as project_run:
+            scoped = TestClient(app).get(f"/api/v1/junior/projects/storykeep/agents/{run.id}")
+        self.assertEqual(scoped.status_code, 200)
+        self.assertEqual(scoped.json()["project_slug"], "storykeep")
+        self.assertEqual(project_run.call_args.args[2], "storykeep")
+        self.assertEqual(str(project_run.call_args.args[3]), str(run.id))
 
         launched_run = SimpleNamespace(
             id=run.id,
