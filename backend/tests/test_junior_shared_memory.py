@@ -1286,6 +1286,47 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertTrue(changed.call_args.kwargs["set_snippet"])
         self.assertEqual(changed.call_args.kwargs["snippet"], "revised snippet")
 
+    def test_thread_search_page_routes(self):
+        now = datetime.now(timezone.utc)
+        thread_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        hit = {
+            "thread_id": thread_id,
+            "thread_title": "Notes",
+            "message_id": message_id,
+            "snippet": "pinned query",
+            "venue": "phone",
+            "created_at": now,
+            "rank": 0.0,
+        }
+        app = _app()
+        with patch(
+            "app.routers.junior_shared.store.list_thread_searches_page",
+            return_value=([hit], str(message_id)),
+        ) as paged:
+            listed = TestClient(app).get(
+                f"/api/v1/junior/threads/{thread_id}/search",
+                params={"q": "pinned", "limit": 5, "cursor": str(message_id)},
+            )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["snippet"], "pinned query")
+        self.assertEqual(listed.headers.get("x-next-cursor"), str(message_id))
+        self.assertEqual(str(paged.call_args.args[2]), str(thread_id))
+        self.assertEqual(paged.call_args.kwargs["query"], "pinned")
+        self.assertEqual(paged.call_args.kwargs["limit"], 5)
+
+        with patch("app.routers.junior_shared.store.record_thread_search", return_value=hit) as recorded:
+            posted = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/search",
+                json={"q": "pinned query", "snippet": "pinned query", "venue": "phone"},
+            )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json()["message_id"], str(message_id))
+        self.assertEqual(recorded.call_args.kwargs["query"], "pinned query")
+        self.assertEqual(recorded.call_args.kwargs["snippet"], "pinned query")
+        self.assertEqual(recorded.call_args.kwargs["venue"], "phone")
+        self.assertEqual(str(recorded.call_args.args[2]), str(thread_id))
+
     def test_invalid_slug(self):
         with self.assertRaises(HTTPException) as caught:
             store.normalize_slug("Story Keep")

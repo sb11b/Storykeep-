@@ -855,6 +855,99 @@ def update_search_hit(
     return _search_hit_dict(thread, message)
 
 
+def _like_contains(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def list_thread_searches_page(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    query: str | None = None,
+    limit: int | None = 25,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Page searches recorded on this thread. 404 when the thread is missing."""
+    thread = thread_owned(db, user, thread_id)
+    cap = clamp_page_limit(limit, default=25)
+    filters = [
+        JuniorThreadMessage.thread_id == thread.id,
+        JuniorThreadMessage.meta["thread_search"].astext == "true",
+    ]
+    q = _clean_text(query, max_len=200, required=False) if query else ""
+    if q:
+        filters.append(JuniorThreadMessage.content.ilike(_like_contains(q), escape="\\"))
+    marker = _as_uuid(before_id) or _as_uuid(cursor)
+    if marker is not None:
+        ref = db.scalar(
+            select(JuniorThreadMessage).where(
+                JuniorThreadMessage.thread_id == thread.id,
+                JuniorThreadMessage.id == marker,
+            )
+        )
+        if ref is not None:
+            filters.append(
+                or_(
+                    JuniorThreadMessage.created_at < ref.created_at,
+                    and_(
+                        JuniorThreadMessage.created_at == ref.created_at,
+                        JuniorThreadMessage.id < ref.id,
+                    ),
+                )
+            )
+    stmt = (
+        select(JuniorThreadMessage)
+        .where(*filters)
+        .order_by(JuniorThreadMessage.created_at.desc(), JuniorThreadMessage.id.desc())
+        .limit(cap + 1)
+    )
+    rows = list(db.scalars(stmt))
+    has_more = len(rows) > cap
+    page = rows[:cap]
+    next_cursor = str(page[-1].id) if has_more and page else None
+    return [_search_hit_dict(thread, row) for row in page], next_cursor
+
+
+def record_thread_search(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    query: str,
+    snippet: str | None = None,
+    venue: str | None = None,
+    device_label: str | None = None,
+) -> dict[str, Any]:
+    """Save a search on this thread. Does not call the model."""
+    thread = thread_owned(db, user, thread_id)
+    body = _clean_text(query, max_len=200)
+    venue_value = normalize_venue(venue)
+    meta: dict[str, Any] = {"thread_search": True, "search_query": body}
+    cleaned_snippet = _clean_text(snippet, max_len=240, required=False)
+    if cleaned_snippet:
+        meta["search_snippet"] = cleaned_snippet
+    now = datetime.now(timezone.utc)
+    row = JuniorThreadMessage(
+        thread_id=thread.id,
+        role="user",
+        content=body,
+        venue=venue_value,
+        meta=meta,
+        created_at=now,
+    )
+    db.add(row)
+    if not (thread.title or "").strip():
+        thread.title = body[:TITLE_MAX]
+    thread.venue_last = venue_value
+    thread.updated_at = now
+    touch_session(db, user, venue_value, device_label)
+    db.flush()
+    return _search_hit_dict(thread, row)
+
+
 def thread_search_hit_owned(db: Session, user: User, thread_id: UUID, message_id: UUID) -> dict[str, Any]:
     thread_owned(db, user, thread_id)
     hit = search_hit_owned(db, user, message_id)

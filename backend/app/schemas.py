@@ -850,6 +850,12 @@ class JuniorSharedSearchHitIn(BaseModel):
     venue: str | None = Field(default=None, max_length=16)
 
 
+class JuniorThreadSearchIn(BaseModel):
+    q: str = Field(min_length=1, max_length=200)
+    snippet: str | None = Field(default=None, max_length=240)
+    venue: str | None = Field(default=None, max_length=16)
+
+
 class JuniorSharedSearchHitOut(BaseModel):
     thread_id: uuid.UUID
     thread_title: str | None = None

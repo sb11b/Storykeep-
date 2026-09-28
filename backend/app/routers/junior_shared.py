@@ -30,6 +30,7 @@ from app.schemas import (
     JuniorSharedMessagePostOut,
     JuniorSharedSearchHitIn,
     JuniorSharedSearchHitOut,
+    JuniorThreadSearchIn,
     JuniorSharedThreadIn,
     JuniorSharedThreadOut,
 )
@@ -442,6 +443,50 @@ def update_thread_agent(
     db.commit()
     db.refresh(row)
     return JuniorAgentRunOut.model_validate(row)
+
+
+@router.get("/threads/{thread_id}/search", response_model=list[JuniorSharedSearchHitOut])
+def list_thread_searches(
+    thread_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+) -> list[JuniorSharedSearchHitOut]:
+    hits, next_cursor = store.list_thread_searches_page(
+        db,
+        user,
+        thread_id,
+        query=q,
+        limit=limit,
+        cursor=cursor,
+        before_id=before_id,
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedSearchHitOut.model_validate(hit) for hit in hits]
+
+
+@router.post("/threads/{thread_id}/search", response_model=JuniorSharedSearchHitOut)
+def record_thread_search(
+    thread_id: UUID,
+    payload: JuniorThreadSearchIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedSearchHitOut:
+    """Record a search on this thread. Replay stays on this route, not POST /search/{id}."""
+    hit = store.record_thread_search(
+        db,
+        user,
+        thread_id,
+        query=payload.q,
+        snippet=payload.snippet,
+        venue=payload.venue,
+    )
+    db.commit()
+    return JuniorSharedSearchHitOut.model_validate(hit)
 
 
 @router.get("/threads/{thread_id}/search/{message_id}", response_model=JuniorSharedSearchHitOut)
