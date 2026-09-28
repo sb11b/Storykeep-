@@ -141,6 +141,8 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/search?q=` | FTS over that user’s threads/messages (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/search/{id}` | One search hit the signed-in user owns |
 | `POST` | `/api/v1/junior/search/{id}` | Update an existing search hit (404 if missing) |
+| `GET` | `/api/v1/junior/threads/{id}/search/{id}` | One search hit on that thread |
+| `POST` | `/api/v1/junior/threads/{id}/search/{id}` | Update that search hit (404 if missing or on another thread) |
 | `GET` | `/api/v1/junior/memories` | Durable facts (`?kind=` optional; same page params) |
 | `GET` | `/api/v1/junior/memories/{id}` | One memory the signed-in user owns |
 | `POST` | `/api/v1/junior/memories` | Add a fact, or update when `id` is set |

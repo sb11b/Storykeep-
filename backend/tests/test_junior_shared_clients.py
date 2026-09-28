@@ -110,7 +110,7 @@ def _windows(http):
 
 class SharedClientSmokeTests(unittest.TestCase):
     def test_health_stamp_is_continue_get_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-thread-agents-page-v1")
+        self.assertEqual(HEALTH_STAMP, "junior-client-thread-search-get-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -143,6 +143,7 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("/threads/{thread_id}/memories/{memory_id}") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/agents/{run_id}") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/agents") for path in junior))
+        self.assertTrue(any(path.endswith("/threads/{thread_id}/search/{message_id}") for path in junior))
 
     def test_phone_and_windows_require_login(self):
         client = TestClient(_app())
@@ -213,6 +214,11 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).get_search_hit(uuid.uuid4())
         self.assertEqual(one_hit.exception.status_code, 401)
         self.assertIn("did not load this search hit", one_hit.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as thread_hit:
+            _windows(client).get_thread_search_hit(uuid.uuid4(), uuid.uuid4())
+        self.assertEqual(thread_hit.exception.status_code, 401)
+        self.assertIn("did not load this thread search hit", thread_hit.exception.user_message)
 
         with self.assertRaises(SharedMemoryError) as one_ctx:
             _windows(client).get_agent_context("storykeep")
@@ -361,6 +367,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).update_search_hit(uuid.uuid4(), snippet="pinned snippet")
         self.assertEqual(search_updated.exception.status_code, 403)
         self.assertIn("did not update this search hit", search_updated.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as thread_hit:
+            _windows(client).get_thread_search_hit(uuid.uuid4(), uuid.uuid4())
+        self.assertEqual(thread_hit.exception.status_code, 403)
+        self.assertIn("did not load this thread search hit", thread_hit.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as thread_hit_updated:
+            _phone(client).update_thread_search_hit(uuid.uuid4(), uuid.uuid4(), snippet="pinned snippet")
+        self.assertEqual(thread_hit_updated.exception.status_code, 403)
+        self.assertIn("did not update this thread search hit", thread_hit_updated.exception.user_message)
 
         with self.assertRaises(SharedMemoryError) as one_ctx:
             _windows(client).get_agent_context("storykeep")
@@ -1457,7 +1473,46 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertEqual(replay_http.json_bodies[0]["prompt"], "Fix the memory API")
         self.assertEqual(replay_http.json_bodies[0]["project_slug"], "storykeep")
         self.assertNotIn(("POST", "/api/v1/junior/agents"), replay_http.calls)
-        self.assertNotIn(("POST", "/api/v1/junior/projects/storykeep/agents"), replay_http.calls)
+        self.assertFalse(any("/projects/" in call[1] for call in replay_http.calls))
+        self.assertFalse(path.exists())
+
+    def test_thread_search_get_403_and_update_replays(self):
+        thread_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        http = _ScriptedHttp([403, 403, 403])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _windows(http).get_thread_search_hit(thread_id, message_id)
+        self.assertEqual(
+            http.calls[0],
+            ("GET", f"/api/v1/junior/threads/{thread_id}/search/{message_id}"),
+        )
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("did not load this thread search hit", ctx.exception.user_message)
+
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as updated:
+                phone_client(fail, queue_path=path).update_thread_search_hit(
+                    thread_id, message_id, snippet="pinned snippet"
+                )
+        self.assertIn("did not update this thread search hit", updated.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "thread_search_update")
+        self.assertEqual(restarted.last_failed_post["snippet"], "pinned snippet")
+        self.assertEqual(restarted.last_failed_post["thread_id"], str(thread_id))
+        self.assertEqual(restarted.last_failed_post["message_id"], str(message_id))
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            replay_http.calls,
+            [("POST", f"/api/v1/junior/threads/{thread_id}/search/{message_id}")],
+        )
+        self.assertEqual(replay_http.json_bodies[0]["snippet"], "pinned snippet")
+        self.assertNotIn(("POST", f"/api/v1/junior/search/{message_id}"), replay_http.calls)
         self.assertFalse(path.exists())
 
 

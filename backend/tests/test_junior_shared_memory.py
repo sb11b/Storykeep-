@@ -523,6 +523,29 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(str(updated_hit.call_args.args[2]), str(hit["message_id"]))
         self.assertEqual(updated_hit.call_args.kwargs["snippet"], "pinned snippet")
 
+        thread_id = hit["thread_id"]
+        with patch("app.routers.junior_shared.store.thread_search_hit_owned", return_value=hit) as owned_thread_hit:
+            on_thread = TestClient(app).get(
+                f"/api/v1/junior/threads/{thread_id}/search/{hit['message_id']}"
+            )
+        self.assertEqual(on_thread.status_code, 200)
+        self.assertEqual(on_thread.json()["snippet"], "equipment finance")
+        self.assertEqual(str(owned_thread_hit.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(owned_thread_hit.call_args.args[3]), str(hit["message_id"]))
+
+        with patch(
+            "app.routers.junior_shared.store.update_thread_search_hit", return_value=pinned
+        ) as updated_thread_hit:
+            thread_changed = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/search/{hit['message_id']}",
+                json={"snippet": "pinned snippet"},
+            )
+        self.assertEqual(thread_changed.status_code, 200)
+        self.assertEqual(thread_changed.json()["snippet"], "pinned snippet")
+        self.assertEqual(str(updated_thread_hit.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(updated_thread_hit.call_args.args[3]), str(hit["message_id"]))
+        self.assertEqual(updated_thread_hit.call_args.kwargs["snippet"], "pinned snippet")
+
         with patch("app.routers.junior_shared.store.list_memories_page", return_value=([fact], None)):
             listed = TestClient(app).get("/api/v1/junior/memories")
         self.assertEqual(listed.status_code, 200)
@@ -687,6 +710,20 @@ class JuniorSharedServiceTests(unittest.TestCase):
         ]
         with self.assertRaises(HTTPException) as caught:
             store.update_message(db, owner, uuid.uuid4(), content="revised turn")
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_thread_search_hit_owned_is_404_off_thread(self):
+        owner = _owner()
+        thread_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        db = MagicMock()
+        with patch("app.services.junior_shared_memory.thread_owned", return_value=object()):
+            with patch(
+                "app.services.junior_shared_memory.search_hit_owned",
+                return_value={"thread_id": uuid.uuid4(), "message_id": message_id},
+            ):
+                with self.assertRaises(HTTPException) as caught:
+                    store.thread_search_hit_owned(db, owner, thread_id, message_id)
         self.assertEqual(caught.exception.status_code, 404)
 
     def test_search_hit_owned_is_404_for_other_user(self):
