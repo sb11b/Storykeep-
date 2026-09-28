@@ -444,6 +444,43 @@ def update_thread_agent(
     return JuniorAgentRunOut.model_validate(row)
 
 
+@router.get("/threads/{thread_id}/search/{message_id}", response_model=JuniorSharedSearchHitOut)
+def get_thread_search_hit(
+    thread_id: UUID,
+    message_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedSearchHitOut:
+    return JuniorSharedSearchHitOut.model_validate(
+        store.thread_search_hit_owned(db, user, thread_id, message_id)
+    )
+
+
+@router.post("/threads/{thread_id}/search/{message_id}", response_model=JuniorSharedSearchHitOut)
+def update_thread_search_hit(
+    thread_id: UUID,
+    message_id: UUID,
+    payload: JuniorSharedSearchHitIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedSearchHitOut:
+    """Update a search hit on this thread. Replay stays on this route, not POST /search/{id}."""
+    incoming = payload or JuniorSharedSearchHitIn()
+    fields = incoming.model_fields_set
+    hit = store.update_thread_search_hit(
+        db,
+        user,
+        thread_id,
+        message_id,
+        snippet=incoming.snippet if "snippet" in fields else None,
+        venue=incoming.venue if "venue" in fields else None,
+        set_snippet="snippet" in fields,
+        set_venue="venue" in fields,
+    )
+    db.commit()
+    return JuniorSharedSearchHitOut.model_validate(hit)
+
+
 @router.get("/threads/{thread_id}/continue", response_model=JuniorSharedContinueOut)
 def get_continue_history(
     thread_id: UUID,

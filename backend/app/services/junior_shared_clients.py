@@ -51,7 +51,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-thread-agents-page-v1"
+HEALTH_STAMP = "junior-client-thread-search-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -104,6 +104,7 @@ def _is_thread_update_path(path: str) -> bool:
         or cleaned.endswith("/memories")
         or "/agents/" in cleaned
         or cleaned.endswith("/agents")
+        or "/search/" in cleaned
     ):
         return False
     return "/threads/" in cleaned
@@ -182,9 +183,16 @@ def _is_agent_update_path(path: str) -> bool:
     return "/agents/" in cleaned
 
 
+def _is_thread_search_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    return "/threads/" in cleaned and "/search/" in cleaned
+
+
 def _is_search_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     if cleaned.endswith("/search"):
+        return False
+    if "/threads/" in cleaned:
         return False
     return "/search/" in cleaned
 
@@ -392,6 +400,8 @@ class SharedMemoryClient:
         path = str(post.get("path") or "")
         if "/continue" in path:
             return "continue"
+        if _is_thread_search_update_path(path):
+            return "thread_search_update"
         if _is_thread_agent_update_path(path):
             return "thread_agent_update"
         if _is_thread_memory_update_path(path):
@@ -505,6 +515,15 @@ class SharedMemoryClient:
                     thread_id=thread_id,
                     meta=post.get("meta") if isinstance(post.get("meta"), dict) else None,
                 )
+        if kind == "thread_search_update" and thread_id:
+            message_id = post.get("message_id") or post.get("id")
+            if message_id:
+                return self.update_thread_search_hit(
+                    thread_id,
+                    message_id,
+                    snippet=post.get("snippet") or text or None,
+                    venue=post.get("search_venue") or post.get("hit_venue"),
+                )
         if kind == "search_update":
             message_id = post.get("message_id") or post.get("id")
             if message_id:
@@ -613,6 +632,8 @@ class SharedMemoryClient:
             return
         if "/continue" in path:
             kind = "continue"
+        elif _is_thread_search_update_path(path):
+            kind = "thread_search_update"
         elif _is_thread_agent_update_path(path):
             kind = "thread_agent_update"
         elif _is_thread_memory_update_path(path):
@@ -665,9 +686,10 @@ class SharedMemoryClient:
             "message_id": body.get("message_id")
             or (
                 body.get("id")
-                if kind in {"message_update", "search_update", "thread_message_update"}
+                if kind in {"message_update", "search_update", "thread_message_update", "thread_search_update"}
                 else None
             ),
+            "search_venue": body.get("search_venue") or body.get("hit_venue"),
             "snippet": body.get("snippet"),
             "slug": body.get("slug"),
             "display_name": body.get("display_name"),
@@ -934,6 +956,39 @@ class SharedMemoryClient:
             action="update this search hit",
             body=body,
             json={key: value for key, value in body.items() if key != "message_id"},
+        )
+
+    def get_thread_search_hit(self, thread_id: UUID | str, message_id: UUID | str) -> Any:
+        return self._read(
+            f"{API_PREFIX}/threads/{thread_id}/search/{message_id}",
+            action="load this thread search hit",
+        )
+
+    def update_thread_search_hit(
+        self,
+        thread_id: UUID | str,
+        message_id: UUID | str,
+        *,
+        snippet: str | None = None,
+        venue: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "thread_id": str(thread_id),
+            "message_id": str(message_id),
+        }
+        json_body: dict[str, Any] = {}
+        if snippet is not None:
+            body["snippet"] = snippet
+            json_body["snippet"] = snippet
+        if venue is not None:
+            body["search_venue"] = venue
+            json_body["venue"] = venue
+        return self._write(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}/search/{message_id}",
+            action="update this thread search hit",
+            body=body,
+            json=json_body,
         )
 
     def get_sessions(

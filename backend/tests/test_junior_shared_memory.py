@@ -689,6 +689,29 @@ class JuniorSharedServiceTests(unittest.TestCase):
             store.update_message(db, owner, uuid.uuid4(), content="revised turn")
         self.assertEqual(caught.exception.status_code, 404)
 
+    def test_thread_search_hit_owned_is_404_when_thread_mismatches(self):
+        owner = _owner()
+        thread_id = uuid.uuid4()
+        other_thread = uuid.uuid4()
+        message_id = uuid.uuid4()
+        message = SimpleNamespace(
+            id=message_id,
+            thread_id=other_thread,
+            content="hi",
+            venue="phone",
+            created_at=None,
+            meta={},
+        )
+        db = MagicMock()
+        db.get.side_effect = [
+            SimpleNamespace(id=thread_id, user_id=owner.id),
+            message,
+            SimpleNamespace(id=other_thread, user_id=owner.id, title="other"),
+        ]
+        with self.assertRaises(HTTPException) as caught:
+            store.thread_search_hit_owned(db, owner, thread_id, message_id)
+        self.assertEqual(caught.exception.status_code, 404)
+
     def test_search_hit_owned_is_404_for_other_user(self):
         owner = _owner()
         other = uuid.uuid4()
@@ -1228,6 +1251,40 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(recorded_thread.call_args.kwargs["project_slug"], "storykeep")
         self.assertEqual(recorded_thread.call_args.kwargs["prompt"], "Fix the memory API")
         self.assertEqual(str(recorded_thread.call_args.kwargs["thread_id"]), str(thread_id))
+
+    def test_thread_search_hit_routes(self):
+        now = datetime.now(timezone.utc)
+        thread_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        hit = {
+            "thread_id": thread_id,
+            "thread_title": "Notes",
+            "message_id": message_id,
+            "snippet": "pinned snippet",
+            "venue": "phone",
+            "created_at": now,
+            "rank": 0.0,
+        }
+        app = _app()
+        with patch("app.routers.junior_shared.store.thread_search_hit_owned", return_value=hit) as owned:
+            loaded = TestClient(app).get(f"/api/v1/junior/threads/{thread_id}/search/{message_id}")
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()["snippet"], "pinned snippet")
+        self.assertEqual(str(owned.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(owned.call_args.args[3]), str(message_id))
+
+        revised = {**hit, "snippet": "revised snippet"}
+        with patch("app.routers.junior_shared.store.update_thread_search_hit", return_value=revised) as changed:
+            posted = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/search/{message_id}",
+                json={"snippet": "revised snippet"},
+            )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json()["snippet"], "revised snippet")
+        self.assertEqual(str(changed.call_args.args[2]), str(thread_id))
+        self.assertEqual(str(changed.call_args.args[3]), str(message_id))
+        self.assertTrue(changed.call_args.kwargs["set_snippet"])
+        self.assertEqual(changed.call_args.kwargs["snippet"], "revised snippet")
 
     def test_invalid_slug(self):
         with self.assertRaises(HTTPException) as caught:
