@@ -275,6 +275,49 @@ def post_turn(
     return _turn_out(thread.id, user_row, junior_row, reply_status)
 
 
+@router.get("/threads/{thread_id}/memories", response_model=list[JuniorSharedMemoryOut])
+def list_thread_memories(
+    thread_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+) -> list[JuniorSharedMemoryOut]:
+    store.thread_owned(db, user, thread_id)
+    rows, next_cursor = store.list_memories_page(
+        db,
+        user,
+        limit=limit,
+        cursor=cursor,
+        before_id=before_id,
+        source_thread=thread_id,
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedMemoryOut.model_validate(row) for row in rows]
+
+
+@router.post("/threads/{thread_id}/memories", response_model=JuniorSharedMemoryOut)
+def create_thread_memory(
+    thread_id: UUID,
+    payload: JuniorSharedMemoryIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMemoryOut:
+    """Add a fact sourced from this thread. Replay stays on this route, not POST /memories."""
+    row = store.create_thread_memory(
+        db,
+        user,
+        thread_id,
+        kind=payload.kind,
+        content=payload.content,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorSharedMemoryOut.model_validate(row)
+
+
 @router.get("/threads/{thread_id}/memories/{memory_id}", response_model=JuniorSharedMemoryOut)
 def get_thread_memory(
     thread_id: UUID,

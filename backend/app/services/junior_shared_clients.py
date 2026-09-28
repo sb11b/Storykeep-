@@ -24,6 +24,7 @@ Failed thread-message updates replay on POST /threads/{id}/messages/{id}. GET /t
 Failed project-agent updates replay on POST /projects/{slug}/agents/{id}. GET /projects/{slug}/agents/{id} loads one agent run on that project.
 Failed thread-memory updates replay on POST /threads/{id}/memories/{id}. GET /threads/{id}/memories/{id} loads one memory on that thread.
 Failed project-agent launches replay on POST /projects/{slug}/agents. GET /projects/{slug}/agents pages agent runs on that project.
+Failed thread-memory writes replay on POST /threads/{id}/memories. GET /threads/{id}/memories pages memories on that thread.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-project-agents-page-v1"
+HEALTH_STAMP = "junior-client-thread-memories-page-v1"
 
 
 class SharedMemoryError(Exception):
@@ -94,7 +95,7 @@ def _is_thread_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     if cleaned.endswith("/threads"):
         return False
-    if "/messages" in cleaned or "/continue" in cleaned or "/memories/" in cleaned:
+    if "/messages" in cleaned or "/continue" in cleaned or "/memories" in cleaned:
         return False
     return "/threads/" in cleaned
 
@@ -116,6 +117,11 @@ def _is_project_agent_create_path(path: str) -> bool:
 def _is_thread_memory_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     return "/threads/" in cleaned and "/memories/" in cleaned
+
+
+def _is_thread_memory_create_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    return "/threads/" in cleaned and cleaned.endswith("/memories")
 
 
 def _is_memory_update_path(path: str) -> bool:
@@ -369,6 +375,8 @@ class SharedMemoryClient:
             return "continue"
         if _is_thread_memory_update_path(path):
             return "thread_memory_update"
+        if _is_thread_memory_create_path(path):
+            return "thread_memory"
         if _is_project_agent_update_path(path):
             return "project_agent_update"
         if _is_project_agent_create_path(path):
@@ -487,6 +495,12 @@ class SharedMemoryClient:
                 kind=post.get("memory_kind") or post.get("fact_kind"),
                 source_thread=post.get("source_thread"),
             )
+        if kind == "thread_memory" and thread_id:
+            return self.create_thread_memory(
+                thread_id,
+                str(post.get("content") or text),
+                kind=post.get("memory_kind") or post.get("fact_kind"),
+            )
         if kind == "thread_memory_update" and thread_id:
             memory_id = post.get("memory_id") or post.get("id")
             if memory_id:
@@ -559,6 +573,8 @@ class SharedMemoryClient:
             kind = "continue"
         elif _is_thread_memory_update_path(path):
             kind = "thread_memory_update"
+        elif _is_thread_memory_create_path(path):
+            kind = "thread_memory"
         elif _is_project_agent_update_path(path):
             kind = "project_agent_update"
         elif _is_project_agent_create_path(path):
@@ -622,7 +638,7 @@ class SharedMemoryClient:
             "run_id": body.get("id") if kind in {"agent_update", "project_agent_update"} else None,
             "memory_id": body.get("id"),
             "memory_kind": body.get("kind")
-            if kind in {"memory", "memory_update", "thread_memory_update"}
+            if kind in {"memory", "memory_update", "thread_memory_update", "thread_memory"}
             else None,
             "source_thread": body.get("source_thread"),
             "path": path,
@@ -1030,6 +1046,44 @@ class SharedMemoryClient:
             action="update this memory",
             body=body,
             json={key: value for key, value in body.items() if key != "id"},
+        )
+
+    def get_thread_memories(
+        self,
+        thread_id: UUID | str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id)
+        return self._read(
+            f"{API_PREFIX}/threads/{thread_id}/memories",
+            action="load these thread memories",
+            **({"params": params} if params else {}),
+        )
+
+    def create_thread_memory(
+        self,
+        thread_id: UUID | str,
+        content: str,
+        *,
+        kind: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "thread_id": str(thread_id),
+            "content": content,
+        }
+        json_body: dict[str, Any] = {"content": content}
+        if kind:
+            body["kind"] = kind
+            json_body["kind"] = kind
+        return self._write(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}/memories",
+            action="save this thread memory",
+            body=body,
+            json=json_body,
         )
 
     def get_thread_memory(self, thread_id: UUID | str, memory_id: UUID | str) -> Any:

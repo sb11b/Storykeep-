@@ -73,7 +73,7 @@ psql "$DATABASE_URL" -f backend/migrations/001_junior_memory.sql
 psql "$DATABASE_URL" -f backend/migrations/002_junior_projects.sql
 ```
 
-Endpoints include threads/messages/search/memories plus `GET/POST /api/v1/junior/projects`, `GET /api/v1/junior/agent-context?project=`, `GET/POST /api/v1/junior/agent-context/{slug}`, `GET/POST /api/v1/junior/threads/{id}/messages/{id}`, `GET /api/v1/junior/threads/{id}/continue`, `GET/POST /api/v1/junior/threads/{id}/memories/{id}`, `GET/POST /api/v1/junior/projects/{slug}/agents`, `GET/POST /api/v1/junior/projects/{slug}/agents/{id}`, `POST /api/v1/junior/agents`. Phone uses `venue=phone` on the same routes. See [`docs/junior_shared_memory.md`](junior_shared_memory.md).
+Endpoints include threads/messages/search/memories plus `GET/POST /api/v1/junior/projects`, `GET /api/v1/junior/agent-context?project=`, `GET/POST /api/v1/junior/agent-context/{slug}`, `GET/POST /api/v1/junior/threads/{id}/messages/{id}`, `GET /api/v1/junior/threads/{id}/continue`, `GET/POST /api/v1/junior/threads/{id}/memories`, `GET/POST /api/v1/junior/threads/{id}/memories/{id}`, `GET/POST /api/v1/junior/projects/{slug}/agents`, `GET/POST /api/v1/junior/projects/{slug}/agents/{id}`, `POST /api/v1/junior/agents`. Phone uses `venue=phone` on the same routes. See [`docs/junior_shared_memory.md`](junior_shared_memory.md).
 
 Generate a domain on the web service (**Settings → Networking → Generate domain**). Open that URL.
 

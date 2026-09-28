@@ -195,6 +195,15 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        thread_id = uuid.uuid4()
+        self.assertEqual(client.get(f"/api/v1/junior/threads/{thread_id}/memories").status_code, 401)
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/threads/{thread_id}/memories",
+                json={"content": "keep this"},
+            ).status_code,
+            401,
+        )
 
     def test_demo_gets_403(self):
         app = _app(SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True))
@@ -224,6 +233,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("POST", "/api/v1/junior/projects/storykeep/agents"),
             ("GET", f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}"),
+            ("GET", f"/api/v1/junior/threads/{uuid.uuid4()}/memories"),
+            ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}/memories"),
             ("GET", f"/api/v1/junior/threads/{uuid.uuid4()}/memories/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/threads/{uuid.uuid4()}/memories/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/search/{uuid.uuid4()}"),
@@ -561,6 +572,36 @@ class JuniorSharedRouteTests(unittest.TestCase):
         self.assertEqual(str(thread_updated.call_args.args[3]), str(fact.id))
         self.assertEqual(thread_updated.call_args.kwargs["content"], "Prefers shorter replies")
 
+        with patch(
+            "app.routers.junior_shared.store.list_memories_page",
+            return_value=([scoped], str(fact.id)),
+        ) as paged, patch(
+            "app.routers.junior_shared.store.thread_owned",
+            return_value=SimpleNamespace(id=thread_id),
+        ):
+            page = TestClient(app).get(
+                f"/api/v1/junior/threads/{thread_id}/memories",
+                params={"limit": 1, "cursor": str(fact.id)},
+            )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.json()[0]["content"], "Prefers shorter replies")
+        self.assertEqual(page.headers.get("x-next-cursor"), str(fact.id))
+        self.assertEqual(paged.call_args.kwargs["source_thread"], thread_id)
+        self.assertEqual(paged.call_args.kwargs["limit"], 1)
+
+        with patch(
+            "app.routers.junior_shared.store.create_thread_memory", return_value=scoped
+        ) as created:
+            saved = TestClient(app).post(
+                f"/api/v1/junior/threads/{thread_id}/memories",
+                json={"content": "Prefers shorter replies", "kind": "note"},
+            )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["source_thread"], str(thread_id))
+        self.assertEqual(created.call_args.args[2], thread_id)
+        self.assertEqual(created.call_args.kwargs["content"], "Prefers shorter replies")
+        self.assertEqual(created.call_args.kwargs["kind"], "note")
+
 
 class JuniorSharedServiceTests(unittest.TestCase):
     def test_invalid_venue_and_kind(self):
@@ -570,6 +611,13 @@ class JuniorSharedServiceTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as kind_err:
             store.normalize_kind("secret")
         self.assertEqual(kind_err.exception.status_code, 400)
+
+    def test_create_thread_memory_requires_owned_thread(self):
+        db = MagicMock()
+        db.get.return_value = None
+        with self.assertRaises(HTTPException) as caught:
+            store.create_thread_memory(db, _owner(), uuid.uuid4(), kind="note", content="fact")
+        self.assertEqual(caught.exception.status_code, 404)
 
     def test_thread_owned_is_404_for_other_user(self):
         owner = _owner()

@@ -868,18 +868,22 @@ def list_memories_page(
     limit: int | None = PAGE_DEFAULT,
     cursor: UUID | str | None = None,
     before_id: UUID | str | None = None,
+    source_thread: UUID | None = None,
 ) -> tuple[list[JuniorMemoryFact], str | None]:
     cap = clamp_page_limit(limit)
     stmt = select(JuniorMemoryFact).where(JuniorMemoryFact.user_id == user.id)
     if kind:
         stmt = stmt.where(JuniorMemoryFact.kind == normalize_kind(kind))
+    if source_thread is not None:
+        stmt = stmt.where(JuniorMemoryFact.source_thread == source_thread)
     marker = _as_uuid(before_id) or _as_uuid(cursor)
     if marker is not None:
-        ref = db.scalar(
-            select(JuniorMemoryFact).where(
-                JuniorMemoryFact.user_id == user.id, JuniorMemoryFact.id == marker
-            )
+        ref_stmt = select(JuniorMemoryFact).where(
+            JuniorMemoryFact.user_id == user.id, JuniorMemoryFact.id == marker
         )
+        if source_thread is not None:
+            ref_stmt = ref_stmt.where(JuniorMemoryFact.source_thread == source_thread)
+        ref = db.scalar(ref_stmt)
         if ref is not None:
             stmt = stmt.where(
                 or_(
@@ -933,6 +937,25 @@ def upsert_memory(
     db.add(row)
     db.flush()
     return row
+
+
+def create_thread_memory(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    kind: str | None,
+    content: str,
+) -> JuniorMemoryFact:
+    thread_owned(db, user, thread_id)
+    return upsert_memory(
+        db,
+        user,
+        memory_id=None,
+        kind=kind,
+        content=content,
+        source_thread=thread_id,
+    )
 
 
 def update_thread_memory(

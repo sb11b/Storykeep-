@@ -110,7 +110,7 @@ def _windows(http):
 
 class SharedClientSmokeTests(unittest.TestCase):
     def test_health_stamp_is_continue_get_v1(self):
-        self.assertEqual(HEALTH_STAMP, "junior-client-project-agents-page-v1")
+        self.assertEqual(HEALTH_STAMP, "junior-client-thread-memories-page-v1")
         build = json.loads(
             (Path(__file__).resolve().parents[1] / "app" / "build-info.json").read_text(encoding="utf-8")
         )
@@ -141,6 +141,7 @@ class SharedClientSmokeTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("/threads/{thread_id}/messages/{message_id}") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/continue") for path in junior))
         self.assertTrue(any(path.endswith("/threads/{thread_id}/memories/{memory_id}") for path in junior))
+        self.assertTrue(any(path.endswith("/threads/{thread_id}/memories") for path in junior))
 
     def test_phone_and_windows_require_login(self):
         client = TestClient(_app())
@@ -246,6 +247,11 @@ class SharedClientSmokeTests(unittest.TestCase):
             _phone(client).get_thread_memory(uuid.uuid4(), uuid.uuid4())
         self.assertEqual(thread_memory.exception.status_code, 401)
         self.assertIn("did not load this thread memory", thread_memory.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as thread_memories:
+            _windows(client).get_thread_memories(uuid.uuid4())
+        self.assertEqual(thread_memories.exception.status_code, 401)
+        self.assertIn("did not load these thread memories", thread_memories.exception.user_message)
 
     def test_demo_is_forbidden_for_both_clients(self):
         demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
@@ -399,6 +405,16 @@ class SharedClientSmokeTests(unittest.TestCase):
             _windows(client).update_thread_memory(uuid.uuid4(), uuid.uuid4(), "revised fact")
         self.assertEqual(thread_memory_updated.exception.status_code, 403)
         self.assertIn("did not update this thread memory", thread_memory_updated.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as thread_memories:
+            _phone(client).get_thread_memories(uuid.uuid4())
+        self.assertEqual(thread_memories.exception.status_code, 403)
+        self.assertIn("did not load these thread memories", thread_memories.exception.user_message)
+
+        with self.assertRaises(SharedMemoryError) as thread_memory_saved:
+            _windows(client).create_thread_memory(uuid.uuid4(), "keep this")
+        self.assertEqual(thread_memory_saved.exception.status_code, 403)
+        self.assertIn("did not save this thread memory", thread_memory_saved.exception.user_message)
 
     def test_phone_posts_on_the_shared_messages_route(self):
         thread, user_msg = _turn("phone")
@@ -1297,6 +1313,46 @@ class SharedClientSmokeTests(unittest.TestCase):
             ("POST", f"/api/v1/junior/memories/{memory_id}"),
             replay_http.calls,
         )
+        self.assertFalse(path.exists())
+
+    def test_thread_memories_page_403_and_create_replays(self):
+        thread_id = uuid.uuid4()
+        http = _ScriptedHttp([200, 403, 403, 403])
+        page = _phone(http).get_thread_memories(thread_id, limit=2, cursor="abc")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(http.calls[0], ("GET", f"/api/v1/junior/threads/{thread_id}/memories"))
+        self.assertEqual(http.params[0], {"limit": 2, "cursor": "abc"})
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as ctx:
+                _windows(http).get_thread_memories(thread_id)
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("did not load these thread memories", ctx.exception.user_message)
+
+        path = _queue_path()
+        fail = _ScriptedHttp([500, 500, 500])
+        with patch("app.services.junior_shared_clients._sleep"):
+            with self.assertRaises(SharedMemoryError) as saved:
+                phone_client(fail, queue_path=path).create_thread_memory(
+                    thread_id, "Railway Postgres is source of truth", kind="decision"
+                )
+        self.assertIn("did not save this thread memory", saved.exception.user_message)
+        restarted = phone_client(object(), queue_path=path)
+        self.assertEqual(restarted.last_failed_post["kind"], "thread_memory")
+        self.assertEqual(restarted.last_failed_post["content"], "Railway Postgres is source of truth")
+        self.assertEqual(restarted.last_failed_post["thread_id"], str(thread_id))
+        self.assertEqual(restarted.last_failed_post["memory_kind"], "decision")
+        replay_http = _ScriptedHttp([200])
+        replayed = phone_client(replay_http, queue_path=path)
+        response = replayed.replay_after_login("owner-session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            replay_http.calls,
+            [("POST", f"/api/v1/junior/threads/{thread_id}/memories")],
+        )
+        self.assertEqual(replay_http.json_bodies[0]["content"], "Railway Postgres is source of truth")
+        self.assertEqual(replay_http.json_bodies[0]["kind"], "decision")
+        self.assertNotIn("thread_id", replay_http.json_bodies[0])
+        self.assertNotIn(("POST", "/api/v1/junior/memories"), replay_http.calls)
         self.assertFalse(path.exists())
 
 
