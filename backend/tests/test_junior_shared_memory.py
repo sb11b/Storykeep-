@@ -185,6 +185,14 @@ class JuniorSharedRouteTests(unittest.TestCase):
             401,
         )
         self.assertEqual(
+            client.get("/api/v1/junior/projects/storykeep/search", params={"q": "notes"}).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.post("/api/v1/junior/projects/storykeep/search", json={"q": "notes"}).status_code,
+            401,
+        )
+        self.assertEqual(
             client.get(f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}").status_code,
             401,
         )
@@ -264,6 +272,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("POST", f"/api/v1/junior/memories/{uuid.uuid4()}"),
             ("POST", "/api/v1/junior/sessions"),
             ("POST", "/api/v1/junior/projects/storykeep"),
+            ("GET", "/api/v1/junior/projects/storykeep/search?q=notes"),
+            ("POST", "/api/v1/junior/projects/storykeep/search"),
         ):
             response = client.request(
                 method,
@@ -274,6 +284,7 @@ class JuniorSharedRouteTests(unittest.TestCase):
                     "project_slug": "storykeep",
                     "prompt": "go",
                     "content": "keep",
+                    "q": "notes",
                 },
             )
             self.assertEqual(response.status_code, 403, path)
@@ -1396,6 +1407,52 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertTrue(pinned.call_args.kwargs["set_thread_id"])
         self.assertTrue(pinned.call_args.kwargs["set_query"])
         self.assertEqual(pinned.call_args.kwargs["query"], "finance")
+    def test_project_search_routes(self):
+        now = datetime.now(timezone.utc)
+        thread_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        hit = {
+            "thread_id": thread_id,
+            "thread_title": "Notes",
+            "message_id": message_id,
+            "snippet": "pinned snippet",
+            "venue": "phone",
+            "created_at": now,
+            "rank": 0.0,
+        }
+        app = _app()
+        project = SimpleNamespace(slug="storykeep", meta={})
+        with patch("app.routers.junior_shared.store.get_project", return_value=project), patch(
+            "app.routers.junior_shared.store.project_search_thread_ids", return_value=[thread_id]
+        ), patch(
+            "app.routers.junior_shared.store.search_page",
+            return_value=([hit], str(message_id)),
+        ) as paged:
+            listed = TestClient(app).get(
+                "/api/v1/junior/projects/storykeep/search",
+                params={"q": "notes", "limit": 1, "cursor": str(message_id)},
+            )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["snippet"], "pinned snippet")
+        self.assertEqual(listed.headers.get("x-next-cursor"), str(message_id))
+        self.assertEqual(paged.call_args.args[2], "notes")
+        self.assertEqual(paged.call_args.kwargs["thread_ids"], [thread_id])
+        self.assertEqual(paged.call_args.kwargs["limit"], 1)
+
+        with patch("app.routers.junior_shared.store.get_project", return_value=project), patch(
+            "app.routers.junior_shared.store.project_search_thread_ids", return_value=[thread_id]
+        ), patch(
+            "app.routers.junior_shared.store.search_page",
+            return_value=([hit], None),
+        ) as ran:
+            posted_search = TestClient(app).post(
+                "/api/v1/junior/projects/storykeep/search",
+                json={"q": "notes"},
+            )
+        self.assertEqual(posted_search.status_code, 200)
+        self.assertEqual(posted_search.json()[0]["snippet"], "pinned snippet")
+        self.assertEqual(ran.call_args.args[2], "notes")
+        self.assertEqual(ran.call_args.kwargs["thread_ids"], [thread_id])
 
     def test_invalid_slug(self):
         with self.assertRaises(HTTPException) as caught:

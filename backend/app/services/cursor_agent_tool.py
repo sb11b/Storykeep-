@@ -282,10 +282,11 @@ _NUM_WORDS = {
     "twenty-six": 26,
     "twenty-seven": 27,
     "twenty-eight": 28,
+    "twenty-nine": 29,
 }
 _SEQ_MENTION_RE = re.compile(
     r"\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b"
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-nine|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b"
     r"|\b(?:sequenced\s+)?#\s*(\d+)\b",
     re.I,
 )
@@ -294,7 +295,7 @@ _NEXT_STEP_RE = re.compile(
     r"|\bgo ahead and (?:send|start)\b"
     r"|\bmove on to the (?:next|nest) step\b"
     r"|\bsequenc(?:e|ed)\s+(?:number\s+)?#?\s*"
-    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b",
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty-nine|twenty-eight|twenty-seven|twenty-six|twenty-five|twenty-four|twenty-three|twenty-two|twenty-one|twenty)\b",
     re.I,
 )
 
@@ -306,17 +307,19 @@ Already done on main:
 - Phone and Windows clients POST /threads/{id}/search; failed searches replay on that route
 - GET /threads/{id}/search pages search hits on that thread
 - POST /agent-context/{slug} and GET /agent-context/{slug} already exist
+- POST /threads/{id}/search/{id} and GET /threads/{id}/search/{id} already exist
 - require_user; demo 403; no new public routes
 - Health stamp junior-client-thread-search-page-v1
 
 Your job (#29):
-1. Both clients POST /threads/{id}/agent-context/{slug} to pin a context pack on that thread. Failed writes stay on the FIFO and replay on that same route (not POST /agent-context/{slug}). Same auth rule. No silent drop.
-2. Add GET /threads/{id}/agent-context/{slug} for one context pack on that thread and project. Same require_user rules. 404 if the thread is missing or the project is missing. Still no public routes.
-3. Both clients call GET /threads/{id}/agent-context/{slug} (same auth).
-4. Keep SQL idempotent; no DROP TABLE. No new public routes.
-5. Extend smoke tests for thread-context-update replay, thread-context GET, and 403. Keep existing tests green.
-6. Health stamp: junior-client-thread-context-get-v1
-7. Commit on a cursor/* branch and push that branch only.
+1. Both clients POST /projects/{slug}/search to run a search on that project. Failed writes stay on the FIFO and replay on that same route (not GET /search, not POST /threads/{id}/search, and not POST /search/{id}). Same auth rule. No silent drop.
+2. Add GET /projects/{slug}/search to page search hits on that project (q plus limit/cursor or before_id). Hits are messages on the project's pinned thread and on threads with an agent run for that slug. Same require_user rules. 404 if the project is missing. Still no public routes.
+3. Both clients POST /threads/{id}/agent-context/{slug} to pin a context pack on that thread. Failed writes stay on the FIFO and replay on that same route (not POST /agent-context/{slug}). Same auth rule. No silent drop.
+4. Add GET /threads/{id}/agent-context/{slug} for one context pack on that thread and project. Same require_user rules. 404 if the thread is missing or the project is missing. Still no public routes.
+5. Keep SQL idempotent; no DROP TABLE. No new public routes.
+6. Extend smoke tests for project-search replay, thread-context GET, and 403. Keep existing tests green.
+7. Health stamp: junior-client-thread-context-get-v1 (project search from this same step is junior-client-project-search-page-v1).
+8. Commit on a cursor/* branch and push that branch only.
 
 Return: branch name, commit SHA, files changed, Ubuntu merge commands for main.
 """
