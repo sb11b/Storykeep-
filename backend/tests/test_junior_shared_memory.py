@@ -211,6 +211,18 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        memory_on_project = uuid.uuid4()
+        self.assertEqual(
+            client.get(f"/api/v1/junior/projects/storykeep/memories/{memory_on_project}").status_code,
+            401,
+        )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/projects/storykeep/memories/{memory_on_project}",
+                json={"content": "keep the quote"},
+            ).status_code,
+            401,
+        )
         self.assertEqual(
             client.get(f"/api/v1/junior/projects/storykeep/agents/{uuid.uuid4()}").status_code,
             401,
@@ -297,6 +309,8 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("POST", f"/api/v1/junior/projects/storykeep/search/{uuid.uuid4()}"),
             ("GET", "/api/v1/junior/projects/storykeep/agent-context"),
             ("POST", "/api/v1/junior/projects/storykeep/agent-context"),
+            ("GET", f"/api/v1/junior/projects/storykeep/memories/{uuid.uuid4()}"),
+            ("POST", f"/api/v1/junior/projects/storykeep/memories/{uuid.uuid4()}"),
         ):
             response = client.request(
                 method,
@@ -745,6 +759,30 @@ class JuniorSharedServiceTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             store.thread_search_hit_owned(db, owner, thread_id, message_id)
         self.assertEqual(caught.exception.status_code, 404)
+
+    def test_project_memory_owned_is_404_when_not_on_project(self):
+        owner = _owner()
+        memory_id = uuid.uuid4()
+        other_thread = uuid.uuid4()
+        row = SimpleNamespace(id=memory_id, user_id=owner.id, source_thread=other_thread)
+        db = MagicMock()
+        db.get.return_value = row
+        project = SimpleNamespace(slug="storykeep", meta={})
+        with patch("app.services.junior_shared_memory.get_project", return_value=project), patch(
+            "app.services.junior_shared_memory.project_search_thread_ids",
+            return_value=[uuid.uuid4()],
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                store.project_memory_owned(db, owner, "storykeep", memory_id)
+        self.assertEqual(caught.exception.status_code, 404)
+
+        with patch(
+            "app.services.junior_shared_memory.get_project",
+            side_effect=HTTPException(status_code=404, detail="Project not found"),
+        ):
+            with self.assertRaises(HTTPException) as missing:
+                store.project_memory_owned(db, owner, "missing", memory_id)
+        self.assertEqual(missing.exception.status_code, 404)
 
     def test_project_search_hit_owned_is_404_when_not_on_project(self):
         owner = _owner()
@@ -1572,6 +1610,49 @@ class JuniorProjectAndAgentTests(unittest.TestCase):
         self.assertEqual(pinned.call_args.kwargs["query"], "finance")
         self.assertTrue(pinned.call_args.kwargs["set_thread_id"])
         self.assertEqual(str(pinned.call_args.kwargs["thread_id"]), str(thread_id))
+
+    def test_project_memory_routes(self):
+        now = datetime.now(timezone.utc)
+        memory_id = uuid.uuid4()
+        source_thread = uuid.uuid4()
+        row = SimpleNamespace(
+            id=memory_id,
+            kind="note",
+            content="keep the quote",
+            source_thread=source_thread,
+            created_at=now,
+            updated_at=now,
+        )
+        app = _app()
+        with patch("app.routers.junior_shared.store.project_memory_owned", return_value=row) as owned:
+            loaded = TestClient(app).get(f"/api/v1/junior/projects/storykeep/memories/{memory_id}")
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()["content"], "keep the quote")
+        self.assertEqual(owned.call_args.args[2], "storykeep")
+        self.assertEqual(str(owned.call_args.args[3]), str(memory_id))
+
+        revised = SimpleNamespace(
+            id=memory_id,
+            kind="decision",
+            content="revised quote",
+            source_thread=source_thread,
+            created_at=now,
+            updated_at=now,
+        )
+        with patch("app.routers.junior_shared.store.update_project_memory", return_value=revised) as changed:
+            posted = TestClient(app).post(
+                f"/api/v1/junior/projects/storykeep/memories/{memory_id}",
+                json={"content": "revised quote", "kind": "decision", "source_thread": str(source_thread)},
+            )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json()["content"], "revised quote")
+        self.assertEqual(changed.call_args.args[2], "storykeep")
+        self.assertEqual(str(changed.call_args.args[3]), str(memory_id))
+        self.assertEqual(changed.call_args.kwargs["content"], "revised quote")
+        self.assertTrue(changed.call_args.kwargs["set_kind"])
+        self.assertEqual(changed.call_args.kwargs["kind"], "decision")
+        self.assertTrue(changed.call_args.kwargs["set_source_thread"])
+        self.assertEqual(str(changed.call_args.kwargs["source_thread"]), str(source_thread))
 
     def test_update_project_agent_context_uses_project_slug(self):
         thread_id = uuid.uuid4()
