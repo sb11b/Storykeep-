@@ -904,6 +904,40 @@ def project_search_hit_owned(db: Session, user: User, slug: str, message_id: UUI
     return hit
 
 
+def project_memory_owned(db: Session, user: User, slug: str, memory_id: UUID) -> JuniorMemoryFact:
+    project = get_project(db, user, slug)
+    row = memory_owned(db, user, memory_id)
+    thread_ids = set(project_search_thread_ids(db, user, project))
+    if row.source_thread not in thread_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found")
+    return row
+
+
+def update_project_memory(
+    db: Session,
+    user: User,
+    slug: str,
+    memory_id: UUID,
+    *,
+    content: str | None = None,
+    kind: str | None = None,
+    source_thread: UUID | None = None,
+    set_kind: bool = False,
+    set_source_thread: bool = False,
+) -> JuniorMemoryFact:
+    project_memory_owned(db, user, slug, memory_id)
+    return update_memory(
+        db,
+        user,
+        memory_id,
+        content=content,
+        kind=kind,
+        source_thread=source_thread,
+        set_kind=set_kind,
+        set_source_thread=set_source_thread,
+    )
+
+
 def update_project_search_hit(
     db: Session,
     user: User,
