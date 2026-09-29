@@ -490,6 +490,43 @@ def search_thread(
     return [JuniorSharedSearchHitOut.model_validate(hit) for hit in hits]
 
 
+@router.get("/threads/{thread_id}/agent-context/{slug}", response_model=JuniorAgentContextOut)
+def get_thread_agent_context(
+    thread_id: UUID,
+    slug: str,
+    q: str | None = Query(default=None, max_length=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentContextOut:
+    pack = store.thread_agent_context(db, user, thread_id, slug, query=q)
+    return _context_out(pack)
+
+
+@router.post("/threads/{thread_id}/agent-context/{slug}", response_model=JuniorAgentContextOut)
+def update_thread_agent_context(
+    thread_id: UUID,
+    slug: str,
+    payload: JuniorAgentContextIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentContextOut:
+    """Pin this thread's context pack. Replay stays on this route, not POST /agent-context/{slug}."""
+    incoming = payload or JuniorAgentContextIn()
+    fields = incoming.model_fields_set
+    pack = store.update_thread_agent_context(
+        db,
+        user,
+        thread_id,
+        slug,
+        query=incoming.q if "q" in fields else None,
+        thread_id_value=incoming.thread_id if "thread_id" in fields else None,
+        set_query="q" in fields,
+        set_thread_id="thread_id" in fields,
+    )
+    db.commit()
+    return _context_out(pack)
+
+
 @router.get("/threads/{thread_id}/search/{message_id}", response_model=JuniorSharedSearchHitOut)
 def get_thread_search_hit(
     thread_id: UUID,

@@ -117,7 +117,7 @@ class CursorAgentToolTests(unittest.TestCase):
         task = cursor_agent_tool.next_step_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
-        self.assertIn("Sequenced #29", task)
+        self.assertIn("Sequenced #30", task)
         self.assertNotIn("cannot start an agent", task.lower())
         self.assertNotIn("isn't defined", task.lower())
         self.assertFalse(cursor_agent_tool.wants_start("do not send the next step"))
@@ -214,6 +214,10 @@ class CursorAgentToolTests(unittest.TestCase):
         assert twenty_eight is not None
         self.assertIn("Sequenced #28", twenty_eight)
         self.assertIn("junior-client-thread-search-page-v1", twenty_eight)
+        twenty_nine = cursor_agent_tool.next_step_task("go ahead and start sequenced #29")
+        assert twenty_nine is not None
+        self.assertIn("Sequenced #29", twenty_nine)
+        self.assertIn("junior-client-thread-context-get-v1", twenty_nine)
 
     def test_sequence_number_five_starts(self):
         msg = "go ahead and start Sequence number five."
@@ -321,6 +325,10 @@ class CursorAgentToolTests(unittest.TestCase):
         assert twenty_eight is not None
         self.assertIn("Sequenced #28", twenty_eight)
         self.assertIn("junior-client-thread-search-page-v1", twenty_eight)
+        twenty_nine = cursor_agent_tool.sequenced_task("sequenced #29")
+        assert twenty_nine is not None
+        self.assertIn("Sequenced #29", twenty_nine)
+        self.assertIn("junior-client-thread-context-get-v1", twenty_nine)
 
     @patch("app.services.cursor_agent_tool.httpx.Client")
     @patch("app.services.cursor_agent_tool.settings")

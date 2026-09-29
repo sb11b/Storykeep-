@@ -52,7 +52,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-thread-search-page-v1"
+HEALTH_STAMP = "junior-client-thread-context-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -107,6 +107,8 @@ def _is_thread_update_path(path: str) -> bool:
         or cleaned.endswith("/agents")
         or "/search/" in cleaned
         or cleaned.endswith("/search")
+        or "/agent-context/" in cleaned
+        or cleaned.endswith("/agent-context")
     ):
         return False
     return "/threads/" in cleaned
@@ -204,9 +206,16 @@ def _is_search_update_path(path: str) -> bool:
     return "/search/" in cleaned
 
 
+def _is_thread_context_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    return "/threads/" in cleaned and "/agent-context/" in cleaned
+
+
 def _is_context_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     if cleaned.endswith("/agent-context"):
+        return False
+    if "/threads/" in cleaned:
         return False
     return "/agent-context/" in cleaned
 
@@ -407,6 +416,8 @@ class SharedMemoryClient:
         path = str(post.get("path") or "")
         if "/continue" in path:
             return "continue"
+        if _is_thread_context_update_path(path):
+            return "thread_context_update"
         if _is_thread_search_update_path(path):
             return "thread_search_update"
         if _is_thread_search_create_path(path):
@@ -543,6 +554,13 @@ class SharedMemoryClient:
                     snippet=post.get("snippet") or text or None,
                     venue=post.get("venue"),
                 )
+        if kind == "thread_context_update" and thread_id:
+            slug = post.get("slug") or post.get("project_slug") or self.project_slug
+            return self.update_thread_agent_context(
+                thread_id,
+                str(slug),
+                q=post.get("q"),
+            )
         if kind == "context_update":
             slug = post.get("slug") or post.get("project_slug") or self.project_slug
             return self.update_agent_context(
@@ -643,6 +661,8 @@ class SharedMemoryClient:
             return
         if "/continue" in path:
             kind = "continue"
+        elif _is_thread_context_update_path(path):
+            kind = "thread_context_update"
         elif _is_thread_search_update_path(path):
             kind = "thread_search_update"
         elif _is_thread_search_create_path(path):
@@ -1027,6 +1047,48 @@ class SharedMemoryClient:
             "post",
             f"{API_PREFIX}/threads/{thread_id}/search/{message_id}",
             action="update this thread search hit",
+            body=body,
+            json=json_body,
+        )
+
+    def get_thread_agent_context(
+        self,
+        thread_id: UUID | str,
+        project_slug: str | None = None,
+        *,
+        q: str | None = None,
+    ) -> Any:
+        slug = project_slug or self.project_slug
+        params: dict[str, Any] = {}
+        if q:
+            params["q"] = q
+        return self._read(
+            f"{API_PREFIX}/threads/{thread_id}/agent-context/{slug}",
+            action="load this thread context",
+            **({"params": params} if params else {}),
+        )
+
+    def update_thread_agent_context(
+        self,
+        thread_id: UUID | str,
+        project_slug: str | None = None,
+        *,
+        q: str | None = None,
+    ) -> Any:
+        slug = project_slug or self.project_slug
+        body: dict[str, Any] = {
+            "thread_id": str(thread_id),
+            "slug": slug,
+            "project_slug": slug,
+        }
+        json_body: dict[str, Any] = {}
+        if q is not None:
+            body["q"] = q
+            json_body["q"] = q
+        return self._write(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}/agent-context/{slug}",
+            action="update this thread context",
             body=body,
             json=json_body,
         )

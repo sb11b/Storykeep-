@@ -1270,6 +1270,45 @@ def update_agent_context(
     )
 
 
+def thread_agent_context(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    slug: str,
+    *,
+    query: str | None = None,
+) -> dict[str, Any]:
+    thread_owned(db, user, thread_id)
+    return build_agent_context(
+        db, user, project_slug=slug, query=query, thread_id=thread_id
+    )
+
+
+def update_thread_agent_context(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    slug: str,
+    *,
+    query: str | None = None,
+    thread_id_value: UUID | None = None,
+    set_query: bool = False,
+    set_thread_id: bool = False,
+) -> dict[str, Any]:
+    thread_owned(db, user, thread_id)
+    if set_thread_id and thread_id_value is not None and thread_id_value != thread_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent context not found")
+    return update_agent_context(
+        db,
+        user,
+        slug,
+        query=query,
+        thread_id=thread_id,
+        set_query=set_query,
+        set_thread_id=True,
+    )
+
+
 def project_agent_owned(db: Session, user: User, slug: str, run_id: UUID) -> JuniorAgentRun:
     project = get_project(db, user, slug)
     row = agent_run_owned(db, user, run_id)
