@@ -30,6 +30,7 @@ from app.schemas import (
     JuniorSharedMessagePostOut,
     JuniorSharedSearchHitIn,
     JuniorSharedSearchHitOut,
+    JuniorProjectSearchIn,
     JuniorThreadSearchIn,
     JuniorSharedThreadIn,
     JuniorSharedThreadOut,
@@ -490,6 +491,43 @@ def search_thread(
     return [JuniorSharedSearchHitOut.model_validate(hit) for hit in hits]
 
 
+@router.get("/threads/{thread_id}/agent-context/{slug}", response_model=JuniorAgentContextOut)
+def get_thread_agent_context(
+    thread_id: UUID,
+    slug: str,
+    q: str | None = Query(default=None, max_length=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentContextOut:
+    pack = store.thread_agent_context(db, user, thread_id, slug, query=q)
+    return _context_out(pack)
+
+
+@router.post("/threads/{thread_id}/agent-context/{slug}", response_model=JuniorAgentContextOut)
+def update_thread_agent_context(
+    thread_id: UUID,
+    slug: str,
+    payload: JuniorAgentContextIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorAgentContextOut:
+    """Pin this thread's context pack. Replay stays on this route, not POST /agent-context/{slug}."""
+    incoming = payload or JuniorAgentContextIn()
+    fields = incoming.model_fields_set
+    pack = store.update_thread_agent_context(
+        db,
+        user,
+        thread_id,
+        slug,
+        query=incoming.q if "q" in fields else None,
+        thread_id_value=incoming.thread_id if "thread_id" in fields else None,
+        set_query="q" in fields,
+        set_thread_id="thread_id" in fields,
+    )
+    db.commit()
+    return _context_out(pack)
+
+
 @router.get("/threads/{thread_id}/search/{message_id}", response_model=JuniorSharedSearchHitOut)
 def get_thread_search_hit(
     thread_id: UUID,
@@ -886,6 +924,57 @@ def update_project_agent(
     db.commit()
     db.refresh(row)
     return JuniorAgentRunOut.model_validate(row)
+
+
+@router.get("/projects/{slug}/search", response_model=list[JuniorSharedSearchHitOut])
+def list_project_search(
+    slug: str,
+    response: Response,
+    q: str = Query(min_length=1, max_length=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+) -> list[JuniorSharedSearchHitOut]:
+    project = store.get_project(db, user, slug)
+    hits, next_cursor = store.search_page(
+        db,
+        user,
+        q,
+        limit=limit,
+        cursor=cursor,
+        before_id=before_id,
+        thread_ids=store.project_search_thread_ids(db, user, project),
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedSearchHitOut.model_validate(hit) for hit in hits]
+
+
+@router.post("/projects/{slug}/search", response_model=list[JuniorSharedSearchHitOut])
+def search_project(
+    slug: str,
+    payload: JuniorProjectSearchIn,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+) -> list[JuniorSharedSearchHitOut]:
+    """Run a search on this project. Replay stays on this route, not GET /search."""
+    project = store.get_project(db, user, slug)
+    hits, next_cursor = store.search_page(
+        db,
+        user,
+        payload.q,
+        limit=limit,
+        cursor=cursor,
+        before_id=before_id,
+        thread_ids=store.project_search_thread_ids(db, user, project),
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSharedSearchHitOut.model_validate(hit) for hit in hits]
 
 
 @router.post("/projects/{slug}", response_model=JuniorProjectOut)

@@ -28,6 +28,7 @@ Failed thread-memory creates replay on POST /threads/{id}/memories. GET /threads
 Failed thread-agent updates replay on POST /threads/{id}/agents/{id}. GET /threads/{id}/agents/{id} loads one agent run on that thread.
 Failed thread-agent launches replay on POST /threads/{id}/agents. GET /threads/{id}/agents pages agent runs on that thread.
 Failed thread search-hit updates replay on POST /threads/{id}/search/{id}. GET /threads/{id}/search/{id} loads one search hit on that thread.
+Failed project searches replay on POST /projects/{slug}/search. GET /projects/{slug}/search pages search hits on that project.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-bugbot-auto-pr-v1"
+HEALTH_STAMP = "junior-client-thread-context-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -107,6 +108,8 @@ def _is_thread_update_path(path: str) -> bool:
         or cleaned.endswith("/agents")
         or "/search/" in cleaned
         or cleaned.endswith("/search")
+        or "/agent-context/" in cleaned
+        or cleaned.endswith("/agent-context")
     ):
         return False
     return "/threads/" in cleaned
@@ -117,6 +120,8 @@ def _is_project_update_path(path: str) -> bool:
     if cleaned.endswith("/projects"):
         return False
     if "/agents/" in cleaned or cleaned.endswith("/agents"):
+        return False
+    if "/search/" in cleaned or cleaned.endswith("/search"):
         return False
     return "/projects/" in cleaned
 
@@ -195,6 +200,11 @@ def _is_thread_search_create_path(path: str) -> bool:
     return "/threads/" in cleaned and cleaned.endswith("/search")
 
 
+def _is_project_search_create_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    return "/projects/" in cleaned and cleaned.endswith("/search")
+
+
 def _is_search_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     if cleaned.endswith("/search"):
@@ -204,9 +214,16 @@ def _is_search_update_path(path: str) -> bool:
     return "/search/" in cleaned
 
 
+def _is_thread_context_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    return "/threads/" in cleaned and "/agent-context/" in cleaned
+
+
 def _is_context_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     if cleaned.endswith("/agent-context"):
+        return False
+    if "/threads/" in cleaned:
         return False
     return "/agent-context/" in cleaned
 
@@ -407,10 +424,14 @@ class SharedMemoryClient:
         path = str(post.get("path") or "")
         if "/continue" in path:
             return "continue"
+        if _is_thread_context_update_path(path):
+            return "thread_context_update"
         if _is_thread_search_update_path(path):
             return "thread_search_update"
         if _is_thread_search_create_path(path):
             return "thread_search"
+        if _is_project_search_create_path(path):
+            return "project_search"
         if _is_thread_agent_update_path(path):
             return "thread_agent_update"
         if _is_thread_memory_update_path(path):
@@ -526,6 +547,11 @@ class SharedMemoryClient:
                 )
         if kind == "thread_search" and thread_id:
             return self.search_thread(thread_id, str(post.get("q") or text))
+        if kind == "project_search":
+            return self.search_project(
+                str(post.get("slug") or post.get("project_slug") or self.project_slug),
+                str(post.get("q") or text),
+            )
         if kind == "thread_search_update" and thread_id:
             message_id = post.get("message_id") or post.get("id")
             if message_id:
@@ -543,6 +569,13 @@ class SharedMemoryClient:
                     snippet=post.get("snippet") or text or None,
                     venue=post.get("venue"),
                 )
+        if kind == "thread_context_update" and thread_id:
+            slug = post.get("slug") or post.get("project_slug") or self.project_slug
+            return self.update_thread_agent_context(
+                thread_id,
+                str(slug),
+                q=post.get("q"),
+            )
         if kind == "context_update":
             slug = post.get("slug") or post.get("project_slug") or self.project_slug
             return self.update_agent_context(
@@ -643,10 +676,14 @@ class SharedMemoryClient:
             return
         if "/continue" in path:
             kind = "continue"
+        elif _is_thread_context_update_path(path):
+            kind = "thread_context_update"
         elif _is_thread_search_update_path(path):
             kind = "thread_search_update"
         elif _is_thread_search_create_path(path):
             kind = "thread_search"
+        elif _is_project_search_create_path(path):
+            kind = "project_search"
         elif _is_thread_agent_update_path(path):
             kind = "thread_agent_update"
         elif _is_thread_memory_update_path(path):
@@ -998,6 +1035,33 @@ class SharedMemoryClient:
             json={"q": query},
         )
 
+    def get_project_search(
+        self,
+        slug: str,
+        query: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+        before_id: UUID | str | None = None,
+    ) -> Any:
+        params = self._page_params(limit=limit, cursor=cursor, before_id=before_id) or {}
+        params["q"] = query
+        return self._read(
+            f"{API_PREFIX}/projects/{slug}/search",
+            action="load these project search hits",
+            params=params,
+        )
+
+    def search_project(self, slug: str, query: str) -> Any:
+        body: dict[str, Any] = {"slug": slug, "project_slug": slug, "q": query}
+        return self._write(
+            "post",
+            f"{API_PREFIX}/projects/{slug}/search",
+            action="run this project search",
+            body=body,
+            json={"q": query},
+        )
+
     def get_thread_search_hit(self, thread_id: UUID | str, message_id: UUID | str) -> Any:
         return self._read(
             f"{API_PREFIX}/threads/{thread_id}/search/{message_id}",
@@ -1027,6 +1091,48 @@ class SharedMemoryClient:
             "post",
             f"{API_PREFIX}/threads/{thread_id}/search/{message_id}",
             action="update this thread search hit",
+            body=body,
+            json=json_body,
+        )
+
+    def get_thread_agent_context(
+        self,
+        thread_id: UUID | str,
+        project_slug: str | None = None,
+        *,
+        q: str | None = None,
+    ) -> Any:
+        slug = project_slug or self.project_slug
+        params: dict[str, Any] = {}
+        if q:
+            params["q"] = q
+        return self._read(
+            f"{API_PREFIX}/threads/{thread_id}/agent-context/{slug}",
+            action="load this thread context",
+            **({"params": params} if params else {}),
+        )
+
+    def update_thread_agent_context(
+        self,
+        thread_id: UUID | str,
+        project_slug: str | None = None,
+        *,
+        q: str | None = None,
+    ) -> Any:
+        slug = project_slug or self.project_slug
+        body: dict[str, Any] = {
+            "thread_id": str(thread_id),
+            "slug": slug,
+            "project_slug": slug,
+        }
+        json_body: dict[str, Any] = {}
+        if q is not None:
+            body["q"] = q
+            json_body["q"] = q
+        return self._write(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}/agent-context/{slug}",
+            action="update this thread context",
             body=body,
             json=json_body,
         )

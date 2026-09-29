@@ -157,6 +157,8 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `POST` | `/api/v1/junior/threads/{id}/search` | Run that same search; replay stays on this route |
 | `GET` | `/api/v1/junior/threads/{id}/search/{id}` | One search hit on that thread |
 | `POST` | `/api/v1/junior/threads/{id}/search/{id}` | Update that search hit (404 if missing or on another thread) |
+| `GET` | `/api/v1/junior/threads/{id}/agent-context/{slug}` | One context pack for that thread and project (404 if either is missing) |
+| `POST` | `/api/v1/junior/threads/{id}/agent-context/{slug}` | Pin that pack on the thread; replay stays on this route |
 | `GET` | `/api/v1/junior/projects` | List project registry (`limit`, `cursor` or `before_id`) |
 | `GET` | `/api/v1/junior/projects/{slug}` | One project |
 | `POST` | `/api/v1/junior/projects` | Upsert by slug |
@@ -165,6 +167,8 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `POST` | `/api/v1/junior/projects/{slug}/agents` | Record a launch on that project (`context_ready`); does not call Cursor |
 | `GET` | `/api/v1/junior/projects/{slug}/agents/{id}` | One agent run on that project |
 | `POST` | `/api/v1/junior/projects/{slug}/agents/{id}` | Update that agent run (404 if missing or on another project) |
+| `GET` | `/api/v1/junior/projects/{slug}/search` | Search hits on that project (`q`, `limit`, `cursor` or `before_id`; 404 if the project is missing) |
+| `POST` | `/api/v1/junior/projects/{slug}/search` | Run that same search; replay stays on this route |
 | `GET` | `/api/v1/junior/agent-context?project=&q=` | Pack for a Cursor agent (project + thread + memories + search) |
 | `GET` | `/api/v1/junior/agent-context/{slug}` | One project context pack (`q` and `thread_id` optional) |
 | `POST` | `/api/v1/junior/agent-context/{slug}` | Pin query/thread on that pack (404 if the project is missing) |
