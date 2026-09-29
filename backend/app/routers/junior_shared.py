@@ -1048,6 +1048,44 @@ def update_project_agent_context(
     return _context_out(pack)
 
 
+@router.get("/projects/{slug}/memories/{memory_id}", response_model=JuniorSharedMemoryOut)
+def get_project_memory(
+    slug: str,
+    memory_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMemoryOut:
+    return JuniorSharedMemoryOut.model_validate(
+        store.project_memory_owned(db, user, slug, memory_id)
+    )
+
+
+@router.post("/projects/{slug}/memories/{memory_id}", response_model=JuniorSharedMemoryOut)
+def update_project_memory(
+    slug: str,
+    memory_id: UUID,
+    payload: JuniorSharedMemoryIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMemoryOut:
+    """Update a memory on this project. Replay stays on this route, not POST /memories/{id}."""
+    fields = payload.model_fields_set
+    row = store.update_project_memory(
+        db,
+        user,
+        slug,
+        memory_id,
+        content=payload.content if "content" in fields else None,
+        kind=payload.kind if "kind" in fields else None,
+        source_thread=payload.source_thread if "source_thread" in fields else None,
+        set_kind="kind" in fields,
+        set_source_thread="source_thread" in fields,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorSharedMemoryOut.model_validate(row)
+
+
 @router.post("/projects/{slug}", response_model=JuniorProjectOut)
 def update_project(
     slug: str,

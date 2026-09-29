@@ -746,6 +746,27 @@ class JuniorSharedServiceTests(unittest.TestCase):
             store.thread_search_hit_owned(db, owner, thread_id, message_id)
         self.assertEqual(caught.exception.status_code, 404)
 
+    def test_project_memory_owned_is_404_when_not_on_project(self):
+        owner = _owner()
+        memory_id = uuid.uuid4()
+        other_thread = uuid.uuid4()
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(
+            id=memory_id,
+            user_id=owner.id,
+            source_thread=other_thread,
+            content="note",
+            kind="note",
+        )
+        project = SimpleNamespace(slug="storykeep", meta={})
+        with patch("app.services.junior_shared_memory.get_project", return_value=project), patch(
+            "app.services.junior_shared_memory.project_search_thread_ids",
+            return_value=[uuid.uuid4()],
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                store.project_memory_owned(db, owner, "storykeep", memory_id)
+        self.assertEqual(caught.exception.status_code, 404)
+
     def test_project_search_hit_owned_is_404_when_not_on_project(self):
         owner = _owner()
         message_id = uuid.uuid4()

@@ -31,6 +31,8 @@ Failed thread search-hit updates replay on POST /threads/{id}/search/{id}. GET /
 Failed thread-context updates replay on POST /threads/{id}/agent-context/{slug}. GET /threads/{id}/agent-context/{slug} loads one context pack on that thread.
 Failed project searches replay on POST /projects/{slug}/search. GET /projects/{slug}/search pages search hits on that project.
 Failed project search-hit updates replay on POST /projects/{slug}/search/{id}. GET /projects/{slug}/search/{id} loads one search hit on that project.
+Failed project context pins replay on POST /projects/{slug}/agent-context. GET /projects/{slug}/agent-context loads one context pack on that project.
+Failed project-memory updates replay on POST /projects/{slug}/memories/{id}. GET /projects/{slug}/memories/{id} loads one memory on that project.
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-agent-in-chat-v1"
+HEALTH_STAMP = "junior-client-project-memory-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -127,6 +129,8 @@ def _is_project_update_path(path: str) -> bool:
         return False
     if cleaned.endswith("/agent-context"):
         return False
+    if "/memories/" in cleaned or cleaned.endswith("/memories"):
+        return False
     return "/projects/" in cleaned
 
 
@@ -145,11 +149,16 @@ def _is_thread_memory_update_path(path: str) -> bool:
     return "/threads/" in cleaned and "/memories/" in cleaned
 
 
+def _is_project_memory_update_path(path: str) -> bool:
+    cleaned = (path or "").rstrip("/")
+    return "/projects/" in cleaned and "/memories/" in cleaned
+
+
 def _is_memory_update_path(path: str) -> bool:
     cleaned = (path or "").rstrip("/")
     if cleaned.endswith("/memories"):
         return False
-    if "/threads/" in cleaned:
+    if "/threads/" in cleaned or "/projects/" in cleaned:
         return False
     return "/memories/" in cleaned
 
@@ -450,6 +459,8 @@ class SharedMemoryClient:
             return "project_search"
         if _is_project_context_update_path(path):
             return "project_context_update"
+        if _is_project_memory_update_path(path):
+            return "project_memory_update"
         if _is_thread_agent_update_path(path):
             return "thread_agent_update"
         if _is_thread_memory_update_path(path):
@@ -586,6 +597,16 @@ class SharedMemoryClient:
                 q=post.get("q"),
                 thread_id=post.get("thread_id"),
             )
+        if kind == "project_memory_update":
+            memory_id = post.get("memory_id") or post.get("id")
+            if memory_id:
+                return self.update_project_memory(
+                    str(post.get("slug") or post.get("project_slug") or self.project_slug),
+                    memory_id,
+                    str(post.get("content") or text),
+                    kind=post.get("memory_kind") or post.get("fact_kind"),
+                    source_thread=post.get("source_thread"),
+                )
         if kind == "thread_search_update" and thread_id:
             message_id = post.get("message_id") or post.get("id")
             if message_id:
@@ -722,6 +743,8 @@ class SharedMemoryClient:
             kind = "project_search"
         elif _is_project_context_update_path(path):
             kind = "project_context_update"
+        elif _is_project_memory_update_path(path):
+            kind = "project_memory_update"
         elif _is_thread_agent_update_path(path):
             kind = "thread_agent_update"
         elif _is_thread_memory_update_path(path):
@@ -804,7 +827,13 @@ class SharedMemoryClient:
             else None,
             "memory_id": body.get("id"),
             "memory_kind": body.get("kind")
-            if kind in {"memory", "memory_update", "thread_memory", "thread_memory_update"}
+            if kind in {
+                "memory",
+                "memory_update",
+                "thread_memory",
+                "thread_memory_update",
+                "project_memory_update",
+            }
             else None,
             "source_thread": body.get("source_thread"),
             "path": path,
@@ -1177,6 +1206,43 @@ class SharedMemoryClient:
             "post",
             f"{API_PREFIX}/projects/{target}/agent-context",
             action="update this project context",
+            body=body,
+            json=json_body,
+        )
+
+    def get_project_memory(self, slug: str, memory_id: UUID | str) -> Any:
+        return self._read(
+            f"{API_PREFIX}/projects/{slug}/memories/{memory_id}",
+            action="load this project memory",
+        )
+
+    def update_project_memory(
+        self,
+        slug: str,
+        memory_id: UUID | str,
+        content: str,
+        *,
+        kind: str | None = None,
+        source_thread: UUID | str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "id": str(memory_id),
+            "slug": slug,
+            "project_slug": slug,
+            "memory_id": str(memory_id),
+            "content": content,
+        }
+        json_body: dict[str, Any] = {"content": content}
+        if kind:
+            body["kind"] = kind
+            json_body["kind"] = kind
+        if source_thread is not None:
+            body["source_thread"] = str(source_thread)
+            json_body["source_thread"] = str(source_thread)
+        return self._write(
+            "post",
+            f"{API_PREFIX}/projects/{slug}/memories/{memory_id}",
+            action="update this project memory",
             body=body,
             json=json_body,
         )
