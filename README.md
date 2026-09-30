@@ -107,7 +107,7 @@ Durable history for StoryKeep, the phone app, and the Windows overlay lives in *
 | `junior_projects` | Repo/app registry (slug unique per user) |
 | `junior_agent_runs` | Cursor-agent launch attempts (`context_ready` stub; listed at `GET /agents`) |
 
-`junior_memory` (singular) remains the one standing markdown note at `GET/PUT /api/v1/junior/memory`. Phone and Windows clients read it with `GET /api/v1/junior/memory` and append with `POST /api/v1/junior/memory`. An append keeps the original text. A failed append replays on that POST, not on `PUT /memory` and not on `POST /memories`.
+`junior_memory` (singular) remains the one standing markdown note at `GET/PUT /api/v1/junior/memory`. Phone and Windows clients read it with `GET /api/v1/junior/memory` and append with `POST /api/v1/junior/memory`. An append keeps the original text. A failed append replays on that POST, not on `PUT /memory` and not on `POST /memories`. On a thread they use `GET` and `POST /api/v1/junior/threads/{id}/memory`. That append also keeps the original text. A failed thread append replays on that POST, not on `POST /memory`, `PUT /memory`, `POST /memories`, or `POST /threads/{id}/memories`. A missing thread is 404.
 
 **Apply the migration**
 
@@ -212,6 +212,8 @@ Owner boot seed (`angry.tune8751@fastmail.com`): projects `storykeep`, `junior-p
 | `GET` | `/api/v1/junior/memory` | Standing markdown note for the signed-in user |
 | `POST` | `/api/v1/junior/memory` | Append text to that note (original text stays; 400 if the addition is blank) |
 | `PUT` | `/api/v1/junior/memory` | Replace the standing note with the full markdown the editor sends |
+| `GET` | `/api/v1/junior/threads/{id}/memory` | Same standing note when the thread belongs to the user (404 if the thread is missing) |
+| `POST` | `/api/v1/junior/threads/{id}/memory` | Append text to that note (original text stays). Replay stays on this route |
 
 Venues: `storykeep`, `phone`, `windows`, `voice`. **Phone is first-class** (`venue=phone` on the same routes — no separate phone DB). Overlay uses `venue=windows`. Message `meta` can hold overlay screen/OCR or voice extras (`screen`, `voice`, `dictation_target`). See [`docs/junior_shared_memory.md`](docs/junior_shared_memory.md).
 
