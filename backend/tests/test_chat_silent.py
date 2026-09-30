@@ -525,7 +525,7 @@ class CursorStartPayloadTests(unittest.TestCase):
         self.assertIn("this Storykeep chat", response.text)
         self.assertNotIn("https://cursor.com/agents/agent-4", response.text)
         self.assertTrue(start_agent.called)
-        self.assertIn("Sequenced #42", start_agent.call_args.args[0])
+        self.assertIn("Sequenced #43", start_agent.call_args.args[0])
         self.assertEqual(start_agent.call_args.kwargs["branch"], "main")
         self.assertTrue(start_agent.call_args.kwargs["auto_create_pr"])
 

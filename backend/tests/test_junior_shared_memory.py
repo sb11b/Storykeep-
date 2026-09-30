@@ -220,6 +220,21 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ).status_code,
             401,
         )
+        thread_for_memory = uuid.uuid4()
+        memory_for_thread = uuid.uuid4()
+        self.assertEqual(
+            client.get(
+                f"/api/v1/junior/projects/storykeep/threads/{thread_for_memory}/memories/{memory_for_thread}"
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.post(
+                f"/api/v1/junior/projects/storykeep/threads/{thread_for_memory}/memories/{memory_for_thread}",
+                json={"content": "pinned fact", "kind": "note"},
+            ).status_code,
+            401,
+        )
         self.assertEqual(
             client.get(f"/api/v1/junior/projects/storykeep/messages/{uuid.uuid4()}").status_code,
             401,
@@ -334,6 +349,14 @@ class JuniorSharedRouteTests(unittest.TestCase):
             ("POST", "/api/v1/junior/projects/storykeep/threads"),
             ("GET", f"/api/v1/junior/projects/storykeep/threads/{uuid.uuid4()}"),
             ("POST", f"/api/v1/junior/projects/storykeep/threads/{uuid.uuid4()}"),
+            (
+                "GET",
+                f"/api/v1/junior/projects/storykeep/threads/{uuid.uuid4()}/memories/{uuid.uuid4()}",
+            ),
+            (
+                "POST",
+                f"/api/v1/junior/projects/storykeep/threads/{uuid.uuid4()}/memories/{uuid.uuid4()}",
+            ),
         ):
             response = client.request(
                 method,
@@ -1193,6 +1216,97 @@ class JuniorSharedServiceTests(unittest.TestCase):
         self.assertTrue(updated.call_args.kwargs["set_venue"])
         self.assertEqual(updated.call_args.kwargs["venue"], "phone")
         self.assertTrue(updated.call_args.kwargs["set_meta"])
+
+    def test_project_thread_memory_owned_is_404_off_thread(self):
+        owner = _owner()
+        thread_id = uuid.uuid4()
+        memory_id = uuid.uuid4()
+        row = SimpleNamespace(id=memory_id, source_thread=uuid.uuid4(), content="note", kind="note")
+        with patch(
+            "app.services.junior_shared_memory.project_thread_owned",
+            return_value=SimpleNamespace(id=thread_id),
+        ), patch("app.services.junior_shared_memory.memory_owned", return_value=row):
+            with self.assertRaises(HTTPException) as caught:
+                store.project_thread_memory_owned(object(), owner, "storykeep", thread_id, memory_id)
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_update_project_thread_memory_uses_thread_scope(self):
+        owner = _owner()
+        thread_id = uuid.uuid4()
+        memory_id = uuid.uuid4()
+        row = SimpleNamespace(id=memory_id, source_thread=thread_id, content="keep", kind="note")
+        with patch(
+            "app.services.junior_shared_memory.project_thread_memory_owned",
+            return_value=row,
+        ), patch("app.services.junior_shared_memory.update_memory", return_value=row) as updated:
+            store.update_project_thread_memory(
+                object(),
+                owner,
+                "storykeep",
+                thread_id,
+                memory_id,
+                content="pinned fact",
+                kind="decision",
+                source_thread=thread_id,
+                set_kind=True,
+                set_source_thread=True,
+            )
+        self.assertEqual(updated.call_args.args[2], memory_id)
+        self.assertEqual(updated.call_args.kwargs["content"], "pinned fact")
+        self.assertEqual(updated.call_args.kwargs["kind"], "decision")
+        self.assertTrue(updated.call_args.kwargs["set_kind"])
+        self.assertTrue(updated.call_args.kwargs["set_source_thread"])
+
+    def test_project_thread_memory_routes(self):
+        now = datetime.now(timezone.utc)
+        thread_id = uuid.uuid4()
+        fact = SimpleNamespace(
+            id=uuid.uuid4(),
+            kind="note",
+            content="Prefers short replies",
+            source_thread=thread_id,
+            created_at=now,
+            updated_at=now,
+        )
+        app = _app()
+        with patch(
+            "app.routers.junior_shared.store.project_thread_memory_owned",
+            return_value=fact,
+        ) as loaded:
+            one = TestClient(app).get(
+                f"/api/v1/junior/projects/storykeep/threads/{thread_id}/memories/{fact.id}"
+            )
+        self.assertEqual(one.status_code, 200)
+        self.assertEqual(one.json()["content"], "Prefers short replies")
+        self.assertEqual(loaded.call_args.args[2], "storykeep")
+        self.assertEqual(loaded.call_args.args[3], thread_id)
+        self.assertEqual(loaded.call_args.args[4], fact.id)
+
+        revised = SimpleNamespace(
+            id=fact.id,
+            kind="decision",
+            content="pinned fact",
+            source_thread=thread_id,
+            created_at=now,
+            updated_at=now,
+        )
+        with patch(
+            "app.routers.junior_shared.store.update_project_thread_memory",
+            return_value=revised,
+        ) as updated:
+            posted = TestClient(app).post(
+                f"/api/v1/junior/projects/storykeep/threads/{thread_id}/memories/{fact.id}",
+                json={"content": "pinned fact", "kind": "decision", "source_thread": str(thread_id)},
+            )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json()["content"], "pinned fact")
+        self.assertEqual(updated.call_args.args[2], "storykeep")
+        self.assertEqual(updated.call_args.args[3], thread_id)
+        self.assertEqual(updated.call_args.args[4], fact.id)
+        self.assertEqual(updated.call_args.kwargs["content"], "pinned fact")
+        self.assertEqual(updated.call_args.kwargs["kind"], "decision")
+        self.assertTrue(updated.call_args.kwargs["set_kind"])
+        self.assertTrue(updated.call_args.kwargs["set_source_thread"])
 
     def test_list_project_thread_messages_requires_thread_on_project(self):
         owner = _owner()
