@@ -1912,6 +1912,52 @@ def update_project_thread_session(
 
 
 @router.get(
+    "/projects/{slug}/sessions",
+    response_model=list[JuniorSessionOut],
+)
+def list_project_sessions(
+    slug: str,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    before_id: UUID | None = Query(default=None),
+) -> list[JuniorSessionOut]:
+    """Sessions on this project (venue matches a thread tied to the project)."""
+    rows, next_cursor = store.list_project_sessions_page(
+        db, user, slug, limit=limit, cursor=cursor, before_id=before_id
+    )
+    _page_headers(response, next_cursor)
+    return [JuniorSessionOut.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/projects/{slug}/sessions",
+    response_model=JuniorSessionOut,
+)
+def heartbeat_project_session(
+    slug: str,
+    payload: JuniorSessionIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSessionOut:
+    """Heartbeat a session on this project. Replay stays on this route, not POST /sessions."""
+    incoming = payload or JuniorSessionIn()
+    fields = incoming.model_fields_set
+    row = store.touch_project_session(
+        db,
+        user,
+        slug,
+        venue=incoming.venue if "venue" in fields else None,
+        device_label=incoming.device_label if "device_label" in fields else None,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorSessionOut.model_validate(row)
+
+
+@router.get(
     "/projects/{slug}/sessions/{session_id}",
     response_model=JuniorSessionOut,
 )
