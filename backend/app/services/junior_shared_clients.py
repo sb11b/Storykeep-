@@ -46,6 +46,7 @@ Failed thread-session heartbeats replay on POST /threads/{id}/sessions. GET /thr
 Failed project-thread-session updates replay on POST /projects/{slug}/threads/{id}/sessions/{id}. GET /projects/{slug}/threads/{id}/sessions/{id} loads one session on that thread.
 Failed project-thread-session heartbeats replay on POST /projects/{slug}/threads/{id}/sessions. GET /projects/{slug}/threads/{id}/sessions pages sessions on that thread.
 Failed memory-note appends replay on POST /memory. GET /memory loads the standing note. The original text stays.
+Failed thread memory-note appends replay on POST /threads/{id}/memory. GET /threads/{id}/memory loads that same note when the thread exists. The original text stays.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.2, 0.5)
 
 QUEUE_DIRNAME = ".storykeep"
-HEALTH_STAMP = "junior-client-memory-note-get-v1"
+HEALTH_STAMP = "junior-client-thread-memory-note-get-v1"
 
 
 class SharedMemoryError(Exception):
@@ -121,6 +122,7 @@ def _is_thread_update_path(path: str) -> bool:
         or "/continue" in cleaned
         or "/memories/" in cleaned
         or cleaned.endswith("/memories")
+        or cleaned.endswith("/memory")
         or "/agents/" in cleaned
         or cleaned.endswith("/agents")
         or "/search/" in cleaned
@@ -209,10 +211,20 @@ def _is_memory_update_path(path: str) -> bool:
     return "/memories/" in cleaned
 
 
-def _is_memory_note_path(path: str) -> bool:
-    """True only for /memory (the standing note), not /memories."""
+def _is_thread_memory_note_path(path: str) -> bool:
+    """True only for /threads/{thread_id}/memory, not /memories and not a project path."""
     cleaned = (path or "").rstrip("/")
-    return cleaned.endswith("/memory") and not cleaned.endswith("/memories")
+    if "/projects/" in cleaned or "/memories" in cleaned:
+        return False
+    return "/threads/" in cleaned and cleaned.endswith("/memory")
+
+
+def _is_memory_note_path(path: str) -> bool:
+    """True only for /memory (the standing note), not /memories and not a thread path."""
+    cleaned = (path or "").rstrip("/")
+    if "/threads/" in cleaned or "/projects/" in cleaned or "/memories" in cleaned:
+        return False
+    return cleaned.endswith("/memory")
 
 
 def _is_thread_session_create_path(path: str) -> bool:
@@ -816,6 +828,8 @@ class SharedMemoryClient:
             return "project"
         if _is_project_update_path(path):
             return "project_update"
+        if _is_thread_memory_note_path(path):
+            return "thread_memory_note"
         if _is_memory_note_path(path):
             return "memory_note"
         if path.rstrip("/").endswith("/memories"):
@@ -1111,6 +1125,11 @@ class SharedMemoryClient:
                     venue=post.get("venue"),
                     meta=post.get("meta") if isinstance(post.get("meta"), dict) else None,
                 )
+        if kind == "thread_memory_note" and thread_id:
+            return self.append_thread_memory_note(
+                thread_id,
+                str(post.get("text") or post.get("content") or text),
+            )
         if kind == "memory_note":
             return self.append_memory_note(str(post.get("text") or post.get("content") or text))
         if kind == "memory":
@@ -1321,6 +1340,8 @@ class SharedMemoryClient:
             kind = "project"
         elif _is_project_update_path(path):
             kind = "project_update"
+        elif _is_thread_memory_note_path(path):
+            kind = "thread_memory_note"
         elif _is_memory_note_path(path):
             kind = "memory_note"
         elif path.rstrip("/").endswith("/memories"):
@@ -2998,6 +3019,22 @@ class SharedMemoryClient:
             action="update this message",
             body=body,
             json={key: value for key, value in body.items() if key != "id"},
+        )
+
+    def get_thread_memory_note(self, thread_id: UUID | str) -> Any:
+        return self._read(
+            f"{API_PREFIX}/threads/{thread_id}/memory",
+            action="load this thread memory note",
+        )
+
+    def append_thread_memory_note(self, thread_id: UUID | str, text: str) -> Any:
+        body = {"text": text, "thread_id": str(thread_id)}
+        return self._write(
+            "post",
+            f"{API_PREFIX}/threads/{thread_id}/memory",
+            action="add to this thread memory note",
+            body=body,
+            json={"text": text},
         )
 
     def get_memory_note(self) -> Any:

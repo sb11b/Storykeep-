@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -37,9 +38,25 @@ from app.schemas import (
     JuniorSharedThreadIn,
     JuniorSharedThreadOut,
 )
+from app.services import junior_memory as standing_note
 from app.services import junior_shared_memory as store
 
 router = APIRouter(prefix="/junior", tags=["junior-shared-memory"])
+
+
+class JuniorThreadMemoryNoteIn(BaseModel):
+    text: str = Field(default="", max_length=standing_note.MEMORY_SAVE_CHARS)
+
+
+def _standing_note_payload(row) -> dict:
+    updated = getattr(row, "updated_at", None) if row is not None else None
+    markdown = ""
+    if row is not None:
+        markdown = (getattr(row, "markdown", None) or "") or ""
+    return {
+        "markdown": markdown,
+        "updated_at": updated.isoformat() if updated else None,
+    }
 
 
 def _turn_out(thread_id: UUID, user_row, junior_row, reply_status: str) -> JuniorSharedMessagePostOut:
@@ -278,6 +295,31 @@ def post_turn(
     if junior_row is not None:
         db.refresh(junior_row)
     return _turn_out(thread.id, user_row, junior_row, reply_status)
+
+
+@router.get("/threads/{thread_id}/memory")
+def get_thread_memory_note(
+    thread_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> dict:
+    """Standing note for the owner of this thread. 404 if the thread is missing."""
+    store.thread_owned(db, user, thread_id)
+    return _standing_note_payload(standing_note.get_row(db, user.id))
+
+
+@router.post("/threads/{thread_id}/memory")
+def append_thread_memory_note(
+    thread_id: UUID,
+    payload: JuniorThreadMemoryNoteIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> dict:
+    """Append to the standing note. The original text stays. Replay stays on this route, not POST /memory."""
+    store.thread_owned(db, user, thread_id)
+    row = standing_note.append_markdown(db, user, payload.text)
+    db.commit()
+    return _standing_note_payload(row)
 
 
 @router.get("/threads/{thread_id}/memories", response_model=list[JuniorSharedMemoryOut])

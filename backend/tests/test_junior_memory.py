@@ -10,8 +10,9 @@ from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import JuniorMemory
+from app.models import JuniorMemory, JuniorThread
 from app.routers import junior_memory as memory_router
+from app.routers import junior_shared as shared_router
 from app.services import junior_memory as memory
 
 
@@ -134,6 +135,74 @@ class JuniorMemoryRouterTests(unittest.TestCase):
         self.assertEqual(added.status_code, 200)
         self.assertEqual(added.json()["markdown"], "Original line\n\nAdded line")
         self.assertTrue(added.json()["markdown"].startswith("Original line"))
+
+
+class JuniorThreadMemoryNoteRouterTests(unittest.TestCase):
+    def _client(self, db, user) -> TestClient:
+        app = FastAPI()
+        app.include_router(shared_router.router, prefix="/api/v1")
+
+        def fake_db():
+            yield db
+
+        app.dependency_overrides[get_db] = fake_db
+        app.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(app)
+
+    def test_missing_thread_is_404_and_does_not_append(self):
+        owner = SimpleNamespace(id=uuid.uuid4(), email="stevebitsko@duck.com", is_demo_locked=False)
+        note = SimpleNamespace(markdown="Keep this.", updated_at=None)
+        db = MagicMock()
+        db.get.side_effect = lambda model, key: note if model is JuniorMemory else None
+        client = self._client(db, owner)
+        thread_id = uuid.uuid4()
+        got = client.get(f"/api/v1/junior/threads/{thread_id}/memory")
+        self.assertEqual(got.status_code, 404)
+        posted = client.post(
+            f"/api/v1/junior/threads/{thread_id}/memory",
+            json={"text": "nope"},
+        )
+        self.assertEqual(posted.status_code, 404)
+        self.assertEqual(note.markdown, "Keep this.")
+        db.commit.assert_not_called()
+
+    def test_post_appends_on_owned_thread(self):
+        owner_id = uuid.uuid4()
+        owner = SimpleNamespace(id=owner_id, email="stevebitsko@duck.com", is_demo_locked=False)
+        thread = SimpleNamespace(id=uuid.uuid4(), user_id=owner_id)
+        note = SimpleNamespace(markdown="Keep this.", updated_at=None)
+        db = MagicMock()
+
+        def fake_get(model, key):
+            if model is JuniorThread and key == thread.id:
+                return thread
+            if model is JuniorMemory:
+                return note
+            return None
+
+        db.get.side_effect = fake_get
+        client = self._client(db, owner)
+        got = client.get(f"/api/v1/junior/threads/{thread.id}/memory")
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(got.json()["markdown"], "Keep this.")
+        posted = client.post(
+            f"/api/v1/junior/threads/{thread.id}/memory",
+            json={"text": "Added line"},
+        )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json()["markdown"], "Keep this.\n\nAdded line")
+        self.assertTrue(posted.json()["markdown"].startswith("Keep this."))
+        db.commit.assert_called()
+
+    def test_demo_post_is_403(self):
+        demo = SimpleNamespace(id=uuid.uuid4(), email="steve@storykeep.local", is_demo_locked=True)
+        client = self._client(MagicMock(), demo)
+        posted = client.post(
+            f"/api/v1/junior/threads/{uuid.uuid4()}/memory",
+            json={"text": "leaked"},
+        )
+        self.assertEqual(posted.status_code, 403)
+        self.assertNotIn("leaked", posted.text)
 
 
 if __name__ == "__main__":
