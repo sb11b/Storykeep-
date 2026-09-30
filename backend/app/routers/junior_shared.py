@@ -1447,6 +1447,54 @@ def update_project_thread_message(
 
 
 @router.get(
+    "/projects/{slug}/threads/{thread_id}/memories/{memory_id}",
+    response_model=JuniorSharedMemoryOut,
+)
+def get_project_thread_memory(
+    slug: str,
+    thread_id: UUID,
+    memory_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMemoryOut:
+    """One memory on a thread of this project. 404 if the thread or memory is not on it."""
+    return JuniorSharedMemoryOut.model_validate(
+        store.project_thread_memory_owned(db, user, slug, thread_id, memory_id)
+    )
+
+
+@router.post(
+    "/projects/{slug}/threads/{thread_id}/memories/{memory_id}",
+    response_model=JuniorSharedMemoryOut,
+)
+def update_project_thread_memory(
+    slug: str,
+    thread_id: UUID,
+    memory_id: UUID,
+    payload: JuniorSharedMemoryIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> JuniorSharedMemoryOut:
+    """Update a memory on this project thread. Replay stays on this route."""
+    fields = payload.model_fields_set
+    row = store.update_project_thread_memory(
+        db,
+        user,
+        slug,
+        thread_id,
+        memory_id,
+        content=payload.content if "content" in fields else None,
+        kind=payload.kind if "kind" in fields else None,
+        source_thread=payload.source_thread if "source_thread" in fields else None,
+        set_kind="kind" in fields,
+        set_source_thread="source_thread" in fields,
+    )
+    db.commit()
+    db.refresh(row)
+    return JuniorSharedMemoryOut.model_validate(row)
+
+
+@router.get(
     "/projects/{slug}/threads/{thread_id}/continue",
     response_model=JuniorSharedContinueOut,
 )
