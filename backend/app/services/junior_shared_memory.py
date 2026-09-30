@@ -326,6 +326,56 @@ def project_session_owned(
     return row
 
 
+def list_project_sessions_page(
+    db: Session,
+    user: User,
+    slug: str,
+    *,
+    limit: int | None = None,
+    cursor: UUID | str | None = None,
+    before_id: UUID | str | None = None,
+) -> tuple[list[JuniorSession], str | None]:
+    """Page sessions whose venue matches a thread on this project.
+
+    404 when the project is missing. An empty venue set returns an empty page.
+    """
+    project = get_project(db, user, slug)
+    venues = project_session_venues(db, user, project)
+    return list_sessions_page(
+        db,
+        user,
+        limit=PAGE_DEFAULT if limit is None else limit,
+        cursor=cursor,
+        before_id=before_id,
+        venues=venues,
+    )
+
+
+def touch_project_session(
+    db: Session,
+    user: User,
+    slug: str,
+    *,
+    venue: str | None = None,
+    device_label: str | None = None,
+) -> JuniorSession:
+    """Heartbeat a session on this project. Replay stays on the project route.
+
+    404 when the project is missing or the venue is not used by a project thread.
+    """
+    project = get_project(db, user, slug)
+    venues = project_session_venues(db, user, project)
+    if venue is None:
+        if len(venues) != 1:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        chosen = next(iter(venues))
+    else:
+        chosen = normalize_venue(venue)
+        if chosen not in venues:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return touch_session(db, user, chosen, device_label)
+
+
 def update_project_session(
     db: Session,
     user: User,
@@ -732,10 +782,15 @@ def list_sessions_page(
     cursor: UUID | str | None = None,
     before_id: UUID | str | None = None,
     venue: str | None = None,
+    venues: set[str] | None = None,
 ) -> tuple[list[JuniorSession], str | None]:
+    if venues is not None and not venues:
+        return [], None
     cap = clamp_page_limit(limit)
     stmt = select(JuniorSession).where(JuniorSession.user_id == user.id)
-    if venue:
+    if venues:
+        stmt = stmt.where(JuniorSession.venue.in_(tuple(sorted(venues))))
+    elif venue:
         stmt = stmt.where(JuniorSession.venue == normalize_venue(venue))
     marker = _as_uuid(before_id) or _as_uuid(cursor)
     if marker is not None:
