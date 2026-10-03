@@ -29,7 +29,6 @@ _ASK_CURSOR_PROMPT_RE = re.compile(
     re.I,
 )
 _ASK_CLINE_PROMPT_ONLY_RE = re.compile(
-    r"\bcline\s+(?:prompt|agent)\b|"
     r"\bwrite\s+a\s+cline\s+prompt\b|"
     r"\bcline\s+prompt\s+only\b",
     re.I,
@@ -721,8 +720,8 @@ def build_turn_extras(
         extras.append(CURSOR_PROMPT_APPEND)
         if cursor_prompt_has_task_details(user_text):
             extras.append(CURSOR_PROMPT_DETAILS_APPEND)
-        if is_cline_prompt_only_turn(user_text):
-            extras.append(CLINE_PROMPT_ONLY_APPEND)
     elif mode == "follow":
         extras.append(CURSOR_FOLLOW_APPEND)
+    if is_cline_prompt_only_turn(user_text):
+        extras.append(CLINE_PROMPT_ONLY_APPEND)
     return extras

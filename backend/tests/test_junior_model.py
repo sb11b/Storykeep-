@@ -207,6 +207,66 @@ class JuniorModelTests(unittest.TestCase):
         )
         self.assertIn("truncated=true", payload[0]["content"])
 
+    def test_cline_agent_does_not_trigger_cline_prompt_only(self):
+        """A request mentioning 'Cline agent' but not 'Cline prompt' stays a normal cursor turn."""
+        extras = junior_model.build_turn_extras(
+            "Start a Cline agent",
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+        )
+        joined = "\n".join(extras)
+        self.assertNotIn("Cline prompt only", joined)
+
+    def test_cline_prompt_only_appends_without_cursor_generate(self):
+        """A direct 'Write a Cline prompt only …' request gets CLINE_PROMPT_ONLY_APPEND even without cursor generate mode."""
+        extras = junior_model.build_turn_extras(
+            "Write a Cline prompt only",
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+        )
+        joined = "\n".join(extras)
+        self.assertIn("Cline prompt only", joined)
+
+    def test_bare_cline_prompt_does_not_trigger_cline_prompt_only(self):
+        """A question about a Cline prompt ('What is wrong with this Cline prompt?') must not trigger the append."""
+        extras = junior_model.build_turn_extras(
+            "What is wrong with this Cline prompt?",
+            memory_block=None,
+            chats_enabled=False,
+            index_block=None,
+            read_meta=None,
+            unread_catalog=None,
+            calendar_connected=False,
+            calendar_tools=False,
+            mail_connected=False,
+            mail_unread=False,
+            unread_mail_md=None,
+            search_enabled=False,
+            will_search=False,
+        )
+        joined = "\n".join(extras)
+        self.assertNotIn("Cline prompt only", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
