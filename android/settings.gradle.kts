@@ -15,4 +15,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "StorykeepJunior"
+include(":system")
 include(":app")
