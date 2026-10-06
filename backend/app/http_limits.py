@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 import traceback
 
+from fastapi import HTTPException, Request, status
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
@@ -189,3 +192,42 @@ class LimitChatBodyMiddleware:
             log_chat_exception("chat handler crashed")
             if not started:
                 await _send_json(send, 500, b'{"detail":"Chat failed."}')
+
+
+# ---------------------------------------------------------------------------
+# IP-based login rate limiting (in-memory, single-process).
+# 10 attempts per minute per client IP. Returns 429 on exceed.
+# ---------------------------------------------------------------------------
+
+LOGIN_RATE_MAX_ATTEMPTS = 10
+LOGIN_RATE_WINDOW_SECONDS = 60
+
+_login_attempts: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    # Honour X-Forwarded-For when present (Railway / proxies).
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def check_login_rate_limit(request: Request) -> None:
+    """FastAPI dependency: raise 429 if the login IP exceeded the rate limit."""
+    ip = _client_ip(request)
+    now = time.monotonic()
+    cutoff = now - LOGIN_RATE_WINDOW_SECONDS
+    with _login_lock:
+        hits = _login_attempts.get(ip, [])
+        hits = [t for t in hits if t > cutoff]
+        if len(hits) >= LOGIN_RATE_MAX_ATTEMPTS:
+            _login_attempts[ip] = hits
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many login attempts. Please try again in a minute.",
+                headers={"Retry-After": str(LOGIN_RATE_WINDOW_SECONDS)},
+            )
+        hits.append(now)
+        _login_attempts[ip] = hits

@@ -12,6 +12,7 @@ from app.auth import create_access_token, hash_password, verify_password
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
+from app.http_limits import check_login_rate_limit
 from app.models import User
 from app.schemas import (
     ChangeEmailConfirmIn,
@@ -109,7 +110,7 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
 
 
 @router.post("/login", response_model=LoginResponseOut)
-def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)) -> LoginResponseOut:
+def login(payload: LoginIn, response: Response, db: Session = Depends(get_db), _rate=Depends(check_login_rate_limit)) -> LoginResponseOut:
     email = payload.email.lower()
     if email_is_locked(email):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo account closed")

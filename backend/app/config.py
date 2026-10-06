@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     def signing_key(self) -> str:
         if self.secret_key and self.secret_key != "change-me-in-production-storykeep":
             return self.secret_key
+        # In production, a stable SECRET_KEY must be supplied explicitly.
+        # Falling back to a hash of DATABASE_URL is fine for local/dev only.
+        if self.env == "production":
+            raise RuntimeError(
+                "SECRET_KEY must be set in production (env=production). "
+                "Set the SECRET_KEY environment variable to a strong random value."
+            )
         return hashlib.sha256(f"storykeep:{self.database_url}".encode()).hexdigest()
 
     @property
