@@ -98,7 +98,7 @@ export function GrokBubble({
     showCryptoGate,
   } = cryptoGate;
 
-  const panels = useGrokPanels(persist);
+  const panels = useGrokPanels(persist, setCustomShelves);
   const {
     panes,
     setPanes,

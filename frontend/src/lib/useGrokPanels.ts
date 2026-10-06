@@ -16,6 +16,7 @@ import {
   saveGrokPanes,
   scrubDefaultPaneLabels,
 } from "@/lib/grok-pane-storage";
+import { parseCustomNoteShelves, type CustomNoteShelf } from "@/lib/custom-note-shelves";
 import { toastActionError } from "@/lib/toast-message";
 import { CRYPTO_UNLOCKED, decryptStoredMessage } from "@/lib/message-crypto";
 import type { GrokConversation, MessageCryptoStatus } from "@/lib/types";
@@ -25,7 +26,7 @@ export const MAX_PANES = 4;
 const INITIAL_PANES = loadSavedGrokPanes() ?? [createGrokPane(0)];
 const INITIAL_FOCUSED_PANE_ID = INITIAL_PANES[0]!.id;
 
-export function useGrokPanels(persist: boolean) {
+export function useGrokPanels(persist: boolean, setCustomShelves: (shelves: CustomNoteShelf[]) => void) {
   const [panes, setPanes] = useState<GrokPaneState[]>(INITIAL_PANES);
   const [focusedPaneId, setFocusedPaneId] = useState<string>(INITIAL_FOCUSED_PANE_ID);
   const focusedPaneIdRef = useRef(focusedPaneId);
@@ -43,6 +44,7 @@ export function useGrokPanels(persist: boolean) {
     void api
       .getPreferences()
       .then((prefs) => {
+        setCustomShelves(parseCustomNoteShelves(prefs));
         const labels = prefs.grok_pane_labels as Record<string, string> | undefined;
         if (!labels || !Object.keys(labels).length) return;
         setPanes((current) => {
