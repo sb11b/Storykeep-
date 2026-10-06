@@ -207,10 +207,11 @@ _login_lock = threading.Lock()
 
 
 def _client_ip(request: Request) -> str:
-    # Honour X-Forwarded-For when present (Railway / proxies).
+    # Use the right-most entry, which the trusted proxy appended.
+    # The left-most entry is client-controlled and can be spoofed.
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 

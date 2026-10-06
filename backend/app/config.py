@@ -2,7 +2,7 @@ from pathlib import Path
 import hashlib
 import os
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -149,6 +149,18 @@ class Settings(BaseSettings):
                 "Set the SECRET_KEY environment variable to a strong random value."
             )
         return hashlib.sha256(f"storykeep:{self.database_url}".encode()).hexdigest()
+
+    @model_validator(mode="after")
+    def require_secret_in_production(self) -> "Settings":
+        """Fail fast at startup if SECRET_KEY is missing in production."""
+        if self.env == "production" and (
+            not self.secret_key or self.secret_key == "change-me-in-production-storykeep"
+        ):
+            raise RuntimeError(
+                "SECRET_KEY must be set in production (env=production). "
+                "Set the SECRET_KEY environment variable to a strong random value."
+            )
+        return self
 
     @property
     def backup_dir(self) -> Path:
