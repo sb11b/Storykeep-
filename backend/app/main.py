@@ -76,6 +76,11 @@ def _try_sql(statement: str) -> None:
 
 
 def _create_schema() -> None:
+    # Deprecated: schema management is now handled by Alembic (backend/alembic).
+    # This function is kept for backward compatibility with existing Railway
+    # deploys that rely on it for bootstrap. Future schema changes should be
+    # made via `alembic revision` migrations, not by adding more _try_sql()
+    # calls here. See backend/alembic/README.md for usage.
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     _try_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     _try_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
