@@ -298,7 +298,8 @@ export function GrokPane({
     onStopArticleListen,
     onActivateListen,
     paneMessages: pane.messages,
-    messagesRef: useRef<ChatLine[]>([]),
+    messagesRef,
+    bodyElementsRef,
     defaultTtsVoiceId,
     ttsVoices,
   });
