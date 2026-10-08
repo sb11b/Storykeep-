@@ -1,0 +1,96 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { useGrokMessageListen } from "@/components/grok-message-listen";
+import { api } from "@/lib/api";
+import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
+import { DEFAULT_TTS_VOICE_ID, resolveTtsVoiceId } from "@/lib/tts-defaults";
+import {
+  readStoredTtsAutoRead,
+  readStoredTtsSpeed,
+  readStoredTtsVoice,
+  writeStoredTtsAutoRead,
+  writeStoredTtsSpeed,
+  writeStoredTtsVoice,
+} from "@/lib/tts-preferences";
+import { wordIndexFromSelection } from "@/lib/tts-words";
+import type { TtsVoice } from "@/lib/types";
+
+type ChatRole = "user" | "assistant";
+
+export type ChatLine = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  files?: unknown[];
+  error?: string | null;
+  failed?: boolean;
+  waiting?: boolean;
+  turnStatus?: string | null;
+  routeLabel?: string | null;
+  paceNote?: string | null;
+  includeChip?: string | null;
+  includeHasMore?: boolean;
+  includeNextOffset?: number | null;
+  includeNextHeading?: string | null;
+  includeMode?: string;
+  includeHeading?: string | null;
+  includeOffset?: number;
+  calendarProposal?: { title: string; start: string; end: string; status?: "pending" | "wrote" | "error" };
+  mailProposal?: { to: string; subject: string; body: string; status?: "pending" | "wrote" | "error" };
+};
+
+type ListenTarget = { id: string; trigger: HTMLElement | null; script: string };
+
+export interface UsePaneVoiceOptions {
+  ttsEnabled: boolean;
+  locked: boolean;
+  panelOpen: boolean;
+  busy: boolean;
+  inFlightRef: React.RefObject<boolean>;
+  onStopArticleListen?: () => void;
+  onActivateListen: (stop: (() => void) | null) => void;
+  paneMessages: ChatLine[];
+  defaultTtsVoiceId: string;
+  ttsVoices: TtsVoice[];
+  bodyElementsRef: React.RefObject<Map<string, HTMLElement>>;
+  messagesRef: React.RefObject<ChatLine[]>;
+}
+
+export interface UsePaneVoiceResult {
+  // TTS
+  voiceId: string;
+  playbackSpeed: number;
+  listenTarget: ListenTarget | null;
+  activeWord: number | null;
+  autoReadReplies: boolean;
+  setAutoReadReplies: React.Dispatch<React.SetStateAction<boolean>>;
+  setActiveWord: React.Dispatch<React.SetStateAction<number | null>>;
+  clickedWordRef: React.RefObject<{ messageId: string; index: number } | null>;
+  listen: ReturnType<typeof useGrokMessageListen>;
+  listenApiRef: React.RefObject<ReturnType<typeof useGrokMessageListen>>;
+  listenPhaseRef: React.RefObject<"idle" | "loading" | "playing" | "paused">;
+  requestAutoListenRef: React.RefObject<(messageId: string, markdown: string) => void>;
+  ttsPausedRef: React.RefObject<boolean>;
+  userStoppedTtsRef: React.RefObject<boolean>;
+  handleVoiceChange: (next: string) => void;
+  handleSpeedChange: (next: number) => void;
+  listenLatestReply: () => void;
+  requestListen: (messageId: string, trigger: HTMLElement | null) => void;
+  requestAutoListen: (messageId: string, markdown: string) => void;
+  handleListenPause: () => void;
+  handleListenStop: () => void;
+  listenFromHere: () => void;
+  readableAssistant: (messageId?: string | null) => ChatLine | null;
+
+  // STT/STS
+  sttPhase: "idle" | "listening" | "transcribing";
+  micMode: "stt" | "sts" | null;
+  sttEmptyHint: boolean;
+  stsModeOn: boolean;
+  handleMicPhaseChange: (phase: "idle" | "listening" | "transcribing", mode: "stt" | "sts" | null) => void;
+  handleStsModeChange: (active: boolean) => void;
+  clearSttEmptyHint: () => void;
+  showSttEmptyHint: () => void;
+}
