@@ -64,6 +64,9 @@ def run_migrations_offline() -> None:
     it bootstraps the schema via ``Base.metadata.create_all`` which requires
     a live connection. Reject offline generation for that revision.
     """
+    # Reject offline generation for the baseline before dispatching any
+    # revision. The baseline uses Base.metadata.create_all which requires
+    # a live database connection and cannot produce SQL.
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -73,6 +76,21 @@ def run_migrations_offline() -> None:
         compare_type=True,
         compare_server_default=True,
     )
+
+    # Reject offline generation for the baseline before dispatching any
+    # revision. The baseline uses Base.metadata.create_all which requires
+    # a live database connection and cannot produce SQL.
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(config)
+    head_revision = script.get_current_head()
+    if head_revision == "0001_initial_schema":
+        raise RuntimeError(
+            "Offline SQL generation is not supported for the baseline revision "
+            "(0001_initial_schema) because it bootstraps the schema via "
+            "Base.metadata.create_all which requires a live database connection. "
+            "Run 'alembic upgrade head' against a live database instead."
+        )
 
     with context.begin_transaction():
         context.run_migrations()

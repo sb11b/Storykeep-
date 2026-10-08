@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
@@ -11,9 +11,8 @@ import { JuniorMicControls, type JuniorMicMode, type JuniorMicPhase } from "@/co
 import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
-import { GrokListenBar, useGrokMessageListen } from "@/components/grok-message-listen";
-import { logReplyText, readReplyText } from "@/lib/grok-reply-speech";
-import { wordIndexFromSelection } from "@/lib/tts-words";
+import { GrokListenBar } from "@/components/grok-message-listen";
+import { usePaneVoice } from "@/lib/usePaneVoice";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { restoreDraftAfterSilent } from "@/lib/silent-retry";
 import { Button } from "@/components/ui/button";
@@ -79,16 +78,8 @@ import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
-import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices, resolveTtsVoiceId } from "@/lib/tts-defaults";
-import {
-  readStoredTtsSpeed,
-  readStoredTtsVoice,
-  TTS_SPEEDS,
-  writeStoredTtsSpeed,
-  writeStoredTtsVoice,
-  readStoredTtsAutoRead,
-  writeStoredTtsAutoRead,
-} from "@/lib/tts-preferences";
+import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices } from "@/lib/tts-defaults";
+import { TTS_SPEEDS } from "@/lib/tts-preferences";
 import { MIC_LIVE, MIC_STT_EMPTY_HINT, MIC_TRANSCRIBING } from "@/lib/stt-ui";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -290,23 +281,34 @@ export function GrokPane({
   useEffect(() => {
     draftValueRef.current = pane.draft;
   }, [pane.draft]);
+
+
   const [busy, setBusy] = useState(false);
+  const messagesRef = useRef<ChatLine[]>(pane.messages);
+  messagesRef.current = pane.messages;
+  const bodyElementsRef = useRef(new Map<string, HTMLElement>());
+
+  /* ── Voice hook ── */
+  const voice = usePaneVoice({
+    ttsEnabled,
+    locked,
+    panelOpen,
+    busy,
+    inFlightRef,
+    onStopArticleListen,
+    onActivateListen,
+    paneMessages: pane.messages,
+    messagesRef,
+    bodyElementsRef,
+    defaultTtsVoiceId,
+    ttsVoices,
+  });
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice(defaultTtsVoiceId));
-  const [playbackSpeed, setPlaybackSpeed] = useState(() => readStoredTtsSpeed());
-  const [listenTarget, setListenTarget] = useState<ListenTarget | null>(null);
-  const [activeWord, setActiveWord] = useState<number | null>(null);
-  const [autoReadReplies, setAutoReadReplies] = useState(() => readStoredTtsAutoRead());
   const [uploadingFiles, setUploadingFiles] = useState(false);
-  const [sttPhase, setSttPhase] = useState<JuniorMicPhase>("idle");
-  const [micMode, setMicMode] = useState<JuniorMicMode | null>(null);
-  const [sttEmptyHint, setSttEmptyHint] = useState(false);
-  const sttEmptyHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [stsModeOn, setStsModeOn] = useState(false);
-  const stsModeOnRef = useRef(false);
-  const stsRearmRef = useRef<(() => void) | null>(null);
-  const ttsPausedRef = useRef(false);
-  const micAbortRef = useRef<(() => void) | null>(null);
+
+  /* ── Chat creation refs ── */
+  const createNonceRef = useRef<string | null>(null);
+  const createInFlightRef = useRef<Promise<string> | null>(null);
   const sendRef = useRef<
     (opts?: {
       message?: string;
@@ -319,7 +321,6 @@ export function GrokPane({
       includeOffset?: number;
     }) => Promise<void>
   >(async () => {});
-  const sttBusy = sttPhase === "listening" || sttPhase === "transcribing";
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
   const streamStatusRef = useRef<ChatStatusKind | null>(null);
@@ -335,33 +336,6 @@ export function GrokPane({
   const thinkingTimerRef = useRef<number | null>(null);
   const gotDeltaRef = useRef(false);
   const generatingRef = useRef(false);
-  const pendingListenRef = useRef(false);
-  const pendingFromHereRef = useRef<number | null>(null);
-  const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
-  const listenTargetRef = useRef<ListenTarget | null>(null);
-  /** Reply that arrived while the mic was still busy. Spoken once the mic is idle. */
-  const pendingAutoListenRef = useRef<{ id: string; markdown: string } | null>(null);
-  const requestAutoListenRef = useRef<(messageId: string, markdown: string) => void>(() => {});
-  /** User paused/stopped TTS; skip auto-speak until Listen or From here. */
-  const userStoppedTtsRef = useRef(false);
-  const streamAssistantIdRef = useRef<string | null>(null);
-  const sttPhaseRef = useRef(sttPhase);
-  sttPhaseRef.current = sttPhase;
-  const panelOpenRef = useRef(panelOpen);
-  panelOpenRef.current = panelOpen;
-  const createInFlightRef = useRef<Promise<string> | null>(null);
-  const createNonceRef = useRef<string | null>(pane.createNonce);
-  createNonceRef.current = pane.createNonce;
-
-  useEffect(() => {
-    if (!pane.createNonce && !pane.conversationId) {
-      createInFlightRef.current = null;
-    }
-  }, [pane.createNonce, pane.conversationId]);
-  const bodyElementsRef = useRef<Map<string, HTMLElement>>(new Map());
-  const messagesRef = useRef(pane.messages);
-  listenTargetRef.current = listenTarget;
-  messagesRef.current = pane.messages;
   const [readerCtx, setReaderCtx] = useState({ selection: "", heading: null as string | null });
 
   useEffect(() => {
@@ -493,28 +467,6 @@ export function GrokPane({
     };
   }, [notePickerOpen, noteQuery]);
 
-  useEffect(() => {
-    if (!ttsVoices.length) return;
-    let cancelled = false;
-    void api
-      .getPreferences()
-      .then((prefs) => {
-        if (cancelled) return;
-        const saved = typeof prefs.tts_voice_id === "string" ? prefs.tts_voice_id : null;
-        const local = readStoredTtsVoice(defaultTtsVoiceId);
-        const next = resolveTtsVoiceId(ttsVoices, defaultTtsVoiceId, saved || local);
-        setVoiceId(next);
-        writeStoredTtsVoice(next);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        const next = resolveTtsVoiceId(ttsVoices, defaultTtsVoiceId, readStoredTtsVoice(defaultTtsVoiceId));
-        setVoiceId(next);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [defaultTtsVoiceId, ttsVoices]);
 
   useEffect(() => {
     if (!panelOpen) {
@@ -565,212 +517,22 @@ export function GrokPane({
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
   }, [pane.draft]);
 
-  const listenPhaseRef = useRef<"idle" | "loading" | "playing" | "paused">("idle");
-  const maybeRearmStsRef = useRef<() => void>(() => {});
-
   /** Re-read the live reply so playback never depends on stale state. */
-  const resolveListenScript = useCallback(() => {
-    const target = listenTargetRef.current;
-    if (!target) return "";
-    if (target.script) return target.script;
-    const resolved = readReplyText({
-      trigger: target.trigger,
-      body: bodyElementsRef.current.get(target.id) ?? null,
-      markdown: messagesRef.current.find((item) => item.id === target.id)?.content ?? null,
-    });
-    logReplyText("resolve", resolved);
-    return resolved.text;
-  }, []);
 
-  const listen = useGrokMessageListen({
-    messageId: listenTarget?.id ?? "",
-    resolveScript: resolveListenScript,
-    voiceId,
-    disabled: !listenTarget || !ttsEnabled || locked,
-    onCue: setActiveWord,
-    onPlayingChange: (active) => {
-      if (active) {
-        onStopArticleListen?.();
-        onActivateListen(() => stopRef.current());
-      } else {
-        // Keep the target: clearing it here tore down the request mid-flight.
-        onActivateListen(null);
-        setActiveWord(null);
-        if (!ttsPausedRef.current) maybeRearmStsRef.current();
-      }
-    },
-  });
 
-  const listenApiRef = useRef(listen);
-  listenApiRef.current = listen;
-  listenPhaseRef.current = listen.phase;
-  stopRef.current = listen.stop;
 
-  const maybeRearmSts = useCallback(() => {
-    if (!stsModeOnRef.current) return;
-    if (ttsPausedRef.current) return;
-    if (sttPhaseRef.current !== "idle") return;
-    if (busy || inFlightRef.current) return;
-    const lp = listenPhaseRef.current;
-    if (lp === "loading" || lp === "playing" || lp === "paused") return;
-    console.log("junior-sts", { action: "rearm-request" });
-    stsRearmRef.current?.();
-  }, [busy]);
-  maybeRearmStsRef.current = maybeRearmSts;
 
-  useEffect(() => {
-    if (pendingListenRef.current && listenTarget) {
-      pendingListenRef.current = false;
-      const fromHere = pendingFromHereRef.current;
-      pendingFromHereRef.current = null;
-      if (fromHere != null) void listenApiRef.current.listenFromWord(fromHere);
-      else listenApiRef.current.listen();
-    }
-  }, [listenTarget]);
 
-  useEffect(() => {
-    if (!panelOpen) listenApiRef.current.stop();
-  }, [panelOpen]);
 
-  const registerBody = useCallback((messageId: string, element: HTMLElement | null) => {
-    if (element) bodyElementsRef.current.set(messageId, element);
-    else bodyElementsRef.current.delete(messageId);
-  }, []);
 
   /** Sticky bar with no active target reads the newest assistant reply. */
-  function listenLatestReply() {
-    if (listenTarget) {
-      requestListen(listenTarget.id, listenTarget.trigger);
-      return;
-    }
-    const latest = [...pane.messages]
-      .reverse()
-      .find((item) => item.role === "assistant" && item.content);
-    if (!latest) {
-      toast.error("Send a message first — there is no reply to read yet.");
-      return;
-    }
-    requestListen(latest.id, null);
-  }
 
-  function requestListen(messageId: string, trigger: HTMLElement | null) {
-    if (listen.isActive && listenTarget?.id !== messageId) {
-      listen.stop();
-    }
-    if (listen.isActive && listenTarget?.id === messageId) {
-      if (listen.phase === "playing") {
-        userStoppedTtsRef.current = true;
-        ttsPausedRef.current = true;
-        listen.pause();
-      } else {
-        userStoppedTtsRef.current = false;
-        ttsPausedRef.current = false;
-        listen.listen();
-      }
-      return;
-    }
-    const resolved = readReplyText({
-      trigger,
-      body: bodyElementsRef.current.get(messageId) ?? null,
-      markdown: pane.messages.find((item) => item.id === messageId)?.content ?? null,
-    });
-    logReplyText("click", resolved);
-    if (!resolved.chars) {
-      toast.error("That reply is still empty — nothing to read yet.");
-      return;
-    }
-    userStoppedTtsRef.current = false;
-    pendingListenRef.current = true;
-    setListenTarget({ id: messageId, trigger, script: resolved.text });
-  }
 
   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
-  function requestAutoListen(messageId: string, markdown: string) {
-    if (!ttsEnabled || locked || panelOpenRef.current === false) return;
-    if (!autoReadReplies) {
-      if (listen.isActive) {
-        listen.stop();
-      }
-      return;
-    }
-    if (userStoppedTtsRef.current) return;
-    if (sttPhaseRef.current !== "idle") {
-      pendingAutoListenRef.current = { id: messageId, markdown };
-      return;
-    }
-    pendingAutoListenRef.current = null;
-    const resolved = readReplyText({
-      trigger: null,
-      body: bodyElementsRef.current.get(messageId) ?? null,
-      markdown,
-    });
-    logReplyText("auto", resolved);
-    if (!resolved.chars) return;
-    if (listen.isActive && listenTarget?.id !== messageId) {
-      listen.stop();
-    }
-    pendingListenRef.current = true;
-    setListenTarget({ id: messageId, trigger: null, script: resolved.text });
-  }
-  requestAutoListenRef.current = requestAutoListen;
 
-  function handleListenPause() {
-    userStoppedTtsRef.current = true;
-    ttsPausedRef.current = true;
-    listen.pause();
-  }
 
-  function handleListenStop() {
-    userStoppedTtsRef.current = true;
-    ttsPausedRef.current = false;
-    listen.stop();
-    maybeRearmSts();
-  }
 
-  function readableAssistant(messageId?: string | null) {
-    if (messageId) {
-      const match = pane.messages.find((item) => item.id === messageId && item.role === "assistant" && item.content);
-      if (match) return match;
-    }
-    if (listenTarget) {
-      const match = pane.messages.find((item) => item.id === listenTarget.id && item.role === "assistant" && item.content);
-      if (match) return match;
-    }
-    return [...pane.messages].reverse().find((item) => item.role === "assistant" && item.content) ?? null;
-  }
 
-  function listenFromHere() {
-    const target = readableAssistant(clickedWordRef.current?.messageId);
-    if (!target) {
-      toast.error("Send a message first — there is no reply to read yet.");
-      return;
-    }
-    const body = bodyElementsRef.current.get(target.id) ?? null;
-    const word = wordIndexFromSelection(body) ?? (clickedWordRef.current?.messageId === target.id ? clickedWordRef.current.index : null);
-    if (word == null || word < 0) {
-      toast.error("Click or highlight a word in the reply first.");
-      return;
-    }
-    const resolved = readReplyText({
-      trigger: listenTarget?.id === target.id ? listenTarget.trigger : null,
-      body,
-      markdown: target.content,
-    });
-    logReplyText("from-here", resolved);
-    if (!resolved.chars) {
-      toast.error("That reply is still empty — nothing to read yet.");
-      return;
-    }
-    if (listenTarget?.id === target.id && listen.isActive) {
-      userStoppedTtsRef.current = false;
-      void listen.listenFromWord(word);
-      return;
-    }
-    userStoppedTtsRef.current = false;
-    pendingFromHereRef.current = word;
-    pendingListenRef.current = true;
-    setListenTarget({ id: target.id, trigger: null, script: resolved.text });
-  }
 
   async function ensureOwnedConversation(): Promise<string> {
     const existing =
@@ -831,8 +593,8 @@ export function GrokPane({
     const turnId = options.turnId ?? turnIdRef.current;
     const controller = options.controller ?? new AbortController();
     if (turnId !== turnIdRef.current || controller.signal.aborted) return;
-    userStoppedTtsRef.current = false;
-    streamAssistantIdRef.current = assistantId;
+    voice.userStoppedTtsRef.current = false;
+    voice.streamAssistantIdRef.current = assistantId;
     abortRef.current = controller;
     abortingRef.current = false;
     setAborting(false);
@@ -990,7 +752,7 @@ export function GrokPane({
               };
             }
             if (meta.assistant_message_id) {
-              streamAssistantIdRef.current = meta.assistant_message_id;
+              voice.streamAssistantIdRef.current = meta.assistant_message_id;
               next = {
                 ...next,
                 messages: next.messages.map((item) =>
@@ -1297,14 +1059,13 @@ export function GrokPane({
               role: "assistant",
               iv: blob.iv,
               ct: blob.ct,
-              id: streamAssistantIdRef.current || assistantId,
+              id: voice.streamAssistantIdRef.current || assistantId,
             });
           } catch (error) {
             toastActionError(error, "save encrypted reply", "Could not save the encrypted reply.");
           }
         }
-        requestAutoListen(streamAssistantIdRef.current || assistantId, streamedText);
-        window.setTimeout(() => maybeRearmSts(), 120);
+        voice.requestAutoListen(voice.streamAssistantIdRef.current || assistantId, streamedText);
         return;
       }
       let recovered = "";
@@ -1315,7 +1076,7 @@ export function GrokPane({
           const last = [...detail.messages].reverse().find((item) => item.role === "assistant");
           if (last) {
             const saved = (await decryptStoredMessage(last)).trim();
-            const already = messagesRef.current.find((item) => item.id === last.id);
+            const already = voice.messagesRef.current.find((item) => item.id === last.id);
             const alreadyShown =
               Boolean(already && (already.content || "").trim()) &&
               !isSilentEmptyChatDetail(already?.content || "");
@@ -1348,7 +1109,7 @@ export function GrokPane({
               : item,
           ),
         }));
-        requestAutoListen(recoveredId || assistantId, recovered);
+        voice.requestAutoListen(recoveredId || assistantId, recovered);
         return;
       }
       putSentBack(EMPTY_REPLY_BODY);
@@ -1370,7 +1131,7 @@ export function GrokPane({
             : item,
         ),
       }));
-      requestAutoListen(streamAssistantIdRef.current || assistantId, spoken);
+      voice.requestAutoListen(voice.streamAssistantIdRef.current || assistantId, spoken);
     }
   }
 
@@ -1580,7 +1341,7 @@ export function GrokPane({
   }) {
     if (!opts?.fromStt) {
       dictation?.abort();
-      micAbortRef.current?.();
+      voice.micAbortRef.current?.();
     }
     const content = (opts?.message ?? draftNow()).trim();
     const pending = pane.pendingAttachments ?? [];
@@ -1748,51 +1509,8 @@ export function GrokPane({
     [fillComposerDraft],
   );
 
-  const clearSttEmptyHint = useCallback(() => {
-    if (sttEmptyHintTimerRef.current != null) {
-      clearTimeout(sttEmptyHintTimerRef.current);
-      sttEmptyHintTimerRef.current = null;
-    }
-    setSttEmptyHint(false);
-  }, []);
 
-  const showSttEmptyHint = useCallback(() => {
-    if (sttEmptyHintTimerRef.current != null) clearTimeout(sttEmptyHintTimerRef.current);
-    setSttEmptyHint(true);
-    sttEmptyHintTimerRef.current = setTimeout(() => {
-      sttEmptyHintTimerRef.current = null;
-      setSttEmptyHint(false);
-    }, 5000);
-  }, []);
 
-  const handleMicPhaseChange = useCallback(
-    (phase: JuniorMicPhase, mode: JuniorMicMode | null) => {
-      if (phase === "listening") clearSttEmptyHint();
-      setSttPhase(phase);
-      setMicMode(mode);
-      if (phase === "idle") {
-        const pending = pendingAutoListenRef.current;
-        if (pending) {
-          pendingAutoListenRef.current = null;
-          requestAutoListenRef.current(pending.id, pending.markdown);
-        }
-      }
-    },
-    [clearSttEmptyHint],
-  );
-
-  const handleStsModeChange = useCallback((active: boolean) => {
-    stsModeOnRef.current = active;
-    setStsModeOn(active);
-  }, []);
-
-  const registerMicAbort = useCallback((abort: (() => void) | null) => {
-    micAbortRef.current = abort;
-  }, []);
-
-  const registerStsRearm = useCallback((rearm: (() => void) | null) => {
-    stsRearmRef.current = rearm;
-  }, []);
 
   async function runImagineFromChat(options: {
     prompt: string;
@@ -2292,27 +2010,10 @@ export function GrokPane({
     saveLastFiling(next, null);
   }
 
-  function handleVoiceChange(next: string) {
-    if (listen.isActive) {
-      listenApiRef.current.stop();
-    }
-    setVoiceId(next);
-    writeStoredTtsVoice(next);
-    void api.updatePreferences({ tts_voice_id: next }).catch(() => {
-      /* ignore */
-    });
-  }
-
-  function handleSpeedChange(next: number) {
-    setPlaybackSpeed(next);
-    writeStoredTtsSpeed(next);
-    listen.changeSpeed(next);
-  }
-
   const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
   const voiceOptions = ttsVoices.length ? ttsVoices : fallbackTtsVoices();
   const hasReadableReply = pane.messages.some((item) => item.role === "assistant" && Boolean(item.content));
-  const showStickyPlayer = ttsEnabled && !locked && (listen.isActive || hasReadableReply);
+  const showStickyPlayer = ttsEnabled && !locked && (voice.listen.isActive || hasReadableReply);
   const visibleStatus = pane.streamStatus ?? streamStatus;
   const lastAssistantId = [...pane.messages].reverse().find((item) => item.role === "assistant")?.id ?? null;
   const shelfSelectId = `junior-shelf-${pane.id}`;
@@ -2431,8 +2132,8 @@ export function GrokPane({
               <span className="text-muted-foreground">Voice</span>
               <select
                 aria-label="TTS voice"
-                value={voiceId}
-                onChange={(event) => handleVoiceChange(event.target.value)}
+                value={voice.voiceId}
+                onChange={(event) => voice.handleVoiceChange(event.target.value)}
                 className={headerSelectClass}
               >
                 {voiceOptions.map((voice) => (
@@ -2446,8 +2147,8 @@ export function GrokPane({
               <span className="text-muted-foreground">Speed</span>
               <select
                 aria-label="Playback speed"
-                value={playbackSpeed}
-                onChange={(event) => handleSpeedChange(Number(event.target.value))}
+                value={voice.playbackSpeed}
+                onChange={(event) => voice.handleSpeedChange(Number(event.target.value))}
                 className={cn(headerSelectClass, "max-w-[4rem]")}
               >
                 {TTS_SPEEDS.map((rate) => (
@@ -2532,17 +2233,17 @@ export function GrokPane({
       <div ref={listRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {showStickyPlayer ? (
           <GrokListenBar
-            phase={listen.phase}
+            phase={voice.listen.phase}
             disabled={!ttsEnabled || locked}
-            speed={listen.speed}
-            voiceId={voiceId}
+            speed={voice.listen.speed}
+            voiceId={voice.voiceId}
             voices={voiceOptions}
-            onListen={listenLatestReply}
-            onFromHere={listenFromHere}
-            onPause={handleListenPause}
-            onStop={handleListenStop}
-            onSpeedChange={handleSpeedChange}
-            onVoiceChange={handleVoiceChange}
+            onListen={voice.listenLatestReply}
+            onFromHere={voice.listenFromHere}
+            onPause={voice.handleListenPause}
+            onStop={voice.handleListenStop}
+            onSpeedChange={voice.handleSpeedChange}
+            onVoiceChange={voice.handleVoiceChange}
           />
         ) : null}
         <div className="space-y-3 px-3 py-3">
@@ -2567,8 +2268,8 @@ export function GrokPane({
                 waiting={item.waiting}
                 busy={busy}
                 ttsAvailable={ttsEnabled && !locked}
-                listening={listenTarget?.id === item.id && listen.isActive}
-                activeWord={listenTarget?.id === item.id ? activeWord : null}
+                listening={voice.listenTarget?.id === item.id && voice.listen.isActive}
+                activeWord={voice.listenTarget?.id === item.id ? voice.activeWord : null}
                 assistantName={label}
                 files={item.files}
                 wordEnabled={!locked}
@@ -2632,10 +2333,10 @@ export function GrokPane({
                             )
                           : null
                 }
-                onRegisterBody={registerBody}
-                onListen={requestListen}
+                onRegisterBody={voice.registerBody}
+                onListen={voice.requestListen}
                 onTtsWordPick={(messageId, index) => {
-                  clickedWordRef.current = { messageId, index };
+                  voice.clickedWordRef.current = { messageId, index };
                 }}
                 onAddToNotes={(payload) => void addToNotes(payload, item.id)}
                 onApplyToNote={
@@ -2761,14 +2462,14 @@ export function GrokPane({
             <label className="inline-flex items-center gap-1.5">
               <input
                 type="checkbox"
-                checked={autoReadReplies}
+                checked={voice.autoReadReplies}
                 disabled={!ttsEnabled || locked}
                 onChange={(event) => {
                   const on = event.target.checked;
-                  setAutoReadReplies(on);
-                  writeStoredTtsAutoRead(on);
-                  if (!on && listen.isActive) {
-                    listen.stop();
+                  voice.setAutoReadReplies(on);
+                  voice.writeStoredTtsAutoRead(on);
+                  if (!on && voice.listen.isActive) {
+                    voice.listen.stop();
                   }
                 }}
               />
@@ -2991,7 +2692,7 @@ export function GrokPane({
             className="min-h-12 max-h-[min(60vh,28rem)] min-w-0 flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-sm"
             value={pane.draft}
             onChange={(event) => {
-              clearSttEmptyHint();
+              voice.clearSttEmptyHint();
               draftValueRef.current = event.target.value;
               patch({ draft: event.target.value });
             }}
@@ -3053,13 +2754,13 @@ export function GrokPane({
             <JuniorMicControls
               enabled={enabled && !uploadingFiles}
               locked={locked}
-              registerAbort={registerMicAbort}
-              registerStsRearm={registerStsRearm}
-              onPhaseChange={handleMicPhaseChange}
-              onStsModeChange={handleStsModeChange}
+              registerAbort={voice.registerMicAbort}
+              registerStsRearm={voice.registerStsRearm}
+              onPhaseChange={voice.handleMicPhaseChange}
+              onStsModeChange={voice.handleStsModeChange}
               onStsSubmit={submitVoiceTranscript}
               onSttDraft={applySttDraft}
-              onSttEmptyHint={showSttEmptyHint}
+              onSttEmptyHint={voice.showSttEmptyHint}
             />
           ) : null}
           {busy || aborting ? (
@@ -3082,7 +2783,7 @@ export function GrokPane({
               disabled={
                 !enabled ||
                 aborting ||
-                sttBusy ||
+                voice.sttBusy ||
                 (!draftNow().trim() && !(pane.pendingAttachments ?? []).length)
               }
               aria-label="Send"
@@ -3091,19 +2792,19 @@ export function GrokPane({
             </Button>
           )}
         </div>
-        {sttPhase === "listening" ? (
+        {voice.sttPhase === "listening" ? (
           <p className="text-[11px] text-muted-foreground" role="status">
-            {micMode === "stt" ? "STT" : "STS"} — {MIC_LIVE}
+            {voice.micMode === "stt" ? "STT" : "STS"} — {MIC_LIVE}
           </p>
-        ) : sttPhase === "transcribing" ? (
+        ) : voice.sttPhase === "transcribing" ? (
           <p className="text-[11px] text-muted-foreground" role="status">
-            {micMode === "stt" ? "STT" : "STS"} — {MIC_TRANSCRIBING}
+            {voice.micMode === "stt" ? "STT" : "STS"} — {MIC_TRANSCRIBING}
           </p>
-        ) : sttEmptyHint ? (
+        ) : voice.sttEmptyHint ? (
           <p className="text-[11px] text-muted-foreground" role="status">
             {MIC_STT_EMPTY_HINT}
           </p>
-        ) : stsModeOn ? (
+        ) : voice.stsModeOn ? (
           <p className="text-[11px] text-muted-foreground" role="status">
             STS — conversation mode
           </p>
@@ -3125,3 +2826,6 @@ export function GrokPane({
     </div>
   );
 }
+
+
+

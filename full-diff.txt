@@ -1,0 +1,1 @@
+or/grok-pane-decomposition-v1 -- src/lib/usePaneVoice.ts src/components/grok-pane.tsx
