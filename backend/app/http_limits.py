@@ -204,6 +204,24 @@ LOGIN_RATE_WINDOW_SECONDS = 60
 
 _login_attempts: dict[str, list[float]] = {}
 _login_lock = threading.Lock()
+_last_login_sweep = 0.0
+
+
+def _prune_login_attempts(now: float) -> None:
+    """Drop empty/stale buckets so the dict cannot grow without bound.
+
+    Called under ``_login_lock`` at most once per window. Buckets whose newest
+    hit is older than the window are removed; that also keeps per-IP entries
+    from lingering after an attacker stops.
+    """
+    global _last_login_sweep
+    if now - _last_login_sweep < LOGIN_RATE_WINDOW_SECONDS:
+        return
+    _last_login_sweep = now
+    cutoff = now - LOGIN_RATE_WINDOW_SECONDS
+    stale = [key for key, hits in _login_attempts.items() if not hits or hits[-1] <= cutoff]
+    for key in stale:
+        del _login_attempts[key]
 
 
 def _client_ip(request: Request) -> str:
@@ -215,20 +233,42 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def check_login_rate_limit(request: Request) -> None:
-    """FastAPI dependency: raise 429 if the login IP exceeded the rate limit."""
+def _login_rate_key(request: Request, email: str | None = None) -> str:
+    """Rate-limit key: per IP, and additionally per (IP, account).
+
+    A single IP is the blunt instrument; an attacker spread across many IPs can
+    still hammer one account, so callers that already know the account pass the
+    lowercased email and get a second, narrower bucket.
+    """
     ip = _client_ip(request)
+    if email:
+        return f"{ip}|{email.strip().lower()}"
+    return ip
+
+
+def _consume_login_attempt(key: str) -> None:
     now = time.monotonic()
     cutoff = now - LOGIN_RATE_WINDOW_SECONDS
     with _login_lock:
-        hits = _login_attempts.get(ip, [])
-        hits = [t for t in hits if t > cutoff]
+        _prune_login_attempts(now)
+        hits = [t for t in _login_attempts.get(key, []) if t > cutoff]
         if len(hits) >= LOGIN_RATE_MAX_ATTEMPTS:
-            _login_attempts[ip] = hits
+            _login_attempts[key] = hits
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many login attempts. Please try again in a minute.",
                 headers={"Retry-After": str(LOGIN_RATE_WINDOW_SECONDS)},
             )
         hits.append(now)
-        _login_attempts[ip] = hits
+        _login_attempts[key] = hits
+
+
+def check_login_rate_limit(request: Request) -> None:
+    """FastAPI dependency: raise 429 if the login IP exceeded the rate limit."""
+    _consume_login_attempt(_login_rate_key(request))
+
+
+def check_login_email_rate_limit(request: Request, email: str) -> None:
+    """Second, account-scoped limiter. Call from the login handler once the
+    submitted email is known, before the password lookup."""
+    _consume_login_attempt(_login_rate_key(request, email))

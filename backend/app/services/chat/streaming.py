@@ -605,6 +605,22 @@ async def stream_completion(
                                     break
                             continue
                         yield text
+                if canopy_buf:
+                    # Stream ended inside an unclosed thinking/tool block: flush the
+                    # visible text we were holding, so a truncated reply is not
+                    # silently dropped. Strip any marker itself, keep the words.
+                    visible = canopy_buf
+                    for marker in (
+                        "<|thinking_begin|>",
+                        "<|tool_call_begin|>",
+                        "<|tool_calls_section_begin|>",
+                    ):
+                        idx = visible.find(marker)
+                        if idx != -1:
+                            visible = visible[:idx]
+                    if visible.strip():
+                        yield visible
+                    canopy_buf = ""
                 if first_token_at is None:
                     _xai_ttft_log(
                         ok=False,

@@ -31,24 +31,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create the full schema from the SQLAlchemy metadata.
+    """Baseline: PostgreSQL extensions and non-ORM indexes only.
 
-    Using ``Base.metadata.create_all`` (via the bind) is idempotent: on a
-    fresh database it creates every table, on an existing database it
-    skips objects that already exist.  This is the safest baseline for an
-    app that previously managed its own schema with hand-rolled DDL.
+    The tables themselves are owned by ``_create_schema()`` in ``main.py``
+    (kept for existing Railway deploys). This revision therefore adds ONLY
+    idempotent, additive objects and never derives DDL from ``Base.metadata``:
+    a baseline must freeze one schema definition. If it re-created tables from
+    the live models, a later revision's ``add_column`` would fail on a fresh
+    database because this revision had already created that column.
     """
-    # Import the app's Base after Alembic has established the migration
-    # connection so create_all binds to the correct connection.
-    from app.database import Base
-    import app.models  # noqa: F401 — registers all tables on Base.metadata
-
-    bind = op.get_bind()
     # PostgreSQL extensions required by the models (pgcrypto for gen_random_uuid,
     # pg_trgm for GIN trigram indexes).
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-    Base.metadata.create_all(bind=bind)
 
     # Additional indexes that _create_schema() created outside of the ORM
     # models.  These are idempotent (IF NOT EXISTS) so they are safe to run
@@ -64,13 +59,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop all tables created by the initial schema.
+    """Non-destructive baseline: this revision has no safe rollback.
 
-    Downgrading the baseline is destructive and not expected in production.
-    It is provided for completeness and local-dev teardown only.
+    The baseline captures tables that already existed in production before
+    Alembic was introduced, so dropping them would delete live user data.
+    Rolling back to "before 0001" is therefore a no-op: Alembic removes its
+    own ``alembic_version`` bookkeeping, and nothing else is touched. Teardown
+    of a scratch database is an explicit operator action, never a downgrade.
     """
-    from app.database import Base
-    import app.models  # noqa: F401
-
-    bind = op.get_bind()
-    Base.metadata.drop_all(bind=bind)
+    pass

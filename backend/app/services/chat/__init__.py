@@ -192,10 +192,11 @@ from .tools import (
 # --- Rate limiting ---
 from .rate_limit import enforce_rate_limit
 
-# Re-export settings and httpx so mock.patch("app.services.chat.settings") etc. still work
+# Re-export settings and httpx for direct ``app.services.chat.settings`` access.
+# NOTE: these are conveniences only. Assignments here do NOT proxy to the
+# submodule bindings, so tests must patch the owning module
+# (e.g. mock.patch("app.services.chat._shared.settings")).
 from app.config import settings
 import httpx
 
-__all__ = [
-    # ... all public names are available via star-import or direct import ...
-]
+__all__ = ["settings", "httpx"]

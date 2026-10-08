@@ -48,7 +48,11 @@ target_metadata = Base.metadata
 # Override the placeholder sqlalchemy.url in alembic.ini with the real
 # runtime value from app.config.settings.  This reuses the same URL
 # normalisation (postgres:// → postgresql+psycopg2://) the app applies.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Escape % as %%: ConfigParser treats % as interpolation, so a
+# percent-encoded password character would break the assignment before the
+# migration ever connects. Alembic documents this requirement for
+# set_main_option.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
