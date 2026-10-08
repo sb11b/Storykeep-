@@ -30,17 +30,14 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Baseline: bootstrap the full schema on a fresh database.
 
-    On a blank database this calls ``_create_schema()`` — the same bootstrap
-    the FastAPI app uses — to create every table, index and extension declared
-    by the ORM.  On an existing database ``_create_schema()`` is a no-op
-    (``create_all`` is idempotent, all ``ALTER TABLE`` statements use
-    ``IF NOT EXISTS``), so this revision is safe to run everywhere.
-
-    After bootstrap, Alembic owns all future schema changes via revisions.
+    Uses ``Base.metadata.create_all`` via the migration connection so that
+    Alembic owns the DDL and any failure propagates (unlike the app's
+    ``_create_schema()`` which swallows errors). On an existing database
+    ``create_all`` is a no-op. After bootstrap, Alembic owns all future
+    schema changes via revisions.
     """
-    from app.main import _create_schema
-
-    _create_schema()
+    bind = op.get_bind()
+    Base.metadata.create_all(bind=bind)
 
 
 def downgrade() -> None:
