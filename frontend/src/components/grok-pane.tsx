@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
@@ -282,6 +282,9 @@ export function GrokPane({
     draftValueRef.current = pane.draft;
   }, [pane.draft]);
 
+
+  const [busy, setBusy] = useState(false);
+
   /* ── Voice hook ── */
   const voice = usePaneVoice({
     ttsEnabled,
@@ -292,13 +295,17 @@ export function GrokPane({
     onStopArticleListen,
     onActivateListen,
     paneMessages: pane.messages,
+    messagesRef: useRef<ChatLine[]>([]),
+    bodyElementsRef: useRef(new Map<string, HTMLElement>()),
     defaultTtsVoiceId,
     ttsVoices,
   });
-
-  const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+
+  /* ── Chat creation refs ── */
+  const createNonceRef = useRef<string | null>(null);
+  const createInFlightRef = useRef<Promise<string> | null>(null);
   const sendRef = useRef<
     (opts?: {
       message?: string;
@@ -519,7 +526,6 @@ export function GrokPane({
 
 
   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
-  voice.requestAutoListenRef.current = requestAutoListen;
 
 
 
@@ -1057,7 +1063,6 @@ export function GrokPane({
           }
         }
         voice.requestAutoListen(voice.streamAssistantIdRef.current || assistantId, streamedText);
-        window.setTimeout(() => maybeRearmSts(), 120);
         return;
       }
       let recovered = "";
@@ -2325,8 +2330,8 @@ export function GrokPane({
                             )
                           : null
                 }
-                onRegisterBody={registerBody}
-                onListen={requestListen}
+                onRegisterBody={voice.registerBody}
+                onListen={voice.requestListen}
                 onTtsWordPick={(messageId, index) => {
                   voice.clickedWordRef.current = { messageId, index };
                 }}
@@ -2458,7 +2463,7 @@ export function GrokPane({
                 disabled={!ttsEnabled || locked}
                 onChange={(event) => {
                   const on = event.target.checked;
-                  setAutoReadReplies(on);
+                  voice.setAutoReadReplies(on);
                   voice.writeStoredTtsAutoRead(on);
                   if (!on && voice.listen.isActive) {
                     voice.listen.stop();
@@ -2818,3 +2823,5 @@ export function GrokPane({
     </div>
   );
 }
+
+

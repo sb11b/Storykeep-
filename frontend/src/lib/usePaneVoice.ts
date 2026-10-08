@@ -95,6 +95,12 @@ export interface UsePaneVoiceResult {
   handleStsModeChange: (active: boolean) => void;
   clearSttEmptyHint: () => void;
   showSttEmptyHint: () => void;
+  messagesRef: React.RefObject<ChatLine[]>;
+  micAbortRef: React.RefObject<(() => void) | null>;
+  registerMicAbort: (abort: (() => void) | null) => void;
+  registerStsRearm: (rearm: (() => void) | null) => void;
+  sttBusy: boolean;
+  registerBody: (messageId: string, element: HTMLElement | null) => void;
 }
 export function usePaneVoice({
   ttsEnabled,
@@ -123,11 +129,13 @@ export function usePaneVoice({
   const [sttEmptyHint, setSttEmptyHint] = useState(false);
   const sttEmptyHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [stsModeOn, setStsModeOn] = useState(false);
+  const sttBusy = sttPhase === "listening" || sttPhase === "transcribing";
 
   // -- refs --
   const ttsPausedRef = useRef(false);
   const userStoppedTtsRef = useRef(false);
   const streamAssistantIdRef = useRef<string | null>(null);
+  const micAbortRef = useRef<(() => void) | null>(null);
   const clickedWordRef = useRef<{ messageId: string; index: number } | null>(null);
   const listenTargetRef = useRef<ListenTarget | null>(null);
   const pendingListenRef = useRef(false);
@@ -425,6 +433,19 @@ export function usePaneVoice({
     [clearSttEmptyHint],
   );
 
+  const registerMicAbort = useCallback((abort: (() => void) | null) => {
+    micAbortRef.current = abort;
+  }, []);
+
+  const registerStsRearm = useCallback((rearm: (() => void) | null) => {
+    stsRearmRef.current = rearm;
+  }, []);
+
+  const registerBody = useCallback((messageId: string, element: HTMLElement | null) => {
+    if (element) bodyElementsRef.current.set(messageId, element);
+    else bodyElementsRef.current.delete(messageId);
+  }, [bodyElementsRef]);
+
   const handleStsModeChange = useCallback((active: boolean) => {
     stsModeOnRef.current = active;
     setStsModeOn(active);
@@ -464,5 +485,11 @@ export function usePaneVoice({
     handleStsModeChange,
     clearSttEmptyHint,
     showSttEmptyHint,
+    messagesRef,
+    micAbortRef,
+    registerMicAbort,
+    registerStsRearm,
+    sttBusy,
+    registerBody,
   };
 }
