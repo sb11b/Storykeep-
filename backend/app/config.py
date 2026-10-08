@@ -2,7 +2,7 @@ from pathlib import Path
 import hashlib
 import os
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     access_token_minutes: int = 60 * 24 * 14
     cors_origins: str = "http://127.0.0.1:43123,http://localhost:43123"
     env: str = "local"
+    # Comma-separated IPs of trusted reverse proxies. X-Forwarded-For is only
+    # honored when the direct peer is in this list; otherwise a client could
+    # spoof the header and mint a fresh rate-limit bucket per request.
+    trusted_proxies: str = "127.0.0.1,::1"
     seed_demo: bool = False
     # Railway: volume on the storykeep service at /app/var, env DATA_DIR=/app/var.
     data_dir: Path = Path(__file__).resolve().parents[1] / "var"
@@ -141,7 +145,28 @@ class Settings(BaseSettings):
     def signing_key(self) -> str:
         if self.secret_key and self.secret_key != "change-me-in-production-storykeep":
             return self.secret_key
+        # In production, a stable SECRET_KEY must be supplied explicitly.
+        # Falling back to a hash of DATABASE_URL is fine for local/dev only.
+        if self.env == "production":
+            raise RuntimeError(
+                "SECRET_KEY must be set in production (env=production). "
+                "Set the SECRET_KEY environment variable to a strong random value."
+            )
         return hashlib.sha256(f"storykeep:{self.database_url}".encode()).hexdigest()
+
+    @model_validator(mode="after")
+    def require_secret_in_production(self) -> "Settings":
+        """Fail fast at startup if SECRET_KEY is missing in production."""
+        if self.env == "production" and (
+            not self.secret_key
+            or not self.secret_key.strip()
+            or self.secret_key == "change-me-in-production-storykeep"
+        ):
+            raise RuntimeError(
+                "SECRET_KEY must be set in production (env=production). "
+                "Set the SECRET_KEY environment variable to a strong random value."
+            )
+        return self
 
     @property
     def backup_dir(self) -> Path:

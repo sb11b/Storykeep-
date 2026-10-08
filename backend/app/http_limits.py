@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 import traceback
 
+from fastapi import HTTPException, Request, status
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -189,3 +194,131 @@ class LimitChatBodyMiddleware:
             log_chat_exception("chat handler crashed")
             if not started:
                 await _send_json(send, 500, b'{"detail":"Chat failed."}')
+
+
+# ---------------------------------------------------------------------------
+# IP-based login rate limiting (in-memory, single-process).
+# 10 attempts per minute per client IP. Returns 429 on exceed.
+# ---------------------------------------------------------------------------
+
+LOGIN_RATE_MAX_ATTEMPTS = 10
+LOGIN_RATE_WINDOW_SECONDS = 60
+
+_login_attempts: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
+_last_login_sweep = 0.0
+
+
+def _prune_login_attempts(now: float) -> None:
+    """Drop empty/stale buckets so the dict cannot grow without bound.
+
+    Called under ``_login_lock`` at most once per window. Buckets whose newest
+    hit is older than the window are removed; that also keeps per-IP entries
+    from lingering after an attacker stops.
+    """
+    global _last_login_sweep
+    if now - _last_login_sweep < LOGIN_RATE_WINDOW_SECONDS:
+        return
+    _last_login_sweep = now
+    cutoff = now - LOGIN_RATE_WINDOW_SECONDS
+    stale = [key for key, hits in _login_attempts.items() if not hits or hits[-1] <= cutoff]
+    for key in stale:
+        del _login_attempts[key]
+
+
+def _trusted_proxies() -> frozenset[str]:
+    raw = getattr(settings, "trusted_proxies", "") or ""
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _client_ip(request: Request) -> str:
+    """Client IP for rate limiting.
+
+    X-Forwarded-For is honored ONLY when the direct peer is a configured
+    trusted proxy; otherwise it is attacker-controlled and would let a caller
+    pick a new bucket per request (bypassing the limit). Untrusted peers are
+    keyed by their socket address.
+    """
+    peer = request.client.host if request.client else "unknown"
+    trusted = _trusted_proxies()
+    if peer in trusted:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # Right-most entry is the one appended by the nearest trusted proxy;
+            # the left-most is client-supplied and spoofable.
+            candidate = forwarded.split(",")[-1].strip()
+            if candidate:
+                return candidate
+    return peer
+
+
+def _login_rate_key(request: Request, email: str | None = None) -> str:
+    """Rate-limit key: per IP, and additionally per (IP, account).
+
+    A single IP is the blunt instrument; an attacker spread across many IPs can
+    still hammer one account, so callers that already know the account pass the
+    lowercased email and get a second, narrower bucket.
+    """
+    ip = _client_ip(request)
+    if email:
+        return f"{ip}|{email.strip().lower()}"
+    return ip
+
+
+def _consume_login_attempt(key: str) -> None:
+    now = time.monotonic()
+    cutoff = now - LOGIN_RATE_WINDOW_SECONDS
+    with _login_lock:
+        _prune_login_attempts(now)
+        hits = [t for t in _login_attempts.get(key, []) if t > cutoff]
+        if len(hits) >= LOGIN_RATE_MAX_ATTEMPTS:
+            _login_attempts[key] = hits
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many login attempts. Please try again in a minute.",
+                headers={"Retry-After": str(LOGIN_RATE_WINDOW_SECONDS)},
+            )
+        hits.append(now)
+        _login_attempts[key] = hits
+
+
+def check_login_rate_limit(request: Request) -> None:
+    """FastAPI dependency: raise 429 if the login IP exceeded the rate limit."""
+    _consume_login_attempt(_login_rate_key(request))
+
+
+# Account-wide limit: bounds attempts against one account across ALL source
+# IPs. The per-(IP, account) bucket above only covers one source, so eleven
+# requests from eleven IPs would slip under it. This ceiling is deliberately
+# looser than the per-IP limit so ordinary retries are not punished.
+LOGIN_EMAIL_MAX_ATTEMPTS = 30
+_login_email_attempts: dict[str, list[float]] = {}
+
+
+def _consume_email_attempt(email: str) -> None:
+    now = time.monotonic()
+    cutoff = now - LOGIN_RATE_WINDOW_SECONDS
+    key = email.strip().lower()
+    with _login_lock:
+        hits = [t for t in _login_email_attempts.get(key, []) if t > cutoff]
+        if len(hits) >= LOGIN_EMAIL_MAX_ATTEMPTS:
+            _login_email_attempts[key] = hits
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many login attempts for this account. Please try again in a minute.",
+                headers={"Retry-After": str(LOGIN_RATE_WINDOW_SECONDS)},
+            )
+        hits.append(now)
+        _login_email_attempts[key] = hits
+        if now - _last_login_sweep >= LOGIN_RATE_WINDOW_SECONDS:
+            stale = [k for k, v in _login_email_attempts.items() if not v or v[-1] <= cutoff]
+            for k in stale:
+                del _login_email_attempts[k]
+
+
+def check_login_email_rate_limit(request: Request, email: str) -> None:
+    """Account-scoped limiters. Call from the login handler once the submitted
+    email is known, before the password lookup. Applies both a per-(IP,
+    account) bucket and an account-wide bucket across all IPs."""
+    _consume_login_attempt(_login_rate_key(request, email))
+    _consume_email_attempt(email)
