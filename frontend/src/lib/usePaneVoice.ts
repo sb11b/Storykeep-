@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -146,6 +146,13 @@ export function usePaneVoice({
   const listenPhaseRef = useRef<"idle" | "loading" | "playing" | "paused">("idle");
   const stsModeOnRef = useRef(false);
   const stsRearmRef = useRef<(() => void) | null>(null);
+
+  // -- conversation mode --
+  const conversationModeRef = useRef(false);
+  const [conversationModeOn, setConversationModeOn] = useState(false);
+  const ttsInterruptedRef = useRef(false);
+  const streamingTtsPlayedRef = useRef(0);
+  const streamingTtsLastChunkRef = useRef<string>("");
 
   // keep refs in sync
   listenTargetRef.current = listenTarget;
@@ -424,6 +431,7 @@ export function usePaneVoice({
       setSttPhase(phase);
       setMicMode(mode);
       if (phase === "idle") {
+        ttsInterruptedRef.current = false;
         const pending = pendingAutoListenRef.current;
         if (pending) {
           pendingAutoListenRef.current = null;
