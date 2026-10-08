@@ -100,6 +100,7 @@ export interface UsePaneVoiceResult {
   registerMicAbort: (abort: (() => void) | null) => void;
   registerStsRearm: (rearm: (() => void) | null) => void;
   sttBusy: boolean;
+  maybeRearmStsRef: React.RefObject<(() => void) | null>;
   registerBody: (messageId: string, element: HTMLElement | null) => void;
 }
 export function usePaneVoice({
@@ -490,6 +491,7 @@ export function usePaneVoice({
     registerMicAbort,
     registerStsRearm,
     sttBusy,
+    maybeRearmStsRef,
     registerBody,
   };
 }

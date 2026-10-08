@@ -284,6 +284,9 @@ export function GrokPane({
 
 
   const [busy, setBusy] = useState(false);
+  const messagesRef = useRef<ChatLine[]>(pane.messages);
+  messagesRef.current = pane.messages;
+  const bodyElementsRef = useRef(new Map<string, HTMLElement>());
 
   /* ── Voice hook ── */
   const voice = usePaneVoice({
@@ -296,7 +299,6 @@ export function GrokPane({
     onActivateListen,
     paneMessages: pane.messages,
     messagesRef: useRef<ChatLine[]>([]),
-    bodyElementsRef: useRef(new Map<string, HTMLElement>()),
     defaultTtsVoiceId,
     ttsVoices,
   });
@@ -2823,5 +2825,6 @@ export function GrokPane({
     </div>
   );
 }
+
 
 
