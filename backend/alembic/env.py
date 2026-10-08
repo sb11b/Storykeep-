@@ -19,7 +19,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 # Ensure the backend/ directory (which contains the ``app`` package) is on
 # sys.path regardless of where alembic is invoked from.  ``__file__`` is
@@ -32,7 +32,7 @@ if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
 from app.config import settings  # noqa: E402
-from app.database import Base  # noqa: E402
+from app.database import Base, db_connect  # noqa: E402
 import app.models  # noqa: F401, E402  — registers all models on Base.metadata
 
 # this is the Alembic Config object
@@ -60,10 +60,13 @@ config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
-    This emits SQL to stdout rather than connecting to a live database.
-    Useful for generating SQL scripts for review or for environments where
-    a direct DB connection is not available.
+    The baseline revision (0001) cannot produce SQL in offline mode because
+    it bootstraps the schema via ``Base.metadata.create_all`` which requires
+    a live connection. Reject offline generation for that revision.
     """
+    # Reject offline generation for the baseline before dispatching any
+    # revision. The baseline uses Base.metadata.create_all which requires
+    # a live database connection and cannot produce SQL.
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -74,6 +77,22 @@ def run_migrations_offline() -> None:
         compare_server_default=True,
     )
 
+    # Reject offline generation for the baseline before dispatching any
+    # revision. The baseline uses Base.metadata.create_all which requires
+    # a live database connection and cannot produce SQL.
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(config)
+    revisions = script.get_revisions("base:head")
+    revision_ids = {rev.revision for rev in revisions}
+    if "0001_initial_schema" in revision_ids:
+        raise RuntimeError(
+            "Offline SQL generation is not supported for the baseline revision "
+            "(0001_initial_schema) because it bootstraps the schema via "
+            "Base.metadata.create_all which requires a live database connection. "
+            "Run 'alembic upgrade head' against a live database instead."
+        )
+
     with context.begin_transaction():
         context.run_migrations()
 
@@ -81,17 +100,15 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
-    Creates an Engine and associates a connection with the migration context.
-    The connection is retrieved from the same ``app.database`` module the
-    FastAPI app uses, so the session/timeout options stay consistent.
+    Builds an engine using the same ``db_connect`` the FastAPI app uses, so
+    the sslmode normalization (dropping verify-full, using require for public
+    hosts) is applied identically. We do NOT reuse ``app.database.engine``
+    because Alembic manages its own connection pool lifecycle and should not
+    close the app's long-lived engine when the migration run finishes.
     """
-    # Build a fresh engine from the alembic.ini + overridden URL.  We do NOT
-    # reuse ``app.database.engine`` here because Alembic manages its own
-    # connection pool lifecycle and should not close the app's long-lived
-    # engine when the migration run finishes.
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    connectable = create_engine(
+        db_connect.url,
+        connect_args=db_connect.connect_args,
         poolclass=pool.NullPool,
     )
 
