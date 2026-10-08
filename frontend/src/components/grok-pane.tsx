@@ -24,6 +24,7 @@ import { agentFollowUpPending } from "@/lib/agent-followup";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { useNotePicker } from "@/lib/useNotePicker";
 import { useNoteFiling } from "@/lib/useNoteFiling";
+import { useSnippetRunner } from "@/lib/useSnippetRunner";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -340,6 +341,12 @@ export function GrokPane({
     threadNoteMarkdown,
     isNoteShrinkMessage,
     toastErrorFromUnknown,
+  });
+  const { runSnippet } = useSnippetRunner({
+    onUpdate,
+    onHistoryChanged,
+    setBusy,
+    spendChipLabel,
   });
   const notePicker = useNotePicker((noteId, noteTitle) => {
     patch({ includeNoteId: noteId, includeNoteTitle: noteTitle });
@@ -1714,39 +1721,6 @@ export function GrokPane({
     });
     } finally {
       if (turnId === turnIdRef.current) inFlightRef.current = false;
-    }
-  }
-
-  async function runSnippet(messageId: string, code: string) {
-    const snippet = code.trim();
-    if (!snippet) {
-      toast.error("That code fence is empty.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await api.runChatSnippet(messageId, snippet);
-      onUpdate((current) => {
-        const extra: ChatLine[] = [
-          { id: result.user_message.id, role: "user", content: result.user_message.content || "" },
-          {
-            id: result.assistant_message.id,
-            role: "assistant",
-            content: result.assistant_message.content || "",
-            routeLabel: spendChipLabel(current.lastResolvedModel, "low"),
-          },
-        ];
-        const merged = [...current.messages];
-        for (const line of extra) {
-          if (!merged.some((row) => row.id === line.id)) merged.push(line);
-        }
-        return { ...current, conversationId: result.conversation_id || current.conversationId, messages: merged };
-      });
-      onHistoryChanged?.();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not run that snippet.");
-    } finally {
-      setBusy(false);
     }
   }
 
