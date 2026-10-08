@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { JuniorMicControls, type JuniorMicMode, type JuniorMicPhase } from "@/components/junior-mic";
-import { GrokChatMessage, type AddToNotesPayload } from "@/components/grok-chat-message";
+import { GrokChatMessage } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar } from "@/components/grok-message-listen";
@@ -22,10 +22,10 @@ import { decryptStoredMessage, encryptMessageBody } from "@/lib/message-crypto";
 import { savedReplyFillsEmptyBubble } from "@/lib/saved-reply";
 import { agentFollowUpPending } from "@/lib/agent-followup";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
-import { folderById, matchFolderByName } from "@/lib/folders";
 import { useNotePicker } from "@/lib/useNotePicker";
+import { useNoteFiling } from "@/lib/useNoteFiling";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
-import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
+import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
   chatTimeoutToast,
   formatChatError,
@@ -75,7 +75,6 @@ import {
 } from "@/lib/include-chunk";
 import { isNoteShrinkMessage } from "@/lib/api-errors";
 import { headingFromInstruction } from "@/lib/work-in-junior";
-import { folderNameForFinishedChat, shelfForFinishedChat } from "@/lib/chat-filing";
 import { saveableThreadTurns, threadNoteMarkdown, threadNoteTitle } from "@/lib/junior-thread-note";
 import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChipLabel } from "@/lib/grok-model";
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
@@ -170,19 +169,6 @@ export function createGrokPane(paneIndex = 0): GrokPaneState {
     savedNoteId: null,
     conversationTitle: null,
   };
-}
-
-function titleFromReply(reply: string, assistantName: string) {
-  const fallback = `${assistantName} note`;
-  const line = reply.trim().split("\n").find((item) => item.trim()) || fallback;
-  return line.replace(/^#+\s*/, "").replace(/^["“]+|["”]+$/g, "").slice(0, 80) || fallback;
-}
-
-function noteMarkdown(reply: string, articleTitle: string | null, sourceRef: string | null, assistantName: string) {
-  const heading = titleFromReply(reply, assistantName);
-  const source = articleTitle || sourceRef;
-  if (!source) return `# ${heading}\n\n${reply.trim()}`;
-  return `# ${heading}\n\nAbout: ${source}${sourceRef ? `\nPath: ${sourceRef}` : ""}\n\n${reply.trim()}`;
 }
 
 /** Keep controlled textarea in sync when STT inserts before React re-renders. */
@@ -331,6 +317,30 @@ export function GrokPane({
   const [inFlightSpend, setInFlightSpend] = useState<string | null>(null);
   const turnSpendRef = useRef({ model: "grok-4.6", reasoning: "low" });
   const [savingChat, setSavingChat] = useState(false);
+  const shelfSelectId = `junior-shelf-${pane.id}`;
+  const { addToNotes, applyToWorkingNote, saveChat } = useNoteFiling({
+    folders,
+    setFolders,
+    patch,
+    onSavedNote,
+    pane,
+    articleTitle,
+    sourceRef,
+    label,
+    customShelves,
+    shelfSelectId,
+    savingChat,
+    setSavingChat,
+    busy,
+    persist,
+    toast,
+    attachmentMarkdown,
+    saveableThreadTurns,
+    threadNoteTitle,
+    threadNoteMarkdown,
+    isNoteShrinkMessage,
+    toastErrorFromUnknown,
+  });
   const notePicker = useNotePicker((noteId, noteTitle) => {
     patch({ includeNoteId: noteId, includeNoteTitle: noteTitle });
   });
@@ -1740,184 +1750,6 @@ export function GrokPane({
     }
   }
 
-  async function addToNotes(payload: AddToNotesPayload, assistantId?: string) {
-    const body = payload.content.trim();
-    if (!body) return;
-    const filing = filingFromDropdowns(payload.dest, payload.folderId, folders);
-    const dest = filing.dest;
-    const folderId = filing.folderId;
-    saveLastFiling(dest, folderId);
-    patch({ noteDest: dest, noteFolderId: folderId });
-    const fromUser =
-      assistantId != null
-        ? (() => {
-            const index = pane.messages.findIndex((item) => item.id === assistantId);
-            const prior = index > 0 ? pane.messages[index - 1] : null;
-            return prior?.role === "user" ? prior.files || [] : [];
-          })()
-        : [];
-    const extra = attachmentMarkdown(fromUser);
-    try {
-      const markdown = extra
-        ? `${noteMarkdown(body, articleTitle, sourceRef || null, label)}\n\n${extra}`
-        : noteMarkdown(body, articleTitle, sourceRef || null, label);
-      const existingId = pane.workingNoteId || pane.savedNoteId;
-      const existing = existingId ? await api.article(existingId) : null;
-      const article = existing
-        ? await api.updateComposedNote(
-            existing.id,
-            existing.title || titleFromReply(body, label),
-            markdown,
-            dest,
-            payload.isCorrection,
-            folderId,
-            false,
-            true,
-          )
-        : await api.composeVaultNote(
-            titleFromReply(body, label),
-            markdown,
-            ["grok"],
-            dest,
-            payload.isCorrection,
-            folderId,
-          );
-      const filedDest = (article.destination as FilingDestination) || dest;
-      const filedFolder = article.folder_id ?? folderId;
-      saveLastFiling(filedDest, filedFolder);
-      patch({ noteDest: filedDest, noteFolderId: filedFolder, savedNoteId: article.id });
-      const folderName = folderById(folders, filedFolder)?.name;
-      toast.success(
-        folderName
-          ? `Saved to StoryKeep/${destinationLabel(filedDest, customShelves)}/${folderName}.`
-          : `Saved to StoryKeep/${destinationLabel(filedDest, customShelves)}.`,
-      );
-      await onSavedNote(article.id, filedDest, filedFolder);
-    } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not save that note");
-    }
-  }
-
-  async function applyToWorkingNote(content: string, assistantId?: string) {
-    const noteId = pane.workingNoteId;
-    if (!noteId) return;
-    const index = assistantId ? pane.messages.findIndex((item) => item.id === assistantId) : -1;
-    const prior = index > 0 ? pane.messages[index - 1] : null;
-    const save = async (confirmShort = false) => {
-      try {
-        const next = await api.applyJuniorReply(noteId, {
-          markdown: content,
-          confirm_short: confirmShort,
-          mode: prior?.includeMode || pane.includeMode,
-          heading: prior?.includeHeading || pane.includeHeading,
-          offset: prior?.includeOffset ?? pane.includeOffset,
-        });
-        patch({ savedNoteId: next.id });
-        toast.success("Applied to the note. Previous save is in History.");
-        await onSavedNote(next.id, (next.destination as FilingDestination) || pane.noteDest, next.folder_id);
-      } catch (error) {
-        if (
-          !confirmShort &&
-          error instanceof ApiError &&
-          error.status === 409 &&
-          isNoteShrinkMessage(error.message)
-        ) {
-          if (window.confirm(error.message)) await save(true);
-          return;
-        }
-        toast.error(error instanceof ApiError ? error.message : "Could not apply that reply");
-      }
-    };
-    await save(false);
-  }
-
-  async function saveChat() {
-    if (savingChat) return;
-    if (busy) {
-      toast.error("Wait until Junior finishes this reply, then save the chat.");
-      return;
-    }
-    const turns = saveableThreadTurns(pane.messages);
-    if (!turns.length) {
-      toast.error("Nothing to save — this thread is empty.");
-      return;
-    }
-    const filing = filingFromDropdowns(pane.noteDest, pane.noteFolderId, folders);
-    let dest = filing.dest;
-    let folderId = filing.folderId;
-    if (!dest) {
-      toast.error("Pick a shelf before saving this chat.");
-      document.getElementById(shelfSelectId)?.focus();
-      return;
-    }
-    if (!folderId) {
-      dest = shelfForFinishedChat(pane.displayName, dest);
-      const folderName = folderNameForFinishedChat(pane.displayName);
-      const existing = matchFolderByName(folders, dest, folderName);
-      try {
-        const row = existing ?? (await api.createFolder(dest, folderName));
-        if (!existing) setFolders((current) => [...current, row]);
-        folderId = row.id;
-      } catch (error) {
-        toastErrorFromUnknown(error, "Could not create a folder for this chat");
-        return;
-      }
-    }
-    saveLastFiling(dest, folderId);
-    patch({ noteDest: dest, noteFolderId: folderId });
-    const title = threadNoteTitle({
-      conversationTitle: pane.conversationTitle,
-      firstUserLine: turns.find((item) => item.role === "user")?.content,
-    });
-    const markdown = threadNoteMarkdown(turns, { title, userName: "Steve", assistantName: "Junior" });
-    setSavingChat(true);
-    try {
-      let article: Awaited<ReturnType<typeof api.composeVaultNote>> | null = null;
-      let updated = false;
-      if (pane.savedNoteId) {
-        try {
-          article = await api.updateComposedNote(
-            pane.savedNoteId,
-            title,
-            markdown,
-            dest,
-            false,
-            folderId,
-          );
-          updated = true;
-        } catch (error) {
-          if (!(error instanceof ApiError && error.status === 404)) {
-            throw error;
-          }
-        }
-      }
-      if (!article) {
-        article = await api.composeVaultNote(title, markdown, ["grok"], dest, false, folderId);
-      }
-      const filedDest = (article.destination as FilingDestination) || dest;
-      const filedFolder = article.folder_id ?? folderId;
-      saveLastFiling(filedDest, filedFolder);
-      patch({ savedNoteId: article.id, conversationTitle: title, noteDest: filedDest, noteFolderId: filedFolder });
-      if (pane.conversationId && persist) {
-        try {
-          await api.patchChatConversation(pane.conversationId, { saved_note_id: article.id });
-        } catch {
-          /* note is saved; linking it to the thread is best-effort */
-        }
-      }
-      const folderName = folderById(folders, filedFolder)?.name;
-      const where = folderName
-        ? `${destinationLabel(filedDest, customShelves)} / ${folderName}`
-        : destinationLabel(filedDest, customShelves);
-      toast.success(updated ? `Updated “${title}” on ${where}.` : `Saved “${title}” to ${where}.`);
-      await onSavedNote(article.id, filedDest, filedFolder);
-    } catch (error) {
-      toastErrorFromUnknown(error, "Could not save this chat");
-    } finally {
-      setSavingChat(false);
-    }
-  }
-
   function patch(partial: Partial<GrokPaneState>) {
     onUpdate((current) => ({ ...current, ...partial }));
   }
@@ -1998,7 +1830,6 @@ export function GrokPane({
   const showStickyPlayer = ttsEnabled && !locked && (voice.listen.isActive || hasReadableReply);
   const visibleStatus = pane.streamStatus ?? streamStatus;
   const lastAssistantId = [...pane.messages].reverse().find((item) => item.role === "assistant")?.id ?? null;
-  const shelfSelectId = `junior-shelf-${pane.id}`;
   const canSaveChat = saveableThreadTurns(pane.messages).length > 0;
   const headerSelectClass =
     "h-7 max-w-[7rem] rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";
