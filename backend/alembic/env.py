@@ -83,8 +83,9 @@ def run_migrations_offline() -> None:
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config)
-    head_revision = script.get_current_head()
-    if head_revision == "0001_initial_schema":
+    revisions = script.get_revisions("base:head")
+    revision_ids = {rev.revision for rev in revisions}
+    if "0001_initial_schema" in revision_ids:
         raise RuntimeError(
             "Offline SQL generation is not supported for the baseline revision "
             "(0001_initial_schema) because it bootstraps the schema via "
