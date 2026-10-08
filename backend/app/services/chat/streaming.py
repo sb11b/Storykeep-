@@ -612,12 +612,15 @@ async def stream_completion(
                 if canopy_buf:
                     # The stream ended inside an unclosed hidden block, so the
                     # buffer holds only marker-prefixed hidden text — never show
-                    # it (that would leak the model's reasoning). If no visible
-                    # text ever left this stream, surface the recoverable
-                    # empty-reply path instead of a silent blank turn.
+                    # it (that would leak the model's reasoning).
                     canopy_buf = ""
-                    if not canopy_visible_sent:
-                        raise HTTPException(status_code=502, detail=XAI_EMPTY_DETAIL)
+                # Check for an empty visible reply after every Canopy stream,
+                # whether the buffer was cleared by a complete hidden block or
+                # left unclosed. If no visible text ever left this stream,
+                # surface the recoverable empty-reply path instead of a silent
+                # blank turn.
+                if not canopy_visible_sent:
+                    raise HTTPException(status_code=502, detail=XAI_EMPTY_DETAIL)
                 if first_token_at is None:
                     _xai_ttft_log(
                         ok=False,
