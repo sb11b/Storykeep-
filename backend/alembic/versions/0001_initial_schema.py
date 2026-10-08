@@ -20,9 +20,6 @@ from __future__ import annotations
 
 from typing import Sequence, Union
 
-from alembic import op
-import sqlalchemy as sa
-
 # revision identifiers, used by Alembic.
 revision: str = "0001_initial_schema"
 down_revision: Union[str, None] = None
@@ -31,31 +28,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Baseline: PostgreSQL extensions and non-ORM indexes only.
+    """Baseline: bootstrap the full schema on a fresh database.
 
-    The tables themselves are owned by ``_create_schema()`` in ``main.py``
-    (kept for existing Railway deploys). This revision therefore adds ONLY
-    idempotent, additive objects and never derives DDL from ``Base.metadata``:
-    a baseline must freeze one schema definition. If it re-created tables from
-    the live models, a later revision's ``add_column`` would fail on a fresh
-    database because this revision had already created that column.
+    On a blank database this calls ``_create_schema()`` — the same bootstrap
+    the FastAPI app uses — to create every table, index and extension declared
+    by the ORM.  On an existing database ``_create_schema()`` is a no-op
+    (``create_all`` is idempotent, all ``ALTER TABLE`` statements use
+    ``IF NOT EXISTS``), so this revision is safe to run everywhere.
+
+    After bootstrap, Alembic owns all future schema changes via revisions.
     """
-    # PostgreSQL extensions required by the models (pgcrypto for gen_random_uuid,
-    # pg_trgm for GIN trigram indexes).
-    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    from app.main import _create_schema
 
-    # Additional indexes that _create_schema() created outside of the ORM
-    # models.  These are idempotent (IF NOT EXISTS) so they are safe to run
-    # on both fresh and existing databases.
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS articles_search_idx "
-        "ON articles USING GIN (search_vector)"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS change_log_user_cursor_idx "
-        "ON change_log (user_id, id)"
-    )
+    _create_schema()
 
 
 def downgrade() -> None:
