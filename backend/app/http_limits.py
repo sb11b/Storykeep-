@@ -10,6 +10,8 @@ import traceback
 from fastapi import HTTPException, Request, status
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # JSON body for POST /api/v1/chat. Larger than ChatIn.max_length so valid
@@ -224,13 +226,30 @@ def _prune_login_attempts(now: float) -> None:
         del _login_attempts[key]
 
 
+def _trusted_proxies() -> frozenset[str]:
+    raw = getattr(settings, "trusted_proxies", "") or ""
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 def _client_ip(request: Request) -> str:
-    # Use the right-most entry, which the trusted proxy appended.
-    # The left-most entry is client-controlled and can be spoofed.
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else "unknown"
+    """Client IP for rate limiting.
+
+    X-Forwarded-For is honored ONLY when the direct peer is a configured
+    trusted proxy; otherwise it is attacker-controlled and would let a caller
+    pick a new bucket per request (bypassing the limit). Untrusted peers are
+    keyed by their socket address.
+    """
+    peer = request.client.host if request.client else "unknown"
+    trusted = _trusted_proxies()
+    if peer in trusted:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # Right-most entry is the one appended by the nearest trusted proxy;
+            # the left-most is client-supplied and spoofable.
+            candidate = forwarded.split(",")[-1].strip()
+            if candidate:
+                return candidate
+    return peer
 
 
 def _login_rate_key(request: Request, email: str | None = None) -> str:
@@ -268,7 +287,38 @@ def check_login_rate_limit(request: Request) -> None:
     _consume_login_attempt(_login_rate_key(request))
 
 
+# Account-wide limit: bounds attempts against one account across ALL source
+# IPs. The per-(IP, account) bucket above only covers one source, so eleven
+# requests from eleven IPs would slip under it. This ceiling is deliberately
+# looser than the per-IP limit so ordinary retries are not punished.
+LOGIN_EMAIL_MAX_ATTEMPTS = 30
+_login_email_attempts: dict[str, list[float]] = {}
+
+
+def _consume_email_attempt(email: str) -> None:
+    now = time.monotonic()
+    cutoff = now - LOGIN_RATE_WINDOW_SECONDS
+    key = email.strip().lower()
+    with _login_lock:
+        hits = [t for t in _login_email_attempts.get(key, []) if t > cutoff]
+        if len(hits) >= LOGIN_EMAIL_MAX_ATTEMPTS:
+            _login_email_attempts[key] = hits
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many login attempts for this account. Please try again in a minute.",
+                headers={"Retry-After": str(LOGIN_RATE_WINDOW_SECONDS)},
+            )
+        hits.append(now)
+        _login_email_attempts[key] = hits
+        if now - _last_login_sweep >= LOGIN_RATE_WINDOW_SECONDS:
+            stale = [k for k, v in _login_email_attempts.items() if not v or v[-1] <= cutoff]
+            for k in stale:
+                del _login_email_attempts[k]
+
+
 def check_login_email_rate_limit(request: Request, email: str) -> None:
-    """Second, account-scoped limiter. Call from the login handler once the
-    submitted email is known, before the password lookup."""
+    """Account-scoped limiters. Call from the login handler once the submitted
+    email is known, before the password lookup. Applies both a per-(IP,
+    account) bucket and an account-wide bucket across all IPs."""
     _consume_login_attempt(_login_rate_key(request, email))
+    _consume_email_attempt(email)

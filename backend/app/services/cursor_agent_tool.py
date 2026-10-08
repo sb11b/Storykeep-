@@ -71,6 +71,10 @@ from app.services.cursor_agent_tasks import (
     SEQ_57_TASK,
     SEQ_58_TASK,
     _POLISH_2_RE,
+    _NEXT_STEP_RE,
+    _NUM_WORDS,
+    _SEQ_MENTION_RE,
+    polish_2_task,
 )
 
 logger = logging.getLogger(__name__)

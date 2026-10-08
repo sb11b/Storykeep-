@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models import JuniorDocument, User
 
-from app.services.junior_shared_memory import (
+from app.services.junior_shared_common import (
     PAGE_DEFAULT,
     _as_uuid,
     clamp_page_limit,

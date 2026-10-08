@@ -31,6 +31,7 @@ from ._shared import (
     SEND_THREAD_TOO_LARGE,
     SSE_PADDING,
     STREAM_HEARTBEAT,
+    XAI_EMPTY_DETAIL,
     XAI_SILENT_DETAIL,
     _content_text,
     chat_idle_after_token_sec,
@@ -444,6 +445,7 @@ async def stream_completion(
     first_token_at: float | None = None
     xai_status: int | str | None = None
     canopy_buf: str = ""  # accumulate across SSE lines when inside Kimi markers
+    canopy_visible_sent = False  # did any user-visible text leave this stream?
     fb_timeout = (
         float(first_byte_timeout)
         if first_byte_timeout is not None
@@ -581,11 +583,13 @@ async def stream_completion(
                                     # no markers at all
                                     if canopy_buf:
                                         yield canopy_buf
+                                        canopy_visible_sent = True
                                         canopy_buf = ""
                                     break
                                 pos, pat = earliest
                                 if pos > 0:
                                     yield canopy_buf[:pos]
+                                    canopy_visible_sent = True
                                     canopy_buf = canopy_buf[pos:]
                                 # now starts with a marker; strip complete or unclosed blocks
                                 end_pats = {
@@ -606,21 +610,14 @@ async def stream_completion(
                             continue
                         yield text
                 if canopy_buf:
-                    # Stream ended inside an unclosed thinking/tool block: flush the
-                    # visible text we were holding, so a truncated reply is not
-                    # silently dropped. Strip any marker itself, keep the words.
-                    visible = canopy_buf
-                    for marker in (
-                        "<|thinking_begin|>",
-                        "<|tool_call_begin|>",
-                        "<|tool_calls_section_begin|>",
-                    ):
-                        idx = visible.find(marker)
-                        if idx != -1:
-                            visible = visible[:idx]
-                    if visible.strip():
-                        yield visible
+                    # The stream ended inside an unclosed hidden block, so the
+                    # buffer holds only marker-prefixed hidden text — never show
+                    # it (that would leak the model's reasoning). If no visible
+                    # text ever left this stream, surface the recoverable
+                    # empty-reply path instead of a silent blank turn.
                     canopy_buf = ""
+                    if not canopy_visible_sent:
+                        raise HTTPException(status_code=502, detail=XAI_EMPTY_DETAIL)
                 if first_token_at is None:
                     _xai_ttft_log(
                         ok=False,

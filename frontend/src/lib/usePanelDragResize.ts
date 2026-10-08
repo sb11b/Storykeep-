@@ -69,11 +69,9 @@ export function usePanelDragResize(mounted: boolean, fullscreen: boolean, open: 
   } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!mounted) return;
-    window.localStorage.setItem(BUBBLE_KEY, JSON.stringify(pos));
-  }, [mounted, pos]);
-
+  // Load BEFORE the save effect below: on the first render where `mounted`
+  // flips true, effects run in declaration order, so a save-first order would
+  // write the default {x:24,y:24} and then read it back, losing the saved spot.
   useEffect(() => {
     if (!mounted) return;
     const fallback = {
@@ -83,6 +81,11 @@ export function usePanelDragResize(mounted: boolean, fullscreen: boolean, open: 
     setPos(loadPoint(BUBBLE_KEY, fallback));
     setSize(loadSize(window.innerWidth, window.innerHeight));
   }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    window.localStorage.setItem(BUBBLE_KEY, JSON.stringify(pos));
+  }, [mounted, pos]);
 
   useEffect(() => {
     function onWindowResize() {

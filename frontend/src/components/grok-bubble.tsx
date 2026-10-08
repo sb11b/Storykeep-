@@ -283,9 +283,13 @@ export function GrokBubble({
   async function createNoteShelf() {
     const name = window.prompt("New shelf name:")?.trim();
     if (!name) return;
-    const id = uniqueShelfId(name, customShelves);
-    const next = [...customShelves, { id, name }];
     try {
+      // Read fresh preferences first: customShelves can still be [] here (the
+      // load is async, or the user created a shelf before it resolved). Merging
+      // into the stale list would send only the new shelf and wipe the saved ones.
+      const current = parseCustomNoteShelves(await api.getPreferences());
+      const id = uniqueShelfId(name, current);
+      const next = [...current, { id, name }];
       const prefs = await api.updatePreferences({ custom_note_shelves: next });
       setCustomShelves(parseCustomNoteShelves(prefs));
       updatePane(focusedPaneId, (pane) => ({ ...pane, noteDest: id, noteFolderId: null }));

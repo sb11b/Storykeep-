@@ -32,7 +32,6 @@ MEMORY_CONTENT_MAX = 8_000
 HISTORY_WINDOW = 24
 SUMMARY_EVERY = 8
 REMEMBER_WHEN = re.compile(r"\bremember when\b", re.I)
-SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PROJECT_KINDS = frozenset({"app", "api", "overlay", "infra", "other"})
 AGENT_STATUSES = frozenset({"context_ready", "launched", "failed", "cancelled"})
 OWNER_EMAIL = "angry.tune8751@fastmail.com"
@@ -521,25 +520,14 @@ def resolve_thread(
     return create_thread(db, user, title=None, venue=venue)
 
 
-PAGE_MAX = 100
-PAGE_DEFAULT = 50
-
-
-def clamp_page_limit(limit: int | None, *, default: int = PAGE_DEFAULT) -> int:
-    if limit is None:
-        return default
-    return max(1, min(int(limit), PAGE_MAX))
-
-
-def _as_uuid(value: UUID | str | None) -> UUID | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, UUID):
-        return value
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None
+from app.services.junior_shared_common import (
+    PAGE_DEFAULT,
+    PAGE_MAX,
+    SLUG_RE,
+    _as_uuid,
+    clamp_page_limit,
+    normalize_slug,
+)
 
 
 def _item_id(item: Any, id_attr: str) -> Any:
@@ -1807,13 +1795,6 @@ def update_memory(
     return row
 
 
-def normalize_slug(value: str | None) -> str:
-    slug = (value or "").strip().lower()
-    if not SLUG_RE.match(slug) or len(slug) > 64:
-        raise HTTPException(status_code=400, detail="Invalid project slug")
-    return slug
-
-
 def normalize_kind_project(value: str | None) -> str:
     kind = (value or "other").strip().lower()
     if kind not in PROJECT_KINDS:
@@ -2577,7 +2558,10 @@ def seed_owner_projects_and_decisions(db: Session) -> None:
 
 
 
-# ── Document CRUD (re-exported from junior_shared_documents) ───────────────
+# ── Document CRUD (defined in junior_shared_documents) ─────────────────────
+# Re-exported for callers that historically imported them from this module.
+# Safe to do: junior_shared_documents no longer imports back from here (the
+# shared helpers moved to junior_shared_common), so this is not a cycle.
 from app.services.junior_shared_documents import (  # noqa: E402,F401
     _document_out,
     delete_document,

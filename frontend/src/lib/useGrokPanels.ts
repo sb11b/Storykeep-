@@ -23,12 +23,12 @@ import type { GrokConversation, MessageCryptoStatus } from "@/lib/types";
 
 export const MAX_PANES = 4;
 
-const INITIAL_PANES = loadSavedGrokPanes() ?? [createGrokPane(0)];
-const INITIAL_FOCUSED_PANE_ID = INITIAL_PANES[0]!.id;
-
 export function useGrokPanels(persist: boolean, setCustomShelves: (shelves: CustomNoteShelf[]) => void) {
-  const [panes, setPanes] = useState<GrokPaneState[]>(INITIAL_PANES);
-  const [focusedPaneId, setFocusedPaneId] = useState<string>(INITIAL_FOCUSED_PANE_ID);
+  // Lazy initializers: loadSavedGrokPanes() touches localStorage, which does not
+  // exist during SSR, and module-scope evaluation would capture stale state for
+  // the life of the bundle (a remount would not see newer saved panes).
+  const [panes, setPanes] = useState<GrokPaneState[]>(() => loadSavedGrokPanes() ?? [createGrokPane(0)]);
+  const [focusedPaneId, setFocusedPaneId] = useState<string>(() => panes[0]!.id);
   const focusedPaneIdRef = useRef(focusedPaneId);
   const panesRef = useRef(panes);
   panesRef.current = panes;
@@ -83,12 +83,11 @@ export function useGrokPanels(persist: boolean, setCustomShelves: (shelves: Cust
     (locked: boolean) => {
       if (locked || panesRef.current.length >= MAX_PANES) return;
       const next = createGrokPane(panesRef.current.length);
-      setPanes((current) => {
-        const result = [...current, next];
-        void persistPaneLabels(result);
-        return result;
-      });
+      const result = [...panesRef.current, next];
+      setPanes(result);
       setFocusedPaneId(next.id);
+      // Side effect outside the updater so StrictMode does not double-write.
+      void persistPaneLabels(result);
     },
     [persistPaneLabels],
   );
@@ -100,24 +99,24 @@ export function useGrokPanels(persist: boolean, setCustomShelves: (shelves: Cust
       next.draft = remainder;
       next.modelChoice = "auto";
       next.reasoningEffort = "low";
-      setPanes((current) => {
-        const result = [...current, next];
-        void persistPaneLabels(result);
-        return result;
-      });
+      const result = [...panesRef.current, next];
+      setPanes(result);
       setFocusedPaneId(next.id);
+      // Side effect outside the updater so StrictMode does not double-write.
+      void persistPaneLabels(result);
       return true;
     },
     [persistPaneLabels],
   );
 
   const removePane = useCallback((id: string) => {
-    setPanes((current) => {
-      const next = current.filter((pane) => pane.id !== id);
-      const result = next.length ? next : [createGrokPane(0)];
-      setFocusedPaneId((focused) => (focused === id ? result[0]!.id : focused));
-      return result;
-    });
+    // Compute the new focus outside the setPanes updater: React requires
+    // updaters to be pure, and StrictMode invokes them twice.
+    const current = panesRef.current;
+    const next = current.filter((pane) => pane.id !== id);
+    const result = next.length ? next : [createGrokPane(0)];
+    setPanes(result);
+    setFocusedPaneId((focused) => (focused === id ? result[0]!.id : focused));
   }, []);
 
   const updatePane = useCallback(

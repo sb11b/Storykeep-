@@ -22,10 +22,12 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 # Ensure the backend/ directory (which contains the ``app`` package) is on
-# sys.path regardless of where alembic is invoked from.  When running
-# ``alembic`` from inside ``backend/`` this is a no-op; when running from
-# the repo root it lets ``import app`` resolve correctly.
-_backend_dir = Path(__file__).resolve().parent
+# sys.path regardless of where alembic is invoked from.  ``__file__`` is
+# backend/alembic/env.py, so the parent of this file's directory is backend/.
+# Without this, the documented ``cd backend; alembic upgrade head`` path would
+# add backend/alembic (which has no ``app`` package) and the app.config import
+# below would fail with ModuleNotFoundError.
+_backend_dir = Path(__file__).resolve().parent.parent
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
