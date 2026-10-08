@@ -23,6 +23,8 @@ import { savedReplyFillsEmptyBubble } from "@/lib/saved-reply";
 import { agentFollowUpPending } from "@/lib/agent-followup";
 import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "@/lib/custom-note-shelves";
 import { folderById, matchFolderByName } from "@/lib/folders";
+import { useNotePicker } from "@/lib/useNotePicker";
+import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { filingFromDropdowns, loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
   chatTimeoutToast,
@@ -329,10 +331,9 @@ export function GrokPane({
   const [inFlightSpend, setInFlightSpend] = useState<string | null>(null);
   const turnSpendRef = useRef({ model: "grok-4.6", reasoning: "low" });
   const [savingChat, setSavingChat] = useState(false);
-  const [notePickerOpen, setNotePickerOpen] = useState(false);
-  const [noteQuery, setNoteQuery] = useState("");
-  const [noteChoices, setNoteChoices] = useState<Array<{ id: string; title: string }>>([]);
-  const [loadingNotes, setLoadingNotes] = useState(false);
+  const notePicker = useNotePicker((noteId, noteTitle) => {
+    patch({ includeNoteId: noteId, includeNoteTitle: noteTitle });
+  });
   const thinkingTimerRef = useRef<number | null>(null);
   const gotDeltaRef = useRef(false);
   const generatingRef = useRef(false);
@@ -447,25 +448,6 @@ export function GrokPane({
     void api.folders().then(setFolders).catch(() => setFolders([]));
   }, []);
 
-  useEffect(() => {
-    if (!notePickerOpen) return;
-    let cancelled = false;
-    setLoadingNotes(true);
-    void api
-      .noteTitles(noteQuery, 20)
-      .then((payload) => {
-        if (!cancelled) setNoteChoices(payload.items || []);
-      })
-      .catch(() => {
-        if (!cancelled) setNoteChoices([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingNotes(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [notePickerOpen, noteQuery]);
 
 
   useEffect(() => {
@@ -2447,13 +2429,13 @@ export function GrokPane({
             <label className="inline-flex items-center gap-1.5">
               <input
                 type="checkbox"
-                checked={Boolean(pane.includeNoteId) || notePickerOpen}
+                checked={Boolean(pane.includeNoteId) || notePicker.notePickerOpen}
                 onChange={(event) => {
                   if (event.target.checked) {
-                    setNotePickerOpen(true);
+                    notePicker.openPicker();
                     return;
                   }
-                  setNotePickerOpen(false);
+                  notePicker.closePicker();
                   patch({ includeNoteId: null, includeNoteTitle: null });
                 }}
               />
@@ -2496,7 +2478,7 @@ export function GrokPane({
                   className="rounded-full p-0.5 hover:bg-background"
                   aria-label="Stop including that note"
                   onClick={() => {
-                    setNotePickerOpen(false);
+                    notePicker.closePicker();
                     patch({ includeNoteId: null, includeNoteTitle: null });
                   }}
                 >
@@ -2612,40 +2594,15 @@ export function GrokPane({
               {plannedIncludeSlice()?.chip}
             </span>
           ) : null}
-          {notePickerOpen ? (
-            <div className="rounded-md border bg-background p-1.5">
-              <Input
-                value={noteQuery}
-                onChange={(event) => setNoteQuery(event.target.value)}
-                placeholder="Search notes…"
-                className="h-7 text-[12px]"
-                aria-label="Search notes to include"
-              />
-              <ul className="mt-1 max-h-32 overflow-y-auto">
-                {loadingNotes ? (
-                  <li className="px-1 py-1 text-[11px] text-muted-foreground">Loading…</li>
-                ) : noteChoices.length ? (
-                  noteChoices.map((note) => (
-                    <li key={note.id}>
-                      <button
-                        type="button"
-                        className="w-full truncate rounded px-1 py-0.5 text-left text-[12px] hover:bg-muted"
-                        onClick={() => {
-                          patch({ includeNoteId: note.id, includeNoteTitle: note.title });
-                          setNotePickerOpen(false);
-                          setNoteQuery("");
-                        }}
-                      >
-                        {note.title}
-                      </button>
-                    </li>
-                  ))
-                ) : (
-                  <li className="px-1 py-1 text-[11px] text-muted-foreground">No notes match.</li>
-                )}
-              </ul>
-            </div>
-          ) : null}
+          <NotePickerDialog
+            open={notePicker.notePickerOpen}
+            query={notePicker.noteQuery}
+            choices={notePicker.noteChoices}
+            loading={notePicker.loadingNotes}
+            onQueryChange={notePicker.setNoteQuery}
+            onSelect={notePicker.selectNote}
+            onClose={notePicker.closePicker}
+          />
         </div>
         {(pane.pendingAttachments ?? []).filter((file) => file.id).length || uploadingFiles ? (
           <ul className="flex flex-wrap gap-1.5" aria-label="Files to send">
