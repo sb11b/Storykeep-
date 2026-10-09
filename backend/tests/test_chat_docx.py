@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.database import get_db
 from app.deps import get_current_user
 from app.routers import chat as chat_router
+from app.routers import chat_messages as messages_router
 from app.services.chat_docx import (
     DOCX_MEDIA_TYPE,
     EMPTY_WORD_BODY,
@@ -113,6 +114,7 @@ class ChatDocxTests(unittest.TestCase):
     def test_unauth_docx_is_401_json(self):
         app = FastAPI()
         app.include_router(chat_router.router, prefix="/api/v1")
+        app.include_router(messages_router.router, prefix="/api/v1")
 
         def fake_db():
             yield MagicMock()
@@ -137,6 +139,7 @@ class ChatDocxTests(unittest.TestCase):
 
         app = FastAPI()
         app.include_router(chat_router.router, prefix="/api/v1")
+        app.include_router(messages_router.router, prefix="/api/v1")
         app.dependency_overrides[get_db] = fake_db
         app.dependency_overrides[get_current_user] = fake_user
         from unittest.mock import patch
@@ -167,6 +170,7 @@ class ChatDocxTests(unittest.TestCase):
 
         app = FastAPI()
         app.include_router(chat_router.router, prefix="/api/v1")
+        app.include_router(messages_router.router, prefix="/api/v1")
         app.dependency_overrides[get_db] = fake_db
         app.dependency_overrides[get_current_user] = lambda: user
         from unittest.mock import patch
