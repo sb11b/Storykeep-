@@ -56,6 +56,7 @@ from app.services import web_search as search_tool
 from app.services import x_search as x_tool
 from app.services import railway_tool
 from app.services import github_tool
+from app.services import cursor_agent_calls
 from app.services import cursor_agent_intent
 from app.services import cursor_agent_replies
 from app.services import cursor_agent_sequence
@@ -888,7 +889,7 @@ def _chat(
         else None
     )
     cursor_tools = (
-        cursor_agent_tool.CURSOR_TOOLS
+        cursor_agent_calls.CURSOR_TOOLS
         if cursor_enabled and cursor_tools_on and (delegate_turn or not junior_model.is_cursor_task_turn(user_text))
         else None
     )
@@ -1557,8 +1558,8 @@ def _chat(
                     if block:
                         follow_blocks.append(block)
             if cursor_enabled:
-                for cursor_call in cursor_agent_tool.assemble_tool_calls(tool_calls_out):
-                    if cursor_call.get("name") == cursor_agent_tool.START_TOOL_NAME and already_started_agent:
+                for cursor_call in cursor_agent_calls.assemble_tool_calls(tool_calls_out):
+                    if cursor_call.get("name") == cursor_agent_calls.START_TOOL_NAME and already_started_agent:
                         continue
                     block = await asyncio.to_thread(
                         cursor_agent_tool.execute_tool_call,
