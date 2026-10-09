@@ -519,15 +519,16 @@ def is_delegate_turn(message: str) -> bool:
 
 def brings_cursor_task(message: str) -> bool:
     """Steve supplied the agent task — polish/follow it, do not invent a new one."""
+    from app.services import cursor_agent_replies
     from app.services import cursor_agent_tool
 
     text = (message or "").strip()
     if not text or asks_for_cursor_prompt(text):
         return False
     if (
-        cursor_agent_tool.diverged_ff_reply(text)
-        or cursor_agent_tool.local_merge_repair(text)
-        or cursor_agent_tool.wsl_switch_reply(text)
+        cursor_agent_replies.diverged_ff_reply(text)
+        or cursor_agent_replies.local_merge_repair(text)
+        or cursor_agent_replies.wsl_switch_reply(text)
     ):
         return False
     if is_delegate_turn(text):
@@ -659,15 +660,16 @@ def should_server_start_agent(message: str, *, configured: bool) -> bool:
     A supplied code task (follow mode) starts only when CURSOR_API_KEY is set.
     "Write me a cursor prompt" stays a copy-paste block and does not start an agent.
     """
+    from app.services import cursor_agent_replies
     from app.services import cursor_agent_tool
 
     text = (message or "").strip()
     if not text:
         return False
     if (
-        cursor_agent_tool.diverged_ff_reply(text)
-        or cursor_agent_tool.local_merge_repair(text)
-        or cursor_agent_tool.wsl_switch_reply(text)
+        cursor_agent_replies.diverged_ff_reply(text)
+        or cursor_agent_replies.local_merge_repair(text)
+        or cursor_agent_replies.wsl_switch_reply(text)
     ):
         return False
     if cursor_agent_tool.wants_start(text):
