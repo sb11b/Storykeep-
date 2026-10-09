@@ -4,6 +4,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.services import cursor_agent_tool, junior_model
+from app.services.cursor_agent_sequence import next_step_task, sequence_number, sequenced_task
+from app.services.cursor_agent_tasks import polish_2_task
 
 
 class CursorAgentToolTests(unittest.TestCase):
@@ -161,7 +163,7 @@ class CursorAgentToolTests(unittest.TestCase):
         msg = "go ahead and start sequenced #2 polish"
         self.assertTrue(cursor_agent_tool.wants_start(msg))
         self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
-        task = cursor_agent_tool.polish_2_task(msg)
+        task = polish_2_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
         self.assertIn("sb11b/Storykeep-", task)
@@ -172,7 +174,7 @@ class CursorAgentToolTests(unittest.TestCase):
         msg = "lets go ahead and send the next step"
         self.assertTrue(cursor_agent_tool.wants_start(msg))
         self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
-        task = cursor_agent_tool.next_step_task(msg)
+        task = next_step_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
         self.assertIn("Sequenced #59", task)
@@ -183,217 +185,217 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertNotIn("cannot start an agent", task.lower())
         self.assertNotIn("isn't defined", task.lower())
         self.assertFalse(cursor_agent_tool.wants_start("do not send the next step"))
-        self.assertIsNone(cursor_agent_tool.next_step_task("do not send the next step"))
-        six = cursor_agent_tool.next_step_task("go ahead and start sequence # 6")
+        self.assertIsNone(next_step_task("do not send the next step"))
+        six = next_step_task("go ahead and start sequence # 6")
         assert six is not None
         self.assertIn("Sequenced #6", six)
         self.assertIn("junior-client-queue-multi-v1", six)
-        seven = cursor_agent_tool.next_step_task("go ahead and start sequenced #7")
+        seven = next_step_task("go ahead and start sequenced #7")
         assert seven is not None
         self.assertIn("Sequenced #7", seven)
         self.assertIn("junior-client-context-page-v1", seven)
-        eight = cursor_agent_tool.next_step_task("go ahead and start sequenced #8")
+        eight = next_step_task("go ahead and start sequenced #8")
         assert eight is not None
         self.assertIn("Sequenced #8", eight)
         self.assertIn("junior-client-agents-page-v1", eight)
-        nine = cursor_agent_tool.next_step_task("go ahead and start sequenced #9")
+        nine = next_step_task("go ahead and start sequenced #9")
         assert nine is not None
         self.assertIn("Sequenced #9", nine)
         self.assertIn("junior-client-memory-write-v1", nine)
-        ten = cursor_agent_tool.next_step_task("go ahead and start sequenced #10")
+        ten = next_step_task("go ahead and start sequenced #10")
         assert ten is not None
         self.assertIn("Sequenced #10", ten)
         self.assertIn("junior-client-sessions-page-v1", ten)
-        eleven = cursor_agent_tool.next_step_task("go ahead and start sequenced #11")
+        eleven = next_step_task("go ahead and start sequenced #11")
         assert eleven is not None
         self.assertIn("Sequenced #11", eleven)
         self.assertIn("junior-client-thread-get-v1", eleven)
-        twelve = cursor_agent_tool.next_step_task("go ahead and start sequenced #12")
+        twelve = next_step_task("go ahead and start sequenced #12")
         assert twelve is not None
         self.assertIn("Sequenced #12", twelve)
         self.assertIn("junior-client-memory-get-v1", twelve)
-        thirteen = cursor_agent_tool.next_step_task("go ahead and start sequenced #13")
+        thirteen = next_step_task("go ahead and start sequenced #13")
         assert thirteen is not None
         self.assertIn("Sequenced #13", thirteen)
         self.assertIn("junior-client-agent-get-v1", thirteen)
-        fourteen = cursor_agent_tool.next_step_task("go ahead and start sequenced #14")
+        fourteen = next_step_task("go ahead and start sequenced #14")
         assert fourteen is not None
         self.assertIn("Sequenced #14", fourteen)
         self.assertIn("junior-client-session-get-v1", fourteen)
-        fifteen = cursor_agent_tool.next_step_task("go ahead and start sequenced #15")
+        fifteen = next_step_task("go ahead and start sequenced #15")
         assert fifteen is not None
         self.assertIn("Sequenced #15", fifteen)
         self.assertIn("junior-client-message-get-v1", fifteen)
-        sixteen = cursor_agent_tool.next_step_task("go ahead and start sequenced #16")
+        sixteen = next_step_task("go ahead and start sequenced #16")
         assert sixteen is not None
         self.assertIn("Sequenced #16", sixteen)
         self.assertIn("junior-client-project-get-v1", sixteen)
-        seventeen = cursor_agent_tool.next_step_task("go ahead and start sequenced #17")
+        seventeen = next_step_task("go ahead and start sequenced #17")
         assert seventeen is not None
         self.assertIn("Sequenced #17", seventeen)
         self.assertIn("junior-client-search-get-v1", seventeen)
-        eighteen = cursor_agent_tool.next_step_task("go ahead and start sequenced #18")
+        eighteen = next_step_task("go ahead and start sequenced #18")
         assert eighteen is not None
         self.assertIn("Sequenced #18", eighteen)
         self.assertIn("junior-client-context-get-v1", eighteen)
-        nineteen = cursor_agent_tool.next_step_task("go ahead and start sequenced #19")
+        nineteen = next_step_task("go ahead and start sequenced #19")
         assert nineteen is not None
         self.assertIn("Sequenced #19", nineteen)
         self.assertIn("junior-client-thread-message-get-v1", nineteen)
-        twenty = cursor_agent_tool.next_step_task("go ahead and start sequenced #20")
+        twenty = next_step_task("go ahead and start sequenced #20")
         assert twenty is not None
         self.assertIn("Sequenced #20", twenty)
         self.assertIn("junior-client-continue-get-v1", twenty)
-        twenty_one = cursor_agent_tool.next_step_task("go ahead and start sequenced #21")
+        twenty_one = next_step_task("go ahead and start sequenced #21")
         assert twenty_one is not None
         self.assertIn("Sequenced #21", twenty_one)
         self.assertIn("junior-client-project-agent-get-v1", twenty_one)
-        twenty_two = cursor_agent_tool.next_step_task("go ahead and start sequenced #22")
+        twenty_two = next_step_task("go ahead and start sequenced #22")
         assert twenty_two is not None
         self.assertIn("Sequenced #22", twenty_two)
         self.assertIn("junior-client-thread-memory-get-v1", twenty_two)
-        twenty_three = cursor_agent_tool.next_step_task("go ahead and start sequenced #23")
+        twenty_three = next_step_task("go ahead and start sequenced #23")
         assert twenty_three is not None
         self.assertIn("Sequenced #23", twenty_three)
         self.assertIn("junior-client-project-agents-page-v1", twenty_three)
-        twenty_four = cursor_agent_tool.next_step_task("go ahead and start sequenced #24")
+        twenty_four = next_step_task("go ahead and start sequenced #24")
         assert twenty_four is not None
         self.assertIn("Sequenced #24", twenty_four)
         self.assertIn("junior-client-thread-memories-page-v1", twenty_four)
-        twenty_five = cursor_agent_tool.next_step_task("go ahead and start sequenced #25")
+        twenty_five = next_step_task("go ahead and start sequenced #25")
         assert twenty_five is not None
         self.assertIn("Sequenced #25", twenty_five)
         self.assertIn("junior-client-thread-agent-get-v1", twenty_five)
-        twenty_six = cursor_agent_tool.next_step_task("go ahead and start sequenced #26")
+        twenty_six = next_step_task("go ahead and start sequenced #26")
         assert twenty_six is not None
         self.assertIn("Sequenced #26", twenty_six)
         self.assertIn("junior-client-thread-agents-page-v1", twenty_six)
-        twenty_seven = cursor_agent_tool.next_step_task("go ahead and start sequenced #27")
+        twenty_seven = next_step_task("go ahead and start sequenced #27")
         assert twenty_seven is not None
         self.assertIn("Sequenced #27", twenty_seven)
         self.assertIn("junior-client-thread-search-get-v1", twenty_seven)
-        twenty_eight = cursor_agent_tool.next_step_task("go ahead and start sequenced #28")
+        twenty_eight = next_step_task("go ahead and start sequenced #28")
         assert twenty_eight is not None
         self.assertIn("Sequenced #28", twenty_eight)
         self.assertIn("junior-client-thread-search-page-v1", twenty_eight)
-        twenty_nine = cursor_agent_tool.next_step_task("go ahead and start sequenced #29")
+        twenty_nine = next_step_task("go ahead and start sequenced #29")
         assert twenty_nine is not None
         self.assertIn("Sequenced #29", twenty_nine)
         self.assertIn("junior-client-thread-context-get-v1", twenty_nine)
         self.assertIn("junior-client-project-search-page-v1", twenty_nine)
-        thirty = cursor_agent_tool.next_step_task("go ahead and start sequenced #30")
+        thirty = next_step_task("go ahead and start sequenced #30")
         assert thirty is not None
         self.assertIn("Sequenced #30", thirty)
         self.assertIn("junior-client-project-search-get-v1", thirty)
-        thirty_one = cursor_agent_tool.next_step_task("go ahead and start sequenced #31")
+        thirty_one = next_step_task("go ahead and start sequenced #31")
         assert thirty_one is not None
         self.assertIn("Sequenced #31", thirty_one)
         self.assertIn("junior-client-project-context-get-v1", thirty_one)
-        thirty_two = cursor_agent_tool.next_step_task("go ahead and start sequenced #32")
+        thirty_two = next_step_task("go ahead and start sequenced #32")
         assert thirty_two is not None
         self.assertIn("Sequenced #32", thirty_two)
         self.assertIn("junior-client-project-memory-get-v1", thirty_two)
-        thirty_three = cursor_agent_tool.next_step_task("go ahead and start sequenced #33")
+        thirty_three = next_step_task("go ahead and start sequenced #33")
         assert thirty_three is not None
         self.assertIn("Sequenced #33", thirty_three)
         self.assertIn("junior-client-project-memories-page-v1", thirty_three)
-        thirty_four = cursor_agent_tool.next_step_task("go ahead and start sequenced #34")
+        thirty_four = next_step_task("go ahead and start sequenced #34")
         assert thirty_four is not None
         self.assertIn("Sequenced #34", thirty_four)
         self.assertIn("junior-client-project-message-get-v1", thirty_four)
-        thirty_five = cursor_agent_tool.next_step_task("go ahead and start sequenced #35")
+        thirty_five = next_step_task("go ahead and start sequenced #35")
         assert thirty_five is not None
         self.assertIn("Sequenced #35", thirty_five)
         self.assertIn("junior-client-project-messages-page-v1", thirty_five)
-        thirty_six = cursor_agent_tool.next_step_task("go ahead and start sequenced #36")
+        thirty_six = next_step_task("go ahead and start sequenced #36")
         assert thirty_six is not None
         self.assertIn("Sequenced #36", thirty_six)
         self.assertIn("junior-client-project-continue-get-v1", thirty_six)
-        thirty_seven = cursor_agent_tool.next_step_task("go ahead and start sequenced #37")
+        thirty_seven = next_step_task("go ahead and start sequenced #37")
         assert thirty_seven is not None
         self.assertIn("Sequenced #37", thirty_seven)
         self.assertIn("junior-client-project-thread-get-v1", thirty_seven)
-        thirty_eight = cursor_agent_tool.next_step_task("go ahead and start sequenced #38")
+        thirty_eight = next_step_task("go ahead and start sequenced #38")
         assert thirty_eight is not None
         self.assertIn("Sequenced #38", thirty_eight)
         self.assertIn("junior-client-project-threads-page-v1", thirty_eight)
-        thirty_nine = cursor_agent_tool.next_step_task("go ahead and start sequenced #39")
+        thirty_nine = next_step_task("go ahead and start sequenced #39")
         assert thirty_nine is not None
         self.assertIn("Sequenced #39", thirty_nine)
         self.assertIn("junior-client-project-thread-message-get-v1", thirty_nine)
-        forty = cursor_agent_tool.next_step_task("go ahead and start sequenced #40")
+        forty = next_step_task("go ahead and start sequenced #40")
         assert forty is not None
         self.assertIn("Sequenced #40", forty)
         self.assertIn("junior-client-project-thread-messages-page-v1", forty)
-        forty_one = cursor_agent_tool.next_step_task("go ahead and start sequenced #41")
+        forty_one = next_step_task("go ahead and start sequenced #41")
         assert forty_one is not None
         self.assertIn("Sequenced #41", forty_one)
         self.assertIn("junior-client-project-thread-continue-get-v1", forty_one)
-        forty_two = cursor_agent_tool.next_step_task("go ahead and start sequenced #42")
+        forty_two = next_step_task("go ahead and start sequenced #42")
         assert forty_two is not None
         self.assertIn("Sequenced #42", forty_two)
         self.assertIn("junior-client-project-thread-memory-get-v1", forty_two)
-        forty_three = cursor_agent_tool.next_step_task("go ahead and start sequenced #43")
+        forty_three = next_step_task("go ahead and start sequenced #43")
         assert forty_three is not None
         self.assertIn("Sequenced #43", forty_three)
         self.assertIn("junior-client-project-thread-memories-page-v1", forty_three)
-        forty_four = cursor_agent_tool.next_step_task("go ahead and start sequenced #44")
+        forty_four = next_step_task("go ahead and start sequenced #44")
         assert forty_four is not None
         self.assertIn("Sequenced #44", forty_four)
         self.assertIn("junior-client-project-thread-agent-get-v1", forty_four)
-        forty_five = cursor_agent_tool.next_step_task("go ahead and start sequenced #45")
+        forty_five = next_step_task("go ahead and start sequenced #45")
         assert forty_five is not None
         self.assertIn("Sequenced #45", forty_five)
         self.assertIn("junior-client-project-thread-agents-page-v1", forty_five)
-        forty_six = cursor_agent_tool.next_step_task("go ahead and start sequenced #46")
+        forty_six = next_step_task("go ahead and start sequenced #46")
         assert forty_six is not None
         self.assertIn("Sequenced #46", forty_six)
         self.assertIn("junior-client-project-thread-search-hit-get-v1", forty_six)
-        forty_seven = cursor_agent_tool.next_step_task("go ahead and start sequenced #47")
+        forty_seven = next_step_task("go ahead and start sequenced #47")
         assert forty_seven is not None
         self.assertIn("Sequenced #47", forty_seven)
         self.assertIn("junior-client-project-thread-search-page-v1", forty_seven)
-        forty_eight = cursor_agent_tool.next_step_task("go ahead and start sequenced #48")
+        forty_eight = next_step_task("go ahead and start sequenced #48")
         assert forty_eight is not None
         self.assertIn("Sequenced #48", forty_eight)
         self.assertIn("junior-client-project-thread-context-get-v1", forty_eight)
-        forty_nine = cursor_agent_tool.next_step_task("go ahead and start sequenced #49")
+        forty_nine = next_step_task("go ahead and start sequenced #49")
         assert forty_nine is not None
         self.assertIn("Sequenced #49", forty_nine)
         self.assertIn("junior-client-thread-session-get-v1", forty_nine)
-        fifty = cursor_agent_tool.next_step_task("go ahead and start sequenced #50")
+        fifty = next_step_task("go ahead and start sequenced #50")
         assert fifty is not None
         self.assertIn("Sequenced #50", fifty)
         self.assertIn("junior-client-thread-sessions-page-v1", fifty)
-        fifty_one = cursor_agent_tool.next_step_task("go ahead and start sequenced #51")
+        fifty_one = next_step_task("go ahead and start sequenced #51")
         assert fifty_one is not None
         self.assertIn("Sequenced #51", fifty_one)
         self.assertIn("junior-client-project-thread-session-get-v1", fifty_one)
-        fifty_two = cursor_agent_tool.next_step_task("go ahead and start sequenced #52")
+        fifty_two = next_step_task("go ahead and start sequenced #52")
         assert fifty_two is not None
         self.assertIn("Sequenced #52", fifty_two)
         self.assertIn("junior-client-project-thread-sessions-page-v1", fifty_two)
-        fifty_three = cursor_agent_tool.next_step_task("go ahead and start sequenced #53")
+        fifty_three = next_step_task("go ahead and start sequenced #53")
         assert fifty_three is not None
         self.assertIn("Sequenced #53", fifty_three)
         self.assertIn("junior-client-project-session-get-v1", fifty_three)
-        fifty_four = cursor_agent_tool.next_step_task("go ahead and start sequenced #54")
+        fifty_four = next_step_task("go ahead and start sequenced #54")
         assert fifty_four is not None
         self.assertIn("Sequenced #54", fifty_four)
         self.assertIn("junior-client-project-sessions-page-v1", fifty_four)
-        fifty_five = cursor_agent_tool.next_step_task("go ahead and start sequenced #55")
+        fifty_five = next_step_task("go ahead and start sequenced #55")
         assert fifty_five is not None
         self.assertIn("Sequenced #55", fifty_five)
         self.assertIn("junior-client-memory-note-get-v1", fifty_five)
-        fifty_six = cursor_agent_tool.next_step_task("go ahead and start sequenced #56")
+        fifty_six = next_step_task("go ahead and start sequenced #56")
         assert fifty_six is not None
         self.assertIn("Sequenced #56", fifty_six)
         self.assertIn("junior-client-thread-memory-note-get-v1", fifty_six)
-        fifty_seven = cursor_agent_tool.next_step_task("go ahead and start sequenced #57")
+        fifty_seven = next_step_task("go ahead and start sequenced #57")
         assert fifty_seven is not None
         self.assertIn("Sequenced #57", fifty_seven)
         self.assertIn("junior-client-project-thread-memory-note-get-v1", fifty_seven)
-        fifty_eight = cursor_agent_tool.next_step_task("go ahead and start sequenced #58")
+        fifty_eight = next_step_task("go ahead and start sequenced #58")
         assert fifty_eight is not None
         self.assertIn("Sequenced #58", fifty_eight)
         self.assertIn("junior-client-project-memory-note-get-v1", fifty_eight)
@@ -401,9 +403,9 @@ class CursorAgentToolTests(unittest.TestCase):
     def test_sequence_number_five_starts(self):
         msg = "go ahead and start Sequence number five."
         self.assertTrue(cursor_agent_tool.wants_start(msg))
-        self.assertEqual(cursor_agent_tool.sequence_number(msg), 5)
+        self.assertEqual(sequence_number(msg), 5)
         self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
-        task = cursor_agent_tool.sequenced_task(msg)
+        task = sequenced_task(msg)
         assert task is not None
         self.assertIn("Sequenced #5", task)
         self.assertIn("last_failed_post", task)
@@ -411,219 +413,219 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertNotIn("Do not open a pull request", task)
         self.assertFalse(cursor_agent_tool.wants_start("do not start sequence number five"))
         self.assertTrue(cursor_agent_tool.wants_start("start next step"))
-        four = cursor_agent_tool.next_step_task("sequenced #4")
+        four = next_step_task("sequenced #4")
         assert four is not None
         self.assertIn("Sequenced #4", four)
-        six = cursor_agent_tool.sequenced_task("go ahead and start sequence # 6")
+        six = sequenced_task("go ahead and start sequence # 6")
         assert six is not None
         self.assertIn("Sequenced #6", six)
         self.assertIn("junior-client-queue-multi-v1", six)
-        seven = cursor_agent_tool.sequenced_task("sequenced #7")
+        seven = sequenced_task("sequenced #7")
         assert seven is not None
         self.assertIn("Sequenced #7", seven)
         self.assertIn("junior-client-context-page-v1", seven)
-        eight = cursor_agent_tool.sequenced_task("sequenced #8")
+        eight = sequenced_task("sequenced #8")
         assert eight is not None
         self.assertIn("Sequenced #8", eight)
         self.assertIn("junior-client-agents-page-v1", eight)
-        nine = cursor_agent_tool.sequenced_task("sequenced #9")
+        nine = sequenced_task("sequenced #9")
         assert nine is not None
         self.assertIn("Sequenced #9", nine)
         self.assertIn("junior-client-memory-write-v1", nine)
-        ten = cursor_agent_tool.sequenced_task("sequenced #10")
+        ten = sequenced_task("sequenced #10")
         assert ten is not None
         self.assertIn("Sequenced #10", ten)
         self.assertIn("junior-client-sessions-page-v1", ten)
-        eleven = cursor_agent_tool.sequenced_task("sequenced #11")
+        eleven = sequenced_task("sequenced #11")
         assert eleven is not None
         self.assertIn("Sequenced #11", eleven)
         self.assertIn("junior-client-thread-get-v1", eleven)
-        twelve = cursor_agent_tool.sequenced_task("sequenced #12")
+        twelve = sequenced_task("sequenced #12")
         assert twelve is not None
         self.assertIn("Sequenced #12", twelve)
         self.assertIn("junior-client-memory-get-v1", twelve)
-        thirteen = cursor_agent_tool.sequenced_task("sequenced #13")
+        thirteen = sequenced_task("sequenced #13")
         assert thirteen is not None
         self.assertIn("Sequenced #13", thirteen)
         self.assertIn("junior-client-agent-get-v1", thirteen)
-        fourteen = cursor_agent_tool.sequenced_task("sequenced #14")
+        fourteen = sequenced_task("sequenced #14")
         assert fourteen is not None
         self.assertIn("Sequenced #14", fourteen)
         self.assertIn("junior-client-session-get-v1", fourteen)
-        fifteen = cursor_agent_tool.sequenced_task("sequenced #15")
+        fifteen = sequenced_task("sequenced #15")
         assert fifteen is not None
         self.assertIn("Sequenced #15", fifteen)
         self.assertIn("junior-client-message-get-v1", fifteen)
-        sixteen = cursor_agent_tool.sequenced_task("sequenced #16")
+        sixteen = sequenced_task("sequenced #16")
         assert sixteen is not None
         self.assertIn("Sequenced #16", sixteen)
         self.assertIn("junior-client-project-get-v1", sixteen)
-        seventeen = cursor_agent_tool.sequenced_task("sequenced #17")
+        seventeen = sequenced_task("sequenced #17")
         assert seventeen is not None
         self.assertIn("Sequenced #17", seventeen)
         self.assertIn("junior-client-search-get-v1", seventeen)
-        eighteen = cursor_agent_tool.sequenced_task("sequenced #18")
+        eighteen = sequenced_task("sequenced #18")
         assert eighteen is not None
         self.assertIn("Sequenced #18", eighteen)
         self.assertIn("junior-client-context-get-v1", eighteen)
-        nineteen = cursor_agent_tool.sequenced_task("sequenced #19")
+        nineteen = sequenced_task("sequenced #19")
         assert nineteen is not None
         self.assertIn("Sequenced #19", nineteen)
         self.assertIn("junior-client-thread-message-get-v1", nineteen)
-        twenty = cursor_agent_tool.sequenced_task("sequenced #20")
+        twenty = sequenced_task("sequenced #20")
         assert twenty is not None
         self.assertIn("Sequenced #20", twenty)
         self.assertIn("junior-client-continue-get-v1", twenty)
-        twenty_one = cursor_agent_tool.sequenced_task("sequenced #21")
+        twenty_one = sequenced_task("sequenced #21")
         assert twenty_one is not None
         self.assertIn("Sequenced #21", twenty_one)
         self.assertIn("junior-client-project-agent-get-v1", twenty_one)
-        twenty_two = cursor_agent_tool.sequenced_task("sequenced #22")
+        twenty_two = sequenced_task("sequenced #22")
         assert twenty_two is not None
         self.assertIn("Sequenced #22", twenty_two)
         self.assertIn("junior-client-thread-memory-get-v1", twenty_two)
-        twenty_three = cursor_agent_tool.sequenced_task("sequenced #23")
+        twenty_three = sequenced_task("sequenced #23")
         assert twenty_three is not None
         self.assertIn("Sequenced #23", twenty_three)
         self.assertIn("junior-client-project-agents-page-v1", twenty_three)
-        twenty_four = cursor_agent_tool.sequenced_task("sequenced #24")
+        twenty_four = sequenced_task("sequenced #24")
         assert twenty_four is not None
         self.assertIn("Sequenced #24", twenty_four)
         self.assertIn("junior-client-thread-memories-page-v1", twenty_four)
-        twenty_five = cursor_agent_tool.sequenced_task("sequenced #25")
+        twenty_five = sequenced_task("sequenced #25")
         assert twenty_five is not None
         self.assertIn("Sequenced #25", twenty_five)
         self.assertIn("junior-client-thread-agent-get-v1", twenty_five)
-        twenty_six = cursor_agent_tool.sequenced_task("sequenced #26")
+        twenty_six = sequenced_task("sequenced #26")
         assert twenty_six is not None
         self.assertIn("Sequenced #26", twenty_six)
         self.assertIn("junior-client-thread-agents-page-v1", twenty_six)
-        twenty_seven = cursor_agent_tool.sequenced_task("sequenced #27")
+        twenty_seven = sequenced_task("sequenced #27")
         assert twenty_seven is not None
         self.assertIn("Sequenced #27", twenty_seven)
         self.assertIn("junior-client-thread-search-get-v1", twenty_seven)
-        twenty_eight = cursor_agent_tool.sequenced_task("sequenced #28")
+        twenty_eight = sequenced_task("sequenced #28")
         assert twenty_eight is not None
         self.assertIn("Sequenced #28", twenty_eight)
         self.assertIn("junior-client-thread-search-page-v1", twenty_eight)
-        twenty_nine = cursor_agent_tool.sequenced_task("sequenced #29")
+        twenty_nine = sequenced_task("sequenced #29")
         assert twenty_nine is not None
         self.assertIn("Sequenced #29", twenty_nine)
         self.assertIn("junior-client-thread-context-get-v1", twenty_nine)
         self.assertIn("junior-client-project-search-page-v1", twenty_nine)
-        thirty = cursor_agent_tool.sequenced_task("sequenced #30")
+        thirty = sequenced_task("sequenced #30")
         assert thirty is not None
         self.assertIn("Sequenced #30", thirty)
         self.assertIn("junior-client-project-search-get-v1", thirty)
-        thirty_one = cursor_agent_tool.sequenced_task("sequenced #31")
+        thirty_one = sequenced_task("sequenced #31")
         assert thirty_one is not None
         self.assertIn("Sequenced #31", thirty_one)
         self.assertIn("junior-client-project-context-get-v1", thirty_one)
-        thirty_two = cursor_agent_tool.sequenced_task("sequenced #32")
+        thirty_two = sequenced_task("sequenced #32")
         assert thirty_two is not None
         self.assertIn("Sequenced #32", thirty_two)
         self.assertIn("junior-client-project-memory-get-v1", thirty_two)
-        thirty_three = cursor_agent_tool.sequenced_task("sequenced #33")
+        thirty_three = sequenced_task("sequenced #33")
         assert thirty_three is not None
         self.assertIn("Sequenced #33", thirty_three)
         self.assertIn("junior-client-project-memories-page-v1", thirty_three)
-        thirty_four = cursor_agent_tool.sequenced_task("sequenced #34")
+        thirty_four = sequenced_task("sequenced #34")
         assert thirty_four is not None
         self.assertIn("Sequenced #34", thirty_four)
         self.assertIn("junior-client-project-message-get-v1", thirty_four)
-        thirty_five = cursor_agent_tool.sequenced_task("sequenced #35")
+        thirty_five = sequenced_task("sequenced #35")
         assert thirty_five is not None
         self.assertIn("Sequenced #35", thirty_five)
         self.assertIn("junior-client-project-messages-page-v1", thirty_five)
-        thirty_six = cursor_agent_tool.sequenced_task("sequenced #36")
+        thirty_six = sequenced_task("sequenced #36")
         assert thirty_six is not None
         self.assertIn("Sequenced #36", thirty_six)
         self.assertIn("junior-client-project-continue-get-v1", thirty_six)
-        thirty_seven = cursor_agent_tool.sequenced_task("sequenced #37")
+        thirty_seven = sequenced_task("sequenced #37")
         assert thirty_seven is not None
         self.assertIn("Sequenced #37", thirty_seven)
         self.assertIn("junior-client-project-thread-get-v1", thirty_seven)
-        thirty_eight = cursor_agent_tool.sequenced_task("sequenced #38")
+        thirty_eight = sequenced_task("sequenced #38")
         assert thirty_eight is not None
         self.assertIn("Sequenced #38", thirty_eight)
         self.assertIn("junior-client-project-threads-page-v1", thirty_eight)
-        thirty_nine = cursor_agent_tool.sequenced_task("sequenced #39")
+        thirty_nine = sequenced_task("sequenced #39")
         assert thirty_nine is not None
         self.assertIn("Sequenced #39", thirty_nine)
         self.assertIn("junior-client-project-thread-message-get-v1", thirty_nine)
-        forty = cursor_agent_tool.sequenced_task("sequenced #40")
+        forty = sequenced_task("sequenced #40")
         assert forty is not None
         self.assertIn("Sequenced #40", forty)
         self.assertIn("junior-client-project-thread-messages-page-v1", forty)
-        forty_one = cursor_agent_tool.sequenced_task("sequenced #41")
+        forty_one = sequenced_task("sequenced #41")
         assert forty_one is not None
         self.assertIn("Sequenced #41", forty_one)
         self.assertIn("junior-client-project-thread-continue-get-v1", forty_one)
-        forty_two = cursor_agent_tool.sequenced_task("sequenced #42")
+        forty_two = sequenced_task("sequenced #42")
         assert forty_two is not None
         self.assertIn("Sequenced #42", forty_two)
         self.assertIn("junior-client-project-thread-memory-get-v1", forty_two)
-        forty_three = cursor_agent_tool.sequenced_task("sequenced #43")
+        forty_three = sequenced_task("sequenced #43")
         assert forty_three is not None
         self.assertIn("Sequenced #43", forty_three)
         self.assertIn("junior-client-project-thread-memories-page-v1", forty_three)
-        forty_four = cursor_agent_tool.sequenced_task("sequenced #44")
+        forty_four = sequenced_task("sequenced #44")
         assert forty_four is not None
         self.assertIn("Sequenced #44", forty_four)
         self.assertIn("junior-client-project-thread-agent-get-v1", forty_four)
-        forty_five = cursor_agent_tool.sequenced_task("sequenced #45")
+        forty_five = sequenced_task("sequenced #45")
         assert forty_five is not None
         self.assertIn("Sequenced #45", forty_five)
         self.assertIn("junior-client-project-thread-agents-page-v1", forty_five)
-        forty_six = cursor_agent_tool.sequenced_task("sequenced #46")
+        forty_six = sequenced_task("sequenced #46")
         assert forty_six is not None
         self.assertIn("Sequenced #46", forty_six)
         self.assertIn("junior-client-project-thread-search-hit-get-v1", forty_six)
-        forty_seven = cursor_agent_tool.sequenced_task("sequenced #47")
+        forty_seven = sequenced_task("sequenced #47")
         assert forty_seven is not None
         self.assertIn("Sequenced #47", forty_seven)
         self.assertIn("junior-client-project-thread-search-page-v1", forty_seven)
-        forty_eight = cursor_agent_tool.sequenced_task("sequenced #48")
+        forty_eight = sequenced_task("sequenced #48")
         assert forty_eight is not None
         self.assertIn("Sequenced #48", forty_eight)
         self.assertIn("junior-client-project-thread-context-get-v1", forty_eight)
-        forty_nine = cursor_agent_tool.sequenced_task("sequenced #49")
+        forty_nine = sequenced_task("sequenced #49")
         assert forty_nine is not None
         self.assertIn("Sequenced #49", forty_nine)
         self.assertIn("junior-client-thread-session-get-v1", forty_nine)
-        fifty = cursor_agent_tool.sequenced_task("sequenced #50")
+        fifty = sequenced_task("sequenced #50")
         assert fifty is not None
         self.assertIn("Sequenced #50", fifty)
         self.assertIn("junior-client-thread-sessions-page-v1", fifty)
-        fifty_one = cursor_agent_tool.sequenced_task("sequenced #51")
+        fifty_one = sequenced_task("sequenced #51")
         assert fifty_one is not None
         self.assertIn("Sequenced #51", fifty_one)
         self.assertIn("junior-client-project-thread-session-get-v1", fifty_one)
-        fifty_two = cursor_agent_tool.sequenced_task("sequenced #52")
+        fifty_two = sequenced_task("sequenced #52")
         assert fifty_two is not None
         self.assertIn("Sequenced #52", fifty_two)
         self.assertIn("junior-client-project-thread-sessions-page-v1", fifty_two)
-        fifty_three = cursor_agent_tool.sequenced_task("sequenced #53")
+        fifty_three = sequenced_task("sequenced #53")
         assert fifty_three is not None
         self.assertIn("Sequenced #53", fifty_three)
         self.assertIn("junior-client-project-session-get-v1", fifty_three)
-        fifty_four = cursor_agent_tool.sequenced_task("sequenced #54")
+        fifty_four = sequenced_task("sequenced #54")
         assert fifty_four is not None
         self.assertIn("Sequenced #54", fifty_four)
         self.assertIn("junior-client-project-sessions-page-v1", fifty_four)
-        fifty_five = cursor_agent_tool.sequenced_task("sequenced #55")
+        fifty_five = sequenced_task("sequenced #55")
         assert fifty_five is not None
         self.assertIn("Sequenced #55", fifty_five)
         self.assertIn("junior-client-memory-note-get-v1", fifty_five)
-        fifty_six = cursor_agent_tool.sequenced_task("sequenced #56")
+        fifty_six = sequenced_task("sequenced #56")
         assert fifty_six is not None
         self.assertIn("Sequenced #56", fifty_six)
         self.assertIn("junior-client-thread-memory-note-get-v1", fifty_six)
-        fifty_seven = cursor_agent_tool.sequenced_task("sequenced #57")
+        fifty_seven = sequenced_task("sequenced #57")
         assert fifty_seven is not None
         self.assertIn("Sequenced #57", fifty_seven)
         self.assertIn("junior-client-project-thread-memory-note-get-v1", fifty_seven)
-        fifty_eight = cursor_agent_tool.sequenced_task("sequenced #58")
+        fifty_eight = sequenced_task("sequenced #58")
         assert fifty_eight is not None
         self.assertIn("Sequenced #58", fifty_eight)
         self.assertIn("junior-client-project-memory-note-get-v1", fifty_eight)

@@ -56,6 +56,7 @@ from app.services import web_search as search_tool
 from app.services import x_search as x_tool
 from app.services import railway_tool
 from app.services import github_tool
+from app.services import cursor_agent_sequence
 from app.services import cursor_agent_tool
 from app.services import junior_shared_memory
 from app.services import chat_index
@@ -1270,7 +1271,7 @@ def _chat(
                 yield chat_service.encode_sse("[DONE]")
                 return
             if will_cursor_start:
-                task_prompt = cursor_agent_tool.sequenced_task(user_text) or ""
+                task_prompt = cursor_agent_sequence.sequenced_task(user_text) or ""
                 agent_source = task_prompt or user_text
                 pane_label = (payload.pane_name or "").strip()
                 if pane_label:
