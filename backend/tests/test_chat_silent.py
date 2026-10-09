@@ -15,6 +15,7 @@ from app.main import http_exception_with_message
 from app.routers import chat_stream as chat_router
 from app.routers import chat_status as status_router
 from app.services import chat as chat_service
+from app.services.cursor_agent_outcome import CursorAgentOutcome
 
 
 def _app() -> FastAPI:
@@ -426,7 +427,7 @@ class CursorStartPayloadTests(unittest.TestCase):
         from app.services import cursor_agent_tool
 
         app = _app()
-        outcome = cursor_agent_tool.CursorAgentOutcome(
+        outcome = CursorAgentOutcome(
             True,
             "Cursor Cloud Agent started.",
             200,
@@ -461,7 +462,7 @@ class CursorStartPayloadTests(unittest.TestCase):
         from app.services import cursor_agent_tool
 
         app = _app()
-        outcome = cursor_agent_tool.CursorAgentOutcome(
+        outcome = CursorAgentOutcome(
             True,
             "Cursor Cloud Agent started.",
             200,
@@ -497,7 +498,7 @@ class CursorStartPayloadTests(unittest.TestCase):
         from app.services import cursor_agent_tool
 
         app = _app()
-        outcome = cursor_agent_tool.CursorAgentOutcome(
+        outcome = CursorAgentOutcome(
             True,
             "Cursor Cloud Agent started.",
             200,
@@ -535,7 +536,7 @@ class CursorStartPayloadTests(unittest.TestCase):
         from app.services import cursor_agent_tool
 
         app = _app()
-        outcome = cursor_agent_tool.CursorAgentOutcome(
+        outcome = CursorAgentOutcome(
             True,
             "Cursor Cloud Agent started.",
             200,

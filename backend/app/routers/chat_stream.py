@@ -57,6 +57,7 @@ from app.services import x_search as x_tool
 from app.services import railway_tool
 from app.services import github_tool
 from app.services import cursor_agent_calls
+from app.services import cursor_agent_outcome
 from app.services import cursor_agent_intent
 from app.services import cursor_agent_replies
 from app.services import cursor_agent_sequence
@@ -1102,7 +1103,7 @@ def _chat(
             deploy_outcome: railway_tool.RailwayOutcome | None = None
             voice_list: list[dict[str, str]] | None = None
             already_started_agent = False
-            agent_outcome: cursor_agent_tool.CursorAgentOutcome | None = None
+            agent_outcome: cursor_agent_outcome.CursorAgentOutcome | None = None
             output_tokens = chat_service.resolved_max_output_tokens()
             open_meta: dict[str, object] = {
                 "stream_status": (
@@ -1310,7 +1311,7 @@ def _chat(
                     agent_outcome = start_task.result()
                 except Exception:
                     log_chat_exception("cursor start failed", user=user_id, conversation=conversation_id)
-                    agent_outcome = cursor_agent_tool.CursorAgentOutcome(
+                    agent_outcome = cursor_agent_outcome.CursorAgentOutcome(
                         False,
                         "Cursor Cloud Agent create failed: the start did not finish.",
                         502,
@@ -1327,7 +1328,7 @@ def _chat(
                         run_id=agent_outcome.run_id,
                         starting_branch=start_branch,
                     )
-                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
+                note = cursor_agent_outcome.summarize_agent_for_user(agent_outcome)
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
                 if persist and conversation_id:
@@ -1654,7 +1655,7 @@ def _chat(
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text and will_cursor_start and agent_outcome is not None:
-                note = cursor_agent_tool.summarize_agent_for_user(agent_outcome)
+                note = cursor_agent_outcome.summarize_agent_for_user(agent_outcome)
                 await emit_delta(note)
                 yield chat_service.encode_sse({"delta": note, "stream_status": "writing"})
             if not saw_text and voice_list is not None:
