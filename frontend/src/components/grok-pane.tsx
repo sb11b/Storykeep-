@@ -31,6 +31,7 @@ import { useStreamRunner } from "@/lib/useStreamRunner";
 import { createContextHelpers } from "@/lib/context-helpers";
 import { useModelSettings } from "@/lib/useModelSettings";
 import { useNoteFolder } from "@/lib/useNoteFolder";
+import { useOwnedConversation } from "@/lib/useOwnedConversation";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -460,6 +461,10 @@ export function GrokPane({
     applyStreamStatus("writing");
   }, [applyStreamStatus]);
 
+  const { ensureOwnedConversation } = useOwnedConversation({
+    pane, onUpdate, createNonceRef, createInFlightRef, conversationIdForRequest, INVALID_CHAT_TOAST,
+  });
+
   const { runStream } = useStreamRunner({
     pane, onUpdate, onHistoryChanged, voice, abortRef, abortingRef, turnIdRef,
     setAborting, setBusy, setStreamStatus, setInFlightSpend, applyStreamStatus, clearStreamStatus,
@@ -547,47 +552,6 @@ export function GrokPane({
 
   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
 
-
-  async function ensureOwnedConversation(): Promise<string> {
-    const existing =
-      conversationIdForRequest(pane.conversationId) ||
-      conversationIdForRequest(pane.createNonce) ||
-      conversationIdForRequest(createNonceRef.current);
-    if (conversationIdForRequest(pane.conversationId)) {
-      return pane.conversationId as string;
-    }
-    if (createInFlightRef.current) {
-      return createInFlightRef.current;
-    }
-    const id = existing || crypto.randomUUID();
-    createNonceRef.current = id;
-    onUpdate((current) => (current.createNonce === id ? current : { ...current, createNonce: id }));
-    const job = api
-      .createChatConversation({
-        id,
-        model: pane.modelChoice,
-        reasoning: pane.modelChoice === "auto" ? "auto" : pane.reasoningEffort,
-      })
-      .then((row) => {
-        const created = conversationIdForRequest(row.id);
-        if (!created) throw new ApiError(422, INVALID_CHAT_TOAST);
-        onUpdate((current) => {
-          if (current.createNonce !== id && current.conversationId !== created) return current;
-          return {
-            ...current,
-            createNonce: created,
-            conversationId: created,
-          };
-        });
-        return created;
-      });
-    createInFlightRef.current = job;
-    try {
-      return await job;
-    } finally {
-      if (createInFlightRef.current === job) createInFlightRef.current = null;
-    }
-  }
 
   async function attachFiles(fileList: FileList | File[]) {
     const incoming = snapshotFiles(fileList);
