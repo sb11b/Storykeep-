@@ -1475,7 +1475,7 @@ async def stream_completion(
         attach_tools = tools
     else:
         from app.services.chat_index import is_chat_index_tool
-        from app.services.cursor_agent_tool import is_cursor_tool
+        from app.services.cursor_agent_calls import is_cursor_tool
         from app.services.github_tool import is_github_tool
         from app.services.railway_tool import is_railway_tool
         from app.services.web_search import is_web_search_tool

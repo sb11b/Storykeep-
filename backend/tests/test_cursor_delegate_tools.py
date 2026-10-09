@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.services import chat
-from app.services.cursor_agent_tool import CURSOR_START_TOOL, is_cursor_tool
+from app.services.cursor_agent_calls import CURSOR_START_TOOL, is_cursor_tool
 from app.services.web_search import WEB_SEARCH_TOOL, is_web_search_tool
 
 
