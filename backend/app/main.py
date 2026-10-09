@@ -20,7 +20,7 @@ from app.request_logging import JuniorRequestLogMiddleware
 from app.database import Base, SessionLocal, engine
 from app.deps import get_current_user
 from app.models import Feed, User
-from app.routers import articles, auth, backups, calendar, chat, feeds, junior_chats, junior_jobs, junior_memory, junior_shared, library, mail, overlay, school, stt, sync, tts
+from app.routers import articles, auth, backups, calendar, chat, chat_crypto, feeds, junior_chats, junior_jobs, junior_memory, junior_shared, library, mail, overlay, school, stt, sync, tts
 from app.seed import seed_demo, _seed_owner_ledger
 from app.services import rss
 from app.services.backup import run_scheduled_s3_dumps
@@ -492,6 +492,7 @@ app.include_router(sync.router, prefix=API)
 app.include_router(backups.router, prefix=API)
 app.include_router(tts.router, prefix=API)
 app.include_router(chat.router, prefix=API)
+app.include_router(chat_crypto.router, prefix=API)
 app.include_router(school.router, prefix=API)
 app.include_router(junior_jobs.router, prefix=API)
 app.include_router(junior_memory.router, prefix=API)
