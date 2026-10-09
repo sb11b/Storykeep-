@@ -1400,14 +1400,14 @@ def _chat(
                     )
                     return f"{label} status was unavailable this turn. Answer without it."
 
-            if will_github:
+            if will_github and github_enabled:
                 block = await _ops_block(
                     "GitHub",
                     github_tool.fetch_status,
                     github_tool.format_status_for_model,
                 )
                 extra = f"{extra}\n{block}" if extra else block
-            if will_deploy:
+            if will_deploy and railway_enabled:
                 try:
                     deploy_outcome = await asyncio.to_thread(railway_tool.deploy)
                     already_deployed = deploy_outcome.ok
@@ -1420,7 +1420,7 @@ def _chat(
                     )
                     block = "Railway deploy was unavailable this turn. Answer without it."
                 extra = f"{extra}\n{block}" if extra else block
-            elif will_railway:
+            elif will_railway and railway_enabled:
                 block = await _ops_block(
                     "Railway",
                     railway_tool.fetch_status,
@@ -1759,7 +1759,7 @@ def _chat(
             raise
         except Exception as exc:
             partial_text = "".join(assistant_parts)
-            from app.http_limits import log_chat_exception, redact_secrets
+            from app.http_limits import redact_secrets
 
             log_chat_exception(
                 "Chat stream unexpected error",
