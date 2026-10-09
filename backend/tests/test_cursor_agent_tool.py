@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.services import cursor_agent_tool, junior_model
+from app.services.cursor_agent_intent import extract_branch, extract_prompt, wants_start
 from app.services.cursor_agent_replies import diverged_ff_reply, local_merge_repair, wsl_switch_reply
 from app.services.cursor_agent_sequence import next_step_task, sequence_number, sequenced_task
 from app.services.cursor_agent_tasks import polish_2_task
@@ -17,11 +18,11 @@ class CursorAgentToolTests(unittest.TestCase):
             "Run this in a cursor agent: refactor junior_model extras",
             "Open a Cloud Agent task for the STT draft race",
         ):
-            self.assertTrue(cursor_agent_tool.wants_start(msg), msg)
+            self.assertTrue(wants_start(msg), msg)
 
     def test_wants_start_not_prompt_generation(self):
         msg = "write a prompt for cursor to fix login"
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
         self.assertEqual(junior_model.cursor_turn_mode(msg), "generate")
 
     def test_delegate_turn_blocks_cursor_follow_mode(self):
@@ -35,35 +36,35 @@ class CursorAgentToolTests(unittest.TestCase):
     def test_extract_prompt_strips_prefix(self):
         raw = "Start a cursor agent to: add tests for railway deploy polling"
         self.assertEqual(
-            cursor_agent_tool.extract_prompt(raw),
+            extract_prompt(raw),
             "add tests for railway deploy polling",
         )
 
     def test_extract_branch_from_message(self):
         msg = "Launch cloud agent from develop to fix auth"
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "develop")
+        self.assertEqual(extract_branch(msg), "develop")
 
     def test_extract_branch_on_main(self):
         msg = "Launch cloud agent on main to fix auth"
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertEqual(extract_branch(msg), "main")
 
     def test_extract_branch_ignores_on_a_article(self):
         msg = (
             "Start a cursor agent on a new branch to scaffold the Android module "
             "days 1-3 Kotlin Compose min SDK 26"
         )
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertEqual(extract_branch(msg), "main")
 
     def test_extract_branch_explicit(self):
         msg = "Start cursor agent branch feature/android-voice on main repo"
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "feature/android-voice")
+        self.assertEqual(extract_branch(msg), "feature/android-voice")
 
     def test_extract_branch_ignores_storykeep_product_name(self):
         msg = (
             "Shared Junior memory is live on StoryKeep production. "
             "Start a cursor agent to record that the tables exist."
         )
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertEqual(extract_branch(msg), "main")
 
     def test_local_merge_conflict_does_not_start_an_agent(self):
         msg = (
@@ -74,7 +75,7 @@ class CursorAgentToolTests(unittest.TestCase):
             "go ahead and start next step\n"
             "pack-reused 0 (from 0)\n"
         )
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
         reply = local_merge_repair(msg)
         assert reply is not None
         self.assertIn("git merge --abort", reply)
@@ -87,7 +88,7 @@ class CursorAgentToolTests(unittest.TestCase):
         assert asked is not None
         self.assertIn("git merge --abort", asked)
         self.assertIn("git reset --hard github/main", asked)
-        self.assertFalse(cursor_agent_tool.wants_start("correct the error then give me a paste for ubantu"))
+        self.assertFalse(wants_start("correct the error then give me a paste for ubantu"))
 
     def test_fast_forward_paste_does_not_start_an_agent(self):
         msg = (
@@ -108,7 +109,7 @@ class CursorAgentToolTests(unittest.TestCase):
             "Cursor Cloud Agent create failed (HTTP 400): Branch 'is' does not exist "
             "in repository sb11b/Storykeep-.\n"
         )
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
         self.assertIsNone(local_merge_repair(msg))
         reply = diverged_ff_reply(msg)
         assert reply is not None
@@ -117,9 +118,9 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("cursor/next-step-in-sequence-b515", reply)
         self.assertIn("Do not push", reply)
         self.assertIn("There is no merge to abort", reply)
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertEqual(extract_branch(msg), "main")
         self.assertEqual(
-            cursor_agent_tool.extract_branch("Your branch is behind 'github/main' by 1 commit"),
+            extract_branch("Your branch is behind 'github/main' by 1 commit"),
             "main",
         )
         from app.services import chat as chat_service
@@ -145,7 +146,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("wsl -d Ubuntu", reply)
         self.assertNotIn("git merge --abort", reply)
         self.assertIsNone(local_merge_repair(msg))
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_extract_branch_ignores_git_pack_line(self):
         msg = (
@@ -154,16 +155,16 @@ class CursorAgentToolTests(unittest.TestCase):
             "From https://github.com/sb11b/Storykeep-\n"
             "Branch from current GitHub main"
         )
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertEqual(extract_branch(msg), "main")
 
     def test_wants_start_ignores_negated_phrase(self):
         msg = "Junior, this already happened. Do not start a Cursor agent for it."
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_sequenced_polish_starts_on_main(self):
         msg = "go ahead and start sequenced #2 polish"
-        self.assertTrue(cursor_agent_tool.wants_start(msg))
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertTrue(wants_start(msg))
+        self.assertEqual(extract_branch(msg), "main")
         task = polish_2_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
@@ -173,8 +174,8 @@ class CursorAgentToolTests(unittest.TestCase):
 
     def test_send_next_step_starts_sequenced_four(self):
         msg = "lets go ahead and send the next step"
-        self.assertTrue(cursor_agent_tool.wants_start(msg))
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertTrue(wants_start(msg))
+        self.assertEqual(extract_branch(msg), "main")
         task = next_step_task(msg)
         self.assertIsNotNone(task)
         assert task is not None
@@ -185,7 +186,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertNotIn("so Bugbot reviews it automatically", task)
         self.assertNotIn("cannot start an agent", task.lower())
         self.assertNotIn("isn't defined", task.lower())
-        self.assertFalse(cursor_agent_tool.wants_start("do not send the next step"))
+        self.assertFalse(wants_start("do not send the next step"))
         self.assertIsNone(next_step_task("do not send the next step"))
         six = next_step_task("go ahead and start sequence # 6")
         assert six is not None
@@ -403,17 +404,17 @@ class CursorAgentToolTests(unittest.TestCase):
 
     def test_sequence_number_five_starts(self):
         msg = "go ahead and start Sequence number five."
-        self.assertTrue(cursor_agent_tool.wants_start(msg))
+        self.assertTrue(wants_start(msg))
         self.assertEqual(sequence_number(msg), 5)
-        self.assertEqual(cursor_agent_tool.extract_branch(msg), "main")
+        self.assertEqual(extract_branch(msg), "main")
         task = sequenced_task(msg)
         assert task is not None
         self.assertIn("Sequenced #5", task)
         self.assertIn("last_failed_post", task)
         self.assertIn("Open a pull request into main so Bugbot reviews it automatically", task)
         self.assertNotIn("Do not open a pull request", task)
-        self.assertFalse(cursor_agent_tool.wants_start("do not start sequence number five"))
-        self.assertTrue(cursor_agent_tool.wants_start("start next step"))
+        self.assertFalse(wants_start("do not start sequence number five"))
+        self.assertTrue(wants_start("start next step"))
         four = next_step_task("sequenced #4")
         assert four is not None
         self.assertIn("Sequenced #4", four)
@@ -905,7 +906,7 @@ class CursorAgentToolTests(unittest.TestCase):
         # When CURSOR_API_KEY is missing, wants_start should still work for explicit
         # phrases (the missing-key check happens in start_agent), but the chat
         # routing should not attach the tool.
-        self.assertTrue(cursor_agent_tool.wants_start("Start a cursor agent to fix login"))
+        self.assertTrue(wants_start("Start a cursor agent to fix login"))
 
     def test_wants_start_negated_start_phrases(self):
         for msg in (
@@ -917,7 +918,7 @@ class CursorAgentToolTests(unittest.TestCase):
             "Don't start cursor for this task",
             "Never start cursor for this task",
         ):
-            self.assertFalse(cursor_agent_tool.wants_start(msg), msg)
+            self.assertFalse(wants_start(msg), msg)
 
     def test_wants_start_operator_rules_paste(self):
         for msg in (
@@ -926,7 +927,7 @@ class CursorAgentToolTests(unittest.TestCase):
             "do not start Cursor, even when asked",
             "never start Cursor from this chat",
         ):
-            self.assertFalse(cursor_agent_tool.wants_start(msg), msg)
+            self.assertFalse(wants_start(msg), msg)
 
     def test_wants_start_ignores_negated_start_anywhere_in_message(self):
         # Even if "start a cursor agent" appears later in the message, a
@@ -935,14 +936,14 @@ class CursorAgentToolTests(unittest.TestCase):
             "Steve pasted: do not start a cursor agent. "
             "Later in the same message: start a cursor agent to fix login"
         )
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_wants_start_operator_rules_blocks_later_start(self):
         msg = (
             "Cline operator rules. Do not start Cursor agents. "
             "Start a cursor agent to fix the login bug."
         )
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     @patch("app.services.cursor_agent_tool.settings")
     def test_is_delegate_turn_false_when_cursor_not_configured(self, mock_settings: MagicMock) -> None:
@@ -955,7 +956,7 @@ class CursorAgentToolTests(unittest.TestCase):
         mock_settings.cursor_api_key = "test_key"
         msg = "Start a cursor agent to fix the login bug"
         self.assertTrue(junior_model.is_delegate_turn(msg))
-        self.assertTrue(cursor_agent_tool.wants_start(msg))
+        self.assertTrue(wants_start(msg))
 
 
 if __name__ == "__main__":

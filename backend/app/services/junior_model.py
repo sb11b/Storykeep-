@@ -505,6 +505,7 @@ def is_ops_turn(message: str) -> bool:
 
 
 def is_delegate_turn(message: str) -> bool:
+    from app.services import cursor_agent_intent
     from app.services import cursor_agent_tool
 
     text = (message or "").strip()
@@ -514,7 +515,7 @@ def is_delegate_turn(message: str) -> bool:
         return False
     if not cursor_agent_tool.configured():
         return False
-    return cursor_agent_tool.wants_start(text)
+    return cursor_agent_intent.wants_start(text)
 
 
 def brings_cursor_task(message: str) -> bool:
@@ -660,8 +661,8 @@ def should_server_start_agent(message: str, *, configured: bool) -> bool:
     A supplied code task (follow mode) starts only when CURSOR_API_KEY is set.
     "Write me a cursor prompt" stays a copy-paste block and does not start an agent.
     """
+    from app.services import cursor_agent_intent
     from app.services import cursor_agent_replies
-    from app.services import cursor_agent_tool
 
     text = (message or "").strip()
     if not text:
@@ -672,7 +673,7 @@ def should_server_start_agent(message: str, *, configured: bool) -> bool:
         or cursor_agent_replies.wsl_switch_reply(text)
     ):
         return False
-    if cursor_agent_tool.wants_start(text):
+    if cursor_agent_intent.wants_start(text):
         return True
     if not configured:
         return False

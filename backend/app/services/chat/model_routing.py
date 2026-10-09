@@ -185,10 +185,10 @@ def should_attach_chat_tools(message: str) -> bool:
 
 def _is_cursor_start_explicit(text: str) -> bool:
     """True only when Steve explicitly says to start the Cursor agent."""
-    from app.services import cursor_agent_tool
+    from app.services import cursor_agent_intent
 
     lowered = (text or "").strip().lower()
-    if cursor_agent_tool.is_cursor_start_negated(lowered):
+    if cursor_agent_intent.is_cursor_start_negated(lowered):
         return False
     return bool(
         re.search(r"\b(?:start|launch|open|spawn)\s+(?:a\s+)?(?:cursor\s+)?(?:cloud\s+)?agent\b", lowered)
@@ -203,8 +203,8 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
     text = (message or "").strip()
     if not text or is_small_talk_turn(text):
         return False
+    from app.services import cursor_agent_intent
     from app.services import cursor_agent_replies
-    from app.services import cursor_agent_tool
     from app.services import junior_model
 
     if (
@@ -217,7 +217,7 @@ def pick_xhigh_for_auto(message: str, history: list[dict[str, str]] | None = Non
         return False
     if (
         junior_model.asks_for_cursor_prompt(text)
-        or cursor_agent_tool.is_cursor_start_negated(text)
+        or cursor_agent_intent.is_cursor_start_negated(text)
     ):
         return False
     # #68: sequence numbers, "write a Cline prompt", file paths, and Cline results

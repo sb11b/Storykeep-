@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from app.services import cursor_agent_tool, junior_model, railway_tool
+from app.services.cursor_agent_intent import wants_start
 
 
 class OpsTurnTests(unittest.TestCase):
@@ -162,24 +163,24 @@ class OpsTurnTests(unittest.TestCase):
 
     def test_wants_start_false_for_sequence_number(self):
         msg = "sequenced #68 pick xhigh"
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_wants_start_false_for_write_cline_prompt(self):
         msg = "write a Cline prompt to fix the bug"
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_wants_start_false_for_file_path(self):
         msg = "backend/app/services/chat.py needs review"
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_wants_start_false_for_cline_result(self):
         msg = "Cline returned the fix for login"
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_wants_start_false_sequence_with_explicit(self):
         # Sequence numbers return False early, even with explicit start words.
         msg = "go ahead and start sequenced #68"
-        self.assertFalse(cursor_agent_tool.wants_start(msg))
+        self.assertFalse(wants_start(msg))
 
     def test_pasted_git_status_stays_low(self):
         from app.services import chat as chat_service
