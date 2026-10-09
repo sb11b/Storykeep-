@@ -26,6 +26,7 @@ import { useNotePicker } from "@/lib/useNotePicker";
 import { useNoteFiling } from "@/lib/useNoteFiling";
 import { useSnippetRunner } from "@/lib/useSnippetRunner";
 import { useRetryAssistant } from "@/lib/useRetryAssistant";
+import { useImagineChat } from "@/lib/useImagineChat";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -422,6 +423,11 @@ export function GrokPane({
     setStreamStatus(null);
     onUpdate((current) => (current.streamStatus == null ? current : { ...current, streamStatus: null }));
   }, [onUpdate]);
+
+  const { runImagineFromChat } = useImagineChat({
+    pane, onUpdate, onHistoryChanged, label, applyStreamStatus, abortRef, abortingRef,
+    setAborting, setBusy, setInFlightSpend, clearStreamStatus, spendChipLabel, hasMediaImage, formatChatError,
+  });
 
   const failOpenTurn = useCallback(
     (assistantId?: string, aborted = false) => {
@@ -1516,101 +1522,6 @@ export function GrokPane({
 
 
 
-
-  async function runImagineFromChat(options: {
-    prompt: string;
-    mediaIds: string[];
-    userLine: ChatLine;
-    assistantId: string;
-  }) {
-    const { prompt, mediaIds, userLine, assistantId } = options;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    abortingRef.current = false;
-    setAborting(false);
-    setBusy(true);
-    applyStreamStatus("generating");
-    const routeLabel = spendChipLabel("grok-4.6", "low");
-    setInFlightSpend(routeLabel);
-    try {
-      const result = await api.chatImagine(
-        {
-          prompt,
-          conversation_id: pane.conversationId,
-          media_ids: mediaIds.length ? mediaIds : undefined,
-        },
-        controller.signal,
-      );
-      const reply = result.assistant_message;
-      const hasPixels =
-        hasMediaImage(reply.content || "") ||
-        (reply.files || []).some((file) => file.kind === "image" && file.media_id);
-      if (!hasPixels) {
-        throw new ApiError(502, "Could not generate that image.");
-      }
-      onUpdate((current) => ({
-        ...current,
-        conversationId: result.conversation_id || current.conversationId,
-        lastResolvedModel: "grok-4.6",
-        lastResolvedReasoning: "low",
-        streamStatus: null,
-        messages: current.messages.map((item) => {
-          if (item.id === userLine.id) {
-            return {
-              id: result.user_message.id,
-              role: "user" as const,
-              content: result.user_message.content || "",
-              files: result.user_message.files,
-            };
-          }
-          if (item.id === assistantId) {
-            return {
-              id: result.assistant_message.id,
-              role: "assistant" as const,
-              content: result.assistant_message.content || "",
-              files: result.assistant_message.files,
-              waiting: false,
-              failed: false,
-              error: null,
-              routeLabel,
-            };
-          }
-          return item;
-        }),
-      }));
-      onHistoryChanged?.();
-    } catch (error) {
-      if (controller.signal.aborted) {
-        onUpdate((current) => ({
-          ...current,
-          streamStatus: null,
-          messages: current.messages.map((item) =>
-            item.id === assistantId ? { ...item, waiting: false } : item,
-          ),
-        }));
-        return;
-      }
-      const status = error instanceof ApiError ? error.status : 502;
-      const detail = error instanceof ApiError ? error.message : "Could not generate that image.";
-      const formatted = formatChatError(status, detail, label);
-      onUpdate((current) => ({
-        ...current,
-        streamStatus: null,
-        messages: current.messages.map((item) =>
-          item.id === assistantId
-            ? { ...item, waiting: false, failed: true, error: formatted, content: "" }
-            : item,
-        ),
-      }));
-      toast.error("Could not generate that image.");
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      abortingRef.current = false;
-      setAborting(false);
-      setBusy(false);
-      clearStreamStatus();
-    }
-  }
 
   async function imagine() {
     const prompt = draftNow().trim();
