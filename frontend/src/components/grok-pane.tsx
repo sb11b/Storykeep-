@@ -29,6 +29,7 @@ import { useImagineChat } from "@/lib/useImagineChat";
 import { useChatSend } from "@/lib/useChatSend";
 import { useStreamRunner } from "@/lib/useStreamRunner";
 import { createContextHelpers } from "@/lib/context-helpers";
+import { useModelSettings } from "@/lib/useModelSettings";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -813,56 +814,9 @@ export function GrokPane({
     onUpdate((current) => ({ ...current, ...partial }));
   }
 
-  async function setModelChoice(next: string) {
-    const reasoning = next === "auto" ? "auto" : pane.reasoningEffort === "auto" ? "low" : pane.reasoningEffort;
-    patch({ modelChoice: next, reasoningEffort: next === "auto" ? pane.reasoningEffort : reasoning });
-    if (!pane.conversationId || !persist) return;
-    try {
-      const updated = await api.patchChatConversation(pane.conversationId, {
-        model: next,
-        reasoning: next === "auto" ? "auto" : reasoning,
-      });
-      patch({
-        modelChoice: updated.model,
-        lastResolvedModel: updated.last_model ?? pane.lastResolvedModel,
-        reasoningEffort:
-          updated.model === "auto"
-            ? pane.reasoningEffort
-            : isGrokReasoningEffort(updated.reasoning)
-              ? updated.reasoning
-              : reasoning,
-        lastResolvedReasoning: updated.last_reasoning ?? pane.lastResolvedReasoning,
-      });
-      onHistoryChanged?.();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function setReasoningEffort(next: string) {
-    patch({ reasoningEffort: next });
-    if (pane.modelChoice === "auto" || !pane.conversationId || !persist) return;
-    try {
-      const updated = await api.patchChatConversation(pane.conversationId, { reasoning: next });
-      patch({
-        reasoningEffort: isGrokReasoningEffort(updated.reasoning) ? updated.reasoning : next,
-        lastResolvedReasoning: updated.last_reasoning ?? pane.lastResolvedReasoning,
-      });
-      onHistoryChanged?.();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function setRecapQuestion(next: boolean) {
-    patch({ recapQuestion: next });
-    if (!pane.conversationId || !persist) return;
-    try {
-      await api.patchChatConversation(pane.conversationId, { recap_question: next });
-    } catch {
-      /* ignore */
-    }
-  }
+  const { setModelChoice, setReasoningEffort, setRecapQuestion } = useModelSettings({
+    pane, persist, patch, isGrokReasoningEffort, onHistoryChanged,
+  });
 
   async function createNoteFolder(shelf: FilingDestination = pane.noteDest) {
     const name = window.prompt(`New folder on ${destinationLabel(shelf, customShelves)}`);
