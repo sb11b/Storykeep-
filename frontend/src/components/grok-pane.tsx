@@ -30,6 +30,7 @@ import { useChatSend } from "@/lib/useChatSend";
 import { useStreamRunner } from "@/lib/useStreamRunner";
 import { createContextHelpers } from "@/lib/context-helpers";
 import { useModelSettings } from "@/lib/useModelSettings";
+import { useNoteFolder } from "@/lib/useNoteFolder";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -818,24 +819,9 @@ export function GrokPane({
     pane, persist, patch, isGrokReasoningEffort, onHistoryChanged,
   });
 
-  async function createNoteFolder(shelf: FilingDestination = pane.noteDest) {
-    const name = window.prompt(`New folder on ${destinationLabel(shelf, customShelves)}`);
-    if (!name?.trim()) return;
-    try {
-      const row = await api.createFolder(shelf, name.trim());
-      setFolders((current) => [...current, row]);
-      patch({ noteDest: shelf, noteFolderId: row.id });
-      saveLastFiling(shelf, row.id);
-    } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "Could not create folder");
-    }
-  }
-
-  function handleNoteDestChange(next: FilingDestination | "") {
-    if (!next) return;
-    patch({ noteDest: next, noteFolderId: null });
-    saveLastFiling(next, null);
-  }
+  const { createNoteFolder, handleNoteDestChange } = useNoteFolder({
+    pane, customShelves, destinationLabel, setFolders, patch, saveLastFiling,
+  });
 
   const modelOptions = ["auto", ...chatModels.filter((item, index, all) => all.indexOf(item) === index)];
   const voiceOptions = ttsVoices.length ? ttsVoices : fallbackTtsVoices();
