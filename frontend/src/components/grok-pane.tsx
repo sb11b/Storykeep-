@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from "lucide-react";
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,7 @@ import { useRetryAssistant } from "@/lib/useRetryAssistant";
 import { useImagineChat } from "@/lib/useImagineChat";
 import { useChatSend } from "@/lib/useChatSend";
 import { useStreamRunner } from "@/lib/useStreamRunner";
+import { createContextHelpers } from "@/lib/context-helpers";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -680,104 +681,23 @@ export function GrokPane({
     });
   }
 
+  const contextHelpers = createContextHelpers({
+    pane, articleId, articleBody, plannedIncludeSlice, plannedWorkingSlice,
+    chatContextOverCap, estimateChatContextChars, GROK_CONTEXT_CHAR_CAP, PASTE_FIRST_CHUNK_CHARS,
+    pasteSplitToast, splitPasteChunk, textareaSelection, draftRef, readerCtx, onOpenRemainderChat,
+    send, Button, createElement,
+  });
+
   function contextInput(draft: string, extraMessages: ChatLine[] = pane.messages) {
-    const noteBody =
-      pane.includeNoteId && articleId && pane.includeNoteId === articleId ? articleBody : null;
-    const slice = plannedIncludeSlice();
-    const workingSlice = plannedWorkingSlice();
-    return {
-      messages: extraMessages,
-      draft,
-      includeArticle: Boolean(pane.includeArticle && articleId),
-      articleBody,
-      includeNote: Boolean(pane.includeNoteId),
-      noteBody,
-      includeSliceChars: slice?.chars,
-      workingNoteSliceChars: workingSlice?.chars,
-      pendingExtracts: (pane.pendingAttachments ?? []).map((item) => item.extract_text),
-    };
+    return contextHelpers.contextInput(draft, extraMessages);
   }
 
   function contextTooLarge(draft: string, extraMessages: ChatLine[] = pane.messages) {
-    return chatContextOverCap(contextInput(draft, extraMessages));
-  }
-
-  function pasteChunkSize() {
-    const used = estimateChatContextChars(contextInput(""));
-    const budget = GROK_CONTEXT_CHAR_CAP - used;
-    return Math.min(PASTE_FIRST_CHUNK_CHARS, Math.max(1, budget));
+    return contextHelpers.contextTooLarge(draft, extraMessages);
   }
 
   function offerPasteSplit(draft: string) {
-    const source = draft;
-    const n = source.length;
-    toast.custom(
-      (id) => (
-        <div className="flex w-[min(100%,22rem)] flex-col gap-2 rounded-lg border bg-background p-3 text-sm shadow-md">
-          <p>{pasteSplitToast(n)}</p>
-          <div className="flex flex-col gap-1">
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 justify-start"
-              onClick={() => {
-                toast.dismiss(id);
-                const { first, remainder } = splitPasteChunk(source, pasteChunkSize());
-                void send({ message: first, keepDraft: remainder, skipPasteSplit: true });
-              }}
-            >
-              Send first chunk
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 justify-start"
-              onClick={() => {
-                const selected = textareaSelection(draftRef.current) || readerCtx.selection;
-                if (!selected.trim()) {
-                  toast.error("Highlight text in the box, then Include selection.");
-                  return;
-                }
-                toast.dismiss(id);
-                void send({
-                  message: selected,
-                  keepDraft: source,
-                  skipPasteSplit: selected.length <= PASTE_FIRST_CHUNK_CHARS,
-                });
-              }}
-            >
-              Include selection
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 justify-start"
-              onClick={() => {
-                toast.dismiss(id);
-                const { first, remainder } = splitPasteChunk(source, pasteChunkSize());
-                let parked = false;
-                if (remainder && onOpenRemainderChat) {
-                  parked = Boolean(onOpenRemainderChat(remainder));
-                }
-                if (remainder && !parked) {
-                  toast.message("Remainder stayed in this box — Junior is full.");
-                }
-                void send({
-                  message: first,
-                  keepDraft: remainder && !parked ? remainder : "",
-                  skipPasteSplit: true,
-                });
-              }}
-            >
-              New chat with remainder
-            </Button>
-          </div>
-        </div>
-      ),
-      { duration: 30_000 },
-    );
+    contextHelpers.offerPasteSplit(draft);
   }
 
   const fillComposerDraft = useCallback(
