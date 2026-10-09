@@ -15,7 +15,6 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import SessionLocal, get_db
 from app.deps import require_user
 from app.models import User
@@ -101,19 +100,6 @@ class ChatIn(BaseModel):
         return self
 
 
-class SearchIn(BaseModel):
-    query: str = Field(min_length=1, max_length=search_tool.QUERY_CHAR_CAP)
-
-
-@router.post("/search")
-def junior_web_search(payload: SearchIn, user: User = Depends(require_user)) -> dict:
-    search_tool.reject_demo(user)
-    outcome = search_tool.search(payload.query)
-    if outcome.fatal:
-        raise HTTPException(status_code=outcome.status_code or 503, detail=outcome.detail)
-    return outcome.as_payload()
-
-
 def _file_out(row) -> GrokMessageFileOut:
     return GrokMessageFileOut(
         media_id=row.media_id,
@@ -138,46 +124,6 @@ def _message_out(row, *, crypto_enabled: bool = False) -> GrokMessageOut:
         created_at=row.created_at,
         files=[_file_out(item) for item in (row.files or [])],
     )
-
-
-@router.get("/chat")
-def chat_status(
-    db: Session = Depends(get_db),
-    user: User = Depends(require_user),
-) -> dict:
-    locked = is_locked(user)
-    models = chat_service.available_models()
-    return {
-        "enabled": chat_service.key_configured() and not locked,
-        "locked": locked,
-        "provider": "xai",
-        "model": chat_service.default_full_model(),
-        "models": models,
-        "default_model": chat_service.default_full_model(),
-        "fast_model": chat_service.default_fast_model(),
-        "reasoning_efforts": list(chat_service.REASONING_EFFORTS),
-        "requests_per_hour": int(settings.chat_requests_per_hour or 120),
-        "imagine_requests_per_hour": int(settings.imagine_requests_per_hour or 10),
-        "persist": grok_store.should_persist(user),
-        "key_configured": chat_service.key_configured(),
-        "key_format_ok": chat_service.key_format_ok(),
-        "message_crypto": message_crypto.status(db, user),
-    }
-
-
-@router.get("/chat/health")
-def chat_health(user: User = Depends(require_user)) -> dict:
-    """Ping xAI with a 1-token request. Auth required; does not consume chat quota."""
-    if not chat_service.key_configured():
-        return {
-            "ok": False,
-            "model": chat_service.default_full_model(),
-            "reasoning": chat_service.DEFAULT_REASONING_EFFORT,
-            "ttft_ms": None,
-            "xai_status": None,
-            "message": "XAI_API_KEY is not set or must start with xai-.",
-        }
-    return chat_service.ping_xai()
 
 
 # Heavy turns (attachments, working notes) can spend several seconds in setup.

@@ -13,6 +13,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.main import http_exception_with_message
 from app.routers import chat as chat_router
+from app.routers import chat_status as status_router
 from app.services import chat as chat_service
 
 
@@ -20,6 +21,7 @@ def _app() -> FastAPI:
     app = FastAPI()
     app.add_exception_handler(StarletteHTTPException, http_exception_with_message)
     app.include_router(chat_router.router, prefix="/api/v1")
+    app.include_router(status_router.router, prefix="/api/v1")
     user = SimpleNamespace(
         id=uuid.uuid4(),
         email="stevebitsko@duck.com",
