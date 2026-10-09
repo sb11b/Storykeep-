@@ -56,6 +56,7 @@ from app.services import web_search as search_tool
 from app.services import x_search as x_tool
 from app.services import railway_tool
 from app.services import github_tool
+from app.services import cursor_agent_intent
 from app.services import cursor_agent_replies
 from app.services import cursor_agent_sequence
 from app.services import cursor_agent_tool
@@ -1281,7 +1282,7 @@ def _chat(
                         f"Asked from the StoryKeep chat named {pane_label}. "
                         "Stay on the existing Storykeep repository. Do not create a new project."
                     )
-                start_branch = cursor_agent_tool.extract_branch(user_text)
+                start_branch = cursor_agent_intent.extract_branch(user_text)
                 try:
                     start_task = asyncio.create_task(
                         asyncio.to_thread(
