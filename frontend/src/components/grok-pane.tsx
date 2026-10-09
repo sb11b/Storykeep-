@@ -32,6 +32,7 @@ import { createContextHelpers } from "@/lib/context-helpers";
 import { useModelSettings } from "@/lib/useModelSettings";
 import { useNoteFolder } from "@/lib/useNoteFolder";
 import { useOwnedConversation } from "@/lib/useOwnedConversation";
+import { useFileAttach } from "@/lib/useFileAttach";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -553,59 +554,10 @@ export function GrokPane({
   /** Same path as Listen, triggered when an assistant reply finishes streaming. */
 
 
-  async function attachFiles(fileList: FileList | File[]) {
-    const incoming = snapshotFiles(fileList);
-    if (!incoming.length) return;
-    if (locked || !enabled) {
-      toast.error("Chat is not available for attachments right now.");
-      return;
-    }
-    const already = pane.pendingAttachments ?? [];
-    const room = LARRY_ATTACH_MAX_FILES - already.length;
-    if (room <= 0) {
-      toast.error(`Attach up to ${LARRY_ATTACH_MAX_FILES} files.`);
-      return;
-    }
-    const chosen = incoming.slice(0, room);
-    if (incoming.length > room) {
-      toast.error(`Attach up to ${LARRY_ATTACH_MAX_FILES} files.`);
-    }
-    setUploadingFiles(true);
-    try {
-      for (const file of chosen) {
-        const reason = rejectLarryFile(file);
-        if (reason) {
-          toast.error(reason);
-          continue;
-        }
-        const uploaded = await uploadLarryAttachment(file);
-        if (!uploaded.id) {
-          toast.error("No attach without a media id.");
-          continue;
-        }
-        onUpdate((current) => {
-          const pending = current.pendingAttachments ?? [];
-          if (pending.some((item) => item.id === uploaded.id)) return current;
-          if (pending.length >= LARRY_ATTACH_MAX_FILES) return current;
-          return { ...current, pendingAttachments: [...pending, uploaded] };
-        });
-      }
-    } catch (error) {
-      toastActionError(error, "attach that file", "Could not attach that file");
-    } finally {
-      setUploadingFiles(false);
-    }
-  }
-
-  function removePending(mediaId: string) {
-    onUpdate((current) => ({
-      ...current,
-      pendingAttachments: (current.pendingAttachments ?? []).filter((item) => item.id !== mediaId),
-    }));
-    void api.deleteNoteMedia(mediaId).catch(() => {
-      /* still drop the chip */
-    });
-  }
+  const { attachFiles, removePending } = useFileAttach({
+    pane, onUpdate, locked, enabled, setUploadingFiles, snapshotFiles,
+    LARRY_ATTACH_MAX_FILES, rejectLarryFile, uploadLarryAttachment, toastActionError,
+  });
 
   function plannedWorkingSlice() {
     if (!pane.workingNoteId) return null;
