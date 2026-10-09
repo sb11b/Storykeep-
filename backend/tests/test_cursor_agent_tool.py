@@ -7,7 +7,7 @@ from app.services import cursor_agent_tool, junior_model
 from app.services.cursor_agent_intent import extract_branch, extract_prompt, wants_start
 from app.services.cursor_agent_replies import diverged_ff_reply, local_merge_repair, wsl_switch_reply
 from app.services.cursor_agent_sequence import next_step_task, sequence_number, sequenced_task
-from app.services.cursor_agent_tasks import polish_2_task
+from app.services.cursor_agent_task_match import polish_2_task
 
 
 class CursorAgentToolTests(unittest.TestCase):

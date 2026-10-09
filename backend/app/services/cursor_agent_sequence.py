@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import re
 
+from app.services.cursor_agent_task_match import (
+    _NEXT_STEP_RE,
+    _NUM_WORDS,
+    _SEQ_MENTION_RE,
+    polish_2_task,
+)
 from app.services.cursor_agent_tasks import (
-    POLISH_2_TASK,
     SEQ_4_TASK,
     SEQ_5_TASK,
     SEQ_6_TASK,
@@ -59,11 +64,6 @@ from app.services.cursor_agent_tasks import (
     SEQ_56_TASK,
     SEQ_57_TASK,
     SEQ_58_TASK,
-    _POLISH_2_RE,
-    _NEXT_STEP_RE,
-    _NUM_WORDS,
-    _SEQ_MENTION_RE,
-    polish_2_task,
 )
 
 _NEGATED_START_RE = re.compile(
