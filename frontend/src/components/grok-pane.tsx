@@ -27,6 +27,7 @@ import { useNoteFiling } from "@/lib/useNoteFiling";
 import { useSnippetRunner } from "@/lib/useSnippetRunner";
 import { useRetryAssistant } from "@/lib/useRetryAssistant";
 import { useImagineChat } from "@/lib/useImagineChat";
+import { useChatSend } from "@/lib/useChatSend";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -300,18 +301,6 @@ export function GrokPane({
   /* ── Chat creation refs ── */
   const createNonceRef = useRef<string | null>(null);
   const createInFlightRef = useRef<Promise<string> | null>(null);
-  const sendRef = useRef<
-    (opts?: {
-      message?: string;
-      fromStt?: boolean;
-      keepDraft?: string;
-      skipPasteSplit?: boolean;
-      includeMode?: IncludeMode;
-      includeHeading?: string | null;
-      includeSelection?: string | null;
-      includeOffset?: number;
-    }) => Promise<void>
-  >(async () => {});
   const [dragOver, setDragOver] = useState(false);
   const [streamStatus, setStreamStatus] = useState<ChatStatusKind | null>(null);
   const streamStatusRef = useRef<ChatStatusKind | null>(null);
@@ -362,6 +351,13 @@ export function GrokPane({
   const gotDeltaRef = useRef(false);
   const generatingRef = useRef(false);
   const [readerCtx, setReaderCtx] = useState({ selection: "", heading: null as string | null });
+  const { send, sendRef } = useChatSend({
+    pane, onUpdate, enabled, busy, aborting, abortingRef, inFlightRef, setAborting, setBusy, setStreamStatus,
+    turnIdRef, abortRef, toast, dictation, voice, readerCtx, articleId, articleTitle, articleBody,
+    contextTooLarge, threadContextToast, contextInput, offerPasteSplit, thisTurnImageMediaIds, imageToolIntent,
+    headingFromInstruction, resolveIncludeSlice, articleNeedsIncludeSlice, pendingToMessageFile, runStream, draftNow,
+    PASTE_FIRST_CHUNK_CHARS, WORKING_NOTE_CHAR_CAP,
+  });
 
   useEffect(() => {
     const sync = () => setReaderCtx(readerIncludeContext());
@@ -1339,147 +1335,6 @@ export function GrokPane({
       { duration: 30_000 },
     );
   }
-
-  async function send(opts?: {
-    message?: string;
-    fromStt?: boolean;
-    keepDraft?: string;
-    skipPasteSplit?: boolean;
-    includeMode?: IncludeMode;
-    includeHeading?: string | null;
-    includeSelection?: string | null;
-    includeOffset?: number;
-  }) {
-    if (!opts?.fromStt) {
-      dictation?.abort();
-      voice.micAbortRef.current?.();
-    }
-    const content = (opts?.message ?? draftNow()).trim();
-    const pending = pane.pendingAttachments ?? [];
-    if (pending.some((item) => !item.id)) {
-      toast.error("Wait for the file to finish uploading.");
-      return;
-    }
-    const files = pending.filter((item) => item.id);
-    if ((!content && !files.length) || busy || aborting || abortingRef.current || !enabled || inFlightRef.current) {
-      if (opts?.fromStt && content) {
-        toast.error("Could not send voice message — try again or tap Send.");
-      }
-      return;
-    }
-    if (pane.includeArticle && articleId) {
-      const mode = opts?.includeMode || pane.includeMode;
-      if (mode === "selection" && !(opts?.includeSelection || readerCtx.selection)) {
-        toast.error("Highlight text in the reader, then Include selection.");
-        return;
-      }
-      if (mode === "heading" && !(opts?.includeHeading || pane.includeHeading)) {
-        toast.error("Pick a heading from this note.");
-        return;
-      }
-    }
-    if (contextTooLarge(content)) {
-      const raw = opts?.message ?? draftNow();
-      const capToast = threadContextToast(contextInput(content));
-      if (!opts?.skipPasteSplit && raw.length >= PASTE_FIRST_CHUNK_CHARS) {
-        offerPasteSplit(raw);
-        return;
-      }
-      toast.error(capToast);
-      return;
-    }
-    inFlightRef.current = true;
-    const turnId = ++turnIdRef.current;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    abortingRef.current = false;
-    setAborting(false);
-    setBusy(true);
-    try {
-    const imageIds = thisTurnImageMediaIds(files);
-    const intent = imageToolIntent(content, imageIds.length > 0);
-    const wantsImage = intent === "edit" || intent === "generate";
-    let includeMode = opts?.includeMode || pane.includeMode;
-    let includeHeading = opts?.includeHeading ?? pane.includeHeading;
-    const includeSelection = opts?.includeSelection || (includeMode === "selection" ? readerCtx.selection : undefined);
-    const includeOffset = opts?.includeOffset ?? pane.includeOffset ?? 0;
-    if (pane.workingNoteId && (includeMode === "auto" || !includeMode) && !includeHeading) {
-      const guessed = headingFromInstruction(
-        content,
-        pane.workingNoteId === articleId ? articleBody || "" : "",
-      );
-      if (guessed) {
-        includeMode = "heading";
-        includeHeading = guessed;
-      }
-    }
-    const workingBody = pane.workingNoteId === articleId ? articleBody || "" : "";
-    const previewSlice = pane.workingNoteId
-      ? workingBody
-        ? resolveIncludeSlice({
-            body: workingBody,
-            mode:
-              includeMode === "auto" && articleNeedsIncludeSlice(workingBody, WORKING_NOTE_CHAR_CAP)
-                ? "chunk"
-                : includeMode,
-            heading: includeHeading,
-            offset: includeOffset,
-            title: pane.workingNoteTitle || articleTitle,
-            cap: WORKING_NOTE_CHAR_CAP,
-            hardMax: WORKING_NOTE_CHAR_CAP,
-          })
-        : null
-      : pane.includeArticle && articleId
-        ? resolveIncludeSlice({
-            body: articleBody || "",
-            mode: includeMode === "auto" && articleNeedsIncludeSlice(articleBody) ? "chunk" : includeMode,
-            selection: includeSelection,
-            heading: includeHeading,
-            offset: includeOffset,
-            title: articleTitle,
-          })
-        : null;
-    const userLine: ChatLine = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content,
-      files: files.map(pendingToMessageFile),
-      includeChip: previewSlice?.chip,
-      includeMode,
-      includeHeading,
-      includeOffset,
-    };
-    const assistantId = crypto.randomUUID();
-    onUpdate((current) => ({
-      ...current,
-      draft: opts?.keepDraft ?? "",
-      pendingAttachments: [],
-      streamStatus: wantsImage ? "generating" : "queued",
-      messages: [
-        ...current.messages,
-        userLine,
-        { id: assistantId, role: "assistant", content: "", waiting: true, turnStatus: wantsImage ? "writing" : "queued" },
-      ],
-    }));
-    setStreamStatus(wantsImage ? "generating" : "queued");
-    await runStream({
-      message: content || (files[0] ? `Please look at ${files.map((item) => item.name).join(", ")}.` : ""),
-      userLine,
-      assistantId,
-      mediaIds: files.map((item) => item.id),
-      includeMode,
-      includeHeading,
-      includeSelection,
-      includeOffset,
-      controller,
-      turnId,
-    });
-    } finally {
-      if (turnId === turnIdRef.current) inFlightRef.current = false;
-    }
-  }
-
-  sendRef.current = send;
 
   const fillComposerDraft = useCallback(
     (transcript: string, focus = false) => {
