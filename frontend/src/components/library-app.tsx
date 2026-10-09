@@ -152,34 +152,23 @@ import { initialListDebug, listRangeLabel } from "@/lib/list-range";
 import { toastErrorFromUnknown } from "@/lib/toast-message";
 import { isFeedId, isNoteShrinkMessage } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
-
-function isStoryKeepNote(article: Article): boolean {
-  return (article.guid || "").startsWith("storykeep-note:");
-}
-
-function isVaultImport(article: Article): boolean {
-  return (article.guid || "").startsWith("obsidian:") && article.source_kind !== "textbook";
-}
+import {
+  composedNoteHtml as composedNoteHtmlOf,
+  composedNoteMarkdown,
+  displayArticleShelf as displayArticleShelfOf,
+  isStoryKeepNote,
+  isVaultImport,
+  readerActionError as readerActionErrorOf,
+  shelfKey,
+  shelfTitle,
+  snapshotKind,
+  snapshotStamp,
+} from "@/lib/library-utils";
 
 const RSS_SHELF_KEY = "storykeep-rss-shelf-id";
 
 function displayArticleShelf(article: Article): FilingDestination | "" {
-  if (article.destination) {
-    return asFilingDestination(article.destination, article.destination);
-  }
-  if (article.source_kind === "textbook") return "books";
-  return "";
-}
-
-function snapshotKind(row: SnapshotRow): "html" | "pdf" {
-  if (row.type === "pdf" || row.archive_type === "pdf") return "pdf";
-  return "html";
-}
-
-function snapshotStamp(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return iso;
-  return parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return displayArticleShelfOf(article, asFilingDestination);
 }
 
 const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
@@ -510,92 +499,11 @@ function PdfSnapshotViewer({
 }
 
 function readerActionError(error: unknown, fallback: string): never {
-  toastErrorFromUnknown(error, fallback);
-  throw error;
-}
-
-function composedNoteMarkdown(article: Article): string {
-  const fromArticle = (article.content_text || "").trim();
-  if (fromArticle) return fromArticle;
-  const fromOverlay = (article.overlay_additions?.[0]?.markdown || "").trim();
-  if (fromOverlay) return fromOverlay;
-  return "";
+  return readerActionErrorOf(error, fallback, toastErrorFromUnknown);
 }
 
 function composedNoteHtml(article: Article): string {
-  const markdown = composedNoteMarkdown(article);
-  if (markdown) return sanitizeHtml(noteMarkdownHtml(markdown));
-  if (article.content_html) return sanitizeHtml(article.content_html);
-  return "";
-}
-
-function shelfTitle(
-  shelf: Shelf,
-  feeds: Feed[],
-  categories: Category[],
-  tags: Tag[],
-  folders: Folder[],
-  customNoteShelves: CustomNoteShelf[],
-): string {
-  switch (shelf.kind) {
-    case "inbox":
-      return "All stories";
-    case "unread":
-      return "Unread";
-    case "saved":
-      return "Saved for life";
-    case "starred":
-      return "Starred";
-    case "notes": {
-      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
-      return folder ? `${folder.name} · Notes` : "Notes";
-    }
-    case "vault": {
-      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
-      return folder ? `${folder.name} · Vault` : "Vault";
-    }
-    case "additions": {
-      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
-      return folder ? `${folder.name} · Additions` : "Additions";
-    }
-    case "books": {
-      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
-      return folder ? `${folder.name} · Books` : "Books";
-    }
-    case "schoolwork": {
-      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
-      return folder ? `${folder.name} · Schoolwork` : "Schoolwork";
-    }
-    case "custom": {
-      const folder = shelf.folderId ? folderById(folders, shelf.folderId) : undefined;
-      const label = destinationLabel(shelf.id, customNoteShelves);
-      return folder ? `${folder.name} · ${label}` : label;
-    }
-    case "search":
-      return `Search: ${shelf.q}`;
-    case "feed":
-      return feeds.find((feed) => feed.id === shelf.id)?.title ?? "Feed";
-    case "category":
-      return categories.find((category) => category.id === shelf.id)?.name ?? "Category";
-    case "tag":
-      return tags.find((tag) => tag.id === shelf.id)?.name ?? "Tag";
-  }
-}
-
-function shelfKey(shelf: Shelf): string {
-  switch (shelf.kind) {
-    case "feed":
-    case "category":
-    case "tag":
-      return `${shelf.kind}:${shelf.id}`;
-    case "search":
-      return `search:${shelf.q}`;
-    case "custom":
-      return shelf.folderId ? `custom:${shelf.id}:folder:${shelf.folderId}` : `custom:${shelf.id}`;
-    default:
-      if (isFolderShelf(shelf) && shelf.folderId) return `${shelf.kind}:folder:${shelf.folderId}`;
-      return shelf.kind;
-  }
+  return composedNoteHtmlOf(article, sanitizeHtml, noteMarkdownHtml);
 }
 
 const LIST_PAGE = 40;
