@@ -89,6 +89,10 @@ export function PdfSnapshotViewer({
       return;
     }
     let cancelled = false;
+    let loadingTask: {
+      destroy: () => Promise<void>;
+      promise: Promise<{ numPages: number; getPage: (n: number) => Promise<any>; destroy: () => Promise<void> }>;
+    } | null = null;
     let widthObserver: ResizeObserver | null = null;
     let widthTimer: number | undefined;
     let raf = 0;
@@ -196,9 +200,14 @@ export function PdfSnapshotViewer({
         }
         if (cancelled) return;
         const pdfjs = await import("pdfjs-dist");
+        if (cancelled) return;
         pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
-        const loadingTask = pdfjs.getDocument({ data: bytes.slice() });
+        loadingTask = pdfjs.getDocument({ data: bytes.slice() });
         const doc = await loadingTask.promise;
+        if (cancelled) {
+          void doc.destroy().catch(() => undefined);
+          return;
+        }
         pdfRef.current = doc;
         const pageCount = Number(doc.numPages) || 0;
         if (pageCount < 1) throw new Error("That PDF has no pages.");
@@ -245,6 +254,7 @@ export function PdfSnapshotViewer({
 
     return () => {
       cancelled = true;
+      void loadingTask?.destroy().catch(() => undefined);
       widthObserver?.disconnect();
       if (widthTimer !== undefined) window.clearTimeout(widthTimer);
       if (raf) window.cancelAnimationFrame(raf);
