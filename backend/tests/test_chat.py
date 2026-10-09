@@ -28,7 +28,7 @@ class ChatGuardTests(unittest.TestCase):
 
     def test_chat_in_accepts_a_large_paste_instead_of_422(self):
         from pydantic import ValidationError
-        from app.routers.chat import ChatIn
+        from app.routers.chat_stream import ChatIn
 
         body = ChatIn(message="x" * 24_000)
         self.assertEqual(len(body.message), 24_000)

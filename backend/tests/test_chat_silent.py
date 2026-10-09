@@ -12,7 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.database import get_db
 from app.deps import get_current_user
 from app.main import http_exception_with_message
-from app.routers import chat as chat_router
+from app.routers import chat_stream as chat_router
 from app.routers import chat_status as status_router
 from app.services import chat as chat_service
 
@@ -46,7 +46,7 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
             patch.object(chat_service, "stream_completion", silent),
         ):
             client = TestClient(app)
@@ -71,7 +71,7 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
             patch.object(chat_service, "stream_completion", fake_stream),
         ):
             client = TestClient(app)
@@ -101,9 +101,9 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.calendars.is_connected", return_value=True),
-            patch("app.routers.chat.is_locked", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.calendars.is_connected", return_value=True),
+            patch("app.routers.chat_stream.is_locked", return_value=False),
             patch.object(chat_service, "stream_completion", fake_stream),
         ):
             client = TestClient(app)
@@ -127,11 +127,11 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.mail_service.has_token", return_value=True),
-            patch("app.routers.chat.mail_service.require_token", return_value="fmu1-test-token-not-real"),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.mail_service.has_token", return_value=True),
+            patch("app.routers.chat_stream.mail_service.require_token", return_value="fmu1-test-token-not-real"),
             patch(
-                "app.routers.chat.jmap.list_emails",
+                "app.routers.chat_stream.jmap.list_emails",
                 return_value={
                     "items": [
                         {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
@@ -168,11 +168,11 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.mail_service.has_token", return_value=True),
-            patch("app.routers.chat.mail_service.require_token", return_value="fmu1-test-token-not-real"),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.mail_service.has_token", return_value=True),
+            patch("app.routers.chat_stream.mail_service.require_token", return_value="fmu1-test-token-not-real"),
             patch(
-                "app.routers.chat.jmap.list_emails",
+                "app.routers.chat_stream.jmap.list_emails",
                 return_value={
                     "items": [
                         {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
@@ -209,11 +209,11 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.mail_service.has_token", return_value=True),
-            patch("app.routers.chat.mail_service.require_token", return_value="fmu1-test-token-not-real"),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.mail_service.has_token", return_value=True),
+            patch("app.routers.chat_stream.mail_service.require_token", return_value="fmu1-test-token-not-real"),
             patch(
-                "app.routers.chat.jmap.list_emails",
+                "app.routers.chat_stream.jmap.list_emails",
                 return_value={
                     "items": [
                         {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
@@ -251,9 +251,9 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.search_tool.owner_can_search", return_value=True),
-            patch("app.routers.chat.search_tool.wants_web_search", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.search_tool.owner_can_search", return_value=True),
+            patch("app.routers.chat_stream.search_tool.wants_web_search", return_value=False),
             patch.object(chat_service, "stream_completion", fake_stream),
         ):
             client = TestClient(app)
@@ -277,7 +277,7 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
             patch.object(chat_service, "stream_completion", empty),
         ):
             client = TestClient(app)
@@ -299,7 +299,7 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
             patch.object(chat_service, "stream_completion", fake_stream),
         ):
             client = TestClient(app)
@@ -328,7 +328,7 @@ class ChatSilentGateTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
             patch.object(chat_service, "stream_completion", fake_stream),
         ):
             client = TestClient(app)
@@ -437,9 +437,9 @@ class CursorStartPayloadTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome),
-            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.cursor_agent_tool.start_agent", return_value=outcome),
+            patch("app.routers.chat_stream.cursor_agent_tool.owner_can_use", return_value=True),
         ):
             client = TestClient(app)
             response = client.post(
@@ -472,9 +472,9 @@ class CursorStartPayloadTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
-            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
+            patch("app.routers.chat_stream.cursor_agent_tool.owner_can_use", return_value=True),
         ):
             response = TestClient(app).post(
                 "/api/v1/chat",
@@ -508,9 +508,9 @@ class CursorStartPayloadTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
-            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
+            patch("app.routers.chat_stream.cursor_agent_tool.owner_can_use", return_value=True),
         ):
             response = TestClient(app).post(
                 "/api/v1/chat",
@@ -546,9 +546,9 @@ class CursorStartPayloadTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
-            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.cursor_agent_tool.start_agent", return_value=outcome) as start_agent,
+            patch("app.routers.chat_stream.cursor_agent_tool.owner_can_use", return_value=True),
         ):
             response = TestClient(app).post(
                 "/api/v1/chat",
@@ -572,9 +572,9 @@ class CursorStartPayloadTests(unittest.TestCase):
         with (
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
-            patch("app.routers.chat.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat.cursor_agent_tool.start_agent") as start_agent,
-            patch("app.routers.chat.cursor_agent_tool.owner_can_use", return_value=True),
+            patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
+            patch("app.routers.chat_stream.cursor_agent_tool.start_agent") as start_agent,
+            patch("app.routers.chat_stream.cursor_agent_tool.owner_can_use", return_value=True),
         ):
             response = TestClient(app).post(
                 "/api/v1/chat",

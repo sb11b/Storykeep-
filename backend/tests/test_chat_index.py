@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.database import get_db
 from app.deps import get_current_user
 from app.main import http_exception_with_message
-from app.routers import chat as chat_router
+from app.routers import chat_stream as chat_router
 from app.services import chat as chat_service
 from app.services import chat_index
 from app.services import web_search
@@ -46,10 +46,10 @@ def _stream_patches(fake_stream):
     with ExitStack() as stack:
         stack.enter_context(patch.object(chat_service, "require_key", return_value="xai-test"))
         stack.enter_context(patch.object(chat_service, "enforce_rate_limit"))
-        stack.enter_context(patch("app.routers.chat.grok_store.should_persist", return_value=False))
-        stack.enter_context(patch("app.routers.chat.calendars.is_connected", return_value=False))
-        stack.enter_context(patch("app.routers.chat.mail_service.has_token", return_value=False))
-        stack.enter_context(patch("app.routers.chat.junior_memory.system_section", return_value=None))
+        stack.enter_context(patch("app.routers.chat_stream.grok_store.should_persist", return_value=False))
+        stack.enter_context(patch("app.routers.chat_stream.calendars.is_connected", return_value=False))
+        stack.enter_context(patch("app.routers.chat_stream.mail_service.has_token", return_value=False))
+        stack.enter_context(patch("app.routers.chat_stream.junior_memory.system_section", return_value=None))
         stack.enter_context(patch.object(web_search, "configured", return_value=False))
         stack.enter_context(patch.object(chat_service, "stream_completion", fake_stream))
         yield
@@ -191,7 +191,7 @@ class ChatIndexRouteTests(unittest.TestCase):
         with (
             _stream_patches(fake_stream),
             patch(
-                "app.routers.chat.chat_index.build_index",
+                "app.routers.chat_stream.chat_index.build_index",
                 return_value=[
                     {
                         "id": cid,
@@ -251,7 +251,7 @@ class ChatIndexRouteTests(unittest.TestCase):
         with (
             _stream_patches(fake_stream),
             patch(
-                "app.routers.chat.chat_index.read_slice",
+                "app.routers.chat_stream.chat_index.read_slice",
                 return_value={
                     "id": str(cid),
                     "title": "DAT lists",

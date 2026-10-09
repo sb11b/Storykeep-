@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.database import get_db
 from app.deps import get_current_user
 from app.main import http_exception_with_message
-from app.routers import chat as chat_router
+from app.routers import chat_stream as chat_router
 
 
 def _app() -> FastAPI:
