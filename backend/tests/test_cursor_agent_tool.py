@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.services import cursor_agent_tool, junior_model
+from app.services.cursor_agent_replies import diverged_ff_reply, local_merge_repair, wsl_switch_reply
 from app.services.cursor_agent_sequence import next_step_task, sequence_number, sequenced_task
 from app.services.cursor_agent_tasks import polish_2_task
 
@@ -74,13 +75,13 @@ class CursorAgentToolTests(unittest.TestCase):
             "pack-reused 0 (from 0)\n"
         )
         self.assertFalse(cursor_agent_tool.wants_start(msg))
-        reply = cursor_agent_tool.local_merge_repair(msg)
+        reply = local_merge_repair(msg)
         assert reply is not None
         self.assertIn("git merge --abort", reply)
         self.assertIn("git reset --hard github/main", reply)
         self.assertIn("Do not push", reply)
-        self.assertIsNone(cursor_agent_tool.local_merge_repair("go ahead and start next step"))
-        asked = cursor_agent_tool.local_merge_repair(
+        self.assertIsNone(local_merge_repair("go ahead and start next step"))
+        asked = local_merge_repair(
             "correct the error then give me a paste for ubantu"
         )
         assert asked is not None
@@ -108,8 +109,8 @@ class CursorAgentToolTests(unittest.TestCase):
             "in repository sb11b/Storykeep-.\n"
         )
         self.assertFalse(cursor_agent_tool.wants_start(msg))
-        self.assertIsNone(cursor_agent_tool.local_merge_repair(msg))
-        reply = cursor_agent_tool.diverged_ff_reply(msg)
+        self.assertIsNone(local_merge_repair(msg))
+        reply = diverged_ff_reply(msg)
         assert reply is not None
         self.assertNotIn("git merge --abort", reply)
         self.assertIn("Do not merge", reply)
@@ -139,11 +140,11 @@ class CursorAgentToolTests(unittest.TestCase):
             "dubantu\n"
             "just want to switch from powershell to wsl\n"
         )
-        reply = cursor_agent_tool.wsl_switch_reply(msg)
+        reply = wsl_switch_reply(msg)
         assert reply is not None
         self.assertIn("wsl -d Ubuntu", reply)
         self.assertNotIn("git merge --abort", reply)
-        self.assertIsNone(cursor_agent_tool.local_merge_repair(msg))
+        self.assertIsNone(local_merge_repair(msg))
         self.assertFalse(cursor_agent_tool.wants_start(msg))
 
     def test_extract_branch_ignores_git_pack_line(self):
@@ -737,7 +738,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("git merge github/main", ff_reply)
         self.assertIn("git push github HEAD", ff_reply)
         self.assertNotIn("stop", ff_reply.lower())
-        self.assertIsNone(cursor_agent_tool.diverged_ff_reply(paste))
+        self.assertIsNone(diverged_ff_reply(paste))
 
     def test_push_workflow_mentions_cursor_branch(self):
         text = cursor_agent_tool.push_workflow_for_user(

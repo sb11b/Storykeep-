@@ -56,6 +56,7 @@ from app.services import web_search as search_tool
 from app.services import x_search as x_tool
 from app.services import railway_tool
 from app.services import github_tool
+from app.services import cursor_agent_replies
 from app.services import cursor_agent_sequence
 from app.services import cursor_agent_tool
 from app.services import junior_shared_memory
@@ -776,9 +777,9 @@ def _chat(
     will_deploy = railway_tool.wants_railway_deploy(user_text)
     cursor_enabled = cursor_agent_tool.owner_can_use(user)
     merge_repair_text = (
-        cursor_agent_tool.wsl_switch_reply(user_text)
-        or cursor_agent_tool.diverged_ff_reply(user_text)
-        or cursor_agent_tool.local_merge_repair(user_text)
+        cursor_agent_replies.wsl_switch_reply(user_text)
+        or cursor_agent_replies.diverged_ff_reply(user_text)
+        or cursor_agent_replies.local_merge_repair(user_text)
     )
     fast_forward_text = junior_model.fast_forward_reply(user_text)
     will_cursor_start = (
