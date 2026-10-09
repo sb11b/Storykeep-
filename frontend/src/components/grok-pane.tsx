@@ -25,6 +25,7 @@ import { destinationLabel, type CustomNoteShelf, type FilingDestination } from "
 import { useNotePicker } from "@/lib/useNotePicker";
 import { useNoteFiling } from "@/lib/useNoteFiling";
 import { useSnippetRunner } from "@/lib/useSnippetRunner";
+import { useRetryAssistant } from "@/lib/useRetryAssistant";
 import { NotePickerDialog } from "@/components/note-picker-dialog";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import {
@@ -347,6 +348,11 @@ export function GrokPane({
     onHistoryChanged,
     setBusy,
     spendChipLabel,
+  });
+  const { retryAssistant } = useRetryAssistant({
+    pane, onUpdate, busy, aborting, abortingRef, enabled, inFlightRef, turnIdRef, abortRef,
+    setAborting, setBusy, setStreamStatus, contextTooLarge, threadContextToast, contextInput,
+    thisTurnImageMediaIds, imageToolIntent, runStream,
   });
   const notePicker = useNotePicker((noteId, noteTitle) => {
     patch({ includeNoteId: noteId, includeNoteTitle: noteTitle });
@@ -1672,55 +1678,6 @@ export function GrokPane({
       setBusy(false);
       clearStreamStatus();
       inFlightRef.current = false;
-    }
-  }
-
-  async function retryAssistant(assistantId: string) {
-    if (busy || aborting || abortingRef.current || !enabled || inFlightRef.current) return;
-    if (!pane.conversationId) {
-      toast.error("That thread is not ready to retry yet.");
-      return;
-    }
-    const messages = pane.messages;
-    const assistantIndex = messages.findIndex((item) => item.id === assistantId);
-    if (assistantIndex < 1) return;
-    const userLine = messages[assistantIndex - 1];
-    if (!userLine || userLine.role !== "user") return;
-    if (contextTooLarge("")) {
-      toast.error(threadContextToast(contextInput("")));
-      return;
-    }
-    inFlightRef.current = true;
-    const turnId = ++turnIdRef.current;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    abortingRef.current = false;
-    setAborting(false);
-    setBusy(true);
-    try {
-    const retryImages = thisTurnImageMediaIds(userLine.files);
-    const retryIntent = imageToolIntent(userLine.content, retryImages.length > 0);
-    const retryWantsImage = retryIntent === "generate" || (retryIntent === "edit" && retryImages.length > 0);
-    onUpdate((current) => ({
-      ...current,
-      streamStatus: retryWantsImage ? "generating" : "queued",
-      messages: current.messages.map((item) =>
-        item.id === assistantId
-          ? { ...item, content: "", failed: false, error: null, waiting: true, turnStatus: retryWantsImage ? "writing" : "queued" }
-          : item,
-      ),
-    }));
-    setStreamStatus(retryWantsImage ? "generating" : "queued");
-    await runStream({
-      message: userLine.content,
-      retry: true,
-      userLine,
-      assistantId,
-      controller,
-      turnId,
-    });
-    } finally {
-      if (turnId === turnIdRef.current) inFlightRef.current = false;
     }
   }
 
