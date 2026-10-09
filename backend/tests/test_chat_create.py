@@ -15,6 +15,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.main import http_exception_with_message, request_validation_handler
 from app.routers import chat as chat_router
+from app.routers import chat_conversations as conversations_router
 from app.services import grok_conversations as grok_store
 from app.services.demo_lock import is_locked
 
@@ -24,6 +25,7 @@ def _app(user=None):
     app.add_exception_handler(StarletteHTTPException, http_exception_with_message)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
     app.include_router(chat_router.router, prefix="/api/v1")
+    app.include_router(conversations_router.router, prefix="/api/v1")
     owner = user or SimpleNamespace(id=uuid4(), email="reader@example.com", is_demo_locked=False)
     db = MagicMock()
 
