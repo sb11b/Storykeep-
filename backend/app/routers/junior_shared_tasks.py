@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,7 @@ from app.schemas import (
     JuniorTaskOut,
 )
 from app.services import junior_shared_tasks
+from app.services.event_bus import bus
 
 router = APIRouter(tags=["junior-shared-tasks"])
 
@@ -29,6 +31,17 @@ def create_task(
     user: User = Depends(require_user),
 ) -> JuniorTaskOut:
     row = junior_shared_tasks.create_task(db, user, payload.kind, payload.title, payload.detail, payload.payload)
+    # create_task commits internally — emit only after the commit is durable.
+    bus.emit(
+        user.id,
+        {
+            "type": "task.state_changed",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "task_id": str(row.id),
+            "status": row.status,
+            "source": "api",
+        },
+    )
     return JuniorTaskOut.model_validate(row)
 
 
@@ -62,6 +75,17 @@ def claim_task(
     user: User = Depends(require_user),
 ) -> JuniorTaskClaimOut:
     row, claim_id = junior_shared_tasks.claim_task(db, user, task_id, payload.claimed_by)
+    # claim_task commits internally — emit only after the commit is durable.
+    bus.emit(
+        user.id,
+        {
+            "type": "task.state_changed",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "task_id": str(row.id),
+            "status": row.status,
+            "source": payload.claimed_by,
+        },
+    )
     return JuniorTaskClaimOut(task=JuniorTaskOut.model_validate(row), claim_id=claim_id, lease_until=row.lease_until)
 
 
@@ -73,6 +97,17 @@ def complete_task(
     user: User = Depends(require_user),
 ) -> JuniorTaskOut:
     row = junior_shared_tasks.complete_task(db, user, task_id, payload.claim_id, payload.result)
+    # complete_task commits internally — emit only after the commit is durable.
+    bus.emit(
+        user.id,
+        {
+            "type": "task.state_changed",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "task_id": str(row.id),
+            "status": row.status,
+            "source": "api",
+        },
+    )
     return JuniorTaskOut.model_validate(row)
 
 
@@ -84,4 +119,15 @@ def fail_task(
     user: User = Depends(require_user),
 ) -> JuniorTaskOut:
     row = junior_shared_tasks.fail_task(db, user, task_id, payload.claim_id, payload.error, payload.retryable)
+    # fail_task commits internally — emit only after the commit is durable.
+    bus.emit(
+        user.id,
+        {
+            "type": "task.state_changed",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "task_id": str(row.id),
+            "status": row.status,
+            "source": "api",
+        },
+    )
     return JuniorTaskOut.model_validate(row)

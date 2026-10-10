@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -11,6 +12,7 @@ from app.deps import require_user
 from app.models import User
 from app.schemas import JuniorDocumentFileOut
 from app.services import junior_shared_files
+from app.services.event_bus import bus
 
 router = APIRouter(tags=["junior-shared-files"])
 
@@ -58,6 +60,18 @@ async def upload_document_file(
         chunks.append(chunk)
     payload = b"".join(chunks)
     row = junior_shared_files.save_file(db, user, slug, file.filename or "file", payload, file.content_type)
+    # save_file commits internally — emit only after the commit is durable.
+    bus.emit(
+        user.id,
+        {
+            "type": "file.uploaded",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "slug": slug,
+            "filename": row.filename,
+            "bytes": row.byte_size,
+            "source": "api",
+        },
+    )
     return JuniorDocumentFileOut.model_validate(row)
 
 
@@ -92,4 +106,16 @@ def delete_document_file(
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ) -> None:
+    row = junior_shared_files.get_file(db, user, file_id)  # user-scoped 404 if not found
+    file_id_str = str(row.id)
     junior_shared_files.delete_file(db, user, file_id)
+    # delete_file commits internally — emit only after the commit is durable.
+    bus.emit(
+        user.id,
+        {
+            "type": "file.deleted",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "file_id": file_id_str,
+            "source": "api",
+        },
+    )
