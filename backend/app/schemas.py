@@ -966,6 +966,52 @@ class JuniorDocumentFileOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JuniorTaskIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=200)
+    detail: str | None = Field(default=None, max_length=32000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class JuniorTaskOut(BaseModel):
+    id: uuid.UUID
+    kind: str
+    title: str
+    detail: str
+    status: str
+    payload: dict[str, Any]
+    claimed_by: str | None = None
+    lease_until: datetime | None = None
+    attempt: int
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JuniorTaskClaimIn(BaseModel):
+    claimed_by: str = Field(min_length=1, max_length=64)
+
+
+class JuniorTaskClaimOut(BaseModel):
+    task: JuniorTaskOut
+    claim_id: str
+    lease_until: datetime
+
+
+class JuniorTaskCompleteIn(BaseModel):
+    claim_id: str = Field(min_length=1, max_length=64)
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class JuniorTaskFailIn(BaseModel):
+    claim_id: str = Field(min_length=1, max_length=64)
+    error: str = Field(min_length=1, max_length=4000)
+    retryable: bool = False
+
+
 class JuniorAgentContextIn(BaseModel):
     q: str | None = Field(default=None, max_length=200)
     thread_id: uuid.UUID | None = None
