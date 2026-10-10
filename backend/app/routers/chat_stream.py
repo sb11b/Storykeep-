@@ -18,8 +18,6 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, get_db
 from app.deps import require_user
 from app.models import User
-from app.routers.articles import _owned_article
-from app.services.destination import is_composed_guid
 from app.http_limits import log_chat_exception
 from app.services import chat as chat_service
 from app.services import chat_attachments
@@ -36,12 +34,7 @@ from app.services import grok_conversations as grok_store
 from app.services import mail as mail_service
 from app.services import mail_tool
 from app.services.demo_lock import is_locked
-from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
-from app.services.include_chunk import format_excerpt as format_include_excerpt
-from app.services.include_chunk import resolve_include_slice
 from app.services.include_chunk import slice_id_from_meta
-from app.services.include_chunk import slice_meta as include_slice_meta
-from app.services.working_note import heading_from_instruction
 from app.services.junior_jobs import news_summary_reply, wants_news_summary
 from app.services import web_search as search_tool
 from app.services import x_search as x_tool
@@ -486,114 +479,18 @@ def _chat(
         resolved_reasoning = "low"
         resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     step("prepare")
-    excerpt = None
-    note_excerpt = None
-    article_body = None
-    note_body = None
+    from app.services import chat_includes
+    includes = chat_includes.resolve_includes(db, user, payload, user_text, history)
+    excerpt = includes.excerpt
+    note_excerpt = includes.note_excerpt
+    article_body = includes.article_body
+    note_body = includes.note_body
     include_article = bool(payload.include_article)
     include_note = bool(payload.include_note_id)
-    working_excerpt = None
-    include_meta: dict[str, object] = {}
-
-    def _owned_include_slice(article, *, cap: int | None = None, hard_max: int | None = None):
-        try:
-            return resolve_include_slice(
-                chat_service.article_body_text(article),
-                mode=payload.include_mode,
-                selection=payload.include_selection,
-                heading=payload.include_heading,
-                offset=payload.include_offset or 0,
-                title=article.title,
-                html=getattr(article, "content_html", None),
-                cap=cap,
-                hard_max=hard_max,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if include_article:
-        if not payload.article_id:
-            raise HTTPException(status_code=400, detail="Open an article before attaching it to chat.")
-        article = _owned_article(db, user, payload.article_id)
-        owned_slice = _owned_include_slice(article)
-        article_body = owned_slice.text
-        excerpt = format_include_excerpt((article.title or "Untitled").strip(), owned_slice)
-        excerpt = (
-            f"article_id: {article.id}\n"
-            f"Open in reader: [{(article.title or 'Untitled').strip()}](#article/{article.id})\n"
-            f"{excerpt}"
-        )
-        include_meta = include_slice_meta(owned_slice)
-    if include_note:
-        if include_article and payload.article_id == payload.include_note_id:
-            note_excerpt = excerpt
-            note_body = article_body
-        else:
-            note = _owned_article(db, user, payload.include_note_id)
-            note_slice = _owned_include_slice(note)
-            note_body = note_slice.text
-            note_excerpt = format_include_excerpt((note.title or "Untitled").strip(), note_slice)
-            if not include_meta:
-                include_meta = include_slice_meta(note_slice)
-    if payload.working_note_id and chat_service.should_attach_working_note(user_text):
-        working = _owned_article(db, user, payload.working_note_id)
-        if not is_composed_guid(working.guid):
-            raise HTTPException(status_code=400, detail="Work in Junior is for StoryKeep-authored notes.")
-        work_mode = payload.include_mode
-        work_heading = payload.include_heading
-        if (not work_mode or work_mode == "auto") and not (work_heading or "").strip():
-            guessed = heading_from_instruction(user_text, chat_service.article_body_text(working))
-            if guessed:
-                work_mode = "heading"
-                work_heading = guessed
-        try:
-            working_slice = resolve_include_slice(
-                chat_service.article_body_text(working),
-                mode=work_mode,
-                selection=payload.include_selection,
-                heading=work_heading,
-                offset=payload.include_offset or 0,
-                title=working.title,
-                html=getattr(working, "content_html", None),
-                cap=WORKING_NOTE_CHAR_CAP,
-                hard_max=WORKING_NOTE_CHAR_CAP,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        working_excerpt = format_include_excerpt((working.title or "Untitled").strip(), working_slice)
-        working_excerpt = f"working_note_id: {working.id}\n{working_excerpt}"
-        include_meta = include_slice_meta(working_slice)
-    include_chars = len(article_body or "")
-    if note_body and note_body != article_body:
-        include_chars += len(note_body)
-    rough_thread = chat_service.messages_for_xai(
-        history,
-        model=resolved_model,
-        db=db,
-        user=user,
-    )
-    working_excerpt = chat_service.cap_working_excerpt(
-        working_excerpt,
-        thread_chars=chat_service.messages_char_count(rough_thread),
-        include_chars=include_chars,
-    )
-    system_overhead = len(excerpt or "") + len(note_excerpt or "") + len(working_excerpt or "")
-    prepared = chat_service.messages_for_xai(
-        history,
-        model=resolved_model,
-        db=db,
-        user=user,
-        trim_cap=chat_service.thread_trim_cap(system_overhead=system_overhead),
-    )
-    history_for_xai = chat_service.validate_payload(prepared)
-    chat_service.reject_oversized_send(
-        history,
-        article_body=article_body,
-        note_body=note_body,
-        working_excerpt=working_excerpt,
-        system_overhead=system_overhead,
-    )
-    has_attachments = any(item.get("files") for item in history)
+    working_excerpt = includes.working_excerpt
+    include_meta = includes.include_meta
+    has_attachments = includes.has_attachments
+    history_for_xai = includes.history_for_xai
     pre = gather_context(
         db,
         user,
