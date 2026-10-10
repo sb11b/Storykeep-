@@ -480,13 +480,13 @@ def _chat(
         resolved_reasoning = chat_service.clamp_reasoning_effort(resolved_model, resolved_reasoning)
     step("prepare")
     from app.services import chat_includes
-    includes = chat_includes.resolve_includes(db, user, payload, user_text, history)
+    includes = chat_includes.resolve_includes(db, user, payload, user_text, history, resolved_model)
     excerpt = includes.excerpt
     note_excerpt = includes.note_excerpt
     article_body = includes.article_body
     note_body = includes.note_body
-    include_article = bool(payload.include_article)
-    include_note = bool(payload.include_note_id)
+    include_article = includes.include_article
+    include_note = includes.include_note
     working_excerpt = includes.working_excerpt
     include_meta = includes.include_meta
     has_attachments = includes.has_attachments

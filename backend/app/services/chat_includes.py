@@ -39,6 +39,8 @@ class IncludeResult:
         self.system_overhead: int = 0
         self.has_attachments: bool = False
         self.history_for_xai: list[dict] = []
+        self.include_article: bool = False
+        self.include_note: bool = False
 
 
 def resolve_includes(
@@ -47,12 +49,15 @@ def resolve_includes(
     payload: "ChatIn",
     user_text: str,
     history: list[dict],
+    resolved_model: str,
 ) -> IncludeResult:
     """Resolve article/note/working-note includes for a chat turn.
 
     Returns an IncludeResult with all excerpts, metadata, and size checks.
     Raises HTTPException on validation failures.
     """
+    from app.routers.articles import _owned_article
+
     result = IncludeResult()
 
     def _owned_include_slice(article: Any, *, cap: int | None = None, hard_max: int | None = None):
@@ -71,10 +76,10 @@ def resolve_includes(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    from app.routers.articles import _owned_article
-
     include_article = bool(payload.include_article)
     include_note = bool(payload.include_note_id)
+    result.include_article = include_article
+    result.include_note = include_note
 
     if include_article:
         if not payload.article_id:
@@ -137,7 +142,7 @@ def resolve_includes(
 
     rough_thread = chat_service.messages_for_xai(
         history,
-        model=chat_service.CURRENT_CHAT_MODEL,
+        model=resolved_model,
         db=db,
         user=user,
     )
@@ -151,7 +156,7 @@ def resolve_includes(
 
     prepared = chat_service.messages_for_xai(
         history,
-        model=chat_service.CURRENT_CHAT_MODEL,
+        model=resolved_model,
         db=db,
         user=user,
         trim_cap=chat_service.thread_trim_cap(system_overhead=result.system_overhead),
