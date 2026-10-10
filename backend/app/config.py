@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     canopy_api_key: str = ""
     chat_requests_per_hour: int = 120
     junior_cron_secret: str = ""
+    # Static bearer token for machine clients (Hermes agent). Empty = disabled.
+    service_token: str = ""
+
+    @field_validator("service_token")
+    @classmethod
+    def _reject_blank_service_token(cls, v: str) -> str:
+        if v and not v.strip():
+            raise ValueError("SERVICE_TOKEN must not be whitespace-only")
+        return v.strip()
     xai_image_url: str = "https://api.x.ai/v1/images/generations"
     xai_image_edit_url: str = "https://api.x.ai/v1/images/edits"
     xai_imagine_model: str = "grok-imagine-image-2.0"
