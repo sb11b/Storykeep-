@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.services import cursor_agent_tool, junior_model
+from app.services import cursor_agent_bugbot
 from app.services.cursor_agent_intent import extract_branch, extract_prompt, wants_start
 from app.services.cursor_agent_replies import diverged_ff_reply, local_merge_repair, wsl_switch_reply
 from app.services.cursor_agent_sequence import next_step_task, sequence_number, sequenced_task
@@ -776,7 +777,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("Bugbot is off", sent)
 
     def test_bugbot_review_text_lists_commit_cost_and_findings(self) -> None:
-        text = cursor_agent_tool.format_bugbot_reviews(
+        text = cursor_agent_bugbot.format_bugbot_reviews(
             [
                 {
                     "commit_sha": "9f3c2a1b7d8e4f5061728394a5b6c7d8e9f0a1b2",
@@ -800,7 +801,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("medium — unresolved — comment 2147484000", text)
 
     def test_dry_run_review_lists_title_and_location(self) -> None:
-        text = cursor_agent_tool.format_bugbot_reviews(
+        text = cursor_agent_bugbot.format_bugbot_reviews(
             [
                 {
                     "commit_sha": "abcdef123456",
@@ -826,7 +827,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("src/net.ts:5-9", text)
         self.assertNotIn("comment None", text)
 
-    @patch("app.services.cursor_agent_tool._analytics_get")
+    @patch("app.services.cursor_agent_bugbot._analytics_get")
     def test_bugbot_section_reads_the_pull_request(self, analytics: MagicMock) -> None:
         analytics.return_value = (
             200,
@@ -843,7 +844,7 @@ class CursorAgentToolTests(unittest.TestCase):
                 ]
             },
         )
-        text, done = cursor_agent_tool.bugbot_section("https://github.com/sb11b/Storykeep-/pull/12")
+        text, done = cursor_agent_bugbot.bugbot_section("https://github.com/sb11b/Storykeep-/pull/12")
         self.assertTrue(done)
         self.assertIn("Commit: abc123def456", text)
         self.assertIn("Cost: $1.00", text)
@@ -852,9 +853,9 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertEqual(params["prNumber"], "12")
 
     @patch("app.services.github_tool.bugbot_pull_review", return_value=None)
-    @patch("app.services.cursor_agent_tool._analytics_get", return_value=(401, {"message": "Invalid Team API Key"}))
+    @patch("app.services.cursor_agent_bugbot._analytics_get", return_value=(401, {"message": "Invalid Team API Key"}))
     def test_team_key_rejection_waits_for_the_pull_request_review(self, analytics: MagicMock, github_review: MagicMock) -> None:
-        text, done = cursor_agent_tool.bugbot_section("https://github.com/sb11b/Storykeep-/pull/3")
+        text, done = cursor_agent_bugbot.bugbot_section("https://github.com/sb11b/Storykeep-/pull/3")
         self.assertFalse(done)
         self.assertEqual(text, "")
         self.assertNotIn("CURSOR_ANALYTICS_KEY", text)
@@ -881,9 +882,9 @@ class CursorAgentToolTests(unittest.TestCase):
             ],
         },
     )
-    @patch("app.services.cursor_agent_tool._analytics_get", return_value=(401, {"message": "Invalid Team API Key"}))
+    @patch("app.services.cursor_agent_bugbot._analytics_get", return_value=(401, {"message": "Invalid Team API Key"}))
     def test_team_key_rejection_uses_the_posted_review(self, analytics: MagicMock, github_review: MagicMock) -> None:
-        text, done = cursor_agent_tool.bugbot_section("https://github.com/sb11b/Storykeep-/pull/10")
+        text, done = cursor_agent_bugbot.bugbot_section("https://github.com/sb11b/Storykeep-/pull/10")
         self.assertTrue(done)
         self.assertIn("Commit: 7487cb1e2c58", text)
         self.assertIn("Findings: 1", text)
