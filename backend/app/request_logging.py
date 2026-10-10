@@ -61,6 +61,26 @@ class JuniorRequestLogMiddleware:
         started = time.perf_counter()
         status_code = 500
         user_id = _user_id_from_scope(scope)
+        headers = scope.get("headers") or []
+        auth_header = ""
+        for key, value in headers:
+            if key.lower() == b"authorization":
+                auth_header = value.decode("latin-1", errors="replace")
+                break
+        has_access_cookie = False
+        for key, value in headers:
+            if key.lower() != b"cookie":
+                continue
+            cookie = value.decode("latin-1", errors="replace")
+            if any(part.strip().startswith("sk_access=") for part in cookie.split(";")):
+                has_access_cookie = True
+                break
+        if auth_header.startswith("Bearer "):
+            auth = "auth=bearer"
+        elif has_access_cookie:
+            auth = "auth=cookie"
+        else:
+            auth = "auth=none"
 
         async def tracked_send(message: Message) -> None:
             nonlocal status_code
@@ -73,10 +93,11 @@ class JuniorRequestLogMiddleware:
         finally:
             latency_ms = int((time.perf_counter() - started) * 1000)
             logger.info(
-                "junior_request path=%s method=%s user_id=%s status=%s latency_ms=%s",
+                "junior_request path=%s method=%s user_id=%s %s status=%s latency_ms=%s",
                 path,
                 (scope.get("method") or "").upper(),
                 user_id or "-",
+                auth,
                 status_code,
                 latency_ms,
             )
