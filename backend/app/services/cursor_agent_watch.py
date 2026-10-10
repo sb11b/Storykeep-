@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from app.models import CursorAgentWatch
 from app.services import cursor_agent_bugbot
 from app.services import cursor_agent_run
-from app.services import cursor_agent_tool
 from app.services import grok_conversations as grok_store
 from app.services.junior_stamp import stamp_assistant_content
 
@@ -144,7 +143,7 @@ def poll_one(db: Session, row: CursorAgentWatch, *, now: datetime | None = None)
     if (snapshot.status or "").upper() == "FINISHED":
         section, done = cursor_agent_bugbot.bugbot_section(snapshot.pr_url)
         bugbot_text = _usable_bugbot_text(section, done)
-    text = cursor_agent_tool.format_follow_up(
+    text = cursor_agent_run.format_follow_up(
         snapshot,
         agent_url=row.agent_url,
         starting_branch=row.starting_branch or "main",
