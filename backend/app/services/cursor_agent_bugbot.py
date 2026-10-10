@@ -1,8 +1,8 @@
 """Bugbot review formatting and fetching for the Cursor Cloud Agent.
 
 Extracted from app.services.cursor_agent_tool; owns the review-analytics
-block (formatting, fetching, and the chat section) that tool callers used
-to resolve through cursor_agent_tool directly.
+block (formatting, fetching, and the chat section). Transport helpers
+(_analytics_get, _repo_slug) now come from cursor_agent_transport.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.cursor_agent_tool import _analytics_get, _repo_slug
+from app.services.cursor_agent_transport import _analytics_get, _repo_slug
 
 
 def pr_number_from_url(url: str | None) -> int | None:

@@ -633,8 +633,8 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("Sequenced #58", fifty_eight)
         self.assertIn("junior-client-project-memory-note-get-v1", fifty_eight)
 
-    @patch("app.services.cursor_agent_tool.httpx.Client")
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.httpx.Client")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_start_agent_success(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
         mock_settings.cursor_api_key = "key_test"
         mock_settings.cursor_agent_repo = ""
@@ -678,8 +678,8 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertTrue(payload.get("autoCreatePR"))
         self.assertEqual(payload["repos"][0]["startingRef"], "main")
 
-    @patch("app.services.cursor_agent_tool.httpx.Client")
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.httpx.Client")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_branch_is_falls_back_to_main(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
         mock_settings.cursor_api_key = "key_test"
         mock_settings.cursor_agent_repo = ""
@@ -705,8 +705,8 @@ class CursorAgentToolTests(unittest.TestCase):
         payload = mock_client.request.call_args.kwargs["json"]
         self.assertEqual(payload["repos"][0]["startingRef"], "develop")
 
-    @patch("app.services.cursor_agent_tool.httpx.Client")
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.httpx.Client")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_fast_forward_paste_does_not_call_cursor(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
         mock_settings.cursor_api_key = "key_test"
         mock_settings.cursor_agent_repo = ""
@@ -751,8 +751,8 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIn("git fetch github", text)
         self.assertIn("Open in Cursor", text)
 
-    @patch("app.services.cursor_agent_tool.httpx.Client")
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.httpx.Client")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_start_agent_delegate_auto_pr(self, mock_settings: MagicMock, mock_client_cls: MagicMock) -> None:
         mock_settings.cursor_api_key = "key_test"
         mock_settings.cursor_agent_repo = ""
@@ -896,7 +896,7 @@ class CursorAgentToolTests(unittest.TestCase):
         github_review.assert_called_once()
         analytics.assert_called_once()
 
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_start_agent_not_configured(self, mock_settings: MagicMock) -> None:
         mock_settings.cursor_api_key = ""
         outcome = cursor_agent_tool.start_agent("Do something")
@@ -946,13 +946,13 @@ class CursorAgentToolTests(unittest.TestCase):
         )
         self.assertFalse(wants_start(msg))
 
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_is_delegate_turn_false_when_cursor_not_configured(self, mock_settings: MagicMock) -> None:
         mock_settings.cursor_api_key = ""
         msg = "Start a cursor agent to fix the login bug"
         self.assertFalse(junior_model.is_delegate_turn(msg))
 
-    @patch("app.services.cursor_agent_tool.settings")
+    @patch("app.services.cursor_agent_transport.settings")
     def test_is_delegate_turn_true_when_cursor_configured(self, mock_settings: MagicMock) -> None:
         mock_settings.cursor_api_key = "test_key"
         msg = "Start a cursor agent to fix the login bug"

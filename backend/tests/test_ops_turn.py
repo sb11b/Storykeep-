@@ -56,7 +56,7 @@ class OpsTurnTests(unittest.TestCase):
         self.assertTrue(junior_model.is_ops_turn("What is on github?"))
 
     def test_is_delegate_turn_false_for_cline_pending(self):
-        with patch("app.services.cursor_agent_tool.settings") as mock_settings:
+        with patch("app.services.cursor_agent_transport.settings") as mock_settings:
             mock_settings.cursor_api_key = "test_key"
             self.assertFalse(junior_model.is_delegate_turn("Cline pending"))
             self.assertFalse(junior_model.is_delegate_turn("Approve or Deny"))
