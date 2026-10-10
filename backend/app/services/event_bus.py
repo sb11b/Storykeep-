@@ -25,15 +25,16 @@ class EventBus:
         self._buffers: dict[uuid.UUID, deque[dict]] = {}
         self._subscribers: dict[uuid.UUID, set[asyncio.Queue]] = {}
 
-    def _next_seq(self) -> int:
+    def emit(self, user_id: uuid.UUID, event: dict) -> None:
+        # seq assignment and buffer append MUST share one lock region: sync
+        # endpoints run in the anyio threadpool, so two threads emitting
+        # concurrently can otherwise append out of seq order — replay_since
+        # would return non-monotonic events, breaking the live-loop dedup and
+        # oscillating oldest_seq after ring wrap. Subscriber notification
+        # happens outside the lock (put_nowait never blocks).
         with self._lock:
             self._seq += 1
-            return self._seq
-
-    def emit(self, user_id: uuid.UUID, event: dict) -> None:
-        seq = self._next_seq()
-        event = {**event, "seq": seq, "id": seq}
-        with self._lock:
+            event = {**event, "seq": self._seq, "id": self._seq}
             buf = self._buffers.setdefault(user_id, deque(maxlen=self._buffer_size))
             buf.append(event)
             subscribers = list(self._subscribers.get(user_id, ()))
