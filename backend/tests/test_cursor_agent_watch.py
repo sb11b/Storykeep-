@@ -6,14 +6,14 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.services import cursor_agent_tool, junior_memory
+from app.services import cursor_agent_run, junior_memory
 from app.services.cursor_agent_run import AgentRunSnapshot
 from app.services.cursor_agent_watch import poll_one
 
 
 class AgentFollowUpTests(unittest.TestCase):
     def test_finished_follow_up_names_the_branch(self):
-        text = cursor_agent_tool.format_follow_up(
+        text = cursor_agent_run.format_follow_up(
             AgentRunSnapshot(
                 "FINISHED",
                 "Fixed the mail list contrast and pin order.",
@@ -36,11 +36,11 @@ class AgentFollowUpTests(unittest.TestCase):
 
     def test_running_follow_up_is_empty(self):
         self.assertIsNone(
-            cursor_agent_tool.format_follow_up(AgentRunSnapshot("RUNNING"), agent_url="https://cursor.com/agents/bc-1")
+            cursor_agent_run.format_follow_up(AgentRunSnapshot("RUNNING"), agent_url="https://cursor.com/agents/bc-1")
         )
 
     def test_error_follow_up_stops_the_wait(self):
-        text = cursor_agent_tool.format_follow_up(
+        text = cursor_agent_run.format_follow_up(
             AgentRunSnapshot("ERROR", "boom"),
             agent_url="https://cursor.com/agents/bc-1",
         )
