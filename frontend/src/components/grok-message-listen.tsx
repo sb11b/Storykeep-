@@ -15,6 +15,7 @@ import {
 import { claimTtsPlayback, releaseTtsPlayback } from "@/lib/tts-session";
 import { fallbackTtsVoices } from "@/lib/tts-defaults";
 import { TTS_CHUNK_TIMEOUT_MS } from "@/lib/tts-speech-client";
+import { useRealtimeVoice } from "@/lib/use-realtime-voice";
 import type { TtsWord } from "@/lib/types";
 
 type ChunkPayload = Awaited<ReturnType<typeof api.messageSpeech>>;
@@ -68,17 +69,9 @@ export function useGrokMessageListen({
   );
   const inflightRef = useRef<AbortController | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const dcRef = useRef<RTCDataChannel | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
-  const resumeWaiterRef = useRef<{
-    capturedCtx: AudioContext;
-    timeoutId: ReturnType<typeof setTimeout>;
-    cancelled: boolean;
-    onStateChange: EventListenerOrEventListenerObject;
-  } | null>(null);
+  const realtime = useRealtimeVoice(voiceRef, stopRef);
+  const { audioCtxRef, resumeWaiterRef, startRealtimeSession, stopRealtimeOnly, cancelResumeWaiter } =
+    realtime;
   type Phase = "idle" | "loading" | "playing" | "paused";
   const [phase, setPhase] = useState<Phase>("idle");
   const [speed, setSpeed] = useState(readStoredTtsSpeed);
@@ -215,119 +208,21 @@ export function useGrokMessageListen({
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
-    if (dcRef.current) {
-      try {
-        dcRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      dcRef.current = null;
-    }
-    if (pcRef.current) {
-      try {
-        pcRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      pcRef.current = null;
-    }
-    if (wsRef.current) {
-      try {
-        wsRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      wsRef.current = null;
-    }
-    if (sourceNodeRef.current) {
-      try {
-        sourceNodeRef.current.stop();
-        sourceNodeRef.current.disconnect();
-      } catch {
-        /* ignore */
-      }
-      sourceNodeRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      try {
-        void audioCtxRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      audioCtxRef.current = null;
-    }
-    // Cancel any pending resume waiter so it cannot call beginPlayback() after stop().
-    if (resumeWaiterRef.current) {
-      clearTimeout(resumeWaiterRef.current.timeoutId);
-      resumeWaiterRef.current.cancelled = true;
-      const { capturedCtx, onStateChange } = resumeWaiterRef.current;
-      if (onStateChange) {
-        capturedCtx.removeEventListener("statechange", onStateChange);
-      }
-      resumeWaiterRef.current = null;
-    }
+    stopRealtimeOnly();
+    cancelResumeWaiter();
     resetLoaded();
     setPhase("idle");
     playingChangeRef.current?.(false);
   }, [
     abortInflight,
+    cancelResumeWaiter,
     clearWatchdog,
     emitCue,
     markTimestampsUnavailable,
     resetLoaded,
     stopCueLoop,
+    stopRealtimeOnly,
   ]);
-
-  /**
-   * Stop only the realtime WebSocket/AudioContext path without touching the HTML
-   * audio element or changing generation/phase. This prevents a late close or
-   * onended from calling the full stop() and killing chunk playback.
-   */
-  const stopRealtimeOnly = useCallback(() => {
-    const ws = wsRef.current;
-    wsRef.current = null;
-    const ctx = audioCtxRef.current;
-    audioCtxRef.current = null;
-    if (ws) {
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    if (sourceNodeRef.current) {
-      try {
-        sourceNodeRef.current.stop();
-        sourceNodeRef.current.disconnect();
-      } catch {
-        /* ignore */
-      }
-      sourceNodeRef.current = null;
-    }
-    if (ctx) {
-      try {
-        void ctx.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    if (dcRef.current) {
-      try {
-        dcRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      dcRef.current = null;
-    }
-    if (pcRef.current) {
-      try {
-        pcRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      pcRef.current = null;
-    }
-  }, []);
 
   stopRef.current = stop;
 
@@ -351,138 +246,6 @@ export function useGrokMessageListen({
       );
     }, PREPARE_TIMEOUT_MS);
   }, [clearWatchdog]);
-
-  /** Decode a base64 string into a Uint8Array. */
-  const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }, []);
-
-  /** Convert interleaved PCM16 data to a Float32Array for Web Audio API. */
-  const pcm16ToFloat32 = useCallback((pcm16: Uint8Array): Float32Array => {
-    const view = new DataView(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength);
-    const float32 = new Float32Array(view.byteLength / 2);
-    for (let i = 0; i < float32.length; i++) {
-      const int16 = view.getInt16(i * 2, true);
-      float32[i] = int16 < 0 ? int16 / 0x8000 : int16 / 0x7fff;
-    }
-    return float32;
-  }, []);
-
-  /** Open an xAI Realtime WebSocket and stream PCM16 deltas to the provided AudioContext. */
-  const startRealtimeSession = useCallback(
-    (token: string, script: string, audioCtx: AudioContext) => {
-      const subprotocol = `xai-client-secret.${token}`;
-      const url = "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
-      const ws = new WebSocket(url, subprotocol);
-      wsRef.current = ws;
-
-      let nextStartTime = audioCtx.currentTime + 0.05;
-      let doneReceived = false;
-      let lastEndTime = 0;
-
-      const isCurrent = () => audioCtxRef.current === audioCtx;
-
-      const tryStop = () => {
-        if (!isCurrent()) return;
-        if (doneReceived && audioCtx.currentTime >= lastEndTime - 0.01) {
-          stopRef.current();
-        }
-      };
-
-      const onOpen = () => {
-        ws.send(
-          JSON.stringify({
-            type: "session.update",
-            session: {
-              voice: voiceRef.current || readStoredTtsVoice() || "alloy",
-              output_audio_format: "pcm16",
-              instructions:
-                "Read the supplied text aloud exactly as written. Do not paraphrase. Do not add words.",
-            },
-          }),
-        );
-        ws.send(
-          JSON.stringify({
-            type: "conversation.item.create",
-            item: {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text: script }],
-            },
-          }),
-        );
-        ws.send(JSON.stringify({ type: "response.create" }));
-      };
-
-      const onMessage = (event: MessageEvent) => {
-        if (!isCurrent()) return;
-        try {
-          const msg = JSON.parse(event.data);
-          if (
-            msg.type === "response.output_audio.delta" ||
-            msg.type === "response.audio.delta"
-          ) {
-            const delta = msg.delta ?? msg.output_audio?.delta;
-            if (delta) {
-              const pcmData = base64ToUint8Array(delta);
-              const floatData = pcm16ToFloat32(pcmData);
-              const audioBuffer = audioCtx.createBuffer(1, floatData.length, 24000);
-              audioBuffer.getChannelData(0).set(floatData);
-
-              const source = audioCtx.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(audioCtx.destination);
-
-              const startTime = Math.max(audioCtx.currentTime + 0.05, nextStartTime);
-              source.start(startTime);
-              nextStartTime = startTime + audioBuffer.duration;
-              lastEndTime = nextStartTime;
-
-              source.onended = () => {
-                tryStop();
-              };
-            }
-          } else if (
-            msg.type === "response.output_audio.done" ||
-            msg.type === "response.audio.done"
-          ) {
-            doneReceived = true;
-            tryStop();
-          } else if (msg.type === "error") {
-            if (wsRef.current === ws) wsRef.current = null;
-            ws.close();
-            showTtsErrorToast(new Error(msg.error?.message || "Realtime API error"));
-          }
-        } catch {
-          /* ignore non-JSON messages */
-        }
-      };
-
-      const onError = () => {
-        if (!isCurrent()) return;
-        if (wsRef.current === ws) wsRef.current = null;
-        showTtsErrorToast(new Error("WebSocket error"));
-      };
-
-      const onClose = () => {
-        if (!isCurrent()) return;
-        if (wsRef.current === ws) wsRef.current = null;
-        doneReceived = true;
-        tryStop();
-      };
-
-      ws.addEventListener("open", onOpen, { once: true });
-      ws.addEventListener("message", onMessage);
-      ws.addEventListener("error", onError, { once: true });
-      ws.addEventListener("close", onClose, { once: true });
-    },
-    [base64ToUint8Array, pcm16ToFloat32],
-  );
 
   // One audio element for the life of the pane. Rebuilding it when the target
   // message changed used to abort the request that was still in flight.
@@ -765,7 +528,7 @@ export function useGrokMessageListen({
         showTtsErrorToast(error);
       }
     }
-  }, [armWatchdog, clearWatchdog, resetLoaded, resolveScript, startRealtimeSession]);
+  }, [armWatchdog, audioCtxRef, clearWatchdog, resetLoaded, resolveScript, startRealtimeSession]);
 
   const listen = useCallback(() => {
     if (disabled) return;
@@ -852,7 +615,7 @@ export function useGrokMessageListen({
       return;
     }
     if (phase === "idle") void beginPlayback();
-  }, [beginPlayback, disabled, phase, startCueLoop]);
+  }, [audioCtxRef, beginPlayback, disabled, phase, resumeWaiterRef, startCueLoop]);
 
   const pause = useCallback(() => {
     if (phase !== "playing") return;
@@ -863,7 +626,7 @@ export function useGrokMessageListen({
     lastCueRef.current = null;
     emitCue(null);
     setPhase("paused");
-  }, [emitCue, phase, stopCueLoop]);
+  }, [audioCtxRef, emitCue, phase, stopCueLoop]);
 
   /** Pause when the page is hidden/blurred; resume on visible/focus. */
   useEffect(() => {
