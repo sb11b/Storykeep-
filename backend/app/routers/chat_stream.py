@@ -25,7 +25,6 @@ from app.services import chat as chat_service
 from app.services import chat_attachments
 from app.services import chat_image
 from app.services import chat_docx
-from app.services import calendar_access as calendars
 from app.services.calendar_tool import (
     ADD_EVENT_TOOL,
     CALENDAR_OFF_APPEND,
@@ -34,10 +33,8 @@ from app.services.calendar_tool import (
     extract_calendar_proposal,
 )
 from app.services import grok_conversations as grok_store
-from app.services import junior_memory
 from app.services import mail as mail_service
 from app.services import mail_tool
-from app.services import fastmail_jmap as jmap
 from app.services.demo_lock import is_locked
 from app.services.include_chunk import WORKING_NOTE_CHAR_CAP
 from app.services.include_chunk import format_excerpt as format_include_excerpt
@@ -45,13 +42,7 @@ from app.services.include_chunk import resolve_include_slice
 from app.services.include_chunk import slice_id_from_meta
 from app.services.include_chunk import slice_meta as include_slice_meta
 from app.services.working_note import heading_from_instruction
-from app.services.junior_jobs import (
-    UNREAD_READER_SYSTEM,
-    attach_unread_catalog,
-    news_summary_reply,
-    unread_news_block,
-    wants_news_summary,
-)
+from app.services.junior_jobs import news_summary_reply, wants_news_summary
 from app.services import web_search as search_tool
 from app.services import x_search as x_tool
 from app.services import railway_tool
@@ -67,6 +58,7 @@ from app.services import chat_index
 from app.services import message_crypto
 from app.services import tts as tts_service
 from app.routers.chat_sse import _image_tool_events, _setup_timeout_events, _sse_headers
+from app.routers.chat_context import gather_context
 
 router = APIRouter(tags=["chat"])
 
@@ -602,55 +594,27 @@ def _chat(
         system_overhead=system_overhead,
     )
     has_attachments = any(item.get("files") for item in history)
-    step("unread")
-    unread_catalog = None if mail_unread else unread_news_block(db, user.id, user_text)
-    if unread_catalog:
-        history_for_xai = chat_service.validate_payload(
-            attach_unread_catalog(history_for_xai, unread_catalog)
-        )
-    step("calendar")
-    calendar_connected = calendars.is_connected(db, user_id) and not is_locked(user)
-    step("mail")
-    mail_connected = mail_service.has_token(db, user)
-    unread_mail_md = None
-    if mail_unread:
-        if mail_connected:
-            try:
-                listed = jmap.list_emails(
-                    mail_service.require_token(db, user), role="inbox", unseen=True, limit=50
-                )
-                unread_mail_md = mail_tool.unread_mail_markdown(listed.get("items") or [])
-            except Exception:
-                unread_mail_md = "Fastmail unread list was unavailable this turn."
-        else:
-            unread_mail_md = "Fastmail mail is not connected. Open Mail in StoryKeep."
-    step("memory")
-    memory_block = junior_memory.system_section(db, user)
-    chats_enabled = chat_index.can_use(user)
-    already_indexed = False
-    already_read = False
-    read_slice_payload: dict[str, object] | None = None
-    index_block: str | None = None
-    read_meta: str | None = None
-    if chats_enabled:
-        if chat_index.wants_index(user_text):
-            index_block = chat_index.format_index(chat_index.build_index(db, user))
-            already_indexed = True
-        elif chat_index.wants_read(user_text):
-            chat_id = chat_index.extract_conversation_id(user_text)
-            if chat_id:
-                try:
-                    read_slice_payload = chat_index.read_slice(db, user, chat_id)
-                    already_read = True
-                    read_meta = (
-                        f"Opened Junior chat slice: {read_slice_payload.get('title')} · "
-                        f"id={read_slice_payload.get('id')} · "
-                        f"truncated={str(bool(read_slice_payload.get('truncated'))).lower()}."
-                    )
-                except HTTPException:
-                    read_meta = "No chat with that id. Use the index. Do not invent a thread."
-            else:
-                read_meta = chat_index.NEED_ID_SYSTEM
+    pre = gather_context(
+        db,
+        user,
+        user_id=user_id,
+        user_text=user_text,
+        mail_unread=mail_unread,
+        history_for_xai=history_for_xai,
+        step=step,
+    )
+    history_for_xai = pre.history_for_xai
+    unread_catalog = pre.unread_catalog
+    calendar_connected = pre.calendar_connected
+    mail_connected = pre.mail_connected
+    unread_mail_md = pre.unread_mail_md
+    memory_block = pre.memory_block
+    chats_enabled = pre.chats_enabled
+    already_indexed = pre.already_indexed
+    already_read = pre.already_read
+    index_block = pre.index_block
+    read_meta = pre.read_meta
+    read_slice_payload = pre.read_slice_payload
     from app.services import junior_model
 
     search_enabled = search_tool.owner_can_search(user)
