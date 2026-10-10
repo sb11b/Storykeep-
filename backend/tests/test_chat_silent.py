@@ -103,7 +103,7 @@ class ChatSilentGateTests(unittest.TestCase):
             patch.object(chat_service, "require_key", return_value="xai-test"),
             patch.object(chat_service, "enforce_rate_limit"),
             patch("app.routers.chat_stream.grok_store.should_persist", return_value=False),
-            patch("app.routers.chat_stream.calendars.is_connected", return_value=True),
+            patch("app.routers.chat_context.calendars.is_connected", return_value=True),
             patch("app.routers.chat_stream.is_locked", return_value=False),
             patch.object(chat_service, "stream_completion", fake_stream),
         ):
@@ -132,7 +132,7 @@ class ChatSilentGateTests(unittest.TestCase):
             patch("app.routers.chat_stream.mail_service.has_token", return_value=True),
             patch("app.routers.chat_stream.mail_service.require_token", return_value="fmu1-test-token-not-real"),
             patch(
-                "app.routers.chat_stream.jmap.list_emails",
+                "app.routers.chat_context.jmap.list_emails",
                 return_value={
                     "items": [
                         {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
@@ -173,7 +173,7 @@ class ChatSilentGateTests(unittest.TestCase):
             patch("app.routers.chat_stream.mail_service.has_token", return_value=True),
             patch("app.routers.chat_stream.mail_service.require_token", return_value="fmu1-test-token-not-real"),
             patch(
-                "app.routers.chat_stream.jmap.list_emails",
+                "app.routers.chat_context.jmap.list_emails",
                 return_value={
                     "items": [
                         {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
@@ -214,7 +214,7 @@ class ChatSilentGateTests(unittest.TestCase):
             patch("app.routers.chat_stream.mail_service.has_token", return_value=True),
             patch("app.routers.chat_stream.mail_service.require_token", return_value="fmu1-test-token-not-real"),
             patch(
-                "app.routers.chat_stream.jmap.list_emails",
+                "app.routers.chat_context.jmap.list_emails",
                 return_value={
                     "items": [
                         {"from": "Ada", "subject": "Hi", "date": "2026-09-15T12:00:00Z", "unseen": True}
