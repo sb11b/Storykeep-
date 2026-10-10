@@ -28,9 +28,9 @@ def push_workflow_for_user(
     auto_create_pr: bool = False,
 ) -> str:
     """Copy-paste Ubuntu steps — Cloud Agents use cursor/* branches, not local main."""
-    from app.services import cursor_agent_tool
+    from app.services import cursor_agent_transport
 
-    slug = (repo_slug or cursor_agent_tool._repo_slug()).strip().strip("/")
+    slug = (repo_slug or cursor_agent_transport._repo_slug()).strip().strip("/")
     repo_https = f"https://github.com/{slug}.git"
     agent_line = agent_url or "(agent URL from above)"
     pr_note = (
@@ -56,9 +56,9 @@ def push_workflow_for_user(
 
 
 def merge_commands(branch: str, *, starting_branch: str = "main", repo_slug: str | None = None) -> str:
-    from app.services import cursor_agent_tool
+    from app.services import cursor_agent_transport
 
-    slug = (repo_slug or cursor_agent_tool._repo_slug()).strip().strip("/")
+    slug = (repo_slug or cursor_agent_transport._repo_slug()).strip().strip("/")
     base = (starting_branch or "main").strip() or "main"
     remote = branch.strip()
     return (
