@@ -72,10 +72,18 @@ class JuniorRequestLogMiddleware:
             if key.lower() != b"cookie":
                 continue
             cookie = value.decode("latin-1", errors="replace")
-            if any(part.strip().startswith("sk_access=") for part in cookie.split(";")):
-                has_access_cookie = True
+            for part in cookie.split(";"):
+                name, _, val = part.strip().partition("=")
+                # Name must be exactly sk_access with a NON-EMPTY value —
+                # matches deps.py, where sk_access="" is falsy and 401s.
+                if name == "sk_access" and val:
+                    has_access_cookie = True
+                    break
+            if has_access_cookie:
                 break
-        if auth_header.startswith("Bearer "):
+        # Bearer scheme is case-insensitive (RFC 7235) and deps.py matches it
+        # case-insensitively — the tag must reflect actual auth state.
+        if auth_header.lower().startswith("bearer "):
             auth = "auth=bearer"
         elif has_access_cookie:
             auth = "auth=cookie"
