@@ -256,7 +256,7 @@ def _create_schema() -> None:
         "updated_at TIMESTAMPTZ DEFAULT now())"
     )
     migrations = Path(__file__).resolve().parents[1] / "migrations"
-    for name in ("001_junior_memory.sql", "002_junior_projects.sql", "003_junior_documents.sql"):
+    for name in ("001_junior_memory.sql", "002_junior_projects.sql", "003_junior_documents.sql", "004_junior_document_files.sql"):
         _apply_sql_file(migrations / name, required=True)
 
 

@@ -955,6 +955,17 @@ class JuniorDocumentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JuniorDocumentFileOut(BaseModel):
+    id: uuid.UUID
+    document_slug: str
+    filename: str
+    content_type: str
+    byte_size: int | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class JuniorAgentContextIn(BaseModel):
     q: str | None = Field(default=None, max_length=200)
     thread_id: uuid.UUID | None = None

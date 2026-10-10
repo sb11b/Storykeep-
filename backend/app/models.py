@@ -744,6 +744,26 @@ class JuniorDocument(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class JuniorDocumentFile(Base):
+    """Binary file attached to a Junior document. Bytes live on disk; this row is the reference."""
+
+    __tablename__ = "junior_document_files"
+    __table_args__ = (
+        Index("junior_document_files_user_slug_idx", "user_id", "document_slug"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    document_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(
+        String(120), nullable=False, default="application/octet-stream", server_default="application/octet-stream"
+    )
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class JuniorAgentRun(Base):
     """Record of a Cursor-agent launch attempt. This slice stores context only."""
 
