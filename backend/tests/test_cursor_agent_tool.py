@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.services import cursor_agent_instructions, cursor_agent_tool, junior_model
+from app.services import cursor_agent_instructions, cursor_agent_start, cursor_agent_tool, junior_model
 from app.services import cursor_agent_bugbot
 from app.services.cursor_agent_intent import extract_branch, extract_prompt, wants_start
 from app.services.cursor_agent_replies import diverged_ff_reply, local_merge_repair, wsl_switch_reply
@@ -657,7 +657,7 @@ class CursorAgentToolTests(unittest.TestCase):
         mock_client.request.return_value = response
         mock_client_cls.return_value = mock_client
 
-        outcome = cursor_agent_tool.start_agent("Add deploy polling tests", branch="main")
+        outcome = cursor_agent_start.start_agent("Add deploy polling tests", branch="main")
         self.assertTrue(outcome.ok)
         self.assertIn("Agent URL:", outcome.text)
         self.assertIn("this Storykeep chat", outcome.text)
@@ -696,7 +696,7 @@ class CursorAgentToolTests(unittest.TestCase):
         mock_client.__enter__.return_value = mock_client
         mock_client.request.return_value = response
         mock_client_cls.return_value = mock_client
-        outcome = cursor_agent_tool.start_agent(
+        outcome = cursor_agent_start.start_agent(
             "Add a health check",
             branch="is",
             source_message="start a cursor agent on branch develop",
@@ -718,7 +718,7 @@ class CursorAgentToolTests(unittest.TestCase):
             "Your branch is behind 'github/main' by 1 commit.\n"
             "Branch 'is' does not exist in repository sb11b/Storykeep-.\n"
         )
-        outcome = cursor_agent_tool.start_agent(msg, branch="is", source_message=msg)
+        outcome = cursor_agent_start.start_agent(msg, branch="is", source_message=msg)
         self.assertFalse(outcome.ok)
         self.assertIn("Do not merge", outcome.text)
         mock_client_cls.assert_not_called()
@@ -769,7 +769,7 @@ class CursorAgentToolTests(unittest.TestCase):
         mock_client.__enter__.return_value = mock_client
         mock_client.request.return_value = response
         mock_client_cls.return_value = mock_client
-        outcome = cursor_agent_tool.start_agent("Task", branch="main", auto_create_pr=True)
+        outcome = cursor_agent_start.start_agent("Task", branch="main", auto_create_pr=True)
         self.assertTrue(outcome.ok)
         self.assertIn("Auto PR", outcome.text)
         self.assertTrue(mock_client.request.call_args.kwargs["json"].get("autoCreatePR"))
@@ -899,7 +899,7 @@ class CursorAgentToolTests(unittest.TestCase):
     @patch("app.services.cursor_agent_transport.settings")
     def test_start_agent_not_configured(self, mock_settings: MagicMock) -> None:
         mock_settings.cursor_api_key = ""
-        outcome = cursor_agent_tool.start_agent("Do something")
+        outcome = cursor_agent_start.start_agent("Do something")
         self.assertFalse(outcome.ok)
         self.assertIn("CURSOR_API_KEY", outcome.text)
 
