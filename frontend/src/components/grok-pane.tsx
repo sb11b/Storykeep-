@@ -12,6 +12,7 @@ import { GrokChatMessage } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar } from "@/components/grok-message-listen";
+import { GrokVoiceControls } from "@/components/grok-voice-controls";
 import { usePaneVoice } from "@/lib/usePaneVoice";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
@@ -96,7 +97,6 @@ import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChi
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices } from "@/lib/tts-defaults";
-import { TTS_SPEEDS } from "@/lib/tts-preferences";
 import { MIC_LIVE, MIC_STT_EMPTY_HINT, MIC_TRANSCRIBING } from "@/lib/stt-ui";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -738,40 +738,15 @@ export function GrokPane({
             )}
           </select>
         </label>
-        {ttsEnabled && !locked && !showStickyPlayer ? (
-          <>
-            <label className="inline-flex items-center gap-1">
-              <span className="text-muted-foreground">Voice</span>
-              <select
-                aria-label="TTS voice"
-                value={voice.voiceId}
-                onChange={(event) => voice.handleVoiceChange(event.target.value)}
-                className={headerSelectClass}
-              >
-                {voiceOptions.map((voice) => (
-                  <option key={voice.voice_id} value={voice.voice_id}>
-                    {voice.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-flex items-center gap-1">
-              <span className="text-muted-foreground">Speed</span>
-              <select
-                aria-label="Playback speed"
-                value={voice.playbackSpeed}
-                onChange={(event) => voice.handleSpeedChange(Number(event.target.value))}
-                className={cn(headerSelectClass, "max-w-[4rem]")}
-              >
-                {TTS_SPEEDS.map((rate) => (
-                  <option key={rate} value={rate}>
-                    {rate === 1 ? "1×" : `${rate}×`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
-        ) : null}
+        <GrokVoiceControls
+          visible={ttsEnabled && !locked && !showStickyPlayer}
+          voiceId={voice.voiceId}
+          playbackSpeed={voice.playbackSpeed}
+          voices={voiceOptions}
+          selectClassName={headerSelectClass}
+          onVoiceChange={voice.handleVoiceChange}
+          onSpeedChange={voice.handleSpeedChange}
+        />
         <label className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
           <input
             type="checkbox"
