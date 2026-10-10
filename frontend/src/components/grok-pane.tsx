@@ -468,21 +468,6 @@ export function GrokPane({
     void api.folders().then(setFolders).catch(() => setFolders([]));
   }, []);
 
-
-  useEffect(() => {
-    if (!panelOpen) {
-      abortInFlight();
-      clearStreamStatus();
-      setBusy(false);
-      onUpdate((current) => ({
-        ...current,
-        messages: current.messages.map((item) =>
-          item.waiting ? { ...item, waiting: false } : item,
-        ),
-      }));
-    }
-  }, [panelOpen, abortInFlight, clearStreamStatus, onUpdate]);
-
   useEffect(() => () => {
     abortInFlight();
     if (thinkingTimerRef.current != null) {
