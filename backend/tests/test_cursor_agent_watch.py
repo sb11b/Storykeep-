@@ -49,7 +49,7 @@ class AgentFollowUpTests(unittest.TestCase):
         self.assertNotIn("git merge", text)
 
     @patch(
-        "app.services.cursor_agent_tool.bugbot_section",
+        "app.services.cursor_agent_watch.cursor_agent_bugbot.bugbot_section",
         return_value=(
             "Review analytics\n\nPosted review\nCommit: 9f3c2a1b7d8e\nFindings: 2\nCost: 42.5 cents\n"
             "1. high — resolved — comment 2147483999",
@@ -108,7 +108,7 @@ class AgentFollowUpTests(unittest.TestCase):
         self.assertEqual(row.status, "posted")
         self.assertIn("still going", append_message.call_args.kwargs["content"])
 
-    @patch("app.services.cursor_agent_tool.bugbot_section", return_value=("", False))
+    @patch("app.services.cursor_agent_watch.cursor_agent_bugbot.bugbot_section", return_value=("", False))
     @patch("app.services.github_tool.open_pull_request", return_value="https://github.com/sb11b/Storykeep-/pull/99")
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
@@ -136,7 +136,7 @@ class AgentFollowUpTests(unittest.TestCase):
         self.assertIn("Bugbot is off", open_pull_request.call_args.kwargs["body"])
 
     @patch(
-        "app.services.cursor_agent_tool.bugbot_section",
+        "app.services.cursor_agent_watch.cursor_agent_bugbot.bugbot_section",
         return_value=("Review analytics\n\nPosted review\nCommit: abcdef123456\nFindings: 1\nCost: not billed", True),
     )
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
@@ -168,7 +168,7 @@ class AgentFollowUpTests(unittest.TestCase):
         self.assertIn("abcdef123456", append_message.call_args.kwargs["content"])
         bugbot_section.assert_called_once()
 
-    @patch("app.services.cursor_agent_tool.bugbot_section", return_value=("", False))
+    @patch("app.services.cursor_agent_watch.cursor_agent_bugbot.bugbot_section", return_value=("", False))
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
     @patch("app.services.cursor_agent_watch.cursor_agent_tool.fetch_run")
