@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.services import cursor_agent_tool, junior_model
+from app.services import cursor_agent_instructions, cursor_agent_tool, junior_model
 from app.services import cursor_agent_bugbot
 from app.services.cursor_agent_intent import extract_branch, extract_prompt, wants_start
 from app.services.cursor_agent_replies import diverged_ff_reply, local_merge_repair, wsl_switch_reply
@@ -743,7 +743,7 @@ class CursorAgentToolTests(unittest.TestCase):
         self.assertIsNone(diverged_ff_reply(paste))
 
     def test_push_workflow_mentions_cursor_branch(self):
-        text = cursor_agent_tool.push_workflow_for_user(
+        text = cursor_agent_instructions.push_workflow_for_user(
             agent_url="https://cursor.com/agents/bc-test",
             repo_slug="sb11b/Storykeep-",
         )

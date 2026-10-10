@@ -10,8 +10,12 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import settings
-from app.http_limits import redact_secrets
 from app.services.demo_lock import is_locked
+from app.services.cursor_agent_instructions import (
+    _cursor_api_error_detail,
+    merge_commands,
+    push_workflow_for_user,
+)
 from app.services.cursor_agent_calls import START_TOOL_NAME
 from app.services.cursor_agent_outcome import CursorAgentOutcome, format_start_for_model
 from app.services.cursor_agent_intent import _default_branch, _valid_branch_ref, extract_branch, extract_prompt
@@ -159,52 +163,6 @@ def _analytics_get(path: str, params: dict[str, str]) -> tuple[int, Any]:
     except json.JSONDecodeError:
         body = {"message": response.text[:500]}
     return response.status_code, body
-
-
-def _cursor_api_error_detail(body: Any) -> str:
-    if isinstance(body, dict):
-        err = body.get("error")
-        if isinstance(err, dict):
-            message = str(err.get("message") or "").strip()
-            if message:
-                return message
-        message = str(body.get("message") or "").strip()
-        if message:
-            return message
-    return redact_secrets(str(body))[:400]
-
-
-def push_workflow_for_user(
-    *,
-    agent_url: str | None,
-    repo_slug: str | None = None,
-    starting_branch: str = "main",
-    auto_create_pr: bool = False,
-) -> str:
-    """Copy-paste Ubuntu steps — Cloud Agents use cursor/* branches, not local main."""
-    slug = (repo_slug or _repo_slug()).strip().strip("/")
-    repo_https = f"https://github.com/{slug}.git"
-    agent_line = agent_url or "(agent URL from above)"
-    pr_note = (
-        "An open PR to main will be created when the agent finishes — merge it on GitHub, then deploy."
-        if auto_create_pr
-        else "On GitHub → Branches, find the new cursor/… branch the agent pushed."
-    )
-    return (
-        "Push to main (Ubuntu) — Cloud Agents commit on cursor/*, not your local main:\n\n"
-        f"Easiest: open {agent_line} → **Open in Cursor** → review → push (or merge the PR).\n\n"
-        "Existing clone in Cursor terminal. Abort a stuck merge first, then match GitHub main:\n"
-        "```bash\n"
-        "cd ~/Storykeep\n"
-        "git merge --abort\n"
-        f"git remote add github {repo_https} 2>/dev/null || true\n"
-        "git fetch github\n"
-        f"git checkout {starting_branch}\n"
-        f"git reset --hard github/{starting_branch}\n"
-        "```\n"
-        f"{pr_note}\n"
-        "Then in Junior: Show GitHub status, then deploy Storykeep."
-    )
 
 
 def _format_agent_response(
@@ -382,24 +340,6 @@ def fetch_run(agent_id: str, run_id: str | None = None) -> AgentRunSnapshot:
     if not isinstance(run_body, dict):
         return AgentRunSnapshot("UNKNOWN", run_id=current_run, reachable=False)
     return _snapshot_from_run(run_body, run_id=current_run)
-
-
-def merge_commands(branch: str, *, starting_branch: str = "main", repo_slug: str | None = None) -> str:
-    slug = (repo_slug or _repo_slug()).strip().strip("/")
-    base = (starting_branch or "main").strip() or "main"
-    remote = branch.strip()
-    return (
-        "```bash\n"
-        "cd ~/Storykeep\n"
-        "git merge --abort\n"
-        f"git remote add github https://github.com/{slug}.git 2>/dev/null || true\n"
-        "git fetch github\n"
-        f"git checkout {base}\n"
-        f"git reset --hard github/{base}\n"
-        f"git merge --ff-only github/{remote}\n"
-        f"git push github {base}\n"
-        "```"
-    )
 
 
 def format_follow_up(
