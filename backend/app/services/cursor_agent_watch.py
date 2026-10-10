@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import CursorAgentWatch
 from app.services import cursor_agent_bugbot
+from app.services import cursor_agent_run
 from app.services import cursor_agent_tool
 from app.services import grok_conversations as grok_store
 from app.services.junior_stamp import stamp_assistant_content
@@ -94,7 +95,7 @@ def _usable_bugbot_text(section: str, done: bool) -> str | None:
 
 def _poll_bugbot(db: Session, row: CursorAgentWatch, *, now: datetime, stale: bool) -> None:
     del stale
-    snapshot = cursor_agent_tool.fetch_run(row.agent_id, row.run_id)
+    snapshot = cursor_agent_run.fetch_run(row.agent_id, row.run_id)
     if snapshot.run_id and snapshot.run_id != row.run_id:
         row.run_id = snapshot.run_id
     section, done = cursor_agent_bugbot.bugbot_section(snapshot.pr_url)
@@ -116,7 +117,7 @@ def poll_one(db: Session, row: CursorAgentWatch, *, now: datetime | None = None)
     if row.status == BUGBOT:
         _poll_bugbot(db, row, now=instant, stale=stale)
         return
-    snapshot = cursor_agent_tool.fetch_run(row.agent_id, row.run_id)
+    snapshot = cursor_agent_run.fetch_run(row.agent_id, row.run_id)
     if snapshot.run_id and snapshot.run_id != row.run_id:
         row.run_id = snapshot.run_id
     base = (row.starting_branch or "main").strip() or "main"
@@ -147,7 +148,7 @@ def poll_one(db: Session, row: CursorAgentWatch, *, now: datetime | None = None)
         snapshot,
         agent_url=row.agent_url,
         starting_branch=row.starting_branch or "main",
-        stale=stale and (snapshot.status or "").upper() not in cursor_agent_tool.TERMINAL_RUN_STATUSES,
+        stale=stale and (snapshot.status or "").upper() not in cursor_agent_run.TERMINAL_RUN_STATUSES,
         bugbot_text=bugbot_text,
     )
     if text is None:

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.services import cursor_agent_tool, junior_memory
-from app.services.cursor_agent_tool import AgentRunSnapshot
+from app.services.cursor_agent_run import AgentRunSnapshot
 from app.services.cursor_agent_watch import poll_one
 
 
@@ -59,7 +59,7 @@ class AgentFollowUpTests(unittest.TestCase):
     @patch("app.services.github_tool.open_pull_request", return_value="https://github.com/sb11b/Storykeep-/pull/99")
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
-    @patch("app.services.cursor_agent_watch.cursor_agent_tool.fetch_run")
+    @patch("app.services.cursor_agent_watch.cursor_agent_run.fetch_run")
     def test_poll_posts_once(self, fetch_run, lookup, append_message, open_pull_request, bugbot_section):
         fetch_run.return_value = AgentRunSnapshot("FINISHED", "Done.", "cursor/mail-pin", None, "run-1")
         lookup.return_value = SimpleNamespace(id=uuid.uuid4())
@@ -89,7 +89,7 @@ class AgentFollowUpTests(unittest.TestCase):
 
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
-    @patch("app.services.cursor_agent_watch.cursor_agent_tool.fetch_run")
+    @patch("app.services.cursor_agent_watch.cursor_agent_run.fetch_run")
     def test_stale_running_posts_a_still_going_note(self, fetch_run, lookup, append_message):
         fetch_run.return_value = AgentRunSnapshot("RUNNING")
         lookup.return_value = SimpleNamespace(id=uuid.uuid4())
@@ -112,7 +112,7 @@ class AgentFollowUpTests(unittest.TestCase):
     @patch("app.services.github_tool.open_pull_request", return_value="https://github.com/sb11b/Storykeep-/pull/99")
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
-    @patch("app.services.cursor_agent_watch.cursor_agent_tool.fetch_run")
+    @patch("app.services.cursor_agent_watch.cursor_agent_run.fetch_run")
     def test_finished_agent_waits_for_bugbot(self, fetch_run, lookup, append_message, open_pull_request, _bugbot):
         fetch_run.return_value = AgentRunSnapshot("FINISHED", "Done.", "cursor/mail-pin", None, "run-1")
         lookup.return_value = SimpleNamespace(id=uuid.uuid4())
@@ -141,7 +141,7 @@ class AgentFollowUpTests(unittest.TestCase):
     )
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
-    @patch("app.services.cursor_agent_watch.cursor_agent_tool.fetch_run")
+    @patch("app.services.cursor_agent_watch.cursor_agent_run.fetch_run")
     def test_bugbot_watch_posts_the_review(self, fetch_run, lookup, append_message, bugbot_section):
         fetch_run.return_value = AgentRunSnapshot(
             "FINISHED",
@@ -171,7 +171,7 @@ class AgentFollowUpTests(unittest.TestCase):
     @patch("app.services.cursor_agent_watch.cursor_agent_bugbot.bugbot_section", return_value=("", False))
     @patch("app.services.cursor_agent_watch.grok_store.append_message")
     @patch("app.services.cursor_agent_watch.grok_store.lookup_owned_conversation")
-    @patch("app.services.cursor_agent_watch.cursor_agent_tool.fetch_run")
+    @patch("app.services.cursor_agent_watch.cursor_agent_run.fetch_run")
     def test_stale_bugbot_watch_stays_quiet(self, fetch_run, lookup, append_message, _bugbot):
         fetch_run.return_value = AgentRunSnapshot(
             "FINISHED",
