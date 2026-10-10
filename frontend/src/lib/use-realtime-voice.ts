@@ -5,6 +5,27 @@ import type { RefObject } from "react";
 import { showTtsErrorToast } from "@/lib/tts-error-toast";
 import { readStoredTtsVoice } from "@/lib/tts-preferences";
 
+/** Decode a base64 string into a Uint8Array. */
+export function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/** Convert interleaved PCM16 data to a Float32Array for Web Audio API. */
+export function pcm16ToFloat32(pcm16: Uint8Array): Float32Array {
+  const view = new DataView(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength);
+  const float32 = new Float32Array(view.byteLength / 2);
+  for (let i = 0; i < float32.length; i++) {
+    const int16 = view.getInt16(i * 2, true);
+    float32[i] = int16 < 0 ? int16 / 0x8000 : int16 / 0x7fff;
+  }
+  return float32;
+}
+
 /** Owns the xAI Realtime voice session (WebSocket + AudioContext PCM16 streaming) extracted from grok-message-listen. */
 export function useRealtimeVoice(
   voiceRef: RefObject<string>,
@@ -21,27 +42,6 @@ export function useRealtimeVoice(
     cancelled: boolean;
     onStateChange: EventListenerOrEventListenerObject;
   } | null>(null);
-
-  /** Decode a base64 string into a Uint8Array. */
-  const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }, []);
-
-  /** Convert interleaved PCM16 data to a Float32Array for Web Audio API. */
-  const pcm16ToFloat32 = useCallback((pcm16: Uint8Array): Float32Array => {
-    const view = new DataView(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength);
-    const float32 = new Float32Array(view.byteLength / 2);
-    for (let i = 0; i < float32.length; i++) {
-      const int16 = view.getInt16(i * 2, true);
-      float32[i] = int16 < 0 ? int16 / 0x8000 : int16 / 0x7fff;
-    }
-    return float32;
-  }, []);
 
   /**
    * Stop only the realtime WebSocket/AudioContext path without touching the HTML
@@ -202,7 +202,7 @@ export function useRealtimeVoice(
       ws.addEventListener("error", onError, { once: true });
       ws.addEventListener("close", onClose, { once: true });
     },
-    [base64ToUint8Array, pcm16ToFloat32, stopRef, voiceRef],
+    [stopRef, voiceRef],
   );
 
   const cancelResumeWaiter = useCallback(() => {
