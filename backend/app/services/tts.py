@@ -13,8 +13,6 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import settings
-
-# Re-exported for app.routers.tts and backend.tests.test_tts, which resolve these through app.services.tts.
 from app.services.tts_scripts import (
     article_script,
     body_sections,
@@ -29,6 +27,11 @@ from app.services.tts_scripts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# This module owns xAI speech synthesis and the on-disk chunk cache, and
+# re-exports the script-building names from app.services.tts_scripts (titles,
+# article/note scripts, section maps, chunking) — routers/tts.py and
+# tests/test_tts.py resolve those names through this module.
 
 DEFAULT_TTS_URL = "https://api.x.ai/v1/tts"
 DEFAULT_VOICES_URL = "https://api.x.ai/v1/tts/voices"

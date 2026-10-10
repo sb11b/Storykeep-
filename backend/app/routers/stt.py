@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth import decode_access_token
 from app.config import settings
 from app.database import get_db
-from app.deps import get_current_user, require_user
+from app.deps import require_user
 from app.models import User
 from app.services.demo_lock import is_locked, reject_authentication
 from app.services.stt_clip import key_configured, transcribe_clip
