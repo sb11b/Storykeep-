@@ -17,7 +17,10 @@ DEMO_DETAIL = "Mail is not enabled on this account"
 
 
 def env_token() -> str:
-    return (settings.fastmail_token or "").strip()
+    # FASTMAIL_JMAP_TOKEN is the current env var name for the JMAP bearer
+    # token; FASTMAIL_TOKEN is the legacy name still set on production.
+    # Either is a valid token — prefer the explicit one.
+    return (settings.fastmail_jmap_token or settings.fastmail_token or "").strip()
 
 
 def _decrypt_row_token(row: object | None) -> str:

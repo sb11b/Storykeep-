@@ -461,3 +461,192 @@ def send_email(token: str, *, to: str, subject: str, body: str) -> dict[str, Any
         "subject": subj,
         "from": from_email,
     }
+
+
+# ── Junior email tools: search + draft-only creation ─────────────────────────
+#
+# create_draft NEVER calls EmailSubmission/set — it only creates the email in
+# the Drafts mailbox. Sending stays a human action in Fastmail.
+
+SEARCH_LIMIT_CAP = 25
+DRAFT_BODY_CAP = 40_000
+
+
+def clean_draft_fields(to: str, subject: str, body: str) -> tuple[str, str, str]:
+    """Validate and normalize draft fields. Raises ValueError with a speakable message."""
+    to_addr = (to or "").strip()
+    subj = (subject or "").strip() or "(no subject)"
+    text = (body or "").strip()
+    if "@" not in to_addr or len(to_addr) > 320:
+        raise ValueError("The recipient needs a real email address.")
+    if len(subj) > 400:
+        subj = subj[:400]
+    if not text:
+        raise ValueError("Write the message before saving a draft.")
+    if len(text) > DRAFT_BODY_CAP:
+        text = text[:DRAFT_BODY_CAP]
+    return to_addr, subj, text
+
+
+def build_draft_create(
+    *,
+    drafts_id: str,
+    identity: dict[str, Any],
+    to_addr: str,
+    subject: str,
+    body: str,
+    from_email: str | None = None,
+    reply_to: str | None = None,
+    reply_target: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the Email/set create payload for a Drafts email (pure — no network).
+
+    The payload targets the Drafts mailbox and carries the $draft keyword.
+    There is deliberately NO EmailSubmission/set anywhere: a draft is never
+    auto-sent.
+    """
+    from_name = str(identity.get("name") or "")
+    from_value = (from_email or str(identity.get("email") or "")).strip()
+    from_list = [{"email": from_value, **({"name": from_name} if from_name else {})}]
+    create: dict[str, Any] = {
+        "mailboxIds": {drafts_id: True},
+        "from": from_list,
+        "to": [{"email": to_addr}],
+        "subject": subject,
+        "keywords": {"$draft": True},
+        "bodyValues": {"t": {"value": body, "charset": "utf-8"}},
+        "textBody": [{"partId": "t", "type": "text/plain"}],
+    }
+    reply_addr = (reply_to or "").strip()
+    if reply_addr:
+        create["replyTo"] = [{"email": reply_addr}]
+    if reply_target:
+        message_id = reply_target.get("messageId")
+        refs: list[str] = []
+        references = reply_target.get("references")
+        if isinstance(references, list):
+            refs.extend(str(item) for item in references)
+        if isinstance(message_id, list) and message_id:
+            refs.append(str(message_id[0]))
+            create["inReplyTo"] = str(message_id[0])
+        if refs:
+            create["references"] = refs
+        thread_id = reply_target.get("threadId")
+        if thread_id:
+            create["threadId"] = str(thread_id)
+    return create
+
+
+def _draft_identity(identities: list[Any]) -> dict[str, Any] | None:
+    """Pick the business identity: FASTMAIL_IDENTITY_BUSINESS id, then
+    FASTMAIL_FROM address, then the first identity Fastmail offers."""
+    wanted_id = (settings.fastmail_identity_business or "").strip()
+    wanted_email = (settings.fastmail_from or "").strip().lower()
+    rows = [item for item in identities if isinstance(item, dict)]
+    if wanted_id:
+        for item in rows:
+            if str(item.get("id") or "") == wanted_id:
+                return item
+    if wanted_email:
+        for item in rows:
+            if str(item.get("email") or "").strip().lower() == wanted_email:
+                return item
+    return rows[0] if rows else None
+
+
+def _reply_target(token: str, session: dict[str, Any], acct: str, email_id: str) -> dict[str, Any] | None:
+    cleaned = (email_id or "").strip()
+    if not cleaned or len(cleaned) > 200:
+        return None
+    get = {
+        "accountId": acct,
+        "ids": [cleaned],
+        "properties": ["messageId", "references", "threadId", "subject", "from"],
+    }
+    calls = _api_call(token, session, [["Email/get", get, "r"]])
+    listed = _result(calls, "Email/get", "r").get("list") or []
+    return listed[0] if listed and isinstance(listed[0], dict) else None
+
+
+def search_emails(token: str, *, query: str, limit: int | None = None) -> dict[str, Any]:
+    """Search messages by sender, subject, or body text (JMAP `text` filter)."""
+    q = (query or "").strip()
+    if not q or len(q) > 200:
+        raise HTTPException(status_code=400, detail="Give me something to search for.")
+    try:
+        page = max(1, min(SEARCH_LIMIT_CAP, int(limit))) if limit is not None else SEARCH_LIMIT_CAP
+    except (TypeError, ValueError):
+        page = SEARCH_LIMIT_CAP
+    session, acct, _boxes = mailboxes(token)
+    query_call = {
+        "accountId": acct,
+        "filter": {"text": q},
+        "sort": [{"property": "receivedAt", "isAscending": False}],
+        "limit": page,
+        "calculateTotal": True,
+    }
+    get = {
+        "accountId": acct,
+        "#ids": {"resultOf": "q", "name": "Email/query", "path": "/ids"},
+        "properties": ["from", "to", "subject", "receivedAt", "preview", "keywords", "hasAttachment"],
+    }
+    calls = _api_call(token, session, [["Email/query", query_call, "q"], ["Email/get", get, "e"]])
+    queried = _result(calls, "Email/query", "q")
+    listed = _result(calls, "Email/get", "e").get("list") or []
+    items = [email_summary(row) for row in listed if isinstance(row, dict) and row.get("id")]
+    total = queried.get("total")
+    try:
+        total_n = int(total) if total is not None else len(items)
+    except (TypeError, ValueError):
+        total_n = len(items)
+    return {"items": items, "total": total_n, "limit": page, "query": q}
+
+
+def create_draft(
+    token: str,
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    reply_to_message_id: str | None = None,
+) -> dict[str, Any]:
+    """Create a DRAFT in Fastmail's Drafts mailbox. Never submits — no send."""
+    try:
+        to_addr, subj, text = clean_draft_fields(to, subject, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session, acct, boxes = mailboxes(token)
+    drafts = mailbox_by_role(boxes, "drafts")
+    if not drafts:
+        raise HTTPException(status_code=502, detail="Fastmail is missing Drafts.")
+    ident_calls = _api_call(token, session, [["Identity/get", {"accountId": acct, "ids": None}, "i"]])
+    identities = _result(ident_calls, "Identity/get", "i").get("list") or []
+    identity = _draft_identity(identities)
+    if not identity or not identity.get("id"):
+        raise HTTPException(status_code=502, detail="Fastmail returned no sending identity.")
+    reply_target = None
+    if reply_to_message_id:
+        reply_target = _reply_target(token, session, acct, reply_to_message_id)
+    create = build_draft_create(
+        drafts_id=drafts["id"],
+        identity=identity,
+        to_addr=to_addr,
+        subject=subj,
+        body=text,
+        from_email=settings.fastmail_from,
+        reply_to=settings.fastmail_reply_to,
+        reply_target=reply_target,
+    )
+    calls = _api_call(token, session, [["Email/set", {"accountId": acct, "create": {"draft": create}}, "s"]])
+    created = (_result(calls, "Email/set", "s").get("created") or {}).get("draft") or {}
+    email_id = str(created.get("id") or "")
+    from_email = str(create["from"][0]["email"])
+    logger.info("jmap draft ok to_host=%s", to_addr.rsplit("@", 1)[-1])
+    return {
+        "ok": True,
+        "draft": True,
+        "id": email_id,
+        "to": to_addr,
+        "subject": subj,
+        "from": from_email,
+    }

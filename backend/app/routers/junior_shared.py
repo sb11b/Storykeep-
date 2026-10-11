@@ -10,6 +10,7 @@ from app.routers.junior_shared_documents import router as documents_router
 from app.routers.junior_shared_files import router as files_router
 from app.routers.junior_shared_tasks import router as tasks_router
 from app.routers.junior_shared_projects import router as projects_router
+from app.routers.junior_email import router as email_router
 
 router = APIRouter(prefix="/junior", tags=["junior-shared-memory"])
 
@@ -23,3 +24,4 @@ router.include_router(documents_router)
 router.include_router(files_router)
 router.include_router(tasks_router)
 router.include_router(projects_router)
+router.include_router(email_router)

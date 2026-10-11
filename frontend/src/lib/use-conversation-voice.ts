@@ -3,23 +3,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import {
+  buildFunctionCallOutput,
   buildRealtimeUrl,
+  buildResponseCreate,
   buildSessionUpdate,
   classifyRealtimeEvent,
   encodeMicChunk,
   extractAudioDelta,
   extractConversationId,
+  extractFunctionCall,
   extractUserTranscript,
   MAX_RECONNECT_ATTEMPTS,
   MIC_PROCESSOR_BUFFER,
   nextBackoffDelay,
   REALTIME_SAMPLE_RATE,
+  runJuniorTool,
   splitMicChunks,
+  type JuniorFunctionCall,
 } from "@/lib/conversation-voice";
 import { base64ToUint8Array, pcm16ToFloat32 } from "@/lib/use-realtime-voice";
 import { micDeniedMessage } from "@/lib/stt-ui";
 
-export type ConversationStatus = "idle" | "connecting" | "listening" | "speaking";
+export type ConversationStatus = "idle" | "connecting" | "listening" | "speaking" | "thinking";
 
 export interface UseConversationVoiceOptions {
   /** Live voice id — read through a ref so voice changes never reopen the socket. */
@@ -36,6 +41,7 @@ export const CONVERSATION_STATUS_LABEL: Record<ConversationStatus, string> = {
   connecting: "Talk — connecting…",
   listening: "Talk — listening…",
   speaking: "Talk — Junior is speaking…",
+  thinking: "Talk — checking your library…",
 };
 
 /**
@@ -74,6 +80,13 @@ export function useConversationVoice({
   const statusRef = useRef<ConversationStatus>("idle");
   const onUserTranscriptRef = useRef(onUserTranscript);
   const onStatusChangeRef = useRef(onStatusChange);
+  /**
+   * Completed function-call ids already handled. xAI emits the completed call
+   * twice — response.function_call_arguments.done AND inside
+   * response.output_item.done — so the dedupe set keeps each call to exactly
+   * one handler run (and one output sent back per call_id).
+   */
+  const handledToolCallsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     onUserTranscriptRef.current = onUserTranscript;
@@ -218,6 +231,38 @@ export function useConversationVoice({
     setStatusSafe("speaking");
   }, [setStatusSafe]);
 
+  /**
+   * Junior's function-call loop: run the tool, return its output to xAI, and
+   * ask for the spoken answer. Verified live against xAI realtime — the
+   * conversation.item.create (function_call_output) + response.create pair
+   * makes Junior speak the tool result.
+   */
+  const handleJuniorToolCall = useCallback(
+    async (socket: WebSocket, session: number, call: JuniorFunctionCall) => {
+      // xAI emits the completed call twice (arguments.done and again inside
+      // output_item.done) — the dedupe set keeps one handler run per call.
+      if (handledToolCallsRef.current.has(call.call_id)) return;
+      handledToolCallsRef.current.add(call.call_id);
+      // A stop() or a newer start() owns the session now — bail.
+      if (session !== sessionRef.current) return;
+      console.log("junior-talk", { action: "tool-call", name: call.name });
+      setStatusSafe("thinking");
+      const result = await runJuniorTool(call.name, call.arguments);
+      console.log("junior-talk", { action: "tool-result", name: call.name, chars: result.length });
+      // Stale guards: a torn-down session or a closed socket must never get
+      // the late result — barge-in and reconnects rely on this.
+      if (session !== sessionRef.current) return;
+      if (socket.readyState !== WebSocket.OPEN) return;
+      try {
+        socket.send(JSON.stringify(buildFunctionCallOutput(call.call_id, result)));
+        socket.send(JSON.stringify(buildResponseCreate()));
+      } catch {
+        /* socket closed mid-send; the close handler reconnects */
+      }
+    },
+    [setStatusSafe],
+  );
+
   const scheduleReconnect = useCallback(() => {
     if (manualStopRef.current) return;
     if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
@@ -358,6 +403,16 @@ export function useConversationVoice({
           return;
         }
         const kind = classifyRealtimeEvent(msg.type);
+        // Junior's function tools: the completed call arrives as
+        // response.function_call_arguments.done (and again inside
+        // response.output_item.done — handled once via the dedupe set).
+        // Tool turns stay inside the realtime session; only the user's
+        // transcribed speech goes to the chat record below, untouched.
+        const toolCall = extractFunctionCall(msg);
+        if (toolCall) {
+          void handleJuniorToolCall(ws, session, toolCall);
+          return;
+        }
         switch (kind) {
           case "conversation": {
             const id = extractConversationId(msg);
@@ -449,7 +504,7 @@ export function useConversationVoice({
       startingRef.current = false;
       setStatusSafe("listening");
     },
-    [closeAudioContext, scheduleAssistantAudio, scheduleReconnect, setStatusSafe, stopPlayback, teardownTransport, voiceIdRef],
+    [closeAudioContext, handleJuniorToolCall, scheduleAssistantAudio, scheduleReconnect, setStatusSafe, stopPlayback, teardownTransport, voiceIdRef],
   );
 
   useEffect(() => {
