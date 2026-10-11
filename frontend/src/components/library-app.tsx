@@ -59,6 +59,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { applyAppearanceFromUser } from "@/lib/appearance";
 import { comparePinned } from "@/lib/pin-order";
 import { ApiError, api } from "@/lib/api";
+import { clearPwaApiCaches } from "@/lib/pwa-cache";
 import { useLibraryList } from "@/lib/useLibraryList";
 import { useFeedManagement } from "@/lib/useFeedManagement";
 import { normalizeUserProfile } from "@/lib/user-profile";
@@ -763,6 +764,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       refreshing={refreshing}
       onLogout={async () => {
         await api.logout();
+        await clearPwaApiCaches();
         router.replace("/login");
       }}
       onProfile={openProfile}

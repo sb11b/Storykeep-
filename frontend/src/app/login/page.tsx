@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
+import { clearPwaApiCaches } from "@/lib/pwa-cache";
 import { cn } from "@/lib/utils";
 
 type TwoFactorState = {
@@ -35,6 +36,7 @@ export default function LoginPage() {
     try {
       if (mode === "register") {
         await api.register(email, password, displayName || undefined);
+        await clearPwaApiCaches();
         router.replace("/");
         return;
       }
@@ -44,6 +46,7 @@ export default function LoginPage() {
           code: code.trim(),
           use_backup_code: useBackupCode,
         });
+        await clearPwaApiCaches();
         router.replace("/");
         return;
       }
@@ -58,6 +61,7 @@ export default function LoginPage() {
         setUseBackupCode(false);
         return;
       }
+      await clearPwaApiCaches();
       router.replace("/");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not sign in");
