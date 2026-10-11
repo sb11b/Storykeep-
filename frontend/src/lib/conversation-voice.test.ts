@@ -62,17 +62,36 @@ test("session.update enables resumption and carries the id when resuming", () =>
   assert.equal(resumed.session.resumption.conversation_id, "conv-9");
 });
 
-test("session.update includes the web_search tool so Talk can answer current-events questions", () => {
+test("session.update includes web_search plus Junior's function tools so Talk can answer about Steve's world", () => {
   const update = buildSessionUpdate("castor");
-  assert.deepEqual(update.session.tools, [{ type: "web_search" }]);
-  // The instructions must tell Junior to reach for the tool on time-sensitive asks.
+  const tools = update.session.tools;
+  assert.deepEqual(tools[0], { type: "web_search" });
+  // The function tools follow, with the exact names Junior's handlers dispatch.
+  assert.deepEqual(
+    tools.slice(1).map((tool: { name?: string }) => tool.name),
+    [
+      "search_library",
+      "get_document",
+      "read_document_file",
+      "list_pending_work",
+      "create_task",
+      "read_email",
+      "search_email",
+      "read_email_message",
+      "draft_email",
+      "list_drafts",
+    ],
+  );
+  // The instructions must tell Junior to reach for the tools and read aloud.
   assert.match(update.session.instructions, /web_search/);
-  assert.match(update.session.instructions, /current events/);
+  assert.match(update.session.instructions, /search_library/);
+  assert.match(update.session.instructions, /read it aloud in full/);
+  assert.match(update.session.instructions, /NEVER send email/);
 });
 
-test("session.update keeps the web_search tool when resuming a conversation", () => {
+test("session.update keeps the full tool set when resuming a conversation", () => {
   const resumed = buildSessionUpdate("castor", "conv-9");
-  assert.deepEqual(resumed.session.tools, [{ type: "web_search" }]);
+  assert.equal(resumed.session.tools.length, 11);
 });
 
 test("MIC_CHUNK_SAMPLES is 100ms of audio at 24kHz", () => {
@@ -990,6 +1009,180 @@ test("a user-initiated stop does not auto-reconnect", async () => {
 
     unmountHook(slots);
   } finally {
+    restore();
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Junior's function-call loop (verified live against xAI realtime).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Install a URL-dispatching fetch: the token mint plus the junior API. */
+function installToolFetch(juniorPayload: unknown, gate?: Promise<void>) {
+  const originals = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/v1/junior/")) {
+      if (gate) await gate;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => juniorPayload,
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ value: "token-abc", expires_at: 0 }),
+    };
+  }) as unknown as typeof fetch;
+  return () => {
+    globalThis.fetch = originals;
+  };
+}
+
+test("a completed function call is handled once and answered: output item + response.create", async () => {
+  const restore = installFakes();
+  const restoreFetch = installToolFetch({
+    slug: "quantum",
+    title: "Quantum Intro",
+    text: "Superposition is real. Entanglement too.",
+    summary: "A short intro to quantum physics.",
+  });
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const statuses: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+            onStatusChange: (s: string) => statuses.push(s),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+    const before = ws.sent.length;
+
+    // The live stream delivers the completed call twice: once as
+    // response.function_call_arguments.done, once inside
+    // response.output_item.done. Both must collapse to ONE handler run.
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "response.function_call_arguments.done",
+        call_id: "call-1",
+        name: "get_document",
+        arguments: '{"slug":"quantum"}',
+      }),
+    });
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "response.output_item.done",
+        item: {
+          type: "function_call",
+          call_id: "call-1",
+          name: "get_document",
+          arguments: '{"slug":"quantum"}',
+        },
+      }),
+    });
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const sent = ws.sent.slice(before).map((line) => JSON.parse(line));
+    const outputs = sent.filter((m) => m.type === "conversation.item.create");
+    assert.equal(outputs.length, 1, "the duplicate call shapes must be handled exactly once");
+    assert.equal(outputs[0].item.type, "function_call_output");
+    assert.equal(outputs[0].item.call_id, "call-1");
+    assert.match(outputs[0].item.output, /Quantum Intro/);
+    assert.match(outputs[0].item.output, /Superposition is real/);
+    assert.ok(
+      sent.some((m) => m.type === "response.create"),
+      "a spoken answer must be requested after the tool output",
+    );
+    assert.ok(statuses.includes("thinking"), "the UI shows the checking-your-library state");
+    // Tool turns never touch the transcript record path.
+    assert.deepEqual(transcripts, []);
+
+    unmountHook(slots);
+  } finally {
+    restoreFetch();
+    restore();
+  }
+});
+
+test("a stop during an in-flight tool call swallows the late result (barge-in safety)", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const restore = installFakes();
+  const restoreFetch = installToolFetch({ slug: "quantum", title: "Quantum", text: "body" }, gate);
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: () => {},
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+    const before = ws.sent.length;
+
+    // The model calls a tool; the fetch parks on the gate (session in flight).
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "response.function_call_arguments.done",
+        call_id: "call-2",
+        name: "get_document",
+        arguments: '{"slug":"quantum"}',
+      }),
+    });
+    await flushMicrotasks();
+
+    // The user ends Talk mode while the tool call is still running.
+    stop();
+    release();
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const sent = ws.sent.slice(before).map((line) => JSON.parse(line));
+    assert.equal(
+      sent.filter((m) => m.type === "conversation.item.create").length,
+      0,
+      "a stopped session must never send the late tool output",
+    );
+    assert.equal(
+      sent.filter((m) => m.type === "response.create").length,
+      0,
+      "a stopped session must never request a spoken answer for a dead call",
+    );
+
+    unmountHook(slots);
+  } finally {
+    restoreFetch();
     restore();
   }
 });

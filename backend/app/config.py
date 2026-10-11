@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     fastmail_caldav_url: str = ""
     fastmail_token: str = ""
     fastmail_jmap_session_url: str = "https://api.fastmail.com/jmap/session"
+    # Junior's email tools: JMAP bearer token plus the business identity used
+    # for drafts. FASTMAIL_TOKEN is the legacy env var name for the same token.
+    fastmail_jmap_token: str = ""
+    fastmail_account_id: str = ""
+    fastmail_identity_business: str = ""
+    fastmail_identity_parent: str = ""
+    fastmail_from: str = ""
+    fastmail_reply_to: str = ""
     railway_api_token: str = ""
     railway_token: str = ""
     railway_project_id: str = ""

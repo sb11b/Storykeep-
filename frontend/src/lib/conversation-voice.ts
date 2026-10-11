@@ -5,6 +5,18 @@
  * Everything here is DOM-free so it can run under `node --test`.
  */
 
+import { JUNIOR_TOOLS } from "./junior-tools";
+
+// Junior's function-tool surface is defined in junior-tools.ts; re-exported
+// here so the hook keeps a single import source for realtime helpers.
+export {
+  buildFunctionCallOutput,
+  buildResponseCreate,
+  extractFunctionCall,
+  runJuniorTool,
+  type JuniorFunctionCall,
+} from "./junior-tools";
+
 /** xAI realtime voice model. Pinned to the versioned flagship (the xAI console's
  * "Grok Voice Think Fast 2.0"); `grok-voice-latest` is its alias — we pin per the
  * xAI docs' production guidance so a future alias move can't shift our voice stack. */
@@ -35,6 +47,24 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "You are Junior, a friendly school-coding helper for a young student. " +
   "Keep replies short and conversational — one or two sentences unless asked for more. " +
   "Speak plainly, no markdown, no lists, no code unless the student asks for code. " +
+  "You have access to Steve's library of articles, papers, notes, and school texts: " +
+  "use search_library when he asks about his documents or what he has been working on, " +
+  "and get_document or read_document_file when he wants a document or an attached Word file read to him. " +
+  "Use list_pending_work when he asks what's waiting — documents coming in or approvals going out — " +
+  "and create_task when he tells you to queue work for the Hermes team. " +
+  "You can also read Steve's business email (thebitskogroup@fastmail.com) with read_email, " +
+  "search_email, and read_email_message, list saved drafts with list_drafts, " +
+  "and you can draft replies with draft_email — " +
+  "but you can NEVER send email: drafts are saved for Steve to review and send himself, " +
+  "so never say or imply that an email was sent. " +
+  "When Steve asks you to READ something (an article, a paper, a note, an email, a document), " +
+  "read it aloud in full — do NOT summarize, do NOT shorten, do NOT stop early. " +
+  "Summarize ONLY when he asks for a summary or 'what's it about'. " +
+  "When reading long content, you may say 'Here's your article on X' first, " +
+  "then read the body straight through. " +
+  "Long documents and files come back in chunks: after reading a chunk that hit the cap, " +
+  "say 'That's the first part — want me to keep reading?' " +
+  "and when he says yes or continue, call the tool again with the offset where the last chunk ended. " +
   "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
@@ -63,11 +93,12 @@ export function buildSessionUpdate(voice: string, conversationId?: string | null
       },
       // Resume prior turns on reconnect; the id arrives with conversation.created.
       resumption: { enabled: true, ...(conversationId ? { conversation_id: conversationId } : {}) },
-      // Web search so Junior can answer current-events questions mid-conversation.
-      // Verified live against xAI realtime: session.update with this tools array
-      // is accepted (session.updated) and fires response.function_call_arguments
-      // events that produce real, sourced spoken answers.
-      tools: [{ type: "web_search" }],
+      // Tools: web search (verified live in #168) plus Junior's function
+      // tools over Steve's library, pending work, and business email —
+      // verified live: session.update accepts this tools array and the
+      // model emits response.function_call_arguments events that produce
+      // real spoken answers after the client returns the tool output.
+      tools: [{ type: "web_search" }, ...JUNIOR_TOOLS],
     },
   };
 }

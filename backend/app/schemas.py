@@ -966,6 +966,58 @@ class JuniorDocumentFileOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JuniorEmailMessageOut(BaseModel):
+    """One email summary for Junior's voice tools — compact and speakable."""
+
+    id: str
+    from_address: str
+    to: str = ""
+    subject: str
+    date: str = ""
+    preview: str = ""
+    unread: bool = False
+
+
+class JuniorEmailBodyOut(BaseModel):
+    """A full email body for Junior to read aloud (capped, marked as excerpt)."""
+
+    id: str
+    from_address: str
+    to: str = ""
+    cc: str = ""
+    subject: str
+    date: str = ""
+    body: str
+    excerpt: bool = False
+
+
+class JuniorEmailDraftIn(BaseModel):
+    """A draft to save in Fastmail. NEVER sent — saving is all this does."""
+
+    to: str = Field(min_length=3, max_length=320)
+    subject: str = Field(default="", max_length=400)
+    body: str = Field(min_length=1, max_length=40_000)
+    reply_to_message_id: str | None = Field(default=None, max_length=200)
+
+
+class JuniorEmailDraftOut(BaseModel):
+    id: str
+    to: str
+    subject: str
+    from_address: str
+    draft: bool = True
+
+
+class JuniorDocumentFileTextOut(BaseModel):
+    """Extracted text from a document's attached file, for reading aloud."""
+
+    file_id: str
+    slug: str
+    filename: str
+    text: str
+    excerpt: bool = False
+
+
 class JuniorTaskIn(BaseModel):
     kind: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=200)
