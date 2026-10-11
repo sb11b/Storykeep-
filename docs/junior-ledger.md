@@ -7,7 +7,7 @@
 | next item | Android network layer (retrofit + service-token auth) |
 | plan | docs/junior-plan.md |
 
-## Remaining slices (one branch each, merge after CodeRabbit)
+## Remaining slices (one branch each, merge after Hermes code review)
 
 1. Android: retrofit client + SERVICE_TOKEN auth via BuildConfig
 2. Android: real Talk — wire /api/v1/stt + /api/v1/tts, kill the fake transcript

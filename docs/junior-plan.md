@@ -1,7 +1,7 @@
 # Junior app — completion plan
 
 Recreated 2026-10-11. Ground truth: GitHub main (highest merged PR #153, commit 8c42294).
-This is the working plan for finishing the Junior app. One slice per branch; merge only after CodeRabbit passes.
+This is the working plan for finishing the Junior app. One slice per branch; merge only after the Hermes code reviewer passes.
 
 ## Where we are (done)
 
@@ -22,7 +22,7 @@ This is the working plan for finishing the Junior app. One slice per branch; mer
 
 ## Remaining slices, in order
 
-Each is one `cursor/*` branch: implement → review → PR → CodeRabbit → merge → Railway.
+Each is one `cursor/*` branch: implement → review → PR → Hermes code review → merge → Railway.
 
 1. **Android network layer.** Retrofit/OkHttp client; base URL + `SERVICE_TOKEN` via BuildConfig (never commit the token); 401 handling. Turns the shell into a real client.
 2. **Android real Talk.** Replace the fake transcript: mic → `POST /api/v1/stt` (clip) or the realtime websocket; reply → `POST /api/v1/tts` playback. Keep the product lock.
