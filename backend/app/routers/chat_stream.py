@@ -46,6 +46,7 @@ from app.services import cursor_agent_intent
 from app.services import cursor_agent_replies
 from app.services import cursor_agent_sequence
 from app.services import cursor_agent_tool
+from app.services import junior_shared_documents
 from app.services import junior_shared_memory
 from app.services import chat_index
 from app.services import message_crypto
@@ -591,6 +592,8 @@ def _chat(
     ledger_text = junior_shared_memory.get_ledger_for_prompt(db, user)
     if ledger_text:
         turn_extras.append(f"Ledger:\n{ledger_text}")
+    for doc in junior_shared_documents.find_mentioned_documents(db, user, user_text):
+        turn_extras.append(f"Document {doc['slug']}:\n{doc['text']}")
     pane_note = junior_model.pane_mismatch_note(user_text, payload.pane_name)
     if pane_note:
         turn_extras.append(junior_model.PANE_MISMATCH_APPEND)
