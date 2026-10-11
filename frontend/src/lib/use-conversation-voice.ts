@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, ApiError } from "@/lib/api";
 import {
-  BASE_BACKOFF_MS,
   buildRealtimeUrl,
   buildSessionUpdate,
   classifyRealtimeEvent,
@@ -13,7 +12,9 @@ import {
   extractUserTranscript,
   MAX_RECONNECT_ATTEMPTS,
   MIC_PROCESSOR_BUFFER,
+  nextBackoffDelay,
   REALTIME_SAMPLE_RATE,
+  splitMicChunks,
 } from "@/lib/conversation-voice";
 import { base64ToUint8Array, pcm16ToFloat32 } from "@/lib/use-realtime-voice";
 import { micDeniedMessage } from "@/lib/stt-ui";
@@ -211,7 +212,8 @@ export function useConversationVoice({
       setStatusSafe("idle");
       return;
     }
-    const delay = BASE_BACKOFF_MS * 2 ** reconnectAttemptRef.current;
+    // Use the unit-tested helper so the MAX_BACKOFF_MS clamp is real in production.
+    const delay = nextBackoffDelay(reconnectAttemptRef.current);
     reconnectAttemptRef.current += 1;
     clearReconnectTimer();
     reconnectTimerRef.current = setTimeout(() => {
@@ -222,10 +224,12 @@ export function useConversationVoice({
 
   const start = useCallback(
     async (resume = false) => {
-      if (startingRef.current || manualStopRef.current) return;
+      // A user-initiated stop cancels the CURRENT session only — re-arm so the
+      // Talk button works again after "End conversation mode".
+      manualStopRef.current = false;
+      if (startingRef.current) return;
       const active = statusRef.current !== "idle";
-      if (active && !resume) return;
-      if (active && resume) return;
+      if (active) return;
       startingRef.current = true;
       setStatusSafe("connecting");
       console.log("junior-talk", { action: resume ? "resume" : "start" });
@@ -235,27 +239,41 @@ export function useConversationVoice({
         const tokenData = await api.realtimeToken();
         token = tokenData.value;
         if (!token) throw new Error("Realtime token is empty.");
-      } catch {
+      } catch (error) {
         startingRef.current = false;
         setStatusSafe("idle");
+        // A 4xx from the token mint is a permanent auth failure — retrying a socket
+        // that was never opened just burns all 5 reconnect attempts.
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+          console.log("junior-talk", { action: "token-fail", status: error.status });
+          return;
+        }
         scheduleReconnect();
+        return;
+      }
+      // The user may have tapped stop while the token was in flight.
+      if (manualStopRef.current) {
+        startingRef.current = false;
         return;
       }
 
       let audioCtx: AudioContext;
       try {
         audioCtx = new AudioContext({ sampleRate: REALTIME_SAMPLE_RATE });
+        // Assign before resume() so the failure path below can close it —
+        // otherwise a throwing resume() leaks the context forever.
+        audioCtxRef.current = audioCtx;
         await audioCtx.resume();
         if (audioCtx.state !== "running") {
           throw new Error("AudioContext failed to start.");
         }
       } catch {
         startingRef.current = false;
+        closeAudioContext();
         setStatusSafe("idle");
         scheduleReconnect();
         return;
       }
-      audioCtxRef.current = audioCtx;
       nextStartTimeRef.current = audioCtx.currentTime + 0.05;
 
       let stream: MediaStream;
@@ -268,6 +286,19 @@ export function useConversationVoice({
         closeAudioContext();
         setStatusSafe("idle");
         console.log("junior-talk", { action: "mic-fail", message: micDeniedMessage(error) });
+        return;
+      }
+      // The user may have tapped stop while the mic was being granted.
+      if (manualStopRef.current) {
+        startingRef.current = false;
+        closeAudioContext();
+        for (const track of stream.getTracks()) {
+          try {
+            track.stop();
+          } catch {
+            /* ignore */
+          }
+        }
         return;
       }
       micStreamRef.current = stream;
@@ -340,7 +371,12 @@ export function useConversationVoice({
       ws.onclose = () => {
         if (wsRef.current !== ws) return;
         wsRef.current = null;
-        stopPlayback();
+        // Tear the whole transport down BEFORE reconnecting: stop the mic tracks,
+        // disconnect the processor, close the AudioContext. Skipping this leaked a
+        // live mic + context per reconnect, and the orphaned processor kept
+        // appending audio to the NEW socket via the shared wsRef.
+        teardownTransport();
+        closeAudioContext();
         if (manualStopRef.current) return;
         setStatusSafe("idle");
         scheduleReconnect();
@@ -361,11 +397,16 @@ export function useConversationVoice({
         const socket = wsRef.current;
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
         const input = event.inputBuffer.getChannelData(0);
-        const chunk = encodeMicChunk(input);
-        try {
-          socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio: chunk }));
-        } catch {
-          /* socket closed mid-send; the close handler reconnects */
+        // Split the ~170ms ScriptProcessor buffer into ~100ms appends (the
+        // documented chunk size server_vad expects).
+        for (const chunk of splitMicChunks(input)) {
+          const encoded = encodeMicChunk(chunk);
+          try {
+            socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio: encoded }));
+          } catch {
+            /* socket closed mid-send; the close handler reconnects */
+            return;
+          }
         }
       };
       micSource.connect(processor);
@@ -378,7 +419,7 @@ export function useConversationVoice({
       startingRef.current = false;
       setStatusSafe("listening");
     },
-    [closeAudioContext, scheduleAssistantAudio, scheduleReconnect, setStatusSafe, stopPlayback, voiceIdRef],
+    [closeAudioContext, scheduleAssistantAudio, scheduleReconnect, setStatusSafe, stopPlayback, teardownTransport, voiceIdRef],
   );
 
   useEffect(() => {
@@ -394,5 +435,6 @@ export function useConversationVoice({
     };
   }, [clearReconnectTimer, closeAudioContext, teardownTransport]);
 
-  return { status, start, stop };
+  // Stable identity so pane effects keyed on `conversation` don't re-run every render.
+  return useMemo(() => ({ status, start, stop }), [status, start, stop]);
 }

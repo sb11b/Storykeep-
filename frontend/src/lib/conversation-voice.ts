@@ -113,21 +113,15 @@ export function classifyRealtimeEvent(type: unknown): RealtimeEventKind {
 export function extractUserTranscript(msg: unknown): string | null {
   if (!msg || typeof msg !== "object") return null;
   const m = msg as { transcript?: unknown; item?: { content?: unknown } };
-  const raw =
-    typeof m.transcript === "string"
-      ? m.transcript
-      : Array.isArray(m.item?.content)
-        ? m.item?.content.find((part) => {
-            const p = part as { transcript?: unknown };
-            return typeof p?.transcript === "string";
-          })
-        : null;
-  if (!raw || typeof (raw as { transcript?: unknown })?.transcript === "string") {
-    const nested = (raw as { transcript?: unknown } | null)?.transcript;
-    if (typeof nested === "string") return nested.trim() || null;
-    return null;
+  // Flat shape: { transcript }. Nested shape: { item: { content: [{ transcript }] } }
+  // — take the first content part that carries a string transcript.
+  if (typeof m.transcript === "string") return m.transcript.trim() || null;
+  if (Array.isArray(m.item?.content)) {
+    for (const part of m.item.content as Array<{ transcript?: unknown }>) {
+      if (typeof part?.transcript === "string") return part.transcript.trim() || null;
+    }
   }
-  return typeof raw === "string" ? raw.trim() || null : null;
+  return null;
 }
 
 /** Assistant PCM16 base64 delta, or null for other shapes. */

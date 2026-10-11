@@ -600,14 +600,20 @@ export function GrokPane({
     onUserTranscript: submitVoiceTranscript,
   });
   const conversationStatus = conversation.status;
-  conversationActiveRef.current = conversationStatus !== "idle";
+  // Mirror into the ref inside an effect (not during render) — usePaneVoice reads
+  // it to stand TTS auto-read down while the realtime socket speaks.
   useEffect(() => {
-    if (!panelOpen) conversation.stop();
-  }, [panelOpen, conversation]);
+    conversationActiveRef.current = conversationStatus !== "idle";
+  }, [conversationStatus]);
+  // Grab the stable stop callback so pane effects don't re-run every render.
+  const stopConversation = conversation.stop;
+  useEffect(() => {
+    if (!panelOpen) stopConversation();
+  }, [panelOpen, stopConversation]);
   // Locked pane or a disabled pane can't hold a mic session.
   useEffect(() => {
-    if (locked || !sttEnabled) conversation.stop();
-  }, [locked, sttEnabled, conversation]);
+    if (locked || !sttEnabled) stopConversation();
+  }, [locked, sttEnabled, stopConversation]);
 
   const { imagine } = useImagine({
     pane, onUpdate, onHistoryChanged, draftNow, busy, aborting, enabled, locked,
@@ -1323,7 +1329,10 @@ export function GrokPane({
                 size="sm"
                 variant={conversationStatus !== "idle" ? "destructive" : "outline"}
                 className="relative z-10 h-9 shrink-0 px-2.5 text-xs font-medium"
-                disabled={locked || uploadingFiles}
+                // Mutual exclusion: one mic per pane. The legacy STS/STT mic owns
+                // the capture while it is live, so Talk stands down (and vice
+                // versa — JuniorMicControls is not rendered while Talk is active).
+                disabled={locked || uploadingFiles || voice.sttBusy || voice.stsModeOn}
                 aria-label={
                   conversationStatus !== "idle"
                     ? "End conversation mode"
@@ -1351,17 +1360,19 @@ export function GrokPane({
                 ) : null}
                 Talk
               </Button>
-              <JuniorMicControls
-                enabled={enabled && !uploadingFiles}
-                locked={locked}
-                registerAbort={voice.registerMicAbort}
-                registerStsRearm={voice.registerStsRearm}
-                onPhaseChange={voice.handleMicPhaseChange}
-                onStsModeChange={voice.handleStsModeChange}
-                onStsSubmit={submitVoiceTranscript}
-                onSttDraft={applySttDraft}
-                onSttEmptyHint={voice.showSttEmptyHint}
-              />
+              {conversationStatus === "idle" ? (
+                <JuniorMicControls
+                  enabled={enabled && !uploadingFiles}
+                  locked={locked}
+                  registerAbort={voice.registerMicAbort}
+                  registerStsRearm={voice.registerStsRearm}
+                  onPhaseChange={voice.handleMicPhaseChange}
+                  onStsModeChange={voice.handleStsModeChange}
+                  onStsSubmit={submitVoiceTranscript}
+                  onSttDraft={applySttDraft}
+                  onSttEmptyHint={voice.showSttEmptyHint}
+                />
+              ) : null}
             </>
           ) : null}
           {busy || aborting ? (
