@@ -32,7 +32,8 @@ export const INPUT_TRANSCRIPTION_MODEL = "grok-transcribe";
 export const JUNIOR_TALK_INSTRUCTIONS =
   "You are Junior, a friendly school-coding helper for a young student. " +
   "Keep replies short and conversational — one or two sentences unless asked for more. " +
-  "Speak plainly, no markdown, no lists, no code unless the student asks for code.";
+  "Speak plainly, no markdown, no lists, no code unless the student asks for code. " +
+  "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
 export function buildRealtimeUrl(conversationId?: string | null): string {
@@ -60,6 +61,11 @@ export function buildSessionUpdate(voice: string, conversationId?: string | null
       },
       // Resume prior turns on reconnect; the id arrives with conversation.created.
       resumption: { enabled: true, ...(conversationId ? { conversation_id: conversationId } : {}) },
+      // Web search so Junior can answer current-events questions mid-conversation.
+      // Verified live against xAI realtime: session.update with this tools array
+      // is accepted (session.updated) and fires response.function_call_arguments
+      // events that produce real, sourced spoken answers.
+      tools: [{ type: "web_search" }],
     },
   };
 }

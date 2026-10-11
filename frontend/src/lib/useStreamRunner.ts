@@ -3,6 +3,7 @@
 import { toast } from "sonner";
 import { ApiError, api } from "@/lib/api";
 import { EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind } from "@/lib/grok-pane-name";
+import { shouldShowToast } from "@/lib/toast-dedupe";
 import { restoreDraftAfterSilent } from "@/lib/silent-retry";
 
 type IncludeMode = "auto" | "selection" | "heading" | "chunk";
@@ -326,8 +327,11 @@ export function useStreamRunner({
               }
             }
             if (meta.toast) {
-              if (meta.toast_kind === "error") toast.error(meta.toast);
-              else toast.message(meta.toast);
+              if (meta.toast_kind === "error") {
+                if (shouldShowToast(meta.toast)) toast.error(meta.toast);
+              } else {
+                if (shouldShowToast(meta.toast)) toast.message(meta.toast);
+              }
             }
             onUpdate((current) => {
               let next = current;
@@ -621,7 +625,7 @@ export function useStreamRunner({
           toastText !== NO_REPLY_TOAST &&
           !/didn't get a text reply|xai silent|returned no text/i.test(toastText)
         ) {
-          toast.error(toastText);
+          if (shouldShowToast(toastText)) toast.error(toastText);
         }
       } finally {
         if (turnId !== turnIdRef.current) return;

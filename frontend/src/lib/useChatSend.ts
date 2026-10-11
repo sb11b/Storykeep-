@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { shouldShowToast } from "@/lib/toast-dedupe";
 
 type IncludeMode = "auto" | "selection" | "heading" | "chunk";
 
@@ -170,9 +171,23 @@ export function useChatSend<T extends SendPane, TContext>({
       return;
     }
     const files = pending.filter((item) => item.id);
-    if ((!content && !files.length) || busy || aborting || abortingRef.current || !enabled || inFlightRef.current) {
+    // fromStt sends (Talk mode) are serialized through a queue in grok-pane,
+    // so the React `busy` state may still be true in this closure when the
+    // next queued send runs. inFlightRef is the synchronous source of truth —
+    // trust it for fromStt and let the typed composer keep the state guard.
+    const blockedByBusy = opts?.fromStt ? busy && inFlightRef.current : busy;
+    if (
+      (!content && !files.length) ||
+      blockedByBusy ||
+      aborting ||
+      abortingRef.current ||
+      !enabled ||
+      inFlightRef.current
+    ) {
       if (opts?.fromStt && content) {
-        toast.error("Could not send voice message — try again or tap Send.");
+        if (shouldShowToast("Could not send voice message — try again or tap Send.")) {
+          toast.error("Could not send voice message — try again or tap Send.");
+        }
       }
       return;
     }
