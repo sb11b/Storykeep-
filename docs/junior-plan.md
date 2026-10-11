@@ -24,7 +24,7 @@ This is the working plan for finishing the Junior app. One slice per branch; mer
 
 Each is one `cursor/*` branch: implement → review → PR → Hermes code review → merge → Railway.
 
-### Decided and merged (1-5)
+### Decided and merged (slices 1-5 + decision 6)
 
 1. **Android network layer.** Retrofit/OkHttp client; base URL + `SERVICE_TOKEN` via BuildConfig (never commit the token); 401 handling. Turns the shell into a real client.
 2. **Android real Talk.** Replaced the fake transcript: mic → `POST /api/v1/stt` (clip) or the realtime websocket; reply → `POST /api/v1/tts` playback. The product lock is kept.
