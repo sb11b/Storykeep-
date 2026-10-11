@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { apiUrl } from "@/lib/api-base";
 
 const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
 
@@ -25,7 +26,7 @@ export function PdfSnapshotViewer({
   onReady?: () => void;
   onFailed?: (message: string) => void;
 }) {
-  const fileUrl = `/api/v1/archives/${encodeURIComponent(String(archiveId || ""))}/file`;
+  const fileUrl = apiUrl(`/api/v1/archives/${encodeURIComponent(String(archiveId || ""))}/file`);
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);

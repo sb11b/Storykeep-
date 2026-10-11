@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { apiUrl } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -89,7 +90,7 @@ export async function downloadChatMessageDocx(messageId: string, options?: { cle
     throw new ApiError(400, "Wait for the reply to finish before downloading Word.");
   }
   const search = options?.clean ? "?clean=true" : "";
-  const response = await fetch(`/api/v1/chat/messages/${encodeURIComponent(id)}/docx${search}`, {
+  const response = await fetch(apiUrl(`/api/v1/chat/messages/${encodeURIComponent(id)}/docx${search}`), {
     method: "POST",
     credentials: "include",
     cache: "no-store",

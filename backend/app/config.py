@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://storykeep:storykeep@127.0.0.1:5432/storykeep"
     secret_key: str = "change-me-in-production-storykeep"
     access_token_minutes: int = 60 * 24 * 14
-    cors_origins: str = "http://127.0.0.1:43123,http://localhost:43123"
+    # Additive over time: the Next dev ports (proxied by next.config rewrites)
+    # plus the Tauri v2 desktop window origin. A packaged Tauri app on Windows
+    # is served by WebView2 from tauri.localhost (http by default; https is
+    # listed too in case the app is configured for the secure scheme).
+    cors_origins: str = "http://127.0.0.1:43123,http://localhost:43123,https://tauri.localhost,http://tauri.localhost"
     env: str = "local"
     # Comma-separated IPs of trusted reverse proxies. X-Forwarded-For is only
     # honored when the direct peer is in this list; otherwise a client could

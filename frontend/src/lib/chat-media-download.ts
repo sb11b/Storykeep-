@@ -1,3 +1,5 @@
+import { apiUrl } from "@/lib/api-base";
+
 const MEDIA_ID = /\/api\/v1\/media\/([0-9a-fA-F-]{36})/;
 const UUID = /^[0-9a-fA-F-]{36}$/;
 const ACCIDENTAL_EXT = /(\/api\/v1\/media\/[0-9a-fA-F-]{36})\.(jpg|jpeg|png|gif|webp)(?=(\?|$))/i;
@@ -34,7 +36,7 @@ export function storykeepDownloadFilename(mediaId: string, contentType?: string 
 }
 
 export function mediaDownloadUrl(mediaId: string): string {
-  return `/api/v1/media/${mediaId}`;
+  return apiUrl(`/api/v1/media/${mediaId}`);
 }
 
 function stripAccidentalPathExt(src: string): string {

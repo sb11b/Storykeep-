@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Mic } from "lucide-react";
 import { toast } from "sonner";
+import { apiWsUrl } from "@/lib/api-base";
 import { appendSpoken, newFinalSegment, normalizeSpoken } from "@/lib/stt-buffer";
 import {
   MIC_DENIED_TOAST,
@@ -260,7 +261,12 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           const protocol = window.location.protocol === "https:" ? "wss" : "ws";
           const params = new URLSearchParams();
           if (sessionContinuous) params.set("continuous", "true");
-          const socket = new WebSocket(`${protocol}://${window.location.host}/api/v1/stt?${params.toString()}`);
+          // Packaged builds (Tauri / static export) have no same-origin proxy:
+          // dial the configured API origin instead of window.location.
+          const socket = new WebSocket(
+            apiWsUrl(`/api/v1/stt?${params.toString()}`) ||
+              `${protocol}://${window.location.host}/api/v1/stt?${params.toString()}`,
+          );
           socket.binaryType = "arraybuffer";
           socketRef.current = socket;
           const pending: ArrayBuffer[] = [];

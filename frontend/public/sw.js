@@ -76,8 +76,20 @@ self.addEventListener("activate", (event) => {
 // holds user-scoped responses keyed on URL only, so it must be dropped on
 // every auth transition or the next user on a shared device inherits the
 // previous user's cached library.
+//
+// "api-origin": the absolute API origin used by packaged builds (Tauri desktop
+// window, static export). There the app is served from its own origin and the
+// API lives on another one, so the same-origin guard below would skip every API
+// request and the library would never cache for offline. The client posts the
+// origin once per load (see pwa-register.tsx); empty = dev, same-origin proxy.
+let API_ORIGIN = "";
+
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "auth-change") {
+  const data = event.data;
+  if (data && data.type === "api-origin" && typeof data.origin === "string") {
+    API_ORIGIN = data.origin.replace(/\/+$/, "");
+  }
+  if (data && data.type === "auth-change") {
     event.waitUntil(caches.delete(API_CACHE));
   }
 });
@@ -90,7 +102,9 @@ self.addEventListener("fetch", (event) => {
   }
 
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
+  const isAppOrigin = url.origin === self.location.origin;
+  const isApiOrigin = Boolean(API_ORIGIN) && url.origin === API_ORIGIN;
+  if (!isAppOrigin && !isApiOrigin) return;
 
   // 1. Navigation requests: network-first, cached shell when offline.
   if (request.mode === "navigate") {

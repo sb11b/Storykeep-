@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { apiUrl } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 import { formatSttEmptyHint, prepareSttUpload, STT_MODEL } from "@/lib/stt-upload";
 
@@ -41,7 +42,7 @@ export async function transcribeClip(
       mime: prepared.mime,
       bytes: prepared.blob.size,
     });
-    const response = await fetch("/api/v1/stt", {
+    const response = await fetch(apiUrl("/api/v1/stt"), {
       method: "POST",
       body,
       signal: controller.signal,

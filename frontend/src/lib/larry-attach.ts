@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { apiUrl } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 
 export const LARRY_ATTACH_ACCEPT = ".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.gif,.webp,.csv";
@@ -103,7 +104,7 @@ export async function uploadLarryAttachment(file: File): Promise<PendingAttachme
   body.append("file", file);
   let status = 0;
   try {
-    const response = await fetch("/api/v1/media", {
+    const response = await fetch(apiUrl("/api/v1/media"), {
       method: "POST",
       body,
       credentials: "include",
