@@ -109,10 +109,16 @@ class DraftSafetyTests(unittest.TestCase):
 
     def test_router_source_never_calls_email_submission(self):
         # Scan the router's CODE identifiers (not comments/docstrings) for the
-        # submission method — a draft is created, never submitted.
+        # submission method — a draft is created, never submitted. The scan
+        # covers Name/Attribute nodes AND string literals (a raw
+        # "EmailSubmission/set" passed directly in a methodCalls list would
+        # otherwise slip past an identifier-only scan).
         tree = ast.parse(ROUTER_SOURCE)
         names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
         names |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                names.add(node.value)
         self.assertNotIn("EmailSubmission", names)
 
     def test_create_draft_builds_a_drafts_mailbox_payload(self):

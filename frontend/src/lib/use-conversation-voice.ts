@@ -197,6 +197,9 @@ export function useConversationVoice({
     teardownTransport();
     closeAudioContext();
     conversationIdRef.current = null;
+    // Tool-call dedupe state is per-session: clearing it here keeps the set
+    // from growing unbounded across a long-lived pane with many Talk sessions.
+    handledToolCallsRef.current.clear();
     setStatusSafe("idle");
   }, [clearReconnectTimer, closeAudioContext, setStatusSafe, teardownTransport]);
 
