@@ -2,7 +2,7 @@
 
 Kotlin + Jetpack Compose app. Three screens only: Home, Conversation, Stories.
 
-No Grok Voice / Speech-to-Speech APIs yet — the **Talk turn is real**: the mic clip goes to the backend STT endpoint and the real transcript replaces the local fake, and Junior's reply is spoken through the backend TTS endpoint. Type stays the text model with a local reply until slice 3 wires the chat endpoint. The session core already enforces the product lock: Talk dies on Type, End, leave, lock / background, and network loss. Saved stories persist on device (transcript text only).
+No Grok Voice / Speech-to-Speech APIs yet — the **Talk turn is real**: the mic clip goes to the backend STT endpoint and the real transcript replaces the local fake, and Junior's reply is spoken through the backend TTS endpoint. The **Conversation venue is real too (slice 3)**: opening it loads the first Junior project, its first thread, and the real message history from the shared-memory API (`/api/v1/junior/projects`, `/junior/projects/{slug}/threads`, `/junior/projects/{slug}/threads/{id}/messages`), and a typed send posts to `POST /junior/projects/{slug}/threads/{id}/messages` — the stored user + Junior messages replace the placeholder transcript. Loading shows a spinner; Offline shows a retry; Unauthorized flags the service token; Http shows the status. The session core still enforces the product lock: Talk dies on Type, End, leave, lock / background, and network loss. Saved stories persist on device (transcript text only).
 
 This folder is a separate Gradle project. It is not part of the Railway web image (`Dockerfile` / `railway.toml` still build backend + Next.js only).
 
@@ -27,7 +27,8 @@ On Windows: `gradlew.bat :app:installDebug`.
 
 - **Home:** mark, “Junior is here”, presence orb, Talk / Type, last-spoke placeholder, bottom nav Talk / Stories / Keep.
 - **Talk** opens Conversation. Grant the mic permission when asked. Tap the amber control: Idle → Listening records, tap again sends the clip to STT and Junior's reply plays through TTS.
-- **Type**, or focusing / typing in the field, kills Talk. Mic and Listen stay off.
+- The conversation itself is real (slice 3): the first project, its threads, and the thread's message history load from the shared-memory API. Pick a thread from the row under the header. A spinner shows while loading; an offline load offers a retry; a 401 flags the service token; any other status shows the code.
+- **Type**, or focusing / typing in the field, kills Talk. Sending a typed message posts to the backend thread — the stored user + Junior messages replace the placeholder reply, and a failed post stays on the device with the reason shown.
 - **Lock / leave the app** or **lose network** kills Talk and keeps the transcript so you can still save it.
 - **Save as story** appends the current transcript (text only) to Stories and keeps it after restart. **End** and **Back** return Home and clear the turn.
 - **Stories:** pinned week’s question, Answer by talking / typing, cards, Record a story.
@@ -39,7 +40,9 @@ Keep is not a fourth screen; it returns to Home.
 The app talks to the Storykeep backend with Retrofit + OkHttp
 (`com.storykeep.junior.network`). Every request carries a static bearer token
 and a 401 becomes `UnauthorizedException` plus a flag on `AuthEvents` — no
-silent retries. Talk / Conversation / Stories endpoints arrive in later slices.
+silent retries. Talk (STT/TTS) and the Conversation surface
+(`junior/projects`, project threads, thread messages, message posts) are
+wired; Stories lands in slice 4.
 
 The token is **never committed**. Put it in `android/local.properties`
 (gitignored), which Gradle reads into `BuildConfig`:

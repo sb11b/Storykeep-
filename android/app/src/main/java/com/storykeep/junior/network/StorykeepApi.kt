@@ -2,19 +2,22 @@ package com.storykeep.junior.network
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import okhttp3.MultipartBody
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
+import retrofit2.http.Path
 
 /**
  * The Storykeep API surface the Junior app calls.
  *
  * Paths are relative to BuildConfig.BASE_URL (…/api/v1/). Slice 1 added the
- * auth probe; this slice adds the two Talk endpoints — clip STT in, TTS
- * audio out. Conversation and Stories endpoints land in slices 3–4.
+ * auth probe; slice 2 the two Talk endpoints (clip STT in, TTS audio out);
+ * slice 3 the shared-memory conversation surface — projects, project threads,
+ * thread messages, and posting a turn. Stories land in slice 4.
  */
 interface StorykeepApi {
     /** Auth probe. Returns 200 with the owner profile, 401 when the token is wrong. */
@@ -43,6 +46,49 @@ interface StorykeepApi {
      */
     @POST("tts/message")
     suspend fun speakMessage(@Body body: ChatSpeechInDto): ChatSpeechDto
+
+    // ---- Conversation (slice 3): shared-memory projects / threads / messages ----
+
+    /**
+     * The owner's Junior projects (junior_shared_projects.list_projects →
+     * `GET /junior/projects`). The Conversation screen picks the first one.
+     */
+    @GET("junior/projects")
+    suspend fun listProjects(): List<JuniorProjectDto>
+
+    /**
+     * Threads on one project (junior_shared_projects.list_project_threads →
+     * `GET /junior/projects/{slug}/threads`).
+     */
+    @GET("junior/projects/{slug}/threads")
+    suspend fun listProjectThreads(@Path("slug") slug: String): List<JuniorSharedThreadDto>
+
+    /**
+     * One thread's message history, oldest first
+     * (junior_shared_projects.list_project_thread_messages →
+     * `GET /junior/projects/{slug}/threads/{thread_id}/messages`).
+     */
+    @GET("junior/projects/{slug}/threads/{threadId}/messages")
+    suspend fun listProjectThreadMessages(
+        @Path("slug") slug: String,
+        @Path("threadId") threadId: String,
+    ): List<JuniorSharedMessageDto>
+
+    /**
+     * Posts one turn on a project thread
+     * (junior_shared_projects.create_project_thread_message →
+     * `POST /junior/projects/{slug}/threads/{thread_id}/messages`).
+     *
+     * The response carries the stored user message plus Junior's reply when
+     * the backend produced one; [JuniorSharedMessagePostOutDto.juniorMessage]
+     * is null when the reply was deferred.
+     */
+    @POST("junior/projects/{slug}/threads/{threadId}/messages")
+    suspend fun postProjectThreadMessage(
+        @Path("slug") slug: String,
+        @Path("threadId") threadId: String,
+        @Body body: JuniorSharedMessageInDto,
+    ): JuniorSharedMessagePostOutDto
 }
 
 /** Mirrors ProfileOut from backend/app/schemas.py. */
@@ -82,3 +128,72 @@ data class ChatSpeechDto(
     val chunk: Int? = null,
     val duration: Double? = null,
 )
+
+// ---- Conversation DTOs (slice 3) ----
+//
+// Every class below mirrors its Pydantic model in backend/app/schemas.py
+// field for field: same JSON names, same nullability, same defaults.
+// UUIDs and datetimes travel as JSON strings; `meta` is free-form JSON.
+
+/** Mirrors JuniorProjectOut (schemas.py). */
+@Serializable
+data class JuniorProjectDto(
+    val id: String,
+    val slug: String,
+    @SerialName("display_name") val displayName: String,
+    val kind: String,
+    @SerialName("repo_url") val repoUrl: String? = null,
+    @SerialName("default_branch") val defaultBranch: String,
+    val notes: String? = null,
+    val meta: Map<String, JsonElement> = emptyMap(),
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+/** Mirrors JuniorSharedThreadOut (schemas.py). */
+@Serializable
+data class JuniorSharedThreadDto(
+    val id: String,
+    val title: String? = null,
+    @SerialName("venue_last") val venueLast: String,
+    val status: String,
+    val summary: String? = null,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+/** Mirrors JuniorSharedMessageOut (schemas.py). [role] is "user" or "junior". */
+@Serializable
+data class JuniorSharedMessageDto(
+    val id: String,
+    @SerialName("thread_id") val threadId: String,
+    val role: String,
+    val content: String,
+    val venue: String,
+    val meta: Map<String, JsonElement> = emptyMap(),
+    @SerialName("created_at") val createdAt: String,
+)
+
+/** Request body of a project-thread message post — mirrors JuniorSharedMessageIn (schemas.py). */
+@Serializable
+data class JuniorSharedMessageInDto(
+    val content: String? = null,
+    val text: String? = null,
+    @SerialName("thread_id") val threadId: String? = null,
+    val venue: String? = DEFAULT_VENUE,
+    val meta: Map<String, JsonElement> = emptyMap(),
+    @SerialName("device_label") val deviceLabel: String? = null,
+)
+
+/** Mirrors JuniorSharedMessagePostOut (schemas.py). */
+@Serializable
+data class JuniorSharedMessagePostOutDto(
+    @SerialName("thread_id") val threadId: String,
+    @SerialName("user_message") val userMessage: JuniorSharedMessageDto,
+    @SerialName("junior_message") val juniorMessage: JuniorSharedMessageDto? = null,
+    @SerialName("reply_status") val replyStatus: String,
+    val detail: String? = null,
+)
+
+/** The backend's default venue (JuniorSharedMessageIn.venue default). */
+const val DEFAULT_VENUE = "storykeep"
