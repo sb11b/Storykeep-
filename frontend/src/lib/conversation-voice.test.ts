@@ -6,6 +6,7 @@ import {
   buildRealtimeUrl,
   buildSessionUpdate,
   classifyRealtimeEvent,
+  clampOutputSpeed,
   clampSample,
   encodeMicChunk,
   extractAudioDelta,
@@ -13,10 +14,18 @@ import {
   extractTranscriptItemId,
   extractUserTranscript,
   floatToPcm16Bytes,
+  IDLE_TIMEOUT_MS,
+  JUNIOR_KEYTERMS,
+  JUNIOR_PRONUNCIATION_REPLACEMENTS,
   JUNIOR_TALK_INSTRUCTIONS,
+  KEYTERM_MAX_CHARS,
+  KEYTERM_MAX_COUNT,
   MAX_BACKOFF_MS,
   MIC_CHUNK_SAMPLES,
   nextBackoffDelay,
+  OUTPUT_SPEED_DEFAULT,
+  OUTPUT_SPEED_MAX,
+  OUTPUT_SPEED_MIN,
   pcm16ToBase64,
   REALTIME_MODEL,
   REALTIME_SAMPLE_RATE,
@@ -48,7 +57,7 @@ test("session.update carries voice, server VAD, and 24kHz PCM in and out", () =>
   assert.equal(s.voice, "castor");
   assert.equal(s.instructions, JUNIOR_TALK_INSTRUCTIONS);
   assert.deepEqual(s.reasoning, { effort: "none" });
-  assert.deepEqual(s.turn_detection, { type: "server_vad" });
+  assert.deepEqual(s.turn_detection, { type: "server_vad", idle_timeout_ms: IDLE_TIMEOUT_MS });
   assert.deepEqual(s.audio.input.format, { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE });
   assert.equal(s.audio.input.transcription.model, "grok-transcribe");
   assert.deepEqual(s.audio.output.format, { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE });
@@ -67,13 +76,16 @@ test("session.update includes web_search plus Junior's function tools so Talk ca
   const update = buildSessionUpdate("castor");
   const tools = update.session.tools;
   assert.deepEqual(tools[0], { type: "web_search" });
-  // The function tools follow, with the exact names Junior's handlers dispatch.
+  // The function tools follow x_search, with the exact names Junior's handlers dispatch.
   assert.deepEqual(
-    tools.slice(1).map((tool: { name?: string }) => tool.name),
+    tools.slice(2).map((tool: { name?: string }) => tool.name),
     [
       "search_library",
       "get_document",
       "read_document_file",
+      "list_feeds",
+      "search_articles",
+      "read_article",
       "list_pending_work",
       "create_task",
       "read_email",
@@ -92,11 +104,84 @@ test("session.update includes web_search plus Junior's function tools so Talk ca
 
 test("session.update keeps the full tool set when resuming a conversation", () => {
   const resumed = buildSessionUpdate("castor", "conv-9");
-  assert.equal(resumed.session.tools.length, 11);
+  assert.equal(resumed.session.tools.length, 15);
 });
 
 test("MIC_CHUNK_SAMPLES is 100ms of audio at 24kHz", () => {
   assert.equal(MIC_CHUNK_SAMPLES, 2400);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Folded xAI voice capabilities — every param below was verified live against
+ * wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-2.0: one
+ * session.update carrying all of them returned session.updated with zero
+ * errors and the server echoed each param back.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("A. session.update biases transcription with keyterms and language_hint", () => {
+  const update = buildSessionUpdate("castor");
+  const transcription = update.session.audio.input.transcription;
+  assert.deepEqual(transcription.keyterms, [...JUNIOR_KEYTERMS]);
+  assert.equal(transcription.language_hint, "en");
+  // Pin the API caps so a future edit can't silently break the contract.
+  assert.ok(
+    transcription.keyterms!.length <= KEYTERM_MAX_COUNT,
+    `at most ${KEYTERM_MAX_COUNT} keyterms are accepted`,
+  );
+  for (const term of transcription.keyterms!) {
+    assert.ok(term.length <= KEYTERM_MAX_CHARS, `keyterm "${term}" exceeds ${KEYTERM_MAX_CHARS} chars`);
+  }
+  // Steve's world proper nouns must actually be in the list.
+  for (const term of ["Storykeep", "Newsmax", "SNHU", "Bitsko", "Meridian", "Hermes", "Fastmail"]) {
+    assert.ok(JUNIOR_KEYTERMS.includes(term), `keyterms must include ${term}`);
+  }
+});
+
+test("B. clampOutputSpeed clamps to the API's 0.7–1.5 range", () => {
+  assert.equal(clampOutputSpeed(0.5), OUTPUT_SPEED_MIN, "0.5 clamps up to 0.7");
+  assert.equal(clampOutputSpeed(2.0), OUTPUT_SPEED_MAX, "2.0 clamps down to 1.5");
+  assert.equal(clampOutputSpeed(1.2), 1.2, "an in-range value passes through");
+  assert.equal(clampOutputSpeed(OUTPUT_SPEED_MIN), OUTPUT_SPEED_MIN, "the lower bound is inclusive");
+  assert.equal(clampOutputSpeed(OUTPUT_SPEED_MAX), OUTPUT_SPEED_MAX, "the upper bound is inclusive");
+  assert.equal(clampOutputSpeed(Number.NaN), OUTPUT_SPEED_DEFAULT, "garbage falls back to the default");
+});
+
+test("B. session.update lands the (clamped) speed in audio.output.speed", () => {
+  assert.equal(buildSessionUpdate("castor").session.audio.output.speed, OUTPUT_SPEED_DEFAULT);
+  assert.equal(buildSessionUpdate("castor", null, 1.25).session.audio.output.speed, 1.25);
+  assert.equal(buildSessionUpdate("castor", null, 0.2).session.audio.output.speed, OUTPUT_SPEED_MIN);
+  assert.equal(buildSessionUpdate("castor", null, 9).session.audio.output.speed, OUTPUT_SPEED_MAX);
+});
+
+test("C. session.update carries the pronunciation replace map at the session root", () => {
+  const update = buildSessionUpdate("castor");
+  assert.deepEqual(update.session.replace, { ...JUNIOR_PRONUNCIATION_REPLACEMENTS });
+  assert.equal(update.session.replace?.SNHU, "S N H U");
+  assert.equal(update.session.replace?.JMAP, "J map");
+  assert.equal(update.session.replace?.Bitsko, "Bit sko");
+  // Verified live: `replace` echoes at the session root, NOT nested in audio.
+  assert.ok(!("replace" in update.session.audio), "replace must not be nested under audio");
+});
+
+test("D. session.update carries both web_search and x_search tools", () => {
+  const update = buildSessionUpdate("castor");
+  const toolTypes = update.session.tools.map((tool: { type: string }) => tool.type);
+  assert.equal(toolTypes[0], "web_search");
+  assert.equal(toolTypes[1], "x_search");
+  assert.match(update.session.instructions, /x_search/);
+  assert.match(update.session.instructions, /what are people saying on X or Twitter/);
+});
+
+test("E. session.update sets turn_detection.idle_timeout_ms so the server re-engages", () => {
+  const update = buildSessionUpdate("castor");
+  assert.deepEqual(update.session.turn_detection, { type: "server_vad", idle_timeout_ms: IDLE_TIMEOUT_MS });
+  assert.equal(IDLE_TIMEOUT_MS, 15000);
+});
+
+test("F. reasoning effort defaults to none and can be raised to high", () => {
+  assert.deepEqual(buildSessionUpdate("castor").session.reasoning, { effort: "none" });
+  assert.deepEqual(buildSessionUpdate("castor", null, 1, "high").session.reasoning, { effort: "high" });
+  assert.deepEqual(buildSessionUpdate("castor", "conv-9", 1, "high").session.reasoning, { effort: "high" });
 });
 
 test("nextBackoffDelay doubles and caps", () => {
@@ -350,6 +435,76 @@ function unmountHook(slots: HookSlots): void {
     effect?.cleanup?.();
   }
 }
+
+/* ── Hook-level tests for useConversationVoice. ── */
+
+test("setOutputSpeed and setReasoningEffort re-send session.update on the live socket", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: () => {},
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+    // The fake socket never fires onopen by itself — the real one does.
+    ws.onopen?.();
+    const sessionUpdates = () =>
+      ws.sent.map((line) => JSON.parse(line)).filter((m) => m.type === "session.update");
+    assert.equal(sessionUpdates().length, 1, "start sends exactly one session.update");
+    assert.equal(sessionUpdates()[0].session.audio.output.speed, OUTPUT_SPEED_DEFAULT);
+
+    // B. Mid-session speed change: a fresh session.update goes out, clamped.
+    const setOutputSpeed = render().setOutputSpeed;
+    assert.equal(setOutputSpeed(1.3), 1.3);
+    assert.equal(setOutputSpeed(9), OUTPUT_SPEED_MAX, "out-of-range speeds are clamped");
+    const afterSpeed = sessionUpdates();
+    assert.equal(afterSpeed.length, 3, "each setter call re-sends session.update");
+    assert.equal(afterSpeed[1].session.audio.output.speed, 1.3);
+    assert.equal(afterSpeed[2].session.audio.output.speed, OUTPUT_SPEED_MAX);
+
+    // F. Mid-session reasoning effort: the next response uses it.
+    const setReasoningEffort = render().setReasoningEffort;
+    setReasoningEffort("high");
+    const afterReasoning = sessionUpdates();
+    assert.equal(afterReasoning.length, 4);
+    assert.deepEqual(afterReasoning[3].session.reasoning, { effort: "high" });
+    // The full session payload still goes out — the update is additive, not a patch.
+    assert.ok(afterReasoning[3].session.audio.input.transcription.keyterms.length > 0);
+    assert.ok(afterReasoning[3].session.replace);
+
+    // The CLOSED-but-current-ref case: the socket died but ws.onclose has NOT
+    // fired, so wsRef.current still points at it. The `!socket` branch alone
+    // would send into a dead socket — readyState CLOSED (3) must stop it.
+    // (Set readyState directly: close() would fire onclose and null the ref.)
+    ws.readyState = 3;
+    setOutputSpeed(1.2);
+    setReasoningEffort("high");
+    assert.equal(sessionUpdates().length, 4, "a CLOSED-but-current socket must not receive session.update");
+
+    // With no live socket the setters are no-ops, not throws.
+    ws.close();
+    setOutputSpeed(1.1);
+    setReasoningEffort("none");
+    assert.equal(sessionUpdates().length, 4, "no session.update may be sent after the socket is gone");
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
 
 /* ── Fake browser APIs ── */
 

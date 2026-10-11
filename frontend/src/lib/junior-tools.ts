@@ -47,17 +47,28 @@ const EMAIL_UNAVAILABLE = "I can't reach your email right now.";
 const WORK_UNAVAILABLE = "I couldn't check the work queue right now.";
 const DRAFT_FAILED = "I couldn't save that draft right now.";
 const TASK_FAILED = "I couldn't queue that task right now.";
+const FEEDS_UNAVAILABLE = "I couldn't reach your feeds right now.";
+const ARTICLES_UNAVAILABLE = "I couldn't reach your articles right now.";
 
+/** Feeds list cap (spec: ~50 entries). */
+const MAX_FEED_ITEMS = 50;
+/** Article summary cap for search results (spec: ~500 chars). */
+const ARTICLE_SUMMARY_CHARS = 500;
+/** Default/max articles per search_articles call. */
+const ARTICLE_SEARCH_DEFAULT_LIMIT = 20;
+const ARTICLE_SEARCH_MAX_LIMIT = 50;
 /**
  * The tool set for session.update — web_search (verified in #168) stays; these
- * function tools give Junior Steve's library, pending work, and business email.
+ * function tools give Junior Steve's library, pending work, business email,
+ * and his RSS feeds (a SEPARATE system from the library: feeds/articles live
+ * behind /api/v1/feeds and /api/v1/articles).
  */
 export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
   {
     type: "function",
     name: "search_library",
     description:
-      "Search Steve's Storykeep library — his articles, papers, notes, and school texts — and his recorded Junior conversations. Use when Steve asks about his documents, what he has written, or what he has been working on.",
+      "Search Steve's Storykeep LIBRARY documents — articles, papers, notes, school texts Steve has written or uploaded — and his recorded Junior conversations. Use when Steve asks about his documents, what he has written, or what he has been working on. This is NOT his news feeds: use search_articles for Newsmax/Fox News/Medium and other feeds he follows.",
     parameters: {
       type: "object",
       properties: {
@@ -74,7 +85,7 @@ export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
     type: "function",
     name: "get_document",
     description:
-      "Fetch one document from Steve's library by its slug. Returns the FULL text so Junior can READ IT ALOUD when Steve asks ('read me my quantum physics article'). For long documents the text is capped and you can call again with an increased offset to continue reading where you left off — when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended. A short summary is included for quick 'what's this about' questions.",
+      "Fetch one Storykeep LIBRARY document Steve has written or uploaded (an article, paper, note, or school text) by its slug. Returns the FULL text so Junior can READ IT ALOUD when Steve asks ('read me my quantum physics article'). For long documents the text is capped and you can call again with an increased offset to continue reading where you left off — when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended. A short summary is included for quick 'what's this about' questions. This is NOT a news feed article — use read_article for articles from his RSS feeds.",
     parameters: {
       type: "object",
       properties: {
@@ -85,7 +96,7 @@ export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
         offset: {
           type: "integer",
           description:
-            "Character offset to start reading from. Omit (or 0) to start at the beginning; pass the length of the previous chunk to continue a long read.",
+            "Character offset to start reading from. Omit (or 0) to start at the beginning; when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended.",
         },
       },
       required: ["slug"],
@@ -95,7 +106,7 @@ export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
     type: "function",
     name: "read_document_file",
     description:
-      "Read the extracted text of a file attached to a document (Word .docx, PDF, text, markdown). Returns the FULL text so Junior can read it aloud when Steve asks ('read me that Word doc'). Use after search_library or list_document_files when the content lives in an attached file.",
+      "Read the extracted text of a file attached to a Storykeep LIBRARY document (Word .docx, PDF, text, markdown) — documents Steve has written or uploaded. Returns the FULL text so Junior can read it aloud when Steve asks ('read me that Word doc'). Use after search_library or list_document_files when the content lives in an attached file. This is NOT a news feed article — use read_article for articles from his RSS feeds.",
     parameters: {
       type: "object",
       properties: {
@@ -109,6 +120,68 @@ export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
         },
       },
       required: ["slug", "file_id"],
+    },
+  },
+  {
+    type: "function",
+    name: "list_feeds",
+    description:
+      "List the RSS feeds Steve is subscribed to (Newsmax, Fox News, Medium, etc.) with their titles. Use when Steve asks about his feeds, subscriptions, or 'what am I following'. These are his NEWS feeds — separate from his Storykeep library documents.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "search_articles",
+    description:
+      "Search the ARTICLES in Steve's RSS feeds (Newsmax, Fox News, Medium, blogs he follows) — headlines, summaries, full text. This is Steve's news reading, separate from his Storykeep library documents. Use when Steve asks about news, his feeds, articles he's reading or has saved.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Free-text search across article title, summary, and content, e.g. 'Supreme Court' or 'Meridian launch'. Omit to just list the newest articles.",
+        },
+        feed: {
+          type: "string",
+          description:
+            "Feed TITLE to search only inside one feed, e.g. 'Newsmax' or 'Fox News' — exactly as returned by list_feeds. Omit to search all feeds.",
+        },
+        saved_only: {
+          type: "boolean",
+          description: "Only articles Steve has saved (default false).",
+        },
+        limit: {
+          type: "integer",
+          description: `How many articles to list (1–${ARTICLE_SEARCH_MAX_LIMIT}, default ${ARTICLE_SEARCH_DEFAULT_LIMIT}).`,
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "read_article",
+    description:
+      "Read the full extracted text of a feed article by its id (from search_articles or a list of articles in a feed). Returns the full text so Junior can read it aloud when Steve asks ('read me that Newsmax article'). For long articles the text is capped and you can call again with an increased offset to continue reading where you left off — when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "The article's id, exactly as returned by search_articles or list_feeds results.",
+        },
+        offset: {
+          type: "integer",
+          description:
+            "Character offset to start reading from. Omit (or 0) to start at the beginning; when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended.",
+        },
+      },
+      required: ["id"],
     },
   },
   {
@@ -294,6 +367,16 @@ export function excerptMarker(shown: number, total: number): string {
   return `[excerpt — first ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} characters; ask me to continue from where I stopped]`;
 }
 
+/**
+ * Speakable truncation marker for a chunked read, positioned cumulatively:
+ * `offset` is where this chunk started, so `offset + chunk.length` is the
+ * character the read has reached — "first 240,000 of 300,000", not
+ * "first 120,000 of 300,000" for a continuation chunk.
+ */
+export function chunkExcerptMarker(offset: number, chunkLength: number, total: number): string {
+  return excerptMarker(offset + chunkLength, total);
+}
+
 /** Format one document read chunk (title + optional summary + capped text). */
 export function formatDocumentRead(
   doc: { title?: string; slug?: string; text?: string; summary?: string | null },
@@ -308,7 +391,7 @@ export function formatDocumentRead(
   if (chunk) {
     parts.push(`Text: ${chunk}`);
     if (offset + chunk.length < text.length) {
-      parts.push(excerptMarker(chunk.length, text.length));
+      parts.push(chunkExcerptMarker(offset, chunk.length, text.length));
     }
   } else if (!text) {
     parts.push("This document has no text.");
@@ -326,6 +409,97 @@ export function formatDocumentMatches(docs: Array<{ title?: string; slug?: strin
     }`;
   });
   return `Found ${docs.length === 1 ? "1 document" : `${docs.length} documents`}: ${lines.join("; ")}.`;
+}
+
+/** Format the subscribed-feeds list for voice (title + url, truncated). */
+export function formatFeedList(
+  feeds: Array<{ id?: string; title?: string | null; url?: string; description?: string | null; is_active?: boolean; last_error?: string | null }>,
+): string {
+  if (!feeds.length) return "You're not subscribed to any feeds yet.";
+  const shown = feeds.slice(0, MAX_FEED_ITEMS);
+  const lines = shown.map((feed) => {
+    const title = feed.title?.trim() || feed.url || "untitled feed";
+    const url = feed.url?.trim();
+    const desc = feed.description?.trim();
+    const parts = [`"${title}"`];
+    if (url) parts.push(`(${url})`);
+    if (desc) parts.push(`— ${desc.slice(0, PREVIEW_CHARS)}`);
+    if (feed.is_active === false) parts.push("[paused]");
+    if (feed.last_error?.trim()) parts.push("[last refresh failed]");
+    return parts.join(" ");
+  });
+  // Report the count actually shown — saying "You follow 200 feeds" and then
+  // listing 50 tells the model about feeds it cannot see.
+  return `You follow ${shown.length} feed${shown.length === 1 ? "" : "s"}: ${lines.join("; ")}.`;
+}
+
+/** Format article search matches for voice (title, feed, summary). */
+export function formatArticleMatches(
+  articles: Array<{
+    id?: string;
+    title?: string;
+    feed_title?: string | null;
+    url?: string;
+    published_at?: string | null;
+    summary?: string | null;
+    is_saved?: boolean;
+    is_read?: boolean;
+  }>,
+): string {
+  if (!articles.length) return "No articles found in your feeds.";
+  const shown = articles.slice(0, MAX_LIST_ITEMS);
+  const lines = shown.map((article) => {
+    const title = article.title?.trim() || "untitled";
+    const feed = article.feed_title?.trim();
+    const summary = article.summary?.trim();
+    const flags = [article.is_saved ? "saved" : null, article.is_read ? "read" : null].filter(Boolean);
+    const parts = [`"${title}"`];
+    if (feed) parts.push(`from ${feed}`);
+    if (summary) parts.push(`— ${summary.slice(0, ARTICLE_SUMMARY_CHARS)}`);
+    if (flags.length) parts.push(`[${flags.join(", ")}]`);
+    if (article.id) parts.push(`(id: ${article.id})`);
+    return parts.join(" ");
+  });
+  // Report the count actually shown: "Found 8 of 20 articles" when the cap
+  // trims the list, so the model never cites articles it cannot see.
+  const count =
+    shown.length === articles.length
+      ? `Found ${articles.length} article${articles.length === 1 ? "" : "s"}`
+      : `Found ${shown.length} of ${articles.length} articles`;
+  return `${count} in your feeds: ${lines.join("; ")}.`;
+}
+
+/** Format one feed-article read chunk — mirrors formatDocumentRead's continuation. */
+export function formatArticleRead(
+  article: {
+    id?: string;
+    title?: string;
+    feed_title?: string | null;
+    url?: string;
+    published_at?: string | null;
+    summary?: string | null;
+    content_text?: string | null;
+  },
+  offset = 0,
+): string {
+  const text = article.content_text ?? "";
+  const chunk = sliceReadChunk(text, offset, DOC_READ_CHARS);
+  const parts = [`"${article.title?.trim() || "article"}"${article.id ? ` (id: ${article.id})` : ""}`];
+  if (article.feed_title?.trim()) parts.push(`from ${article.feed_title.trim()}`);
+  if (article.url?.trim()) parts.push(`(${article.url.trim()})`);
+  parts.push(".");
+  if (offset === 0 && article.summary?.trim()) {
+    parts.push(`Summary: ${article.summary.trim().slice(0, SUMMARY_CHARS)}`);
+  }
+  if (chunk) {
+    parts.push(`Text: ${chunk}`);
+    if (offset + chunk.length < text.length) {
+      parts.push(chunkExcerptMarker(offset, chunk.length, text.length));
+    }
+  } else if (!text) {
+    parts.push("That article has no extracted text yet.");
+  }
+  return parts.join(" ");
 }
 
 /** Lowercase query tokens (>= 3 chars) for client-side document matching. */
@@ -469,13 +643,13 @@ async function toolFetch(path: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-async function toolJson(path: string, init?: RequestInit): Promise<{ ok: boolean; data: unknown }> {
+async function toolJson(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: unknown }> {
   const response = await toolFetch(path, init);
-  if (!response.ok) return { ok: false, data: null };
+  if (!response.ok) return { ok: false, status: response.status, data: null };
   try {
-    return { ok: true, data: await response.json() };
+    return { ok: true, status: response.status, data: await response.json() };
   } catch {
-    return { ok: false, data: null };
+    return { ok: false, status: response.status, data: null };
   }
 }
 
@@ -568,6 +742,101 @@ async function readDocumentFile(args: Record<string, unknown>): Promise<string> 
     return formatFileText(file.data as { filename?: string; text?: string; excerpt?: boolean });
   } catch {
     return LIBRARY_UNAVAILABLE;
+  }
+}
+
+interface JuniorFeedRow {
+  id?: string;
+  title?: string | null;
+  url?: string;
+  description?: string | null;
+  is_active?: boolean;
+  last_error?: string | null;
+}
+
+interface JuniorArticleRow {
+  id?: string;
+  title?: string;
+  feed_title?: string | null;
+  url?: string;
+  published_at?: string | null;
+  summary?: string | null;
+  content_text?: string | null;
+  is_read?: boolean;
+  is_saved?: boolean;
+}
+
+/** Fetch the feed list once — shared by list_feeds and feed-title resolution. */
+async function fetchFeeds(): Promise<{ ok: boolean; rows: JuniorFeedRow[] }> {
+  const res = await toolJson("/api/v1/feeds");
+  return { ok: res.ok, rows: ((res.data as JuniorFeedRow[] | null) ?? []) };
+}
+
+/** Resolve a feed TITLE (as the model types it) to a feed id, case-insensitively. */
+function matchFeedId(feeds: JuniorFeedRow[], feedTitle: string): string | null {
+  const wanted = feedTitle.trim().toLowerCase();
+  if (!wanted) return null;
+  const exact = feeds.find((feed) => (feed.title ?? "").trim().toLowerCase() === wanted);
+  if (exact?.id) return exact.id;
+  const partial = feeds.find((feed) => (feed.title ?? "").toLowerCase().includes(wanted));
+  return partial?.id ?? null;
+}
+
+async function listFeeds(): Promise<string> {
+  try {
+    const { ok, rows } = await fetchFeeds();
+    if (!ok) return FEEDS_UNAVAILABLE;
+    return formatFeedList(rows);
+  } catch {
+    return FEEDS_UNAVAILABLE;
+  }
+}
+
+async function searchArticles(args: Record<string, unknown>): Promise<string> {
+  const query = requiredStringArg(args, "query");
+  const feed = requiredStringArg(args, "feed");
+  const savedOnly = args.saved_only === true;
+  const limit = optionalIntArg(args, "limit");
+  try {
+    // The feed param is a TITLE — resolve it to a feed_id via the feeds list.
+    let feedId: string | null = null;
+    if (feed) {
+      const { ok, rows } = await fetchFeeds();
+      if (!ok) return FEEDS_UNAVAILABLE;
+      feedId = matchFeedId(rows, feed);
+      if (!feedId) return `You don't have a feed called "${feed}".`;
+    }
+    const params = new URLSearchParams({
+      limit: String(limit ? Math.min(Math.max(limit, 1), ARTICLE_SEARCH_MAX_LIMIT) : ARTICLE_SEARCH_DEFAULT_LIMIT),
+      sort: "published_desc",
+    });
+    if (query) params.set("q", query);
+    if (feedId) params.set("feed_id", feedId);
+    if (savedOnly) params.set("saved", "true");
+    const res = await toolJson(`/api/v1/articles?${params.toString()}`);
+    if (!res.ok) return ARTICLES_UNAVAILABLE;
+    // The route returns a Page envelope: { items, total, limit, offset }.
+    const page = res.data as { items?: JuniorArticleRow[] | null } | null;
+    const rows = page?.items ?? (Array.isArray(res.data) ? (res.data as JuniorArticleRow[]) : []);
+    return formatArticleMatches(rows);
+  } catch {
+    return ARTICLES_UNAVAILABLE;
+  }
+}
+
+async function readArticle(args: Record<string, unknown>): Promise<string> {
+  const id = requiredStringArg(args, "id");
+  if (!id) return "Which article should I read?";
+  const offset = optionalIntArg(args, "offset") ?? 0;
+  try {
+    const res = await toolJson(`/api/v1/articles/${encodeURIComponent(id)}`);
+    if (!res.ok) {
+      // 404 means the id is wrong; anything else (500, network) is the backend.
+      return res.status === 404 ? `I couldn't find an article with that id.` : ARTICLES_UNAVAILABLE;
+    }
+    return formatArticleRead(res.data as JuniorArticleRow, offset);
+  } catch {
+    return ARTICLES_UNAVAILABLE;
   }
 }
 
@@ -702,6 +971,9 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<string
   search_library: searchLibrary,
   get_document: getDocument,
   read_document_file: readDocumentFile,
+  list_feeds: listFeeds,
+  search_articles: searchArticles,
+  read_article: readArticle,
   list_pending_work: listPendingWork,
   create_task: createTask,
   read_email: readEmail,

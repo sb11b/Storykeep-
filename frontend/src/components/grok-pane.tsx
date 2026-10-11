@@ -5,7 +5,8 @@ import { LoaderCircle, Paperclip, Pencil, Save, Send, Sparkles, Square, X } from
 import { GrokRowMenu } from "@/components/grok-row-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { useDictation } from "@/components/dictation";
+import { DictationMic, useDictation } from "@/components/dictation";
+import { showDictationMic } from "@/lib/composer-dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
@@ -1343,6 +1344,10 @@ export function GrokPane({
                   if (conversationStatus !== "idle") {
                     conversation.stop();
                   } else {
+                    // One mic per pane: an in-flight continuous dictation would
+                    // keep the mic next to the now-open realtime socket (same
+                    // invariant as the Talk/STS mutual exclusion in #166).
+                    dictation?.abort();
                     void conversation.start();
                   }
                 }}
@@ -1353,6 +1358,18 @@ export function GrokPane({
                 Talk
               </Button>
             </>
+          ) : null}
+          {showDictationMic({
+            dictationAvailable: Boolean(dictation),
+            locked,
+            conversationStatus,
+            busy,
+            aborting,
+          }) ? (
+            <DictationMic
+              className="relative right-auto top-auto z-10 flex size-9 shrink-0 translate-y-0 items-center justify-center rounded-lg border border-border bg-background p-0 hover:bg-muted"
+              target={() => draftRef.current}
+            />
           ) : null}
           {busy || aborting ? (
             <Button
