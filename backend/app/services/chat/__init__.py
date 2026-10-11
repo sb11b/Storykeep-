@@ -88,6 +88,7 @@ from .model_routing import (
     model_label,
     model_uses_reasoning,
     normalize_model_choice,
+    normalize_stored_model_choice,
     normalize_reasoning_effort,
     pace_reason,
     pace_why,
