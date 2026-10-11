@@ -10,6 +10,7 @@ import {
   encodeMicChunk,
   extractAudioDelta,
   extractConversationId,
+  extractTranscriptItemId,
   extractUserTranscript,
   floatToPcm16Bytes,
   JUNIOR_TALK_INSTRUCTIONS,
@@ -146,6 +147,45 @@ test("extractUserTranscript returns null for blank or missing text", () => {
   assert.equal(extractUserTranscript({}), null);
   assert.equal(extractUserTranscript(null), null);
   assert.equal(extractUserTranscript("not an object"), null);
+});
+
+test("extractTranscriptItemId reads the top-level item_id", () => {
+  assert.equal(
+    extractTranscriptItemId({ item_id: "5ef9d6e1-df26", transcript: "hi" }),
+    "5ef9d6e1-df26"
+  );
+});
+
+test("extractTranscriptItemId returns null when absent or malformed", () => {
+  assert.equal(extractTranscriptItemId({ transcript: "hi" }), null);
+  assert.equal(extractTranscriptItemId({ item_id: "" }), null);
+  assert.equal(extractTranscriptItemId({ item_id: 42 }), null);
+  assert.equal(extractTranscriptItemId(null), null);
+});
+
+test("xAI triplicate transcript events share one item_id — dedupe key is stable", () => {
+  // Live-verified: api.x.ai emits transcription.completed three times per
+  // utterance with the same item_id and different event_ids. Simulate the
+  // exact wire shape; the dedupe set must collapse all three to one record.
+  const events = [
+    { type: "conversation.item.input_audio_transcription.completed", event_id: "a", item_id: "item-1", transcript: "What did I write?" },
+    { type: "conversation.item.input_audio_transcription.completed", event_id: "b", item_id: "item-1", transcript: "What did I write?" },
+    { type: "conversation.item.input_audio_transcription.completed", event_id: "c", item_id: "item-1", transcript: "What did I write?" },
+    { type: "conversation.item.input_audio_transcription.completed", event_id: "d", item_id: "item-2", transcript: "Read me the article" },
+  ];
+  const seen = new Set<string>();
+  const recorded: string[] = [];
+  for (const ev of events) {
+    const text = extractUserTranscript(ev);
+    const itemId = extractTranscriptItemId(ev);
+    if (!text) continue;
+    if (itemId) {
+      if (seen.has(itemId)) continue;
+      seen.add(itemId);
+    }
+    recorded.push(text);
+  }
+  assert.deepEqual(recorded, ["What did I write?", "Read me the article"]);
 });
 
 test("extractAudioDelta reads both delta shapes and rejects empties", () => {
@@ -864,6 +904,119 @@ test("blank transcripts never reach onUserTranscript; one committed turn fires e
     // One committed turn fires exactly once, trimmed.
     feed({ type: "conversation.item.input_audio_transcription.completed", transcript: "  what's the news  " });
     assert.deepEqual(transcripts, ["what's the news"], "one turn, trimmed, fired exactly once");
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("xAI triplicate transcript events record exactly once through the hook", async () => {
+  // Live-verified wire behavior: api.x.ai emits transcription.completed three
+  // times per utterance — same item_id, distinct event_ids. Without dedup each
+  // copy reached onUserTranscript and the turn was sent to chat 3x (Junior
+  // answering the same thing repeatedly + the message list flickering).
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+    const feed = (msg: unknown) => ws.onmessage?.({ data: JSON.stringify(msg) });
+
+    // The exact triplicate: three completed events, one item_id.
+    for (const event_id of ["a", "b", "c"]) {
+      feed({
+        type: "conversation.item.input_audio_transcription.completed",
+        event_id,
+        item_id: "item-1",
+        transcript: "What did I write about quantum physics last week?",
+      });
+    }
+    assert.deepEqual(
+      transcripts,
+      ["What did I write about quantum physics last week?"],
+      "triplicate events with one item_id must record exactly once",
+    );
+
+    // A genuinely new utterance (different item_id) still records.
+    feed({
+      type: "conversation.item.input_audio_transcription.completed",
+      event_id: "d",
+      item_id: "item-2",
+      transcript: "Read me the article",
+    });
+    assert.deepEqual(transcripts.length, 2, "a new item_id is a new turn and must record");
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("stop() clears the transcript dedupe set (no unbounded growth, sessions independent)", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const feed = (msg: unknown) =>
+      FakeWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify(msg) });
+
+    feed({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "item-1",
+      transcript: "hello",
+    });
+    assert.deepEqual(transcripts, ["hello"]);
+
+    // Session ends; a brand-new Talk session reusing the same item_id must
+    // record again (and the internal set must not have grown across sessions).
+    stop();
+    await start();
+    await flushMicrotasks();
+    feed({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "item-1",
+      transcript: "hello",
+    });
+    assert.deepEqual(
+      transcripts,
+      ["hello", "hello"],
+      "after stop() the same item_id records again — the set was cleared",
+    );
 
     unmountHook(slots);
   } finally {
