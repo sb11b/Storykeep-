@@ -35,6 +35,19 @@ val storykeepServiceToken = configValue("STORYKEEP_SERVICE_TOKEN", "")
 fun kotlinStringLiteral(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+// Release signing: reads android/keystore.properties (gitignored, a sibling
+// of local.properties). When the file — or its storeFile key — is absent the
+// release build stays UNSIGNED instead of failing, so a fresh clone or CI can
+// still assembleRelease; only a publishable build needs the keystore. The
+// keystore and its passwords are never committed. See android/README.md.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
+}
+val hasReleaseSigning = keystoreProperties.getProperty("storeFile") != null
+
 android {
     namespace = "com.storykeep.junior"
     compileSdk = 35
@@ -43,15 +56,33 @@ android {
         applicationId = "com.storykeep.junior"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-shell"
+        versionCode = 2
+        versionName = "0.1.0"
         buildConfigField("String", "BASE_URL", kotlinStringLiteral(storykeepBaseUrl))
         buildConfigField("String", "SERVICE_TOKEN", kotlinStringLiteral(storykeepServiceToken))
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                // storeFile is resolved relative to the android/ directory.
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // No assignment when there is no keystore: the release variant
+            // then builds unsigned rather than failing the build.
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

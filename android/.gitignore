@@ -1,6 +1,10 @@
 .gradle/
 **/build/
 local.properties
+# Release signing — NEVER commit. Steve generates this locally (see README.md).
+keystore.properties
+*.jks
+*.keystore
 .idea/
 *.iml
 .cxx/

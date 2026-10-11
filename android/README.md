@@ -56,3 +56,44 @@ STORYKEEP_BASE_URL=https://storykeep-production.up.railway.app/api/v1/
 
 Build with a missing token and the app still runs — it just 401s on every
 authenticated call until the property is set.
+
+## Release build and signing
+
+The release variant is shrunk with R8 (`isMinifyEnabled` +
+`isShrinkResources`; keep rules live in `app/proguard-rules.pro`) and signed
+from `android/keystore.properties` — a **gitignored** file, never committed:
+
+```properties
+storeFile=storykeep-release.jks
+storePassword=<store password>
+keyAlias=<key alias>
+keyPassword=<key password>
+```
+
+`storeFile` is a path relative to the `android/` directory (e.g.
+`storykeep-release.jks` sitting next to `keystore.properties`).
+
+Generate your keystore **once, locally** (and back it up — losing it means you
+can never update the published app under the same signing identity):
+
+```bash
+keytool -genkeypair -v -keystore storykeep-release.jks \
+  -alias storykeep -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Then create `android/keystore.properties` with the four keys above (same
+passwords you just chose). **Never commit the `.jks` file or
+`keystore.properties`** — both are gitignored (`android/.gitignore`).
+
+Without `keystore.properties` the release build still succeeds — it just
+produces an **unsigned** APK (`app/build/outputs/apk/release/`), so a fresh
+clone can always run `./gradlew :app:assembleRelease`. Build a publishable,
+signed APK with:
+
+```bash
+cd android
+./gradlew :app:assembleRelease
+```
+
+Current version: `versionCode 2`, `versionName 0.1.0` — all three venues
+(Talk, Conversation, Stories) are real, so the old `-shell` suffix is gone.
