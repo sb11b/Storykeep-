@@ -157,8 +157,14 @@ export function classifyRealtimeEvent(type: unknown): RealtimeEventKind {
  */
 export function extractTranscriptItemId(msg: unknown): string | null {
   if (!msg || typeof msg !== "object") return null;
-  const m = msg as { item_id?: unknown };
-  return typeof m.item_id === "string" && m.item_id.length > 0 ? m.item_id : null;
+  const m = msg as { item_id?: unknown; item?: { id?: unknown } };
+  // Top-level shape (verified live): { item_id }. Nested shape fallback —
+  // extractUserTranscript also accepts { item: { content: [...] } }, so read
+  // the nested item id too; without it a nested-shaped transcript would record
+  // but never dedupe, silently reverting to the 3x bug.
+  if (typeof m.item_id === "string" && m.item_id.length > 0) return m.item_id;
+  if (typeof m.item?.id === "string" && m.item.id.length > 0) return m.item.id;
+  return null;
 }
 
 /** User speech text from a transcription.completed event, trimmed; null when blank. */

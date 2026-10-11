@@ -911,6 +911,119 @@ test("blank transcripts never reach onUserTranscript; one committed turn fires e
   }
 });
 
+test("xAI triplicate transcript events record exactly once through the hook", async () => {
+  // Live-verified wire behavior: api.x.ai emits transcription.completed three
+  // times per utterance — same item_id, distinct event_ids. Without dedup each
+  // copy reached onUserTranscript and the turn was sent to chat 3x (Junior
+  // answering the same thing repeatedly + the message list flickering).
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+    const feed = (msg: unknown) => ws.onmessage?.({ data: JSON.stringify(msg) });
+
+    // The exact triplicate: three completed events, one item_id.
+    for (const event_id of ["a", "b", "c"]) {
+      feed({
+        type: "conversation.item.input_audio_transcription.completed",
+        event_id,
+        item_id: "item-1",
+        transcript: "What did I write about quantum physics last week?",
+      });
+    }
+    assert.deepEqual(
+      transcripts,
+      ["What did I write about quantum physics last week?"],
+      "triplicate events with one item_id must record exactly once",
+    );
+
+    // A genuinely new utterance (different item_id) still records.
+    feed({
+      type: "conversation.item.input_audio_transcription.completed",
+      event_id: "d",
+      item_id: "item-2",
+      transcript: "Read me the article",
+    });
+    assert.deepEqual(transcripts.length, 2, "a new item_id is a new turn and must record");
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("stop() clears the transcript dedupe set (no unbounded growth, sessions independent)", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const feed = (msg: unknown) =>
+      FakeWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify(msg) });
+
+    feed({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "item-1",
+      transcript: "hello",
+    });
+    assert.deepEqual(transcripts, ["hello"]);
+
+    // Session ends; a brand-new Talk session reusing the same item_id must
+    // record again (and the internal set must not have grown across sessions).
+    stop();
+    await start();
+    await flushMicrotasks();
+    feed({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "item-1",
+      transcript: "hello",
+    });
+    assert.deepEqual(
+      transcripts,
+      ["hello", "hello"],
+      "after stop() the same item_id records again — the set was cleared",
+    );
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
 test("hook returns a stable object across renders", async () => {
   const restore = installFakes();
   try {
