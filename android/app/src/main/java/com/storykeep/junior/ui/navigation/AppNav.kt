@@ -16,6 +16,7 @@ import com.storykeep.junior.data.BottomTab
 import com.storykeep.junior.data.EntryMode
 import com.storykeep.junior.data.JuniorSession
 import com.storykeep.junior.data.PrefsStoryStore
+import com.storykeep.junior.audio.MediaTalkPlayer
 import com.storykeep.junior.ui.conversation.ConversationScreen
 import com.storykeep.junior.ui.home.HomeScreen
 import com.storykeep.junior.ui.stories.StoriesScreen
@@ -37,7 +38,10 @@ class JuniorSessionFactory(
             PrefsStoryStore.PREFS_NAME,
             Context.MODE_PRIVATE,
         )
-        return JuniorSession(PrefsStoryStore(prefs)) as T
+        return JuniorSession(
+            storyStore = PrefsStoryStore(prefs),
+            player = MediaTalkPlayer(application),
+        ) as T
     }
 }
 
