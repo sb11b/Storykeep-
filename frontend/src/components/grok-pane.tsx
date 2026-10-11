@@ -14,6 +14,7 @@ import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar } from "@/components/grok-message-listen";
 import { GrokVoiceControls } from "@/components/grok-voice-controls";
 import { usePaneVoice } from "@/lib/usePaneVoice";
+import { useConversationVoice, CONVERSATION_STATUS_LABEL } from "@/lib/use-conversation-voice";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -259,6 +260,7 @@ export function GrokPane({
   const bodyElementsRef = useRef(new Map<string, HTMLElement>());
 
   /* ── Voice hook ── */
+  const conversationActiveRef = useRef(false);
   const voice = usePaneVoice({
     ttsEnabled,
     locked,
@@ -272,6 +274,7 @@ export function GrokPane({
     bodyElementsRef,
     defaultTtsVoiceId,
     ttsVoices,
+    conversationActiveRef,
   });
   const [folders, setFolders] = useState<Folder[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -589,6 +592,22 @@ export function GrokPane({
     [fillComposerDraft],
   );
 
+  /* ── Conversation mode: one realtime WebSocket — mic in, Junior's voice out ── */
+  const voiceIdRef = useRef(voice.voiceId);
+  voiceIdRef.current = voice.voiceId;
+  const conversation = useConversationVoice({
+    voiceIdRef,
+    onUserTranscript: submitVoiceTranscript,
+  });
+  const conversationStatus = conversation.status;
+  conversationActiveRef.current = conversationStatus !== "idle";
+  useEffect(() => {
+    if (!panelOpen) conversation.stop();
+  }, [panelOpen, conversation]);
+  // Locked pane or a disabled pane can't hold a mic session.
+  useEffect(() => {
+    if (locked || !sttEnabled) conversation.stop();
+  }, [locked, sttEnabled, conversation]);
 
   const { imagine } = useImagine({
     pane, onUpdate, onHistoryChanged, draftNow, busy, aborting, enabled, locked,
@@ -1298,17 +1317,52 @@ export function GrokPane({
             <Sparkles className="size-4" />
           </Button>
           {sttEnabled && !locked ? (
-            <JuniorMicControls
-              enabled={enabled && !uploadingFiles}
-              locked={locked}
-              registerAbort={voice.registerMicAbort}
-              registerStsRearm={voice.registerStsRearm}
-              onPhaseChange={voice.handleMicPhaseChange}
-              onStsModeChange={voice.handleStsModeChange}
-              onStsSubmit={submitVoiceTranscript}
-              onSttDraft={applySttDraft}
-              onSttEmptyHint={voice.showSttEmptyHint}
-            />
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant={conversationStatus !== "idle" ? "destructive" : "outline"}
+                className="relative z-10 h-9 shrink-0 px-2.5 text-xs font-medium"
+                disabled={locked || uploadingFiles}
+                aria-label={
+                  conversationStatus !== "idle"
+                    ? "End conversation mode"
+                    : "Start conversation mode — talk to Junior hands-free"
+                }
+                aria-pressed={conversationStatus !== "idle"}
+                data-talk-state={conversationStatus}
+                title={
+                  conversationStatus !== "idle"
+                    ? "Tap to end the conversation"
+                    : "Conversation mode — speak to Junior and hear replies"
+                }
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (conversationStatus !== "idle") {
+                    conversation.stop();
+                  } else {
+                    void conversation.start();
+                  }
+                }}
+              >
+                {conversationStatus === "connecting" ? (
+                  <LoaderCircle className="mr-1 size-3.5 animate-spin" />
+                ) : null}
+                Talk
+              </Button>
+              <JuniorMicControls
+                enabled={enabled && !uploadingFiles}
+                locked={locked}
+                registerAbort={voice.registerMicAbort}
+                registerStsRearm={voice.registerStsRearm}
+                onPhaseChange={voice.handleMicPhaseChange}
+                onStsModeChange={voice.handleStsModeChange}
+                onStsSubmit={submitVoiceTranscript}
+                onSttDraft={applySttDraft}
+                onSttEmptyHint={voice.showSttEmptyHint}
+              />
+            </>
           ) : null}
           {busy || aborting ? (
             <Button
@@ -1350,6 +1404,10 @@ export function GrokPane({
         ) : voice.sttEmptyHint ? (
           <p className="text-[11px] text-muted-foreground" role="status">
             {MIC_STT_EMPTY_HINT}
+          </p>
+        ) : conversationStatus !== "idle" ? (
+          <p className="text-[11px] text-muted-foreground" role="status" data-talk-status={conversationStatus}>
+            {CONVERSATION_STATUS_LABEL[conversationStatus]}
           </p>
         ) : voice.stsModeOn ? (
           <p className="text-[11px] text-muted-foreground" role="status">

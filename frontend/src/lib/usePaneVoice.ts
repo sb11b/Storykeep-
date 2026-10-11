@@ -56,6 +56,8 @@ export interface UsePaneVoiceOptions {
   ttsVoices: TtsVoice[];
   bodyElementsRef: React.RefObject<Map<string, HTMLElement>>;
   messagesRef: React.RefObject<ChatLine[]>;
+  /** Conversation mode: the realtime socket speaks the reply, so TTS auto-read stands down. */
+  conversationActiveRef?: React.RefObject<boolean>;
 }
 
 export interface UsePaneVoiceResult {
@@ -116,6 +118,7 @@ export function usePaneVoice({
   ttsVoices,
   bodyElementsRef,
   messagesRef,
+  conversationActiveRef,
 }: UsePaneVoiceOptions): UsePaneVoiceResult {
   // -- TTS state --
   const [voiceId, setVoiceId] = useState(() => readStoredTtsVoice(defaultTtsVoiceId));
@@ -316,6 +319,13 @@ export function usePaneVoice({
 
   function requestAutoListen(messageId: string, markdown: string) {
     if (!ttsEnabled || locked || !panelOpen) return;
+    // Conversation mode speaks replies over the realtime socket — TTS would double up.
+    if (conversationActiveRef?.current) {
+      if (listen.isActive) {
+        listen.stop();
+      }
+      return;
+    }
     if (!autoReadReplies) {
       if (listen.isActive) {
         listen.stop();
