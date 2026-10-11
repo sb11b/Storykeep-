@@ -115,21 +115,31 @@ that entry the window would load but every API call would fail CORS.
 The web app authenticates with the `sk_access` cookie, which the backend sets
 as `SameSite=Lax`. A packaged desktop window is a **different site** from
 Railway, and Lax cookies are not sent on cross-site `fetch` — so the window
-would load and every API call would come back 401 until one of these is done:
+would load and every API call would come back 401 if the app relied on the
+cookie alone. It does not: the desktop app authenticates with a **bearer
+token**.
 
-1. **Backend (one line, recommended):** in `backend/app/routers/auth.py`
-   `_set_cookie`, set `samesite="none"` with `secure=True` when the request
-   `Origin` is an allowed desktop origin (`https://tauri.localhost`), keeping
-   `lax` for the web app. Requires a browser that accepts `Secure` cookies
-   from a custom scheme host — WebView2 does.
-2. **Bearer token:** the backend already accepts `Authorization: Bearer
-   <token>` (`backend/app/deps.py`) and `/api/v1/auth/login` returns
-   `access_token`. A follow-up slice can store that token and attach it in
-   `src/lib/api-base.ts`, which removes the cookie dependency entirely.
+- `/api/v1/auth/login` (and `/api/v1/auth/login/2fa`) already return
+  `access_token` in the response body (`backend/app/schemas.py`), and the
+  backend already accepts `Authorization: Bearer <token>` ahead of the cookie
+  (`backend/app/deps.py` `get_current_user` checks the header first).
+- `src/app/login/page.tsx` stores that token via `setAuthToken()` from
+  `src/lib/api-base.ts`, and `request()` in `src/lib/api.ts` attaches it as an
+  `Authorization` header on every call. The web app never sets a token, so it
+  stays cookie-based and unchanged — SameSite simply stops mattering for the
+  desktop app.
+- **No backend change was needed** for authentication, and no new dependency
+  was added.
 
-Until one of those lands, the desktop build is scaffold-verified only — the
-window, icons, bundle, and API wiring are correct, but sign-in needs the
-cookie fix. Nothing else in this slice depends on it.
+Trade-offs, stated honestly:
+
+- The token lives in **JS memory only** — never `localStorage`, never a
+  cookie. It is gone on reload, so **restarting the desktop app requires
+  signing in again**. That is deliberate: a persisted bearer token is a
+  long-lived credential sitting on disk.
+- Logout clears it (`setAuthToken(null)` in `library-app.tsx`).
+- Requests still send `credentials: "include"` as well, so the web app's
+  cookie path is untouched.
 
 ### How offline works
 

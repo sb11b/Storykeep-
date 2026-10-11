@@ -46,14 +46,18 @@ function stripAccidentalPathExt(src: string): string {
 
 /**
  * Exact GET URL for Download. Must match the working <img> src (origin, path, query, UUID).
- * Never append .jpg to the request path. Never replace a live src with a reconstructed /media/{id}.
+ * Never append .jpg to the request path. Never replace a live src with a reconstructed media URL.
+ *
+ * Relative srcs (the server emits a bare media path) resolve against the
+ * configured API origin so the packaged desktop window fetches Railway, not
+ * `tauri.localhost`; in dev `apiUrl` is a no-op and relative paths stay put.
  */
 export function resolveChatImageSrc(
   imgSrc: string | null | undefined,
   mediaId?: string | null,
 ): string {
   const raw = (imgSrc || "").trim();
-  if (raw) return stripAccidentalPathExt(raw);
+  if (raw) return apiUrl(stripAccidentalPathExt(raw));
   const id = (mediaId || "").trim();
   if (UUID.test(id)) return mediaDownloadUrl(id);
   return "";

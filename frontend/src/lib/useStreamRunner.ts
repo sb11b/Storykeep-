@@ -2,6 +2,7 @@
 
 import { toast } from "sonner";
 import { ApiError, api } from "@/lib/api";
+import { apiUrl } from "@/lib/api-base";
 import { EMPTY_REPLY_BODY, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind } from "@/lib/grok-pane-name";
 import { restoreDraftAfterSilent } from "@/lib/silent-retry";
 
@@ -433,7 +434,9 @@ export function useStreamRunner({
                               filename: "generated image",
                               content_type: "image/png",
                               kind: "image" as const,
-                              url: `/api/v1/media/${meta.media_id}`,
+                              // Server stream meta carries only the id; the
+                              // desktop window needs the absolute origin.
+                              url: apiUrl(`/api/v1/media/${meta.media_id}`),
                             },
                           ],
                         }

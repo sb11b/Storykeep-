@@ -1,5 +1,6 @@
 import { createGrokPane, type GrokPaneState } from "@/components/grok-pane";
 import { asFilingDestination } from "@/lib/destinations";
+import { apiUrl } from "@/lib/api-base";
 import { defaultGrokPaneName, isDefaultPaneName } from "@/lib/grok-pane-name";
 import type { PendingAttachment } from "@/lib/larry-attach";
 
@@ -34,7 +35,8 @@ export function sanitizePendingAttachments(raw: unknown): PendingAttachment[] {
       id,
       name,
       size,
-      url: `/api/v1/media/${id}`,
+      // Absolute in packaged builds (no same-origin proxy); no-op in dev.
+      url: apiUrl(`/api/v1/media/${id}`),
       kind,
       content_type: contentType,
       extract_text: extract,

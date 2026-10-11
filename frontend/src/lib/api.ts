@@ -36,7 +36,7 @@ import type {
 } from "./types";
 
 import { httpErrorFallback, INVALID_ID_TOAST, isFeedId, isUuid, parseErrorPayload } from "@/lib/api-errors";
-import { apiUrl } from "@/lib/api-base";
+import { apiUrl, AUTH_TOKEN } from "@/lib/api-base";
 import {
   CHAT_CREATE_TIMEOUT_TOAST,
   INVALID_CHAT_TOAST,
@@ -84,6 +84,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData;
   if (init?.body && !isForm && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+  // Desktop app: the SameSite=Lax cookie is not sent cross-site from
+  // tauri.localhost, so attach the login access_token as a bearer header.
+  // The backend checks the header first (backend/app/deps.py) and falls back
+  // to the cookie, so the web app (AUTH_TOKEN unset) is unaffected.
+  if (AUTH_TOKEN && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
   }
   const response = await fetch(apiUrl(path), {
     ...init,

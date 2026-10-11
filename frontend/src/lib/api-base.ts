@@ -27,6 +27,25 @@ export function apiUrl(path: string): string {
 }
 
 /**
+ * Bearer token for the packaged desktop app.
+ *
+ * The web app authenticates with the `sk_access` cookie (SameSite=Lax), which
+ * is not sent on cross-site fetches from `tauri.localhost` to Railway — so the
+ * desktop window would 401 on every call. The backend accepts
+ * `Authorization: Bearer <access_token>` first (see `backend/app/deps.py`
+ * `get_current_user`), and login returns that token in the response body, so
+ * the desktop app holds it in JS memory only (never localStorage) and attaches
+ * it here. A restart therefore requires signing in again.
+ *
+ * Empty/null on the web app: `request()` then sends cookies only, unchanged.
+ */
+export let AUTH_TOKEN: string | null = null;
+
+export function setAuthToken(token: string | null): void {
+  AUTH_TOKEN = token?.trim() || null;
+}
+
+/**
  * WebSocket URL for an app-relative path. The backend is reached over TLS in
  * production, so ws becomes wss there; with no configured origin the caller
  * keeps using `window.location` (dev, proxied).

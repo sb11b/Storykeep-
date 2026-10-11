@@ -11,6 +11,11 @@ export const LARRY_ATTACH_MAX_FILES = 5;
 
 const ALLOWED_SUFFIXES = new Set([".pdf", ".txt", ".md", ".docx", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".csv"]);
 
+/** Media byte URL for an id, origin-resolved (no-op in dev). */
+function mediaUrl(id: string): string {
+  return apiUrl(`/api/v1/media/${id}`);
+}
+
 export type LarryAttachment = {
   media_id: string;
   filename: string;
@@ -80,8 +85,8 @@ export function attachmentMarkdown(files: LarryAttachment[]): string {
   return files
     .map((item) =>
       item.kind === "image"
-        ? `![${item.filename.replace(/\.[^.]+$/, "")}](${item.url || `/api/v1/media/${item.media_id}`})`
-        : `[${item.filename}](${item.url || `/api/v1/media/${item.media_id}`})`,
+        ? `![${item.filename.replace(/\.[^.]+$/, "")}](${apiUrl(item.url || mediaUrl(item.media_id))})`
+        : `[${item.filename}](${apiUrl(item.url || mediaUrl(item.media_id))})`,
     )
     .join("\n");
 }
@@ -92,7 +97,7 @@ export function pendingToMessageFile(item: PendingAttachment): LarryAttachment {
     filename: item.name,
     content_type: item.content_type,
     kind: item.kind,
-    url: item.url || `/api/v1/media/${item.id}`,
+    url: apiUrl(item.url || mediaUrl(item.id)),
     byte_size: item.size,
     extract_text: item.extract_text || null,
   };
@@ -139,7 +144,7 @@ export async function uploadLarryAttachment(file: File): Promise<PendingAttachme
       id,
       name,
       size: uploaded.byte_size ?? file.size,
-      url: uploaded.url || `/api/v1/media/${id}`,
+      url: apiUrl(uploaded.url || mediaUrl(id)),
       kind: uploaded.kind === "image" ? "image" : "file",
       content_type: file.type || "application/octet-stream",
       extract_text: uploaded.extract_text || null,

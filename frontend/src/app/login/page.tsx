@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
+import { setAuthToken } from "@/lib/api-base";
 import { clearPwaApiCaches } from "@/lib/pwa-cache";
 import { cn } from "@/lib/utils";
 
@@ -41,11 +42,14 @@ export default function LoginPage() {
         return;
       }
       if (twoFactor) {
-        await api.verifyLogin2fa({
+        const verified = await api.verifyLogin2fa({
           challenge_id: twoFactor.challengeId,
           code: code.trim(),
           use_backup_code: useBackupCode,
         });
+        // Desktop: hold the returned token in memory so API calls authenticate
+        // with a bearer header (the SameSite=Lax cookie is not sent cross-site).
+        setAuthToken(verified.access_token ?? null);
         await clearPwaApiCaches();
         router.replace("/");
         return;
@@ -61,6 +65,7 @@ export default function LoginPage() {
         setUseBackupCode(false);
         return;
       }
+      setAuthToken(result.access_token ?? null);
       await clearPwaApiCaches();
       router.replace("/");
     } catch (error) {
