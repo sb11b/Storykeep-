@@ -485,11 +485,20 @@ test("setOutputSpeed and setReasoningEffort re-send session.update on the live s
     assert.ok(afterReasoning[3].session.audio.input.transcription.keyterms.length > 0);
     assert.ok(afterReasoning[3].session.replace);
 
+    // The CLOSED-but-current-ref case: the socket died but ws.onclose has NOT
+    // fired, so wsRef.current still points at it. The `!socket` branch alone
+    // would send into a dead socket — readyState CLOSED (3) must stop it.
+    // (Set readyState directly: close() would fire onclose and null the ref.)
+    ws.readyState = 3;
+    setOutputSpeed(1.2);
+    setReasoningEffort("high");
+    assert.equal(sessionUpdates().length, 4, "a CLOSED-but-current socket must not receive session.update");
+
     // With no live socket the setters are no-ops, not throws.
     ws.close();
     setOutputSpeed(1.1);
     setReasoningEffort("none");
-    assert.equal(sessionUpdates().length, 4, "no session.update may be sent on a closed socket");
+    assert.equal(sessionUpdates().length, 4, "no session.update may be sent after the socket is gone");
 
     unmountHook(slots);
   } finally {

@@ -1344,6 +1344,10 @@ export function GrokPane({
                   if (conversationStatus !== "idle") {
                     conversation.stop();
                   } else {
+                    // One mic per pane: an in-flight continuous dictation would
+                    // keep the mic next to the now-open realtime socket (same
+                    // invariant as the Talk/STS mutual exclusion in #166).
+                    dictation?.abort();
                     void conversation.start();
                   }
                 }}

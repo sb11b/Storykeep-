@@ -3,18 +3,23 @@ import test from "node:test";
 import {
   buildFunctionCallOutput,
   buildResponseCreate,
+  chunkExcerptMarker,
   DOC_READ_CHARS,
   excerptMarker,
   extractFunctionCall,
+  formatArticleMatches,
+  formatArticleRead,
   formatDocumentMatches,
   formatDocumentRead,
   formatDraftSaved,
   formatEmailBody,
   formatEmailList,
+  formatFeedList,
   formatFileText,
   formatPendingTasks,
   JUNIOR_TOOLS,
   JUNIOR_TOOL_NAMES,
+  JuniorToolDef,
   optionalIntArg,
   parseToolArguments,
   queryTokens,
@@ -72,12 +77,30 @@ test("the never-send invariant is baked into the draft tool description", () => 
 });
 
 test("get_document's description explains full reads and offset continuation", () => {
-  const getDoc = JUNIOR_TOOLS.find((tool) => tool.name === "get_document");
+  const getDoc = JUNIOR_TOOLS.find((tool: JuniorToolDef) => tool.name === "get_document");
   assert.ok(getDoc);
   assert.match(getDoc!.description, /FULL text/);
   assert.match(getDoc!.description, /READ IT ALOUD/);
   assert.match(getDoc!.description, /increased offset to continue reading/);
   assert.ok(getDoc!.parameters.properties.offset, "get_document exposes an offset parameter");
+});
+
+test("read_article's offset description matches get_document's continuation wording", () => {
+  const readArt = JUNIOR_TOOLS.find((tool: JuniorToolDef) => tool.name === "read_article");
+  assert.ok(readArt);
+  // The old wording ("pass the length of the previous chunk") loops on chunk 2:
+  // the previous chunk's length is still the read cap, so the model re-reads
+  // from the start forever. The offset must be where the previous chunk ENDED.
+  const offsetDesc = String((readArt!.parameters.properties.offset as { description?: string }).description);
+  assert.match(offsetDesc, /use the offset where the previous chunk ended/);
+  assert.ok(!offsetDesc.includes("length of the previous chunk"), "the looping wording is gone");
+  // Both tools must carry the same phrase so the model learns one rule.
+  const getDoc = JUNIOR_TOOLS.find((tool: JuniorToolDef) => tool.name === "get_document");
+  assert.ok(getDoc);
+  assert.match(
+    String((getDoc!.parameters.properties.offset as { description?: string }).description),
+    /use the offset where the previous chunk ended/,
+  );
 });
 
 test("read_email_message's description promises the full body for reading aloud", () => {
@@ -178,6 +201,31 @@ test("excerptMarker is speakable and states both numbers", () => {
   assert.match(marker, /continue/);
 });
 
+test("chunkExcerptMarker reports the cumulative position for continuation chunks", () => {
+  // Chunk 2 of a 300k document covers chars 120,001–240,000: the marker must
+  // say "first 240,000 of 300,000", not "first 120,000 of 300,000".
+  const marker = chunkExcerptMarker(120_000, 120_000, 300_000);
+  assert.match(marker, /first 240,000 of 300,000 characters/);
+  // Chunk 1 (offset 0) is unchanged.
+  assert.match(chunkExcerptMarker(0, 120_000, 300_000), /first 120,000 of 300,000 characters/);
+});
+
+test("formatDocumentRead's continuation chunk marker is cumulative", () => {
+  const text = "y".repeat(DOC_READ_CHARS * 2 + 500);
+  const second = formatDocumentRead({ slug: "s", title: "T", text }, DOC_READ_CHARS);
+  assert.match(second, /first 240,000 of 240,500 characters/);
+});
+
+test("formatArticleRead's continuation chunk marker is cumulative and echoes the id", () => {
+  const text = "a".repeat(DOC_READ_CHARS * 2 + 500);
+  const article = { id: "art-7", title: "Long piece", content_text: text };
+  const first = formatArticleRead(article, 0);
+  assert.match(first, /\(id: art-7\)/, "the header echoes the article id like get_document echoes the slug");
+  assert.match(first, /first 120,000 of 240,500 characters/);
+  const second = formatArticleRead(article, DOC_READ_CHARS);
+  assert.match(second, /first 240,000 of 240,500 characters/);
+});
+
 /* ── Result mapping ── */
 
 test("formatDocumentMatches lists titles, slugs, and summaries", () => {
@@ -194,6 +242,32 @@ test("queryTokens and documentMatchesQuery filter documents by title/summary", (
   assert.equal(documentMatchesQuery(doc, queryTokens("quantum")), true);
   assert.equal(documentMatchesQuery(doc, queryTokens("medieval")), false);
   assert.equal(documentMatchesQuery(doc, []), true);
+});
+
+test("formatFeedList reports the capped count, not the raw subscription count", () => {
+  // 60 feeds, cap 50: saying "You follow 60 feeds" then listing 50 tells the
+  // model about 10 feeds it cannot see.
+  const feeds = Array.from({ length: 60 }, (_, i) => ({ id: `f${i}`, title: `Feed ${i}`, url: `https://x.com/${i}` }));
+  const result = formatFeedList(feeds);
+  assert.match(result, /You follow 50 feeds/);
+  assert.ok(!result.includes("Feed 50"), "only the first 50 feeds are listed");
+  // Under the cap the count is exact.
+  assert.match(formatFeedList(feeds.slice(0, 3)), /You follow 3 feeds/);
+  assert.match(formatFeedList([{ id: "f0", title: "Only" }]), /You follow 1 feed/);
+});
+
+test("formatArticleMatches reports the capped count ('Found 8 of 20')", () => {
+  const articles = Array.from({ length: 20 }, (_, i) => ({
+    id: `a${i}`,
+    title: `Article ${i}`,
+    feed_title: "Newsmax",
+  }));
+  const result = formatArticleMatches(articles);
+  assert.match(result, /Found 8 of 20 articles/);
+  assert.ok(!result.includes("Article 8"), "only the first 8 articles are listed");
+  // Equal counts keep the plain form.
+  assert.match(formatArticleMatches(articles.slice(0, 2)), /Found 2 articles/);
+  assert.match(formatArticleMatches([articles[0]!]), /Found 1 article/);
 });
 
 test("formatPendingTasks summarizes kind, title, status, and approval doc slugs", () => {
@@ -306,16 +380,18 @@ test("buildFunctionCallOutput and buildResponseCreate match the live-verified wi
 
 type FetchStub = { calls: Array<{ url: string; init?: RequestInit }>; restore: () => void };
 
-function stubFetch(handler: (url: string) => { ok: boolean; payload: unknown }): FetchStub {
+function stubFetch(
+  handler: (url: string) => { ok: boolean; payload: unknown; status?: number },
+): FetchStub {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, init });
-    const { ok, payload } = handler(url);
+    const { ok, payload, status } = handler(url);
     return {
       ok,
-      status: ok ? 200 : 500,
+      status: status ?? (ok ? 200 : 500),
       statusText: ok ? "OK" : "Error",
       json: async () => payload,
     };
@@ -607,7 +683,7 @@ test("runJuniorTool read_article returns the full text and continues by offset",
   try {
     const result = await runJuniorTool("read_article", '{"id":"art-1"}');
     assert.ok(stub.calls.some((call) => call.url.includes("/api/v1/articles/art-1")));
-    assert.match(result, /"Long Newsmax piece" from Newsmax/);
+    assert.match(result, /"Long Newsmax piece" \(id: art-1\) from Newsmax/);
     assert.match(result, /Summary: A long piece\./);
     // The first chunk is exactly the read cap and announces the continuation —
     // the same speakable marker get_document uses.
@@ -633,6 +709,26 @@ test("runJuniorTool read_article returns the full text and continues by offset",
     assert.ok(!result.includes("[excerpt"), "the final chunk needs no continuation marker");
   } finally {
     stub2.restore();
+  }
+});
+
+test("runJuniorTool read_article separates a wrong id (404) from an unavailable backend (500)", async () => {
+  const notFound = stubFetch(() => ({ ok: false, status: 404, payload: null }));
+  try {
+    const result = await runJuniorTool("read_article", '{"id":"ghost"}');
+    assert.match(result, /couldn't find an article with that id/);
+    assert.ok(!result.includes("couldn't reach your articles"), "a 404 must not claim the backend is down");
+  } finally {
+    notFound.restore();
+  }
+
+  const serverError = stubFetch(() => ({ ok: false, status: 500, payload: null }));
+  try {
+    const result = await runJuniorTool("read_article", '{"id":"art-1"}');
+    assert.match(result, /couldn't reach your articles right now/);
+    assert.ok(!result.includes("couldn't find"), "a 500 must not claim the article is missing");
+  } finally {
+    serverError.restore();
   }
 });
 

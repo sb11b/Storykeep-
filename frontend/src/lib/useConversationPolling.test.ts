@@ -40,7 +40,7 @@ function freshSlots(): HookSlots {
 }
 
 /** Run one render of the hook with a hand-rolled React dispatcher. */
-function renderPolling(slots: HookSlots) {
+function renderPolling(slots: HookSlots, persist = true) {
   const internals = (React as unknown as {
     __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: { H: unknown };
   }).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
@@ -82,7 +82,7 @@ function renderPolling(slots: HookSlots) {
     slots.index = 0;
     return withDispatcher(slots, () =>
       useConversationPolling(
-        true, // persist
+        persist,
         false, // needsCryptoUnlock
         { current: [] } as React.MutableRefObject<never[]>,
         { current: false } as React.MutableRefObject<boolean>,
@@ -224,6 +224,43 @@ test("a background refresh with a populated list never flips historyLoading", as
     assert.ok(
       slots.writes.some((w) => Array.isArray(w.value) && w.value.length === 2),
       "the refreshed conversations must be written through",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("persist false→true resets historyEverLoadedRef so the post-recovery refresh shows loading", async () => {
+  const restore = stubConversationsFetch([ROW]);
+  const slots = freshSlots();
+  try {
+    // First session: persistence on, list loads, the latch is set.
+    renderPolling(slots);
+    const first = renderPolling(slots).refreshHistory;
+    await first();
+    await flushMicrotasks();
+    const loadingSlot = slots.writes.find((w) => w.value === true)?.slot;
+    assert.ok(loadingSlot !== undefined, "the initial load takes the loading state");
+
+    // persist drops (non-401 chatStatus failure) and comes back.
+    renderPolling(slots, false);
+    // The harness records effects without running them, so commit the
+    // persist-watching effect by hand (deps [persist], value false).
+    const persistEffect = slots.effects.find(
+      (effect) => effect && effect.deps.length === 1 && effect.deps[0] === false,
+    );
+    assert.ok(persistEffect, "the hook must install a persist-watching effect");
+    persistEffect!.create();
+    // The latch must have been reset, so the FIRST post-recovery refresh shows
+    // the loading state instead of updating a stale list silently.
+    slots.writes.length = 0;
+    renderPolling(slots);
+    const recovered = renderPolling(slots).refreshHistory;
+    await recovered();
+    await flushMicrotasks();
+    assert.ok(
+      slots.writes.some((w) => w.slot === loadingSlot && w.value === true),
+      "the first post-recovery refresh must show the loading state — the old list is stale",
     );
   } finally {
     restore();

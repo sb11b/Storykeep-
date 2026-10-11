@@ -55,6 +55,17 @@ export function useConversationPolling(
    */
   const historyEverLoadedRef = useRef(false);
 
+  /**
+   * persist flips false on a non-401 chatStatus failure (and back true on
+   * recovery). When it drops, the loaded list goes stale, so forget that we
+   * ever loaded it — otherwise the first post-recovery refresh runs silently
+   * behind a stale list instead of showing the loading state.
+   */
+  useEffect(() => {
+    if (persist) return;
+    historyEverLoadedRef.current = false;
+  }, [persist]);
+
   const refreshHistory = useCallback(async () => {
     if (!persist) return;
     const showLoading = !historyEverLoadedRef.current;
