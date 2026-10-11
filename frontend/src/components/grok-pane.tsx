@@ -14,6 +14,7 @@ import { MailProposalCard } from "@/components/mail-overlay";
 import { GrokListenBar } from "@/components/grok-message-listen";
 import { GrokVoiceControls } from "@/components/grok-voice-controls";
 import { usePaneVoice } from "@/lib/usePaneVoice";
+import { useConversationVoice, CONVERSATION_STATUS_LABEL } from "@/lib/use-conversation-voice";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -259,6 +260,7 @@ export function GrokPane({
   const bodyElementsRef = useRef(new Map<string, HTMLElement>());
 
   /* ── Voice hook ── */
+  const conversationActiveRef = useRef(false);
   const voice = usePaneVoice({
     ttsEnabled,
     locked,
@@ -272,6 +274,7 @@ export function GrokPane({
     bodyElementsRef,
     defaultTtsVoiceId,
     ttsVoices,
+    conversationActiveRef,
   });
   const [folders, setFolders] = useState<Folder[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -589,6 +592,28 @@ export function GrokPane({
     [fillComposerDraft],
   );
 
+  /* ── Conversation mode: one realtime WebSocket — mic in, Junior's voice out ── */
+  const voiceIdRef = useRef(voice.voiceId);
+  voiceIdRef.current = voice.voiceId;
+  const conversation = useConversationVoice({
+    voiceIdRef,
+    onUserTranscript: submitVoiceTranscript,
+  });
+  const conversationStatus = conversation.status;
+  // Mirror into the ref inside an effect (not during render) — usePaneVoice reads
+  // it to stand TTS auto-read down while the realtime socket speaks.
+  useEffect(() => {
+    conversationActiveRef.current = conversationStatus !== "idle";
+  }, [conversationStatus]);
+  // Grab the stable stop callback so pane effects don't re-run every render.
+  const stopConversation = conversation.stop;
+  useEffect(() => {
+    if (!panelOpen) stopConversation();
+  }, [panelOpen, stopConversation]);
+  // Locked pane or a disabled pane can't hold a mic session.
+  useEffect(() => {
+    if (locked || !sttEnabled) stopConversation();
+  }, [locked, sttEnabled, stopConversation]);
 
   const { imagine } = useImagine({
     pane, onUpdate, onHistoryChanged, draftNow, busy, aborting, enabled, locked,
@@ -1298,17 +1323,67 @@ export function GrokPane({
             <Sparkles className="size-4" />
           </Button>
           {sttEnabled && !locked ? (
-            <JuniorMicControls
-              enabled={enabled && !uploadingFiles}
-              locked={locked}
-              registerAbort={voice.registerMicAbort}
-              registerStsRearm={voice.registerStsRearm}
-              onPhaseChange={voice.handleMicPhaseChange}
-              onStsModeChange={voice.handleStsModeChange}
-              onStsSubmit={submitVoiceTranscript}
-              onSttDraft={applySttDraft}
-              onSttEmptyHint={voice.showSttEmptyHint}
-            />
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant={conversationStatus !== "idle" ? "destructive" : "outline"}
+                className="relative z-10 h-9 shrink-0 px-2.5 text-xs font-medium"
+                // Mutual exclusion: one mic per pane. The legacy STS/STT mic owns
+                // the capture while it is live, so Talk stands down (and vice
+                // versa — JuniorMicControls is not rendered while Talk is active).
+                // 'connecting' is disabled too: the button must not be tappable
+                // mid-handshake, or a stop()+start() race can open a duplicate
+                // session (defense in depth — the hook's session generations are
+                // the real guard).
+                disabled={
+                  locked ||
+                  uploadingFiles ||
+                  voice.sttBusy ||
+                  voice.stsModeOn ||
+                  conversationStatus === "connecting"
+                }
+                aria-label={
+                  conversationStatus !== "idle"
+                    ? "End conversation mode"
+                    : "Start conversation mode — talk to Junior hands-free"
+                }
+                aria-pressed={conversationStatus !== "idle"}
+                data-talk-state={conversationStatus}
+                title={
+                  conversationStatus !== "idle"
+                    ? "Tap to end the conversation"
+                    : "Conversation mode — speak to Junior and hear replies"
+                }
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (conversationStatus !== "idle") {
+                    conversation.stop();
+                  } else {
+                    void conversation.start();
+                  }
+                }}
+              >
+                {conversationStatus === "connecting" ? (
+                  <LoaderCircle className="mr-1 size-3.5 animate-spin" />
+                ) : null}
+                Talk
+              </Button>
+              {conversationStatus === "idle" ? (
+                <JuniorMicControls
+                  enabled={enabled && !uploadingFiles}
+                  locked={locked}
+                  registerAbort={voice.registerMicAbort}
+                  registerStsRearm={voice.registerStsRearm}
+                  onPhaseChange={voice.handleMicPhaseChange}
+                  onStsModeChange={voice.handleStsModeChange}
+                  onStsSubmit={submitVoiceTranscript}
+                  onSttDraft={applySttDraft}
+                  onSttEmptyHint={voice.showSttEmptyHint}
+                />
+              ) : null}
+            </>
           ) : null}
           {busy || aborting ? (
             <Button
@@ -1350,6 +1425,10 @@ export function GrokPane({
         ) : voice.sttEmptyHint ? (
           <p className="text-[11px] text-muted-foreground" role="status">
             {MIC_STT_EMPTY_HINT}
+          </p>
+        ) : conversationStatus !== "idle" ? (
+          <p className="text-[11px] text-muted-foreground" role="status" data-talk-status={conversationStatus}>
+            {CONVERSATION_STATUS_LABEL[conversationStatus]}
           </p>
         ) : voice.stsModeOn ? (
           <p className="text-[11px] text-muted-foreground" role="status">
