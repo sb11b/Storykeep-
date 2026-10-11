@@ -5,8 +5,10 @@
  * Everything here is DOM-free so it can run under `node --test`.
  */
 
-/** xAI realtime voice model. */
-export const REALTIME_MODEL = "grok-voice-latest";
+/** xAI realtime voice model. Pinned to the versioned flagship (the xAI console's
+ * "Grok Voice Think Fast 2.0"); `grok-voice-latest` is its alias — we pin per the
+ * xAI docs' production guidance so a future alias move can't shift our voice stack. */
+export const REALTIME_MODEL = "grok-voice-think-fast-2.0";
 
 /** Wire rate for both directions. xAI expects 24kHz PCM16. */
 export const REALTIME_SAMPLE_RATE = 24000;
