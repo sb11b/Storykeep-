@@ -1,5 +1,6 @@
 package com.storykeep.junior.network
 
+import java.io.IOException
 import okhttp3.Interceptor
 import okhttp3.Response
 
@@ -23,5 +24,12 @@ class UnauthorizedInterceptor : Interceptor {
     }
 }
 
-/** Thrown when the backend rejects the service token with 401. */
-class UnauthorizedException(message: String) : Exception(message)
+/**
+ * Thrown when the backend rejects the service token with 401.
+ *
+ * Extends [IOException] deliberately: OkHttp's async call path (the one
+ * Retrofit's suspend adapter always uses) delivers IOExceptions to the caller
+ * unwrapped, while any other Throwable is wrapped as a canceled-IOException
+ * and rethrown on the dispatcher thread — which on Android kills the process.
+ */
+class UnauthorizedException(message: String) : IOException(message)

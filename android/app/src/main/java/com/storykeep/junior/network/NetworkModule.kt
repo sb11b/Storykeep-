@@ -30,11 +30,7 @@ object NetworkModule {
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         // BASIC logs request lines and response codes only — headers would
         // print the bearer token into logcat.
-        level = if (BuildConfig.DEBUG) {
-            HttpLoggingInterceptor.Level.BASIC
-        } else {
-            HttpLoggingInterceptor.Level.NONE
-        }
+        level = HttpLoggingInterceptor.Level.BASIC
     }
 
     private val okHttpClient: OkHttpClient by lazy {
@@ -42,7 +38,13 @@ object NetworkModule {
             .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .addInterceptor(loggingInterceptor)
+            .apply {
+                // Debug builds only — a release build must not even carry
+                // the logging interceptor in its chain.
+                if (BuildConfig.DEBUG) {
+                    addInterceptor(loggingInterceptor)
+                }
+            }
             .addInterceptor(AuthInterceptor())
             .addInterceptor(UnauthorizedInterceptor())
             .build()
