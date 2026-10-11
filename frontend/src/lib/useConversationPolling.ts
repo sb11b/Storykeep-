@@ -43,16 +43,29 @@ export function useConversationPolling(
   const renameInputRef = useRef<HTMLInputElement>(null);
   const conversationListReadyRef = useRef(false);
   const conversationUpdatedRef = useRef(new Map<string, string>());
+  /**
+   * True once the conversation list has rendered at least once. Background
+   * refreshes (useStreamRunner fires onHistoryChanged on every stream turn —
+   * i.e. on every spoken Talk turn) must never blank an already-loaded list:
+   * the sidebar renders `historyLoading ? <LoaderCircle "Loading…"> : <list>`,
+   * so flipping the flag replaced the whole list with a spinner and repainted
+   * it on every turn — the left sidebar flickered continuously during Talk.
+   * Only the initial load, when there is nothing to show yet, takes the
+   * loading state; later refreshes update the list silently in place.
+   */
+  const historyEverLoadedRef = useRef(false);
 
   const refreshHistory = useCallback(async () => {
     if (!persist) return;
-    setHistoryLoading(true);
+    const showLoading = !historyEverLoadedRef.current;
+    if (showLoading) setHistoryLoading(true);
     try {
       setConversations(await api.chatConversations());
+      historyEverLoadedRef.current = true;
     } catch {
-      /* ignore */
+      /* ignore — the next poll/refresh retries */
     } finally {
-      setHistoryLoading(false);
+      if (showLoading) setHistoryLoading(false);
     }
   }, [persist]);
 
