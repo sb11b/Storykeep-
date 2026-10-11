@@ -363,9 +363,12 @@ fun ConversationScreen(
             }
             OutlinedButton(
                 onClick = { session.saveAsStory() },
-                enabled = session.lines.isNotEmpty() || session.messages.isNotEmpty(),
+                enabled = !session.storiesSaving &&
+                    (session.lines.isNotEmpty() || session.messages.isNotEmpty()),
             ) {
-                Text(if (session.savedThisTurn) "Saved" else "Save as story")
+                Text(
+                    if (session.savedThisTurn) "Saved" else if (session.storiesSaving) "Saving…" else "Save as story",
+                )
             }
         }
         Button(
