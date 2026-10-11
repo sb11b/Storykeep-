@@ -29,7 +29,12 @@ class NoopTalkPlayer : TalkPlayer {
  */
 class MediaTalkPlayer(private val context: Context) : TalkPlayer {
 
+    // Written from the IO dispatcher in play(), read from the main thread in
+    // stop(); @Volatile keeps the handoff visible across both.
+    @Volatile
     private var player: MediaPlayer? = null
+
+    @Volatile
     private var file: File? = null
 
     override suspend fun play(audio: ByteArray) {

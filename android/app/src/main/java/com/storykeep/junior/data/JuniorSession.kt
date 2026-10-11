@@ -188,11 +188,19 @@ class JuniorSession(
         super.onCleared()
     }
 
-    /** Stops capture, playback, and any in-flight turn so no late reply lands. */
+    /**
+     * Stops capture, playback, and any in-flight turn so no late reply lands.
+     *
+     * Called only from main-thread lifecycle callbacks, so the mic stop must
+     * not join the pump thread here: [TalkRecorder.halt] merely signals and
+     * the pump thread owns stop+release, which keeps this off the main
+     * thread's critical path. The clip is discarded — kill paths never
+     * record.
+     */
     private fun haltAudio() {
         turnJob?.cancel()
         turnJob = null
-        recorder.stop()
+        recorder.halt()
         player.stop()
     }
 
