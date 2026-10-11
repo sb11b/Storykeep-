@@ -112,13 +112,16 @@ self.addEventListener("message", (event) => {
  * API-origin requests with a token set (the desktop window); the web app
  * keeps its cookie session untouched.
  */
-function withBearer(request) {
+function withBearer(request, mode) {
   if (!AUTH_TOKEN || !API_ORIGIN) return request;
   if (new URL(request.url).origin !== API_ORIGIN) return request;
   if (request.headers.has("Authorization")) return request;
   const headers = new Headers(request.headers);
   headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
-  return new Request(request, { headers });
+  // An explicit cors mode is required for no-cors subresource loads
+  // (<img>): cloning a no-cors request strips Authorization behind the
+  // request-no-cors guard, so the header would silently disappear.
+  return new Request(request, mode ? { headers, mode } : { headers });
 }
 
 self.addEventListener("fetch", (event) => {
@@ -170,6 +173,19 @@ self.addEventListener("fetch", (event) => {
   //    device. The app itself sends cache: 'no-store' on these calls, so
   //    passing them through to the network uncached is the zero-risk default.
   if (url.pathname.startsWith("/api/")) {
+    // Non-Junior API GETs: network-only, never cached. But a cross-origin
+    // subresource (avatar <img>, chat picture, markdown image) cannot carry
+    // the bearer header itself, so when a token is set, respond with an
+    // explicitly cors-mode authenticated fetch — a no-cors clone strips
+    // Authorization, and without respondWith the browser re-fetches the
+    // original headerless request. Still never cached: no cache.put here.
+    if (isApiOrigin && AUTH_TOKEN) {
+      const authedApi = withBearer(request, "cors");
+      if (authedApi !== request) {
+        event.respondWith(fetch(authedApi));
+        return;
+      }
+    }
     return; // network-only, never cached
   }
   event.respondWith(cacheFirst(request, SHELL_CACHE));
