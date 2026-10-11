@@ -8,19 +8,23 @@ import {
   buildResponseCreate,
   buildSessionUpdate,
   classifyRealtimeEvent,
+  clampOutputSpeed,
   encodeMicChunk,
   extractAudioDelta,
   extractConversationId,
   extractFunctionCall,
-  extractUserTranscript,
   extractTranscriptItemId,
+  extractUserTranscript,
   MAX_RECONNECT_ATTEMPTS,
   MIC_PROCESSOR_BUFFER,
   nextBackoffDelay,
+  OUTPUT_SPEED_DEFAULT,
   REALTIME_SAMPLE_RATE,
   runJuniorTool,
   splitMicChunks,
+  DEFAULT_REASONING_EFFORT,
   type JuniorFunctionCall,
+  type ReasoningEffort,
 } from "@/lib/conversation-voice";
 import { base64ToUint8Array, pcm16ToFloat32 } from "@/lib/use-realtime-voice";
 import { micDeniedMessage } from "@/lib/stt-ui";
@@ -92,6 +96,55 @@ export function useConversationVoice({
   // transcription.completed three times per utterance; cleared in stop() so it
   // stays bounded across Talk sessions (same lifecycle as handledToolCallsRef).
   const handledTranscriptItemsRef = useRef<Set<string>>(new Set());
+  /**
+   * B/F. Live session knobs. Both are read at start() to build the initial
+   * session.update, and both setters re-send session.update over the live
+   * socket when they change mid-session (the server accepts additive
+   * session.update on an open connection — verified live). Refs (not state)
+   * so changing them never re-renders the pane or reopens the socket.
+   */
+  const outputSpeedRef = useRef(OUTPUT_SPEED_DEFAULT);
+  const reasoningEffortRef = useRef<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
+
+  /** Send a fresh session.update on the live socket, if one is open. */
+  const sendSessionUpdate = useCallback((socket: WebSocket | null) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(
+        JSON.stringify(
+          buildSessionUpdate(
+            voiceIdRef.current || "castor",
+            conversationIdRef.current,
+            outputSpeedRef.current,
+            reasoningEffortRef.current,
+          ),
+        ),
+      );
+    } catch {
+      /* socket closed mid-send; the close handler reconnects */
+    }
+  }, [voiceIdRef, conversationIdRef]);
+
+  /** B. Change Junior's playback speed mid-session (clamped to 0.7–1.5). */
+  const setOutputSpeed = useCallback(
+    (speed: number) => {
+      const clamped = clampOutputSpeed(speed);
+      outputSpeedRef.current = clamped;
+      sendSessionUpdate(wsRef.current);
+      return clamped;
+    },
+    [sendSessionUpdate],
+  );
+
+  /** F. Change Junior's reasoning effort mid-session ("none" | "high"). */
+  const setReasoningEffort = useCallback(
+    (effort: ReasoningEffort) => {
+      reasoningEffortRef.current = effort;
+      sendSessionUpdate(wsRef.current);
+      return effort;
+    },
+    [sendSessionUpdate],
+  );
 
   useEffect(() => {
     onUserTranscriptRef.current = onUserTranscript;
@@ -396,11 +449,7 @@ export function useConversationVoice({
       ws.onopen = () => {
         if (wsRef.current !== ws) return;
         reconnectAttemptRef.current = 0;
-        ws.send(
-          JSON.stringify(
-            buildSessionUpdate(voiceIdRef.current || "castor", resume ? conversationIdRef.current : null),
-          ),
-        );
+        sendSessionUpdate(ws);
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -523,7 +572,7 @@ export function useConversationVoice({
       startingRef.current = false;
       setStatusSafe("listening");
     },
-    [closeAudioContext, handleJuniorToolCall, scheduleAssistantAudio, scheduleReconnect, setStatusSafe, stopPlayback, teardownTransport, voiceIdRef],
+    [closeAudioContext, handleJuniorToolCall, scheduleAssistantAudio, scheduleReconnect, sendSessionUpdate, setStatusSafe, stopPlayback, teardownTransport],
   );
 
   useEffect(() => {
@@ -541,5 +590,8 @@ export function useConversationVoice({
   }, [clearReconnectTimer, closeAudioContext, teardownTransport]);
 
   // Stable identity so pane effects keyed on `conversation` don't re-run every render.
-  return useMemo(() => ({ status, start, stop }), [status, start, stop]);
+  return useMemo(
+    () => ({ status, start, stop, setOutputSpeed, setReasoningEffort }),
+    [status, start, stop, setOutputSpeed, setReasoningEffort],
+  );
 }

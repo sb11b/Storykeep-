@@ -42,6 +42,64 @@ export const MAX_RECONNECT_ATTEMPTS = 5;
 /** Realtime transcriptions use grok-transcribe on the same socket. */
 export const INPUT_TRANSCRIPTION_MODEL = "grok-transcribe";
 
+/**
+ * A. keyterms — ASR bias terms for Steve's world. These proper nouns are the
+ * ones transcription currently guesses at (SNHU → "S N H U"-ish garbage,
+ * Bitsko → "bit sco"), so we hand the curated list to the server. Hard caps
+ * from the xAI API: at most KEYTERM_MAX_COUNT terms, each at most
+ * KEYTERM_MAX_CHARS characters. Pinned by tests so a future edit can't
+ * silently break the session.update contract.
+ */
+export const KEYTERM_MAX_COUNT = 100;
+export const KEYTERM_MAX_CHARS = 50;
+
+export const JUNIOR_KEYTERMS: readonly string[] = [
+  "Storykeep",
+  "Newsmax",
+  "Fox News",
+  "Meridian",
+  "Bitsko",
+  "SNHU",
+  "Junior",
+  "Jennifer",
+  "Matthew",
+  "Andrew",
+  "Dayton",
+  "Hermes",
+  "Grok",
+  "Fastmail",
+  "Bitsko Group",
+];
+
+/**
+ * C. replace map — pronunciation fixes the TTS applies when speaking. The
+ * spoken audio changes; the written transcript stays correct (the transcript
+ * carries the original spelling).
+ */
+export const JUNIOR_PRONUNCIATION_REPLACEMENTS: Readonly<Record<string, string>> = {
+  SNHU: "S N H U",
+  JMAP: "J map",
+  Bitsko: "Bit sko",
+};
+
+/** B. audio.output.speed bounds — the API accepts 0.7–1.5. */
+export const OUTPUT_SPEED_MIN = 0.7;
+export const OUTPUT_SPEED_MAX = 1.5;
+export const OUTPUT_SPEED_DEFAULT = 1.0;
+
+/** Clamp a requested playback speed into the API's accepted range. Pure. */
+export function clampOutputSpeed(speed: number): number {
+  if (!Number.isFinite(speed)) return OUTPUT_SPEED_DEFAULT;
+  return Math.min(OUTPUT_SPEED_MAX, Math.max(OUTPUT_SPEED_MIN, speed));
+}
+
+/** E. idle_timeout_ms — if Steve goes quiet after Junior finishes, re-engage. */
+export const IDLE_TIMEOUT_MS = 15000;
+
+/** F. Adaptive reasoning effort — "none" for fast chit-chat, "high" on demand. */
+export type ReasoningEffort = "none" | "high";
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "none";
+
 /** Junior's persona for conversation mode. */
 export const JUNIOR_TALK_INSTRUCTIONS =
   "You are Junior, a friendly school-coding helper for a young student. " +
@@ -72,7 +130,8 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "Long documents and articles come back in chunks: after reading a chunk that hit the cap, " +
   "say 'That's the first part — want me to keep reading?' " +
   "and when he says yes or continue, call the tool again with the offset where the last chunk ended. " +
-  "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering.";
+  "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering. " +
+  "You can also search X (Twitter) with x_search — use it when Steve asks about reactions, trends, or 'what are people saying on X or Twitter'.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
 export function buildRealtimeUrl(conversationId?: string | null): string {
@@ -80,32 +139,63 @@ export function buildRealtimeUrl(conversationId?: string | null): string {
   return conversationId ? `${base}&conversation_id=${encodeURIComponent(conversationId)}` : base;
 }
 
-/** The session.update payload: low latency, server VAD, in+out PCM16 at 24kHz. */
-export function buildSessionUpdate(voice: string, conversationId?: string | null) {
+/**
+ * The session.update payload: low latency, server VAD, 24kHz PCM16 in and
+ * out, plus the verified xAI voice capabilities folded in this slice:
+ * keyterms + language_hint (ASR accuracy), output speed, a pronunciation
+ * replace map, the x_search tool, idle_timeout_ms, and adaptive reasoning.
+ * All of these were verified live against
+ * wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-2.0 — a single
+ * session.update carrying every one returned session.updated with zero
+ * errors and the server echoed each param back.
+ */
+export function buildSessionUpdate(
+  voice: string,
+  conversationId?: string | null,
+  speed: number = OUTPUT_SPEED_DEFAULT,
+  reasoningEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+) {
   return {
     type: "session.update",
     session: {
       voice,
       instructions: JUNIOR_TALK_INSTRUCTIONS,
-      // Low latency: skip reasoning for conversational turns.
-      reasoning: { effort: "none" },
+      // Low latency: skip reasoning for conversational turns (F — the
+      // "high" option is explicit control, never auto-detected).
+      reasoning: { effort: reasoningEffort },
       // Server-side VAD + natural barge-in; the server commits on speech_stopped.
-      turn_detection: { type: "server_vad" },
+      // idle_timeout_ms: if Steve goes quiet after Junior finishes, the server
+      // re-engages him instead of sitting in silence (E).
+      turn_detection: { type: "server_vad", idle_timeout_ms: IDLE_TIMEOUT_MS },
       audio: {
         input: {
           format: { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE },
-          transcription: { model: INPUT_TRANSCRIPTION_MODEL },
+          transcription: {
+            model: INPUT_TRANSCRIPTION_MODEL,
+            // A. Bias the ASR toward Steve's world proper nouns — SNHU, Bitsko,
+            // Newsmax, Meridian, etc. — which transcription currently guesses at.
+            keyterms: JUNIOR_KEYTERMS,
+            language_hint: "en",
+          },
         },
-        output: { format: { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE } },
+        output: {
+          format: { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE },
+          // B. Playback speed, clamped to the API's 0.7–1.5 range.
+          speed: clampOutputSpeed(speed),
+        },
       },
+      // C. Pronunciation fixes, at the session ROOT (verified live: the server
+      // echoes `replace` at the root, not nested under audio).
+      replace: JUNIOR_PRONUNCIATION_REPLACEMENTS,
       // Resume prior turns on reconnect; the id arrives with conversation.created.
       resumption: { enabled: true, ...(conversationId ? { conversation_id: conversationId } : {}) },
-      // Tools: web search (verified live in #168) plus Junior's function
-      // tools over Steve's library, pending work, and business email —
-      // verified live: session.update accepts this tools array and the
-      // model emits response.function_call_arguments events that produce
-      // real spoken answers after the client returns the tool output.
-      tools: [{ type: "web_search" }, ...JUNIOR_TOOLS],
+      // Tools: web search plus x_search (D — verified accepted alongside
+      // web_search), then Junior's function tools over Steve's library,
+      // feeds, pending work, and business email — verified live: session.update
+      // accepts this tools array and the model emits
+      // response.function_call_arguments events that produce real spoken
+      // answers after the client returns the tool output.
+      tools: [{ type: "web_search" }, { type: "x_search" }, ...JUNIOR_TOOLS],
     },
   };
 }
