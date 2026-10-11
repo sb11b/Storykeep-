@@ -33,3 +33,22 @@ On Windows: `gradlew.bat :app:installDebug`.
 - **Stories:** pinned week’s question, Answer by talking / typing, cards, Record a story.
 
 Keep is not a fourth screen; it returns to Home.
+
+## Network layer (service-token auth)
+
+The app talks to the Storykeep backend with Retrofit + OkHttp
+(`com.storykeep.junior.network`). Every request carries a static bearer token
+and a 401 becomes `UnauthorizedException` plus a flag on `AuthEvents` — no
+silent retries. Talk / Conversation / Stories endpoints arrive in later slices.
+
+The token is **never committed**. Put it in `android/local.properties`
+(gitignored), which Gradle reads into `BuildConfig`:
+
+```
+STORYKEEP_SERVICE_TOKEN=<the Railway SERVICE_TOKEN>
+# optional:
+STORYKEEP_BASE_URL=https://storykeep-production.up.railway.app/api/v1/
+```
+
+Build with a missing token and the app still runs — it just 401s on every
+authenticated call until the property is set.
