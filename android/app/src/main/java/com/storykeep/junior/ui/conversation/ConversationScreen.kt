@@ -5,7 +5,9 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -34,6 +37,7 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,12 +64,15 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.storykeep.junior.data.EntryMode
 import com.storykeep.junior.data.JuniorSession
 import com.storykeep.junior.data.TalkKillReason
 import com.storykeep.junior.data.TranscriptLine
 import com.storykeep.junior.data.VoiceState
+import com.storykeep.junior.network.ApiError
+import com.storykeep.junior.network.AuthEvents
 import com.storykeep.junior.ui.theme.Amber
 import com.storykeep.junior.ui.theme.DeepInk
 import com.storykeep.junior.ui.theme.InkMuted
@@ -106,9 +114,10 @@ fun ConversationScreen(
         }
     }
 
-    LaunchedEffect(typeMode, session.lines.size) {
-        if (session.lines.isNotEmpty()) {
-            listState.animateScrollToItem(session.lines.lastIndex)
+    LaunchedEffect(session.messages.size, session.lines.size) {
+        val total = session.messages.size + session.lines.size
+        if (total > 0) {
+            listState.animateScrollToItem(total - 1)
         }
     }
 
@@ -120,6 +129,21 @@ fun ConversationScreen(
             keyboard?.hide()
         }
     }
+
+    val authFlagged by AuthEvents.unauthorized.collectAsState()
+    val conversationError = session.conversationError
+    val errorBanner: String? = when {
+        conversationError is ApiError.Unauthorized || (authFlagged && conversationError != null) ->
+            "The app's service token was rejected (401), so the conversation could not load."
+        conversationError is ApiError.Offline ->
+            "You're offline. The conversation could not load — try again when you're back."
+        conversationError is ApiError.Http ->
+            "The conversation service answered ${conversationError.code}. Try again."
+        conversationError is ApiError.Malformed ->
+            "The conversation reply could not be read. Try again."
+        else -> null
+    }
+    val errorIsRetryable = conversationError != null && conversationError !is ApiError.Unauthorized
 
     val stateLabel = when {
         session.lastKillReason == TalkKillReason.NetworkLost -> "Talk ended · network lost"
@@ -153,6 +177,37 @@ fun ConversationScreen(
             }
         }
         HorizontalDivider(color = PaperLine)
+
+        // Slice 3: the real thread list from the shared-memory API.
+        if (session.threads.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                session.threads.forEach { thread ->
+                    val selected = thread.id == session.activeThread?.id
+                    TextButton(
+                        onClick = { session.selectThread(thread) },
+                        colors = ButtonDefaults.textButtonColors(
+                            containerColor = if (selected) Amber.copy(alpha = 0.22f) else PaperRaised,
+                            contentColor = if (selected) DeepInk else InkMuted,
+                        ),
+                    ) {
+                        Text(
+                            text = thread.title ?: "Untitled thread",
+                            style = StorykeepTypography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(color = PaperLine)
+        }
+
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -161,7 +216,59 @@ fun ConversationScreen(
             contentPadding = PaddingValues(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(session.lines, key = { it.id }) { line ->
+            if (session.conversationLoading && session.messages.isEmpty()) {
+                item(key = "loading") {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(color = DeepInk)
+                    }
+                }
+            }
+            errorBanner?.let { banner ->
+                item(key = "error") {
+                    Surface(
+                        color = PaperRaised,
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Text(banner, style = StorykeepTypography.bodyMedium, color = DeepInk)
+                            if (errorIsRetryable) {
+                                TextButton(onClick = { session.retryConversation() }) {
+                                    Text("Try again")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (
+                !session.conversationLoading &&
+                session.messages.isEmpty() &&
+                session.lines.isEmpty() &&
+                errorBanner == null
+            ) {
+                item(key = "empty") {
+                    Text(
+                        "No messages yet — say hello to Junior.",
+                        style = StorykeepTypography.bodyMedium,
+                        color = InkMuted,
+                    )
+                }
+            }
+            // Real shared-memory history, oldest first.
+            items(session.messages, key = { "msg-" + it.id }) { message ->
+                TranscriptBubble(
+                    TranscriptLine(
+                        id = message.id,
+                        fromJunior = message.fromJunior,
+                        text = message.text,
+                    ),
+                )
+            }
+            // The live Talk turn still streams here.
+            items(session.lines, key = { "turn-" + it.id }) { line ->
                 TranscriptBubble(line)
             }
         }
@@ -256,7 +363,7 @@ fun ConversationScreen(
             }
             OutlinedButton(
                 onClick = { session.saveAsStory() },
-                enabled = session.lines.isNotEmpty(),
+                enabled = session.lines.isNotEmpty() || session.messages.isNotEmpty(),
             ) {
                 Text(if (session.savedThisTurn) "Saved" else "Save as story")
             }
