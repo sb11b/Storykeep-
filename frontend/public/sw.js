@@ -72,6 +72,16 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Auth-change signal from the client (logout / login success): the API cache
+// holds user-scoped responses keyed on URL only, so it must be dropped on
+// every auth transition or the next user on a shared device inherits the
+// previous user's cached library.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "auth-change") {
+    event.waitUntil(caches.delete(API_CACHE));
+  }
+});
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") {
