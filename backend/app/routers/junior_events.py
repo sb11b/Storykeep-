@@ -41,6 +41,10 @@ async def event_stream(
     the ring buffer, a {"type":"resync_required","oldest_seq":N} frame is sent
     and the client should fall back to the cursor-paginated list endpoints.
 
+    Each frame carries an SSE `id:` line, so browsers auto-reconnect with
+    Last-Event-ID on stream drop; the since= query param is the non-browser
+    equivalent.
+
     Single-process caveat: see EventBus docstring — fan-out is per worker.
     """
     cursor = since
@@ -65,7 +69,7 @@ async def event_stream(
             last_seq = replayed[-1].get("seq") if replayed else (cursor or 0)
             for event in replayed:
                 if wanted is None or event.get("type", "").split(".")[0] in wanted:
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield f"id: {event.get('seq')}\ndata: {json.dumps(event)}\n\n"
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=20.0)
@@ -76,7 +80,7 @@ async def event_stream(
                     continue  # already replayed from the buffer
                 if wanted is not None and event.get("type", "").split(".")[0] not in wanted:
                     continue
-                yield f"data: {json.dumps(event)}\n\n"
+                yield f"id: {event.get('seq')}\ndata: {json.dumps(event)}\n\n"
         finally:
             bus.unsubscribe(user.id, queue)
 
