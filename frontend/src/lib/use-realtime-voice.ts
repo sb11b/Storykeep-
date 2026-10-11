@@ -4,6 +4,7 @@ import { useCallback, useRef } from "react";
 import type { RefObject } from "react";
 import { showTtsErrorToast } from "@/lib/tts-error-toast";
 import { readStoredTtsVoice } from "@/lib/tts-preferences";
+import { DEFAULT_TTS_VOICE_ID } from "@/lib/tts-defaults";
 
 /** Decode a base64 string into a Uint8Array. */
 export function base64ToUint8Array(base64: string): Uint8Array {
@@ -120,10 +121,12 @@ export function useRealtimeVoice(
           JSON.stringify({
             type: "session.update",
             session: {
-              voice: voiceRef.current || readStoredTtsVoice() || "alloy",
-              output_audio_format: "pcm16",
+              voice: voiceRef.current || readStoredTtsVoice() || DEFAULT_TTS_VOICE_ID,
               instructions:
                 "Read the supplied text aloud exactly as written. Do not paraphrase. Do not add words.",
+              audio: {
+                output: { format: { type: "audio/pcm", rate: 24000 } },
+              },
             },
           }),
         );
