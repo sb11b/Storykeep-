@@ -1,5 +1,9 @@
 package com.storykeep.junior.ui.conversation
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -43,9 +47,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -78,6 +86,25 @@ fun ConversationScreen(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
+
+    // Talk is real: the mic needs RECORD_AUDIO at runtime (targetSdk 35).
+    // The request fires once per screen entry; a denial leaves Talk alive
+    // but silent — the session settles the failed mic open back to Idle.
+    val context = LocalContext.current
+    var micGranted by remember {
+        mutableStateOf(
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val requestMic = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> micGranted = granted }
+    LaunchedEffect(Unit) {
+        if (!micGranted) {
+            requestMic.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     LaunchedEffect(typeMode, session.lines.size) {
         if (session.lines.isNotEmpty()) {
@@ -252,9 +279,9 @@ fun ConversationScreen(
 }
 
 private fun talkHint(state: VoiceState): String = when (state) {
-    VoiceState.Idle -> "Tap to listen (stub)"
-    VoiceState.Listening -> "Tap to add a fake turn"
-    VoiceState.Speaking -> "Tap to settle"
+    VoiceState.Idle -> "Tap to talk"
+    VoiceState.Listening -> "Tap when you're done"
+    VoiceState.Speaking -> "Junior is replying"
 }
 
 @Composable

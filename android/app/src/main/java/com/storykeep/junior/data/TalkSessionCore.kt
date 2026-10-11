@@ -26,7 +26,9 @@ data class TranscriptLine(
  * Talk / Type session rules. No Android or network APIs.
  *
  * Product lock:
- * - Talk will later be Grok STS plus live STT. This core only tracks whether Talk is alive.
+ * - Talk is real now: the mic clip goes to the backend STT endpoint and the
+ *   transcript replaces the local fake. Reply audio comes from the backend
+ *   TTS endpoint. This core only tracks whether Talk is alive.
  * - Type is the text model; Listen stays off.
  * - Talk dies on Type / End / leave / lock / network loss.
  * - End and leave clear the turn. Lock and network loss keep the transcript so it can still be saved.
@@ -76,7 +78,7 @@ class TalkSessionCore {
                 TranscriptLine(
                     fromJunior = true,
                     text = if (mode == EntryMode.Talk) {
-                        "I'm here. Talk when you are ready — this turn is a local stub."
+                        "I'm here. Talk when you are ready."
                     } else {
                         "Type whenever you like. Listen is off in Type."
                     },
@@ -111,12 +113,39 @@ class TalkSessionCore {
         if (entryMode == EntryMode.Type || !talkAlive) return
         when (voiceState) {
             VoiceState.Idle -> voiceState = VoiceState.Listening
-            VoiceState.Listening -> {
-                voiceState = VoiceState.Speaking
-                appendFakeTalkTurn()
-            }
+            VoiceState.Listening -> voiceState = VoiceState.Speaking
             VoiceState.Speaking -> voiceState = VoiceState.Idle
         }
+    }
+
+    /**
+     * Drops the voice back to Idle once a turn's audio has finished (or the
+     * turn produced nothing). Never revives a dead Talk.
+     */
+    fun settleVoice() {
+        if (talkAlive && voiceState == VoiceState.Speaking) {
+            voiceState = VoiceState.Idle
+        }
+    }
+
+    /**
+     * Drops a failed mic open back to Idle (permission denied, mic busy).
+     * Talk itself stays alive — this is not a kill.
+     */
+    fun cancelListening() {
+        if (voiceState == VoiceState.Listening) {
+            voiceState = VoiceState.Idle
+        }
+    }
+
+    /**
+     * Appends one real transcript line. Refused once Talk is dead: a late
+     * network reply must never resurrect a turn the product lock killed.
+     */
+    fun appendLine(fromJunior: Boolean, text: String) {
+        val value = text.trim()
+        if (!talkAlive || value.isEmpty()) return
+        lines = lines + TranscriptLine(fromJunior = fromJunior, text = value)
     }
 
     fun sendTyped() {
@@ -158,15 +187,4 @@ class TalkSessionCore {
 
     fun transcriptTitle(): String =
         lines.firstOrNull { !it.fromJunior }?.text?.take(42) ?: "Conversation with Junior"
-
-    private fun appendFakeTalkTurn() {
-        lines = lines + TranscriptLine(
-            fromJunior = false,
-            text = "We walked the river path this morning.",
-        )
-        lines = lines + TranscriptLine(
-            fromJunior = true,
-            text = "That's a keeper. What did the water sound like?",
-        )
-    }
 }

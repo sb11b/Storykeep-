@@ -2,7 +2,7 @@
 
 Kotlin + Jetpack Compose app. Three screens only: Home, Conversation, Stories.
 
-No Grok Voice / Speech-to-Speech APIs yet. Talk, Type, and Save as story still use a **local fake transcript**. The session core already enforces the product lock: Talk dies on Type, End, leave, lock / background, and network loss. Saved stories persist on device (transcript text only).
+No Grok Voice / Speech-to-Speech APIs yet — the **Talk turn is real**: the mic clip goes to the backend STT endpoint and the real transcript replaces the local fake, and Junior's reply is spoken through the backend TTS endpoint. Type stays the text model with a local reply until slice 3 wires the chat endpoint. The session core already enforces the product lock: Talk dies on Type, End, leave, lock / background, and network loss. Saved stories persist on device (transcript text only).
 
 This folder is a separate Gradle project. It is not part of the Railway web image (`Dockerfile` / `railway.toml` still build backend + Next.js only).
 
@@ -26,7 +26,7 @@ On Windows: `gradlew.bat :app:installDebug`.
 ## What you can walk
 
 - **Home:** mark, “Junior is here”, presence orb, Talk / Type, last-spoke placeholder, bottom nav Talk / Stories / Keep.
-- **Talk** opens Conversation with the mic stub. Tap the amber control: Idle → Listening → fake transcript → Speaking.
+- **Talk** opens Conversation. Grant the mic permission when asked. Tap the amber control: Idle → Listening records, tap again sends the clip to STT and Junior's reply plays through TTS.
 - **Type**, or focusing / typing in the field, kills Talk. Mic and Listen stay off.
 - **Lock / leave the app** or **lose network** kills Talk and keeps the transcript so you can still save it.
 - **Save as story** appends the current transcript (text only) to Stories and keeps it after restart. **End** and **Back** return Home and clear the turn.
