@@ -148,10 +148,38 @@ class LoggingLockdownTests(unittest.TestCase):
 
 class SttSocketAuthTests(unittest.TestCase):
     def test_socket_rejects_closed_demo(self):
+        from app.deps import user_from_access_token
         from app.routers import stt as stt_router
 
         source = inspect.getsource(stt_router._user_from_socket)
-        self.assertIn("reject_authentication", source)
+        # The socket path verifies through the shared deps helper — the same
+        # verification the HTTP bearer path uses — and that helper is what
+        # enforces reject_authentication for closed demo accounts.
+        self.assertIn("user_from_access_token", source)
+        self.assertIn("reject_authentication", inspect.getsource(user_from_access_token))
+
+    def test_socket_accepts_token_query_fallback_when_cookie_absent(self):
+        from app.routers import stt as stt_router
+
+        source = inspect.getsource(stt_router._user_from_socket)
+        # Cookie first (web app unchanged), ?token= only as the fallback for
+        # the packaged desktop window whose WebSocket cannot set a header.
+        self.assertIn('cookies.get("sk_access")', source)
+        self.assertIn('query_params.get("token")', source)
+
+    def test_socket_rejects_when_no_token_at_all(self):
+        from app.deps import user_from_access_token
+        from app.routers import stt as stt_router
+
+        socket = SimpleNamespace(
+            headers={},
+            cookies={},
+            query_params={},
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            stt_router._user_from_socket(socket, MagicMock())
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertIsNotNone(user_from_access_token)
 
 
 if __name__ == "__main__":

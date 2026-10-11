@@ -60,6 +60,7 @@ import { applyAppearanceFromUser } from "@/lib/appearance";
 import { comparePinned } from "@/lib/pin-order";
 import { ApiError, api } from "@/lib/api";
 import { clearPwaApiCaches } from "@/lib/pwa-cache";
+import { apiUrl, setAuthToken } from "@/lib/api-base";
 import { useLibraryList } from "@/lib/useLibraryList";
 import { useFeedManagement } from "@/lib/useFeedManagement";
 import { normalizeUserProfile } from "@/lib/user-profile";
@@ -764,6 +765,7 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       refreshing={refreshing}
       onLogout={async () => {
         await api.logout();
+        setAuthToken(null);
         await clearPwaApiCaches();
         router.replace("/login");
       }}
@@ -2744,7 +2746,7 @@ function Reader({
           <ArticleShareMenu article={{ id: article.id, title: article.title, url: article.url }} />
           {article.source_kind === "file" ? (
             <a
-              href={`/api/v1/articles/${article.id}/file`}
+              href={apiUrl(`/api/v1/articles/${article.id}/file`)}
               className="inline-flex h-7 items-center rounded-md border px-2.5 text-[0.8rem] hover:bg-muted"
             >
               Download original

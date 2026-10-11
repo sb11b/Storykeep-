@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
+import { setAuthToken } from "@/lib/api-base";
 import { clearPwaApiCaches } from "@/lib/pwa-cache";
 import { cn } from "@/lib/utils";
 
@@ -35,17 +36,24 @@ export default function LoginPage() {
     setBusy(true);
     try {
       if (mode === "register") {
-        await api.register(email, password, displayName || undefined);
+        // register returns access_token (auth.py TokenOut) — store it like
+        // login does, or the desktop window's next api.me() 401s on the
+        // cross-site cookie and bounces straight back to /login.
+        const registered = await api.register(email, password, displayName || undefined);
+        setAuthToken(registered.access_token ?? null);
         await clearPwaApiCaches();
         router.replace("/");
         return;
       }
       if (twoFactor) {
-        await api.verifyLogin2fa({
+        const verified = await api.verifyLogin2fa({
           challenge_id: twoFactor.challengeId,
           code: code.trim(),
           use_backup_code: useBackupCode,
         });
+        // Desktop: hold the returned token in memory so API calls authenticate
+        // with a bearer header (the SameSite=Lax cookie is not sent cross-site).
+        setAuthToken(verified.access_token ?? null);
         await clearPwaApiCaches();
         router.replace("/");
         return;
@@ -61,6 +69,7 @@ export default function LoginPage() {
         setUseBackupCode(false);
         return;
       }
+      setAuthToken(result.access_token ?? null);
       await clearPwaApiCaches();
       router.replace("/");
     } catch (error) {

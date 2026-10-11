@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { authHeaders } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 import type { TtsWord } from "@/lib/types";
 
@@ -45,6 +46,14 @@ function logTtsFailure(label: string, status: number, body: unknown) {
   console.error(`[tts] ${label} failed`, { status, body });
 }
 
+/** Normalize RequestInit headers (record | Headers | array) into a plain record. */
+function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
+  if (Array.isArray(headers)) return Object.fromEntries(headers);
+  return { ...headers };
+}
+
 /** xAI unary TTS can exceed 20s on a cold first hit — keep client/server aligned. */
 export const TTS_CHUNK_TIMEOUT_MS = 120_000;
 
@@ -83,6 +92,9 @@ export async function fetchSpeechChunk(
       signal: controller.signal,
       credentials: "include",
       cache: "no-store",
+      // Desktop bearer token, merged under the caller's own headers (both
+      // TTS endpoints sit behind Depends(get_current_user); empty on the web).
+      headers: { ...authHeaders(), ...headersToRecord(init.headers) },
     });
     status = response.status;
     if (!response.ok) {

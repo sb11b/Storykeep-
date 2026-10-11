@@ -3,6 +3,7 @@
 import { Download, ExternalLink, Paperclip, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { apiUrl } from "@/lib/api-base";
 import { fileAttachments, removeAttachmentFromMarkdown, type NoteAttachment } from "@/lib/note-attachments";
 import { toastErrorFromUnknown } from "@/lib/toast-message";
 import { cn } from "@/lib/utils";
@@ -27,7 +28,7 @@ function AttachmentRow({
       <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
       <div className="flex flex-wrap gap-1">
         <a
-          href={item.url}
+          href={apiUrl(item.url)}
           target="_blank"
           rel="noreferrer"
           className="inline-flex h-7 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs hover:bg-accent"
@@ -36,7 +37,7 @@ function AttachmentRow({
           Open
         </a>
         <a
-          href={item.url}
+          href={apiUrl(item.url)}
           download={item.label}
           className="inline-flex h-7 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs hover:bg-accent"
         >

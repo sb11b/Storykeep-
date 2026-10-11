@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 
 const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
 
@@ -25,7 +26,7 @@ export function PdfSnapshotViewer({
   onReady?: () => void;
   onFailed?: (message: string) => void;
 }) {
-  const fileUrl = `/api/v1/archives/${encodeURIComponent(String(archiveId || ""))}/file`;
+  const fileUrl = apiUrl(`/api/v1/archives/${encodeURIComponent(String(archiveId || ""))}/file`);
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -186,7 +187,7 @@ export function PdfSnapshotViewer({
     void (async () => {
       try {
         if (!archiveId) throw new Error("This PDF restore is missing an archive id.");
-        const response = await fetch(fileUrl, { credentials: "include", cache: "no-store" });
+        const response = await fetch(fileUrl, { credentials: "include", cache: "no-store", headers: authHeaders() });
         let bodyText = "";
         const buffer = response.ok ? await response.arrayBuffer() : null;
         if (!response.ok || !buffer) {

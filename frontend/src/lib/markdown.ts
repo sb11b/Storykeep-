@@ -1,3 +1,5 @@
+import { apiUrl } from "@/lib/api-base";
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -6,10 +8,27 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-const MEDIA_IMAGE = /!\[([^\]]*)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
-const HTML_MEDIA_IMG = /<img\b[^>]*\bsrc="(\/api\/v1\/media\/[0-9a-fA-F-]{36})"[^>]*>/gi;
-const MEDIA_FILE = /(?<!!)\[([^\]]+)\]\((\/api\/v1\/media\/[0-9a-fA-F-]{36})\)/g;
-const MEDIA_LINE = /^(!?\[[^\]]*\]\(\/api\/v1\/media\/[0-9a-fA-F-]{36}\))$/;
+// Media URLs are written relative in dev and absolute in packaged builds, so
+// the origin prefix is optional when matching either (same shape as
+// note-attachments.ts). Emitted src/href values are then resolved with
+// apiUrl so a relative media path points at the API origin in the desktop
+// window — where a relative src would 404 against the app origin.
+const MEDIA_ORIGIN = "(?:[A-Za-z][A-Za-z0-9+.-]*://[^)\\s]*)?";
+const MEDIA_IMAGE = new RegExp(
+  `!\\[([^\\]]*)\\]\\((${MEDIA_ORIGIN}/api/v1/media/[0-9a-fA-F-]{36})\\)`,
+  "g",
+);
+const HTML_MEDIA_IMG = new RegExp(
+  `<img\\b[^>]*\\bsrc="(${MEDIA_ORIGIN}/api/v1/media/[0-9a-fA-F-]{36})"[^>]*>`,
+  "gi",
+);
+const MEDIA_FILE = new RegExp(
+  `(?<!!)\\[([^\\]]+)\\]\\((${MEDIA_ORIGIN}/api/v1/media/[0-9a-fA-F-]{36})\\)`,
+  "g",
+);
+const MEDIA_LINE = new RegExp(
+  `^(!?\\[[^\\]]*\\]\\(${MEDIA_ORIGIN}/api/v1/media/[0-9a-fA-F-]{36}\\))$`,
+);
 const FENCE_OPEN = /^(`{3})([\w-+#.]*)?\s*$/;
 const FENCE_CLOSE = /^(`{3})\s*$/;
 const INDENTED_CODE = /^(?: {4}|\t)/;
@@ -44,10 +63,13 @@ function inlineWithWikilinks(value: string, resolver?: WikilinkResolver): string
 
 function mediaImageHtml(alt: string, url: string): string {
   const id = url.split("/").pop() || "";
+  // Relative media paths must resolve against the API origin in the
+  // packaged window (a relative <img src> would 404 on the app origin).
+  const src = apiUrl(url);
   return (
     `<figure class="sk-chat-image">` +
-    `<img src="${url}" alt="${alt}" />` +
-    `<button type="button" class="sk-chat-image-download" data-media-id="${id}" data-media-url="${url}" aria-label="Download picture">Download picture</button>` +
+    `<img src="${src}" alt="${alt}" />` +
+    `<button type="button" class="sk-chat-image-download" data-media-id="${id}" data-media-url="${src}" aria-label="Download picture">Download picture</button>` +
     `</figure>`
   );
 }
@@ -105,7 +127,8 @@ function inline(value: string, resolver?: WikilinkResolver): string {
     .replace(MEDIA_IMAGE, (_all, alt: string, url: string) => mediaImageHtml(alt, url))
     .replace(
       MEDIA_FILE,
-      '<a class="sk-attachment-link" href="$2" download="$1">$1</a>',
+      (_all, label: string, url: string) =>
+        `<a class="sk-attachment-link" href="${apiUrl(url)}" download="${label}">${label}</a>`,
     )
     .replace(/==([\s\S]+?)==/g, "<mark>$1</mark>")
     .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>")
@@ -395,7 +418,9 @@ function renderMarkdownBlocks(source: string, resolver?: WikilinkResolver): stri
 function htmlMediaImagesToMarkdown(source: string): string {
   return source.replace(HTML_MEDIA_IMG, (tag, url: string) => {
     const alt = (tag.match(/\balt="([^"]*)"/i)?.[1] || "generated image").replace(/]/g, "");
-    return `![${alt}](${url})`;
+    // Normalize to the origin-resolved URL so the re-parsed <img> keeps the
+    // API origin in packaged builds.
+    return `![${alt}](${apiUrl(url)})`;
   });
 }
 
