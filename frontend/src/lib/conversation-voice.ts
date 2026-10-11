@@ -93,8 +93,14 @@ export function clampOutputSpeed(speed: number): number {
   return Math.min(OUTPUT_SPEED_MAX, Math.max(OUTPUT_SPEED_MIN, speed));
 }
 
-/** E. idle_timeout_ms — if Steve goes quiet after Junior finishes, re-engage. */
-export const IDLE_TIMEOUT_MS = 15000;
+/**
+ * E. idle_timeout_ms — REMOVED (verified live 2026-10-11, PR #172 follow-up).
+ * With idle_timeout_ms: 15000 the server re-engages Junior every 15s of
+ * silence; a listening Steve (quiet while Junior talks) reads as "user went
+ * quiet", so Junior starts a NEW response — with searches — every 15 seconds,
+ * building into an endless news loop. The default (null) means silence stays
+ * silent and Junior only speaks when Steve speaks.
+ */
 
 /** F. Adaptive reasoning effort — "none" for fast chit-chat, "high" on demand. */
 export type ReasoningEffort = "none" | "high";
@@ -131,7 +137,9 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "say 'That's the first part — want me to keep reading?' " +
   "and when he says yes or continue, call the tool again with the offset where the last chunk ended. " +
   "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering. " +
-  "You can also search X (Twitter) with x_search — use it when Steve asks about reactions, trends, or 'what are people saying on X or Twitter'.";
+  "Make at most ONE search per question, then answer from what you found — never chain search after search, and never keep going after you have answered. " +
+  "You can also search X (Twitter) with x_search — use it when Steve asks about reactions, trends, or 'what are people saying on X or Twitter'. " +
+  "If Steve goes quiet, stay quiet — wait for him to speak; do not fill the silence.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
 export function buildRealtimeUrl(conversationId?: string | null): string {
@@ -164,9 +172,10 @@ export function buildSessionUpdate(
       // "high" option is explicit control, never auto-detected).
       reasoning: { effort: reasoningEffort },
       // Server-side VAD + natural barge-in; the server commits on speech_stopped.
-      // idle_timeout_ms: if Steve goes quiet after Junior finishes, the server
-      // re-engages him instead of sitting in silence (E).
-      turn_detection: { type: "server_vad", idle_timeout_ms: IDLE_TIMEOUT_MS },
+      // NO idle_timeout_ms (E removed): it re-engages the server every N ms of
+      // silence, and a listening Steve reads as silence — Junior then loops new
+      // responses (with searches) until Steve speaks again. Verified live.
+      turn_detection: { type: "server_vad" },
       audio: {
         input: {
           format: { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE },

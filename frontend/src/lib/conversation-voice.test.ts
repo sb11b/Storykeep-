@@ -14,7 +14,6 @@ import {
   extractTranscriptItemId,
   extractUserTranscript,
   floatToPcm16Bytes,
-  IDLE_TIMEOUT_MS,
   JUNIOR_KEYTERMS,
   JUNIOR_PRONUNCIATION_REPLACEMENTS,
   JUNIOR_TALK_INSTRUCTIONS,
@@ -57,7 +56,7 @@ test("session.update carries voice, server VAD, and 24kHz PCM in and out", () =>
   assert.equal(s.voice, "castor");
   assert.equal(s.instructions, JUNIOR_TALK_INSTRUCTIONS);
   assert.deepEqual(s.reasoning, { effort: "none" });
-  assert.deepEqual(s.turn_detection, { type: "server_vad", idle_timeout_ms: IDLE_TIMEOUT_MS });
+  assert.deepEqual(s.turn_detection, { type: "server_vad" });
   assert.deepEqual(s.audio.input.format, { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE });
   assert.equal(s.audio.input.transcription.model, "grok-transcribe");
   assert.deepEqual(s.audio.output.format, { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE });
@@ -172,10 +171,19 @@ test("D. session.update carries both web_search and x_search tools", () => {
   assert.match(update.session.instructions, /what are people saying on X or Twitter/);
 });
 
-test("E. session.update sets turn_detection.idle_timeout_ms so the server re-engages", () => {
+test("E. turn_detection carries NO idle_timeout_ms — it caused a search loop (regression)", () => {
+  // Verified live: idle_timeout_ms: 15000 made the server re-engage Junior every
+  // 15s of silence; a listening Steve reads as silence, so Junior started new
+  // responses (each with searches) every 15 seconds — an endless news loop.
   const update = buildSessionUpdate("castor");
-  assert.deepEqual(update.session.turn_detection, { type: "server_vad", idle_timeout_ms: IDLE_TIMEOUT_MS });
-  assert.equal(IDLE_TIMEOUT_MS, 15000);
+  assert.deepEqual(update.session.turn_detection, { type: "server_vad" });
+  assert.equal(update.session.turn_detection.idle_timeout_ms, undefined);
+});
+
+test("instructions cap searches at one per question and keep Junior quiet on silence", () => {
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /at most ONE search per question/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /never chain search after search/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /stay quiet/);
 });
 
 test("F. reasoning effort defaults to none and can be raised to high", () => {
