@@ -12,6 +12,7 @@ import { NoteComposer } from "@/components/note-composer";
 import { useMovableWindow } from "@/components/movable-window";
 import { COMPOSE_POS_KEY } from "@/lib/movable-window";
 import { ApiError, api } from "@/lib/api";
+import { apiUrl } from "@/lib/api-base";
 import { asFilingDestination } from "@/lib/destinations";
 import { loadLastFiling, saveLastFiling } from "@/lib/last-filing";
 import { formatRelative } from "@/lib/format";
@@ -945,7 +946,7 @@ export function BackupDialog({
                     {row.backup_type} · {row.destination} · {row.status}
                   </span>
                   {row.status === "success" && row.location && !row.location.startsWith("s3://") ? (
-                    <a className="text-primary underline" href={`/api/v1/backups/${row.id}/download`}>
+                    <a className="text-primary underline" href={apiUrl(`/api/v1/backups/${row.id}/download`)}>
                       Download
                     </a>
                   ) : null}

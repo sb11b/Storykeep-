@@ -41,9 +41,142 @@ by `src/components/pwa-register.tsx`) implements four strategies:
 A small offline indicator appears at the bottom of the window when the
 network is down. No data is ever fabricated for offline use.
 
-## Static export and the future Tauri wrapper
+## Static export and the Tauri wrapper
 
 `NEXT_OUTPUT=export npx next build` produces a fully static `out/`
 directory (manifest, icons, and `sw.js` included). That same cache is what
-will make the planned Tauri desktop wrapper work offline — the static
-export is the build target both paths share.
+makes the Tauri desktop wrapper work offline — the static export is the
+build target both paths share.
+
+## Desktop app (Tauri)
+
+`src-tauri/` is a [Tauri v2](https://v2.tauri.app) wrapper around the static
+export: the same Next.js build you deploy to Railway runs inside a native
+Windows window, so StoryKeep opens like any other app (Start menu, taskbar)
+with no browser chrome. It is a window over the web app, not a rewrite —
+every screen, API call, and cache behaviour is the one you already use.
+
+### Prerequisites (Windows)
+
+1. **Rust** — install from <https://rustup.rs> (the `x86_64-pc-windows-msvc`
+   toolchain; rustup's default choice is fine). Verify with `rustc --version`.
+2. **MSVC Build Tools** — "Desktop development with C++" from
+   [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+   Tauri's linker needs the MSVC toolchain.
+3. **WebView2 Runtime** — preinstalled on Windows 11 and on any up-to-date
+   Windows 10. Tauri will prompt to install the Evergreen bootstrapper if it
+   is missing.
+4. **Node.js 20+** and the repo's frontend dependencies.
+
+### Build the installer
+
+From `frontend/`:
+
+```bash
+npm install
+npm run tauri build
+```
+
+`tauri build` runs `beforeBuildCommand` first (`NEXT_OUTPUT=export
+NEXT_PUBLIC_API_ORIGIN=https://storykeep-production.up.railway.app npm run
+build`), so the static export is produced fresh and pointed at the Railway
+API, then compiles the Rust shell and bundles it.
+
+Output lands in **`frontend/src-tauri/target/release/bundle/`**:
+
+- `msi/StoryKeep_0.1.0_x64_en-US.msi` — the installer to run
+- `nsis/StoryKeep_0.1.0_x64-setup.exe` — a portable-ish alternative
+
+Both targets are configured in `tauri.conf.json` (`bundle.targets`). The
+first build downloads and compiles the Rust dependency tree, so expect
+several minutes; later builds are incremental.
+
+For a hot-reload dev window (Next dev server on port 43123 plus the Rust
+shell rebuilding on change): `npm run tauri:dev`.
+
+### Which API it talks to
+
+A static export has no dev server to proxy `/api/*`, so the packaged app
+must call the API by absolute URL. `next.config.ts` bakes
+`NEXT_PUBLIC_API_ORIGIN` into `NEXT_OUTPUT=export` builds, defaulting to
+`https://storykeep-production.up.railway.app`; override it at build time
+(`NEXT_PUBLIC_API_ORIGIN=https://staging.example npm run tauri build`) to
+point a build at another deployment. `src/lib/api-base.ts` resolves every
+API path against that origin and is a no-op in `next dev`, where the
+`rewrites()` proxy still serves relative `/api/*`.
+
+The backend allows the desktop origin via CORS: `backend/app/config.py`
+`cors_origins` includes `https://tauri.localhost` (the WebView2 origin of a
+packaged Tauri app on Windows) alongside the existing dev ports. Without
+that entry the window would load but every API call would fail CORS.
+
+### Signing in (read this before the first build)
+
+The web app authenticates with the `sk_access` cookie, which the backend sets
+as `SameSite=Lax`. A packaged desktop window is a **different site** from
+Railway, and Lax cookies are not sent on cross-site `fetch` — so the window
+would load and every API call would come back 401 if the app relied on the
+cookie alone. It does not: the desktop app authenticates with a **bearer
+token**.
+
+- `/api/v1/auth/login`, `/api/v1/auth/login/2fa` and
+  `/api/v1/auth/register` all return `access_token` in the response body
+  (`backend/app/schemas.py`), and the backend accepts
+  `Authorization: Bearer <token>` ahead of the cookie
+  (`backend/app/deps.py` `get_current_user` checks the header first).
+- `src/app/login/page.tsx` stores that token via `setAuthToken()` from
+  `src/lib/api-base.ts` — on login, on 2FA verification, and on register.
+- `request()` in `src/lib/api.ts` attaches it as an `Authorization` header on
+  every call, and the direct `fetch()` sites (Word downloads, media
+  upload/download, STT clips, TTS chunks, PDF snapshots) use the shared
+  `authHeaders()` helper from `src/lib/api-base.ts` for the same purpose.
+- `<img src>` and other subresources cannot set headers, and Lax cookies are
+  not sent on cross-site subresource loads, so the **service worker** injects
+  the bearer header for fetches to the API origin (`public/sw.js`). The token
+  is mirrored to the worker from `setAuthToken()`.
+- The STT dictation WebSocket cannot set headers either, so the client appends
+  `?token=<token>` to the socket URL and the backend accepts it as a fallback
+  **only when the cookie is absent** (`backend/app/routers/stt.py`, verified
+  through the same `deps.py` token-verification helper the bearer header
+  uses).
+- The web app never sets a token, so it stays cookie-based and unchanged.
+
+Trade-offs, stated honestly:
+
+- The token lives in **JS memory only** — never `localStorage`, never a
+  cookie — plus **service-worker memory** for the desktop app (the worker
+  holds the same in-memory token to authenticate subresources). Neither is
+  persisted to disk; both die with the browser profile, so **restarting the
+  desktop app requires signing in again**. That is deliberate: a persisted
+  bearer token is a long-lived credential sitting on disk.
+- The `?token=` query fallback on the STT WebSocket exists because a browser
+  WebSocket cannot set an `Authorization` header. **Query-param tokens can
+  appear in access logs**, which is why it is strictly a fallback (cookie
+  first) and is never used on the web app.
+- Logout clears it (`setAuthToken(null)` in `library-app.tsx`, which also
+  tells the service worker to drop the token).
+- Requests still send `credentials: "include"` as well, so the web app's
+  cookie path is untouched.
+
+### How offline works
+
+WebView2 runs service workers, so the slice-1 `public/sw.js` cache is live
+inside the Tauri window too — nothing extra was wired up for the desktop
+build:
+
+- **App shell + static assets** (`/`, `_next/static`, icons, manifest):
+  cache-first, precached on install. The window opens offline.
+- **Junior API GETs** (`/api/v1/junior/*` — jobs, memory, and the rest of
+  the library): stale-while-revalidate. You get the library as you last saw
+  it, refreshed in the background when there is a connection — this is the
+  train-travel case.
+- **Mutations** (POST / PATCH / PUT / DELETE): network-only, never cached.
+  An offline edit fails loudly instead of pretending to succeed.
+- **Navigations**: network-first, falling back to the cached shell and the
+  static `/offline` page.
+
+One caveat, stated plainly: the app talks to the Railway API by absolute
+URL, so **fresh data needs internet**. Offline you read what is cached;
+writes queue nowhere and fail by design. Features that need a live socket
+(dictation, realtime voice) are online-only for the same reason.
+

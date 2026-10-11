@@ -36,6 +36,7 @@ import type {
 } from "./types";
 
 import { httpErrorFallback, INVALID_ID_TOAST, isFeedId, isUuid, parseErrorPayload } from "@/lib/api-errors";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 import {
   CHAT_CREATE_TIMEOUT_TOAST,
   INVALID_CHAT_TOAST,
@@ -84,7 +85,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !isForm && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(path, {
+  // Desktop app: the SameSite=Lax cookie is not sent cross-site from
+  // tauri.localhost, so attach the login access_token as a bearer header.
+  // The backend checks the header first (backend/app/deps.py) and falls back
+  // to the cookie, so the web app (AUTH_TOKEN unset) is unaffected.
+  for (const [name, value] of Object.entries(authHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers,
     credentials: "include",
@@ -195,7 +203,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   register: (email: string, password: string, display_name?: string) =>
-    request<{ user: User }>("/api/v1/auth/register", {
+    request<{ user: User; access_token?: string }>("/api/v1/auth/register", {
       method: "POST",
       body: JSON.stringify({ email, password, display_name }),
     }),
@@ -255,7 +263,7 @@ export const api = {
     return request<VaultImportResult>("/api/v1/sources/obsidian/import", { method: "POST", body });
   },
   downloadObsidianPack: async () => {
-    const response = await fetch("/api/v1/export/obsidian-pack", { credentials: "include", cache: "no-store" });
+    const response = await fetch(apiUrl("/api/v1/export/obsidian-pack"), { credentials: "include", cache: "no-store" });
     if (!response.ok) throw new ApiError(response.status, "Could not build the Obsidian pack");
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -406,7 +414,7 @@ export const api = {
     return request<OpmlImportResult>("/api/v1/feeds/import-opml", { method: "POST", body });
   },
   exportOpml: async () => {
-    const response = await fetch("/api/v1/feeds/opml", { credentials: "include", cache: "no-store" });
+    const response = await fetch(apiUrl("/api/v1/feeds/opml"), { credentials: "include", cache: "no-store" });
     if (!response.ok) throw new ApiError(response.status, "Could not export OPML");
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -592,7 +600,7 @@ export const api = {
     const search = new URLSearchParams({ chunk: String(chunk) });
     if (confirm) search.set("confirm", "true");
     return fetchSpeechChunk(
-      `/api/v1/tts/message?${search.toString()}`,
+      apiUrl(`/api/v1/tts/message?${search.toString()}`),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -784,7 +792,7 @@ export const api = {
       try {
         let response: Response | undefined;
         try {
-          response = await fetch("/api/v1/chat", {
+          response = await fetch(apiUrl("/api/v1/chat"), {
             method: "POST",
             credentials: "include",
             cache: "no-store",
@@ -866,7 +874,7 @@ export const api = {
     const search = new URLSearchParams({ chunk: String(chunk) });
     if (opts?.confirm) search.set("confirm", "true");
     return fetchSpeechChunk(
-      `/api/v1/articles/${id}/tts?${search.toString()}`,
+      apiUrl(`/api/v1/articles/${id}/tts?${search.toString()}`),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -889,7 +897,7 @@ export const api = {
     const search = new URLSearchParams({ voice_id: voiceId, chunk: String(chunk) });
     if (opts?.confirm) search.set("confirm", "true");
     if (opts?.includeNotes) search.set("include_notes", "true");
-    return fetchSpeechChunk(`/api/v1/articles/${id}/tts?${search.toString()}`, { method: "GET" }, "article");
+    return fetchSpeechChunk(apiUrl(`/api/v1/articles/${id}/tts?${search.toString()}`), { method: "GET" }, "article");
   },
   schoolQuiz: (body: { message_id?: string | null; article_id?: string | null; conversation_id?: string | null; persist?: boolean }) =>
     request<{

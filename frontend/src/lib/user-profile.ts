@@ -1,4 +1,5 @@
 import { isUuid } from "@/lib/api-errors";
+import { apiUrl } from "@/lib/api-base";
 import type { Profile, User } from "./types";
 
 /**
@@ -15,7 +16,8 @@ export function avatarMediaId(mediaId: string | null | undefined): string | null
 export function avatarMediaUrl(mediaId: string | null | undefined): string | null {
   const id = avatarMediaId(mediaId);
   if (!id) return null;
-  return `/api/v1/media/${id}?v=${id}`;
+  // Absolute in packaged builds (no same-origin proxy); no-op in dev.
+  return apiUrl(`/api/v1/media/${id}?v=${id}`);
 }
 
 /** Initials for the fallback shown when there is no avatar, or it fails to load. */

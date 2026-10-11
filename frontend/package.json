@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start --port 43123 --hostname 0.0.0.0",
     "lint": "eslint",
-    "test": "npx tsx --test src/lib/*.test.ts"
+    "test": "npx tsx --test src/lib/*.test.ts",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -25,6 +28,8 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tauri-apps/api": "^2.12.3",
+    "@tauri-apps/cli": "^2.12.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

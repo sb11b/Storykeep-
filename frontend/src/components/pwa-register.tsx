@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { API_ORIGIN } from "@/lib/api-base";
 
 /**
  * Registers the library-aware service worker (production only) and renders a
@@ -15,9 +16,22 @@ export function PwaRegister() {
     if (process.env.NODE_ENV !== "production") return;
     if (!("serviceWorker" in navigator)) return;
     const onLoad = () => {
-      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {
-        // Registration failure is non-fatal: the app works online without it.
-      });
+      navigator.serviceWorker
+        .register("/sw.js", { scope: "/" })
+        // Packaged builds call the API on a different origin; tell the worker
+        // so it still caches the library GETs (see sw.js "api-origin").
+        .then(async (registration) => {
+          const message = { type: "api-origin", origin: API_ORIGIN };
+          // Cold first load: this page is not yet controlled, so
+          // navigator.serviceWorker.controller is null — post to the
+          // registration's active worker as well or the worker never learns
+          // the API origin.
+          registration.active?.postMessage(message);
+          navigator.serviceWorker.controller?.postMessage(message);
+        })
+        .catch(() => {
+          // Registration failure is non-fatal: the app works online without it.
+        });
     };
     window.addEventListener("load", onLoad);
     return () => window.removeEventListener("load", onLoad);
