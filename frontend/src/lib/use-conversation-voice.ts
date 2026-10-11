@@ -13,6 +13,7 @@ import {
   extractConversationId,
   extractFunctionCall,
   extractUserTranscript,
+  extractTranscriptItemId,
   MAX_RECONNECT_ATTEMPTS,
   MIC_PROCESSOR_BUFFER,
   nextBackoffDelay,
@@ -87,6 +88,10 @@ export function useConversationVoice({
    * one handler run (and one output sent back per call_id).
    */
   const handledToolCallsRef = useRef<Set<string>>(new Set());
+  // Per-session set of transcription item_ids already recorded — xAI repeats
+  // transcription.completed three times per utterance; cleared in stop() so it
+  // stays bounded across Talk sessions (same lifecycle as handledToolCallsRef).
+  const handledTranscriptItemsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     onUserTranscriptRef.current = onUserTranscript;
@@ -200,6 +205,7 @@ export function useConversationVoice({
     // Tool-call dedupe state is per-session: clearing it here keeps the set
     // from growing unbounded across a long-lived pane with many Talk sessions.
     handledToolCallsRef.current.clear();
+    handledTranscriptItemsRef.current.clear();
     setStatusSafe("idle");
   }, [clearReconnectTimer, closeAudioContext, setStatusSafe, teardownTransport]);
 
@@ -430,6 +436,16 @@ export function useConversationVoice({
           case "user-transcript": {
             const text = extractUserTranscript(msg);
             if (text) {
+              // xAI repeats transcription.completed three times per utterance
+              // (same item_id, distinct event_ids). Dedupe on item_id so one
+              // spoken turn yields exactly one transcript record; without this
+              // every turn was sent to the chat 3× — Junior answering the same
+              // thing repeatedly and the message list flickering per duplicate.
+              const itemId = extractTranscriptItemId(msg);
+              if (itemId) {
+                if (handledTranscriptItemsRef.current.has(itemId)) break;
+                handledTranscriptItemsRef.current.add(itemId);
+              }
               console.log("junior-talk", { action: "user-transcript", chars: text.length });
               onUserTranscriptRef.current(text);
             }

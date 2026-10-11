@@ -148,6 +148,19 @@ export function classifyRealtimeEvent(type: unknown): RealtimeEventKind {
   }
 }
 
+/**
+ * The item_id carried by a transcription.completed event, or null when absent.
+ * xAI emits `conversation.item.input_audio_transcription.completed` THREE times
+ * per utterance (same item_id, different event_ids — verified live against
+ * api.x.ai). Callers dedupe on this so one spoken turn produces exactly one
+ * transcript record.
+ */
+export function extractTranscriptItemId(msg: unknown): string | null {
+  if (!msg || typeof msg !== "object") return null;
+  const m = msg as { item_id?: unknown };
+  return typeof m.item_id === "string" && m.item_id.length > 0 ? m.item_id : null;
+}
+
 /** User speech text from a transcription.completed event, trimmed; null when blank. */
 export function extractUserTranscript(msg: unknown): string | null {
   if (!msg || typeof msg !== "object") return null;
