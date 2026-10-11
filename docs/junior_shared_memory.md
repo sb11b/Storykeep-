@@ -101,6 +101,8 @@ Junior can start Cursor agents with a **full picture** — repo + memory — not
 
 Decision (2026-10-11): the Expo junior-mobile client was **dropped** — the Android app (merged through #162) is the phone client, since there is no `/api/v1/junior/phone/*` namespace and both apps target the same API and venue `phone`. The `junior-phone` project row and venue stay seeded; the repo URL is a placeholder only.
 
+Decision (2026-10-11): the Windows overlay client is **deferred indefinitely** (plan slice 7) — the `overlay` backend is the notes overlay (article annotations, Obsidian import/packs, media, corrections), not a desktop quick-capture surface; there is no windows-specific API (venue `windows` shares the generic `/api/v1/junior/*` routes) and no client repo under sb11b. The `windows` venue and the `windows-overlay` project row stay seeded; a client against the generic Memory API can be built any time.
+
 Boot also seeds durable **decisions** in `junior_memories`: Railway Postgres is source of truth; xAI is inference only; three venues share one API; Junior can launch Cursor agents with a context pack.
 
 ### How Junior uses agent-context before a Cursor agent
