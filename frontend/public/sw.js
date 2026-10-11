@@ -96,6 +96,15 @@ self.addEventListener("fetch", (event) => {
 
   // 3. Everything else same-origin (static assets, manifest, icons):
   //    cache-first, filled lazily on first fetch.
+  //    API paths (other than the Junior SWR set above) are deliberately NOT
+  //    cached: they are user-scoped responses (credentials: include), the
+  //    backend sends no Vary header, and the Cache API keys on URL only —
+  //    caching them would serve one user's data to the next on a shared
+  //    device. The app itself sends cache: 'no-store' on these calls, so
+  //    passing them through to the network uncached is the zero-risk default.
+  if (url.pathname.startsWith("/api/")) {
+    return; // network-only, never cached
+  }
   event.respondWith(cacheFirst(request, SHELL_CACHE));
 });
 
