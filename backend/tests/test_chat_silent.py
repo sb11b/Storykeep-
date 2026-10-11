@@ -421,6 +421,58 @@ class StreamConnectStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pieces[0], "")
         self.assertEqual(pieces[1], "Hi")
 
+    async def test_visible_text_stream_without_canopy_does_not_502(self):
+        # Regression: with Canopy disabled the direct yield-text path never set
+        # canopy_visible_sent, so the post-stream empty-reply guard raised
+        # HTTP 502 "returned no text" on EVERY turn whose text already
+        # streamed. Production runs canopy-off, so every reply ended in a
+        # spurious 502 after the text was already delivered.
+        class FakeResponse:
+            status_code = 200
+
+            def aiter_lines(self):
+                async def lines():
+                    yield 'data: {"choices":[{"delta":{"content":"Hi"}}]}'
+                    yield "data: [DONE]"
+
+                return lines()
+
+        class FakeStream:
+            async def __aenter__(self):
+                return FakeResponse()
+
+            async def __aexit__(self, *_args):
+                return False
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                return FakeStream()
+
+        with (
+            patch.object(chat_service, "require_key", return_value="xai-test"),
+            patch.object(chat_service.httpx, "AsyncClient", FakeClient),
+            patch.object(chat_service, "_canopy_enabled", return_value=False),
+        ):
+            pieces: list[str] = []
+            async for piece in chat_service.stream_completion(
+                [{"role": "user", "content": "hello"}],
+                None,
+                include_article=False,
+                model="grok-4.6",
+            ):
+                pieces.append(piece)
+        self.assertEqual(pieces[0], "")
+        self.assertIn("Hi", pieces)
+
 
 class CursorStartPayloadTests(unittest.TestCase):
     def test_start_agent_can_read_pane_name(self):
