@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -13,6 +14,7 @@ from app.schemas import (
     JuniorDocumentOut,
 )
 from app.services import junior_shared_memory as store
+from app.services.event_bus import bus
 
 
 router = APIRouter(tags=["junior-shared-documents"])
@@ -61,6 +63,19 @@ def create_or_update_document(
     )
     db.commit()
     db.refresh(row)
+    # Fresh insert sets created_at == updated_at in the same commit; that
+    # distinguishes document.created from document.updated.
+    bus.emit(
+        user.id,
+        {
+            "type": "document.created" if row.created_at == row.updated_at else "document.updated",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "slug": row.slug,
+            "title": row.title,
+            "changed": sorted(fields),
+            "source": "api",
+        },
+    )
     return JuniorDocumentOut.model_validate(row)
 
 
@@ -81,3 +96,12 @@ def delete_document(
 ) -> None:
     store.delete_document(db, user, slug)
     db.commit()
+    bus.emit(
+        user.id,
+        {
+            "type": "document.deleted",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "slug": slug,
+            "source": "api",
+        },
+    )
