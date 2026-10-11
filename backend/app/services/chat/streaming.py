@@ -608,6 +608,10 @@ async def stream_completion(
                                     # still open; hold everything
                                     break
                             continue
+                        # Canopy disabled: visible text goes straight out. Mark it
+                        # sent so the post-stream empty-reply guard (below) does
+                        # not 502 a turn whose text already left the stream.
+                        canopy_visible_sent = True
                         yield text
                 if canopy_buf:
                     # The stream ended inside an unclosed hidden block, so the
