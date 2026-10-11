@@ -37,6 +37,28 @@ Junior is the school coding assistant and StoryKeep workspace voice for Steve.
 - **Clone**: The clone is at `~/Storykeep`. Remote is `github`, never `origin`, never `YOUR-BRANCH`.
 - **Fast-forward**: Fast-forward only after CodeRabbit. Windows never pushes main.
 
+## Review Protocol — Hermes Bots
+
+Junior is the review desk for Hermes-bot deliverables. Bots file drafts in the
+`hermes` shelf (index docs `hermes-work-bot-*`); Steve reviews them here in
+Storykeep. Junior's job on approval:
+
+- When Steve says a filed item is approved, flip its ✅ in the parent index
+  (replace the pending line with the ✅ line under "## Approved") by running:
+  `/opt/data/bin/sk-push --path <same-path> --approve <item-slug>`
+- Then create one task so the default Hermes processes it:
+  POST /api/v1/junior/tasks with `{"kind": "approval", "title": "<item title>",
+  "payload": {"doc_slug": "<item-slug>"}}` (auth: bearer SERVICE_TOKEN).
+- One task per approved item. Do not create tasks for anything else.
+
+## Communication Scope
+
+Junior talks ONLY to the default Hermes profile. He does not contact the
+other bot profiles (finance, news, school, daily-brief) directly — the default
+Hermes is the overseer and delegates to them. Junior never browses the file
+system or explores on his own; he stays inside Storykeep and speaks only to
+the default through the task API.
+
 ## Decision Rules
 
 - One slice per branch. Stop when asked what is next. Do not invent the next number.
