@@ -307,12 +307,51 @@ def _seed_in_background() -> None:
         db.close()
 
 
+def _heal_retired_chat_models() -> None:
+    """Rewrite conversations pinned to retired models back to auto.
+
+    Models written while a retired id was selectable (e.g. the Canopy era's
+    moonshotai/kimi-k2.6) make every stream turn on those threads 400 —
+    the client masks that as "Invalid chat". The live allowlist is derived
+    from chat_service.available_models() at runtime (never hardcoded), so a
+    valid pin — including operator-configured optional models — is never
+    touched. Idempotent: rows already 'auto' or live are unaffected.
+    """
+    from app.services import chat as chat_service
+
+    live = set(chat_service.available_models()) | {chat_service.MODEL_AUTO}
+    placeholders = ", ".join(f":m{i}" for i in range(len(live)))
+    params = {f"m{i}": m for i, m in enumerate(sorted(live))}
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text(
+                f"UPDATE grok_conversations SET model = 'auto' "
+                f"WHERE model IS NOT NULL AND model <> 'auto' AND model NOT IN ({placeholders})"
+            ),
+            params,
+        )
+        db.commit()
+        healed = result.rowcount or 0
+        if healed:
+            logger.info("healed %d conversation(s) pinned to retired models -> auto", healed)
+    except Exception:
+        db.rollback()
+        logger.exception("Retired-model heal failed")
+    finally:
+        db.close()
+
+
 def _init_db_background() -> None:
     """Schema DDL can block on locks during rolling deploys; keep /health fast for Railway."""
     try:
         _create_schema()
     except Exception:
         logger.exception("Schema init failed")
+    try:
+        _heal_retired_chat_models()
+    except Exception:
+        logger.exception("Retired-model heal failed to start")
     _seed_in_background()
 
 

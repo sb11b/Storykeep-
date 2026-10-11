@@ -291,3 +291,74 @@ class ChatIndexKeepOnShortTurnTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PersistedStreamRetiredModelTests(unittest.TestCase):
+    """Regression: a stored conversation pinned to a retired model must not 400/500.
+
+    normalize_stored_model_choice must be reachable through the
+    app.services.chat facade — the router calls chat_service.<name>. A missing
+    re-export surfaced as AttributeError -> HTTP 500 on EVERY persisted stream
+    turn (worse than the original 400), and the suite never caught it because
+    every chat_stream test patches should_persist to False.
+    """
+
+    def test_router_facade_exposes_stored_normalizer(self):
+        # the exact call shape the router uses
+        self.assertTrue(hasattr(chat_service, "normalize_stored_model_choice"))
+        self.assertTrue(callable(chat_service.normalize_stored_model_choice))
+
+    def test_persisted_stream_with_retired_stored_model_streams(self):
+        captured: dict = {}
+        cid = uuid.uuid4()
+        retired = "moonshotai/kimi-k2.6"
+        live = set(chat_service.available_models())
+        if retired in live:
+            self.skipTest("retired model still live in this environment")
+
+        async def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            yield "Reply."
+
+        conversation = SimpleNamespace(
+            id=cid,
+            model=retired,
+            reasoning="auto",
+            title="Old thread",
+            recap_question=False,
+            files=[],
+            messages=[SimpleNamespace(role="user", content="hi")],
+        )
+
+        def fake_owned(_db, _user, _cid):
+            return conversation
+
+        app = _app(_owner())
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(chat_service, "require_key", return_value="xai-test"))
+            stack.enter_context(patch.object(chat_service, "enforce_rate_limit"))
+            # persist=True is the branch under test
+            stack.enter_context(patch("app.routers.chat_stream.grok_store.should_persist", return_value=True))
+            stack.enter_context(patch("app.routers.chat_stream.grok_store.owned_conversation", fake_owned))
+            stack.enter_context(patch("app.routers.chat_stream.grok_store.pending_user_turn", return_value=None))
+            stack.enter_context(patch("app.routers.chat_stream.grok_store.trim_trailing_assistants"))
+            stack.enter_context(patch("app.routers.chat_stream.grok_store.create_conversation"))
+            stack.enter_context(
+                patch(
+                    "app.routers.chat_stream.grok_store.conversation_history",
+                    return_value=[{"role": "user", "content": "hello"}],
+                )
+            )
+            stack.enter_context(patch.object(chat_router, "grok_store", chat_router.grok_store))
+            stack.enter_context(patch("app.routers.chat_context.calendars.is_connected", return_value=False))
+            stack.enter_context(patch("app.routers.chat_stream.mail_service.has_token", return_value=False))
+            stack.enter_context(patch("app.routers.chat_context.junior_memory.system_section", return_value=None))
+            stack.enter_context(patch.object(web_search, "configured", return_value=False))
+            stack.enter_context(patch.object(chat_service, "stream_completion", fake_stream))
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/chat",
+                json={"message": "hello", "conversation_id": str(cid), "model": "auto", "reasoning_effort": "auto"},
+            )
+        self.assertEqual(response.status_code, 200, response.text[:300])
+        self.assertIn("Reply.", response.text)

@@ -348,3 +348,51 @@ class ChatGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetiredStoredModelTests(unittest.TestCase):
+    """normalize_stored_model_choice must never 400 on a retired stored model."""
+
+    def setUp(self) -> None:
+        # canopy_base_url has a non-empty default; while it is set, every model
+        # rewrites to moonshotai/kimi-k2.6 (live) — pin it off so these tests
+        # are deterministic regardless of ambient env.
+        import app.config as app_config
+
+        self._canopy = app_config.settings.canopy_base_url
+        app_config.settings.canopy_base_url = ""
+
+    def tearDown(self) -> None:
+        import app.config as app_config
+
+        app_config.settings.canopy_base_url = self._canopy
+
+    def test_strict_normalize_still_rejects_retired(self):
+        from app.services.chat.model_routing import normalize_model_choice
+
+        with self.assertRaises(HTTPException):
+            normalize_model_choice("moonshotai/kimi-k2.6")
+
+    def test_lenient_falls_back_to_auto_for_retired(self):
+        from app.services.chat.model_routing import normalize_stored_model_choice
+
+        # retired ids are not in available_models(); must degrade, not raise
+        retired = "moonshotai/kimi-k2.6"
+        live = set(available_models_list())
+        if retired in live:
+            self.skipTest("retired model still live in this environment")
+        self.assertEqual(normalize_stored_model_choice(retired), "auto")
+
+    def test_lenient_keeps_live_pin(self):
+        from app.services.chat.model_routing import normalize_stored_model_choice
+
+        for model in available_models_list():
+            self.assertEqual(normalize_stored_model_choice(model), model)
+        self.assertEqual(normalize_stored_model_choice("auto"), "auto")
+        self.assertEqual(normalize_stored_model_choice(None), "auto")
+
+
+def available_models_list():
+    from app.services.chat.model_routing import available_models
+
+    return available_models()

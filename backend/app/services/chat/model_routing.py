@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from fastapi import HTTPException
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 from ._shared import (
     AUTO_LOW_MAX_CHARS,
@@ -156,6 +159,21 @@ def normalize_model_choice(choice: str | None) -> str:
             detail=f"Unknown model. Choose auto or one of: {', '.join(models)}.",
         )
     return cleaned
+
+
+def normalize_stored_model_choice(choice: str | None) -> str:
+    """Same as normalize_model_choice, but never raises for stored values.
+
+    Rows written while a retired model was selectable (e.g. the Canopy era's
+    moonshotai/kimi-k2.6) would otherwise 400 every stream turn on those
+    threads — the client masks that as "Invalid chat". Fall back to auto so
+    old threads resolve to the live default instead of dying.
+    """
+    try:
+        return normalize_model_choice(choice)
+    except HTTPException:
+        logger.warning("stored model %r is retired; falling back to auto", choice)
+        return MODEL_AUTO
 
 
 def is_small_talk_turn(message: str) -> bool:

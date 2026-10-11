@@ -705,7 +705,17 @@ export const api = {
         throw new ApiError(504, CHAT_CREATE_TIMEOUT_TOAST);
       }
       if (error instanceof ApiError && (error.status === 422 || error.status === 400)) {
-        throw new ApiError(error.status, INVALID_CHAT_TOAST);
+        // Only mask as "Invalid chat" when the rejection really is about the
+        // conversation id shape (pydantic UUID validation dump). A 400 like
+        // "Unknown model" must reach the user verbatim — masking it hid real
+        // errors behind a generic toast and made them undiagnosable.
+        const text = String(error.message ?? "");
+        const looksLikeIdShape =
+          !text ||
+          /valid uuid|invalid chat|invalid request/i.test(text) ||
+          /"loc"\s*:\s*\["body"\s*,\s*"(conversation_)?id"\]/.test(text);
+        if (looksLikeIdShape) throw new ApiError(error.status, INVALID_CHAT_TOAST);
+        throw error;
       }
       throw error;
     }

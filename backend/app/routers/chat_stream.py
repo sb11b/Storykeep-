@@ -236,7 +236,7 @@ def _chat(
                     db, user, model=model_choice, reasoning=stored_reasoning
                 )
                 conversation_id = conversation.id
-            model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
+            model_choice = chat_service.normalize_stored_model_choice(conversation.model or chat_service.MODEL_AUTO)
             reasoning_choice = chat_service.normalize_reasoning_effort(
                 getattr(conversation, "reasoning", None) or chat_service.REASONING_AUTO
             )
@@ -282,7 +282,7 @@ def _chat(
                 }
                 for item in (pending.files or [])
             ]
-            model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
+            model_choice = chat_service.normalize_stored_model_choice(conversation.model or chat_service.MODEL_AUTO)
             reasoning_choice = chat_service.normalize_reasoning_effort(
                 getattr(conversation, "reasoning", None) or chat_service.REASONING_AUTO
             )
@@ -302,7 +302,7 @@ def _chat(
             history = grok_store.conversation_history(db, conversation_id)
         elif conversation_id:
             conversation = grok_store.owned_conversation(db, user, conversation_id)
-            model_choice = chat_service.normalize_model_choice(conversation.model or chat_service.MODEL_AUTO)
+            model_choice = chat_service.normalize_stored_model_choice(conversation.model or chat_service.MODEL_AUTO)
             reasoning_choice = chat_service.normalize_reasoning_effort(
                 getattr(conversation, "reasoning", None) or chat_service.REASONING_AUTO
             )
