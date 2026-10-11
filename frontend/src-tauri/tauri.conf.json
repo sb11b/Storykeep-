@@ -5,7 +5,7 @@
   "identifier": "com.storykeep.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "NEXT_OUTPUT=export NEXT_PUBLIC_API_ORIGIN=https://storykeep-production.up.railway.app npm run build",
+    "beforeBuildCommand": "npx cross-env NEXT_OUTPUT=export NEXT_PUBLIC_API_ORIGIN=https://storykeep-production.up.railway.app npm run build",
     "devUrl": "http://localhost:43123",
     "frontendDist": "../out"
   },
