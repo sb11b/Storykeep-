@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useDictation } from "@/components/dictation";
 import { DestinationSelect, FolderSelect } from "@/components/destination-controls";
-import { JuniorMicControls, type JuniorMicMode, type JuniorMicPhase } from "@/components/junior-mic";
 import { GrokChatMessage } from "@/components/grok-chat-message";
 import { CalendarProposalCard } from "@/components/calendar-overlay";
 import { MailProposalCard } from "@/components/mail-overlay";
@@ -16,6 +15,7 @@ import { GrokVoiceControls } from "@/components/grok-voice-controls";
 import { usePaneVoice } from "@/lib/usePaneVoice";
 import { useConversationVoice, CONVERSATION_STATUS_LABEL } from "@/lib/use-conversation-voice";
 import { DEFAULT_PANE_NAME, defaultGrokPaneName, chatStatusLine, closeAssistantTurn, NO_REPLY_TOAST, normalizeTurnStatus, type ChatStatusKind, type ChatTurnStatus } from "@/lib/grok-pane-name";
+import { shouldShowToast } from "@/lib/toast-dedupe";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
@@ -98,7 +98,6 @@ import { grokModelLabel, GROK_REASONING_EFFORTS, isGrokReasoningEffort, spendChi
 import { postedSpendForTurn } from "@/lib/grok-auto-route";
 import { hasMediaImage, imageToolIntent, MEDIA_MARKDOWN, thisTurnImageMediaIds } from "@/lib/chat-image";
 import { DEFAULT_TTS_VOICE_ID, fallbackTtsVoices } from "@/lib/tts-defaults";
-import { MIC_LIVE, MIC_STT_EMPTY_HINT, MIC_TRANSCRIBING } from "@/lib/stt-ui";
 import type { Folder, TtsVoice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -431,7 +430,9 @@ export function GrokPane({
     abortRef.current?.abort();
     abortRef.current = null;
     failOpenTurn(undefined, true);
-    toast.error(NO_REPLY_TOAST);
+    // Deduped: stop can fire repeatedly (each auto-sent Talk turn that gets
+    // aborted calls this), and identical "No reply — retry" toasts would storm.
+    if (shouldShowToast(NO_REPLY_TOAST)) toast.error(NO_REPLY_TOAST);
   }, [dictation, failOpenTurn]);
 
   const markWriting = useCallback(() => {
@@ -553,43 +554,33 @@ export function GrokPane({
     contextHelpers.offerPasteSplit(draft);
   }
 
-  const fillComposerDraft = useCallback(
-    (transcript: string, focus = false) => {
-      const message = transcript.trim();
-      if (!message) return;
-      draftValueRef.current = message;
-      onUpdate((current) => ({ ...current, draft: message }));
-      const el = draftRef.current;
-      if (el) {
-        setNativeTextareaValue(el, message);
-        el.style.height = "auto";
-        const cap = Math.round(window.innerHeight * 0.6);
-        el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), cap)}px`;
-        if (focus) {
-          el.focus();
-          const end = message.length;
-          el.setSelectionRange(end, end);
-        }
-      }
-    },
-    [onUpdate],
-  );
+  /**
+   * Serializes Talk-mode transcript sends. server_vad commits a new user
+   * transcript every few seconds while the previous chat turn is still
+   * streaming; useChatSend drops a colliding fromStt send (busy/inFlight)
+   * with a "Could not send voice message" toast. The queue guarantees one
+   * send per turn, in order, so every spoken turn lands in the history.
+   */
+  const talkSendQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const submitVoiceTranscript = useCallback(
     (transcript: string) => {
       const message = transcript.trim();
       if (!message) return;
-      fillComposerDraft(message);
-      void sendRef.current({ message, fromStt: true });
+      // Talk mode writes the record AFTER the fact, never live into the
+      // composer — no text appears above the input line while talking.
+      // Sends are serialized through a queue: server_vad commits a new
+      // transcript every few seconds, but the previous chat turn is still
+      // streaming, and useChatSend drops a colliding fromStt send with a
+      // "Could not send voice message" toast. Serializing means exactly one
+      // send per turn, every turn lands in the history, and no toast storms.
+      talkSendQueueRef.current = talkSendQueueRef.current
+        .then(() => sendRef.current({ message, fromStt: true }))
+        .catch(() => {
+          /* the send path already surfaces real errors via its own toast */
+        });
     },
-    [fillComposerDraft],
-  );
-
-  const applySttDraft = useCallback(
-    (transcript: string) => {
-      fillComposerDraft(transcript, true);
-    },
-    [fillComposerDraft],
+    [],
   );
 
   /* ── Conversation mode: one realtime WebSocket — mic in, Junior's voice out ── */
@@ -1329,18 +1320,9 @@ export function GrokPane({
                 size="sm"
                 variant={conversationStatus !== "idle" ? "destructive" : "outline"}
                 className="relative z-10 h-9 shrink-0 px-2.5 text-xs font-medium"
-                // Mutual exclusion: one mic per pane. The legacy STS/STT mic owns
-                // the capture while it is live, so Talk stands down (and vice
-                // versa — JuniorMicControls is not rendered while Talk is active).
-                // 'connecting' is disabled too: the button must not be tappable
-                // mid-handshake, or a stop()+start() race can open a duplicate
-                // session (defense in depth — the hook's session generations are
-                // the real guard).
                 disabled={
                   locked ||
                   uploadingFiles ||
-                  voice.sttBusy ||
-                  voice.stsModeOn ||
                   conversationStatus === "connecting"
                 }
                 aria-label={
@@ -1370,19 +1352,6 @@ export function GrokPane({
                 ) : null}
                 Talk
               </Button>
-              {conversationStatus === "idle" ? (
-                <JuniorMicControls
-                  enabled={enabled && !uploadingFiles}
-                  locked={locked}
-                  registerAbort={voice.registerMicAbort}
-                  registerStsRearm={voice.registerStsRearm}
-                  onPhaseChange={voice.handleMicPhaseChange}
-                  onStsModeChange={voice.handleStsModeChange}
-                  onStsSubmit={submitVoiceTranscript}
-                  onSttDraft={applySttDraft}
-                  onSttEmptyHint={voice.showSttEmptyHint}
-                />
-              ) : null}
             </>
           ) : null}
           {busy || aborting ? (
@@ -1405,7 +1374,6 @@ export function GrokPane({
               disabled={
                 !enabled ||
                 aborting ||
-                voice.sttBusy ||
                 (!draftNow().trim() && !(pane.pendingAttachments ?? []).length)
               }
               aria-label="Send"
@@ -1414,25 +1382,9 @@ export function GrokPane({
             </Button>
           )}
         </div>
-        {voice.sttPhase === "listening" ? (
-          <p className="text-[11px] text-muted-foreground" role="status">
-            {voice.micMode === "stt" ? "STT" : "STS"} — {MIC_LIVE}
-          </p>
-        ) : voice.sttPhase === "transcribing" ? (
-          <p className="text-[11px] text-muted-foreground" role="status">
-            {voice.micMode === "stt" ? "STT" : "STS"} — {MIC_TRANSCRIBING}
-          </p>
-        ) : voice.sttEmptyHint ? (
-          <p className="text-[11px] text-muted-foreground" role="status">
-            {MIC_STT_EMPTY_HINT}
-          </p>
-        ) : conversationStatus !== "idle" ? (
+        {conversationStatus !== "idle" ? (
           <p className="text-[11px] text-muted-foreground" role="status" data-talk-status={conversationStatus}>
             {CONVERSATION_STATUS_LABEL[conversationStatus]}
-          </p>
-        ) : voice.stsModeOn ? (
-          <p className="text-[11px] text-muted-foreground" role="status">
-            STS — conversation mode
           </p>
         ) : null}
         {(busy || aborting) && inFlightSpend ? (

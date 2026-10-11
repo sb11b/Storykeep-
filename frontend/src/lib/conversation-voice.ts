@@ -5,8 +5,10 @@
  * Everything here is DOM-free so it can run under `node --test`.
  */
 
-/** xAI realtime voice model. */
-export const REALTIME_MODEL = "grok-voice-latest";
+/** xAI realtime voice model. Pinned to the versioned flagship (the xAI console's
+ * "Grok Voice Think Fast 2.0"); `grok-voice-latest` is its alias — we pin per the
+ * xAI docs' production guidance so a future alias move can't shift our voice stack. */
+export const REALTIME_MODEL = "grok-voice-think-fast-2.0";
 
 /** Wire rate for both directions. xAI expects 24kHz PCM16. */
 export const REALTIME_SAMPLE_RATE = 24000;
@@ -32,7 +34,8 @@ export const INPUT_TRANSCRIPTION_MODEL = "grok-transcribe";
 export const JUNIOR_TALK_INSTRUCTIONS =
   "You are Junior, a friendly school-coding helper for a young student. " +
   "Keep replies short and conversational — one or two sentences unless asked for more. " +
-  "Speak plainly, no markdown, no lists, no code unless the student asks for code.";
+  "Speak plainly, no markdown, no lists, no code unless the student asks for code. " +
+  "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
 export function buildRealtimeUrl(conversationId?: string | null): string {
@@ -60,6 +63,11 @@ export function buildSessionUpdate(voice: string, conversationId?: string | null
       },
       // Resume prior turns on reconnect; the id arrives with conversation.created.
       resumption: { enabled: true, ...(conversationId ? { conversation_id: conversationId } : {}) },
+      // Web search so Junior can answer current-events questions mid-conversation.
+      // Verified live against xAI realtime: session.update with this tools array
+      // is accepted (session.updated) and fires response.function_call_arguments
+      // events that produce real, sourced spoken answers.
+      tools: [{ type: "web_search" }],
     },
   };
 }

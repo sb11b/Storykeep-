@@ -62,6 +62,19 @@ test("session.update enables resumption and carries the id when resuming", () =>
   assert.equal(resumed.session.resumption.conversation_id, "conv-9");
 });
 
+test("session.update includes the web_search tool so Talk can answer current-events questions", () => {
+  const update = buildSessionUpdate("castor");
+  assert.deepEqual(update.session.tools, [{ type: "web_search" }]);
+  // The instructions must tell Junior to reach for the tool on time-sensitive asks.
+  assert.match(update.session.instructions, /web_search/);
+  assert.match(update.session.instructions, /current events/);
+});
+
+test("session.update keeps the web_search tool when resuming a conversation", () => {
+  const resumed = buildSessionUpdate("castor", "conv-9");
+  assert.deepEqual(resumed.session.tools, [{ type: "web_search" }]);
+});
+
 test("MIC_CHUNK_SAMPLES is 100ms of audio at 24kHz", () => {
   assert.equal(MIC_CHUNK_SAMPLES, 2400);
 });
@@ -789,6 +802,49 @@ test("a 4xx token failure does not burn reconnect attempts", async () => {
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("blank transcripts never reach onUserTranscript; one committed turn fires exactly one event", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+
+    const feed = (msg: unknown) =>
+      ws.onmessage?.({ data: JSON.stringify(msg) });
+
+    // server_vad commits with no speech (noise, partial buffer) — must not fire.
+    feed({ type: "conversation.item.input_audio_transcription.completed", transcript: "   " });
+    feed({ type: "conversation.item.input_audio_transcription.completed", transcript: "" });
+    feed({ type: "conversation.item.input_audio_transcription.completed" });
+    feed({ type: "conversation.item.input_audio_transcription.completed", item: { content: [{ transcript: "  " }] } });
+    assert.deepEqual(transcripts, [], "blank transcripts must never reach the callback");
+
+    // One committed turn fires exactly once, trimmed.
+    feed({ type: "conversation.item.input_audio_transcription.completed", transcript: "  what's the news  " });
+    assert.deepEqual(transcripts, ["what's the news"], "one turn, trimmed, fired exactly once");
 
     unmountHook(slots);
   } finally {
