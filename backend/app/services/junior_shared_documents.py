@@ -6,6 +6,7 @@ upserted, listed, and injected into Junior's prompt context.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -151,3 +152,47 @@ def get_ledger_for_prompt(
     if not text:
         return None
     return text[:cap] if len(text) > cap else text
+
+
+# A slug mention is a kebab-case token of 2+ hyphen-joined segments.
+_SLUG_MENTION_RE = re.compile(r"\b([a-z0-9]+(?:-[a-z0-9]+){1,})\b")
+
+DOC_MENTION_CAP = 1200
+
+
+def find_mentioned_documents(
+    db: Session, user: User, text: str, *, cap: int = DOC_MENTION_CAP
+) -> list[dict[str, Any]]:
+    """Documents explicitly referenced by slug in a user message.
+
+    A slug mention is a kebab-case token of 2+ hyphen-joined segments that
+    matches an existing document for this user. Max 3 documents injected per
+    turn. Missing mentions are ignored silently. Each document's text is
+    capped; the cap mirrors the junior-ledger injection cap.
+    """
+    if not text:
+        return []
+    seen: set[str] = set()
+    slugs: list[str] = []
+    for match in _SLUG_MENTION_RE.finditer(text.lower()):
+        candidate = match.group(1)
+        if len(candidate) > 64 or candidate in seen:
+            continue
+        seen.add(candidate)
+        slugs.append(candidate)
+        if len(slugs) >= 3:
+            break
+    if not slugs:
+        return []
+    out: list[dict[str, Any]] = []
+    for slug in slugs:
+        row = db.scalar(
+            select(JuniorDocument).where(JuniorDocument.user_id == user.id, JuniorDocument.slug == slug)
+        )
+        if row is None:
+            continue
+        body = (row.text or "").strip()
+        if not body:
+            continue
+        out.append({"slug": row.slug, "title": row.title, "text": body[:cap] if len(body) > cap else body})
+    return out
