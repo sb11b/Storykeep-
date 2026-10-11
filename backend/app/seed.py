@@ -14,9 +14,9 @@ _LEDGER_TEXT = """# Junior ledger
 
 | Field | Value |
 | --- | --- |
-| last finished | 162 |
-| last merged | #162 (0b87eaa) |
-| next item | Windows overlay decision (build or defer) |
+| last finished | 163 |
+| last merged | #163 (7c0c591) |
+| next item | (none — plan complete) |
 | plan | docs/junior-plan.md |
 
 ## Done
@@ -27,10 +27,11 @@ _LEDGER_TEXT = """# Junior ledger
 4. Android: Stories — /projects, documents, files
 5. Android: release signing, versionCode 2, off "-shell"
 6. junior-mobile (Expo): DROPPED — Android is the phone client; venue `phone` stays seeded, API ready if reconsidered
+7. Windows overlay: DEFERRED — the `overlay` backend is the notes overlay (article notes, Obsidian import/packs, media, corrections), not a desktop quick-capture surface; there is no windows-specific API and no client repo under sb11b. Venue `windows` stays seeded; a client against the generic Memory API can be built any time.
 
 ## Remaining slices (one branch each, merge after Hermes code review)
 
-7. windows-overlay client: build or defer — Steve decides
+(none — all 7 slices resolved)
 """
 
 
