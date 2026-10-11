@@ -22,6 +22,16 @@ test("apiUrl leaves absolute URLs and schemes alone", async () => {
   assert.equal(apiUrl("//cdn.example/x.png"), "//cdn.example/x.png");
 });
 
+// Simulate the packaged desktop window: the app origin (tauri.localhost)
+// differs from the API origin (Railway), which is what unlocks bearer-token
+// storage. A dedicated web-app isolation test covers the opposite case.
+if (typeof globalThis.window === "undefined") {
+  Object.defineProperty(globalThis, "window", {
+    value: { location: { origin: "https://tauri.localhost" } },
+    configurable: true,
+  });
+}
+
 test("setAuthToken stores the login token and clears it on logout", async () => {
   // Read through the namespace object (not a destructured binding) so the
   // mutable AUTH_TOKEN export is observed live under tsx's CJS output.
@@ -33,6 +43,25 @@ test("setAuthToken stores the login token and clears it on logout", async () => 
   assert.equal(base.AUTH_TOKEN, null);
   base.setAuthToken("");
   assert.equal(base.AUTH_TOKEN, null);
+});
+
+test("setAuthToken is a no-op on the web app (same-origin, no token ever held)", async () => {
+  // The web app is served same-origin with the API even in a static export,
+  // so IS_PACKAGED_WINDOW is false there: the HttpOnly cookie stays the only
+  // credential and no token may enter JS-readable memory or WebSocket URLs.
+  Object.defineProperty(globalThis.window, "location", {
+    value: { origin: ORIGIN },
+    configurable: true,
+  });
+  const base = await import("./api-base");
+  base.setAuthToken("web-app-should-not-store-this");
+  assert.equal(base.AUTH_TOKEN, null);
+  assert.deepEqual(base.authHeaders(), {});
+  // Restore the packaged-window simulation for any later tests.
+  Object.defineProperty(globalThis.window, "location", {
+    value: { origin: "https://tauri.localhost" },
+    configurable: true,
+  });
 });
 
 test("resolveChatImageSrc makes server-emitted relative media srcs absolute", async () => {

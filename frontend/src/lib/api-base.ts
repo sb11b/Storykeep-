@@ -15,6 +15,28 @@ const RAW_ORIGIN = (process.env.NEXT_PUBLIC_API_ORIGIN ?? "").trim();
 
 export const API_ORIGIN = RAW_ORIGIN.replace(/\/+$/, "");
 
+/**
+ * True only inside the packaged desktop window.
+ *
+ * The bearer token is a desktop-only mechanism: the web app authenticates
+ * with the HttpOnly `sk_access` cookie and must never hold the token in
+ * JS-readable memory (that would widen XSS exfiltration to any point in a
+ * 14-day session) or leak it into WebSocket query strings (access logs).
+ * The desktop window is the case where the token is genuinely required —
+ * `tauri.localhost` is a different origin from the API, so the Lax cookie
+ * is not sent and every call would 401.
+ *
+ * Detection: the packaged window's app origin differs from the API origin
+ * (Tauri serves from tauri.localhost; the web app is same-origin with the
+ * API even in a static export). `__TAURI_INTERNALS__` is the documented
+ * Tauri runtime global, kept as a second signal. Evaluated per call (not
+ * at module load) so it stays correct under any environment.
+ */
+function isPackagedWindow(): boolean {
+  if (typeof window === "undefined" || !API_ORIGIN) return false;
+  return API_ORIGIN !== window.location.origin || "__TAURI_INTERNALS__" in window;
+}
+
 /** True for URLs that already carry their own origin/scheme (leave them alone). */
 function isAbsoluteUrl(path: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("//");
@@ -38,11 +60,13 @@ export function apiUrl(path: string): string {
  * it here. A restart therefore requires signing in again.
  *
  * Empty/null on the web app: `request()` then sends cookies only, unchanged.
+ * Gated to the packaged window (`isPackagedWindow()`) so the web app can
+ * never hold a token — see the function's comment for why that matters.
  */
 export let AUTH_TOKEN: string | null = null;
 
 export function setAuthToken(token: string | null): void {
-  AUTH_TOKEN = token?.trim() || null;
+  AUTH_TOKEN = isPackagedWindow() ? token?.trim() || null : null;
   postAuthTokenToServiceWorker(AUTH_TOKEN);
 }
 
