@@ -52,6 +52,9 @@ test("required parameters are declared for the tools that need them", () => {
   assert.deepEqual(required.search_library, ["query"]);
   assert.deepEqual(required.get_document, ["slug"]);
   assert.deepEqual(required.read_document_file, ["slug", "file_id"]);
+  assert.deepEqual(required.list_feeds, []);
+  assert.deepEqual(required.search_articles, []);
+  assert.deepEqual(required.read_article, ["id"]);
   assert.deepEqual(required.list_pending_work, []);
   assert.deepEqual(required.create_task, ["kind", "title", "instructions"]);
   assert.deepEqual(required.read_email, []);
@@ -494,6 +497,145 @@ test("runJuniorTool read_email_message returns the full body for reading aloud",
   }
 });
 
+test("runJuniorTool list_feeds maps the feeds response with truncation", async () => {
+  const longDescription = "D".repeat(600);
+  const stub = stubFetch(() => ({
+    ok: true,
+    payload: [
+      {
+        id: "feed-1",
+        title: "Newsmax",
+        url: "https://newsmax.com/rss",
+        description: longDescription,
+        is_active: true,
+        last_error: null,
+      },
+      { id: "feed-2", title: "Fox News", url: "https://foxnews.com/rss", description: null, is_active: false, last_error: "timeout" },
+    ],
+  }));
+  try {
+    const result = await runJuniorTool("list_feeds", "{}");
+    assert.ok(stub.calls.some((call) => call.url.includes("/api/v1/feeds")), "list_feeds must GET /api/v1/feeds");
+    assert.match(result, /You follow 2 feeds/);
+    assert.match(result, /"Newsmax" \(https:\/\/newsmax\.com\/rss\)/);
+    assert.match(result, /"Fox News" \(https:\/\/foxnews\.com\/rss\) \[paused\] \[last refresh failed\]/);
+    // Descriptions are truncated so the spoken list stays short.
+    assert.ok(!result.includes("D".repeat(600)), "descriptions must be truncated");
+    assert.ok(result.includes("D".repeat(240)));
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool search_articles maps q/feed/saved_only onto the query string", async () => {
+  const stub = stubFetch((url) => {
+    if (url.includes("/api/v1/feeds")) {
+      return { ok: true, payload: [{ id: "feed-1", title: "Newsmax", url: "https://newsmax.com/rss" }] };
+    }
+    // The articles route returns a Page envelope.
+    return {
+      ok: true,
+      payload: {
+        items: [
+          {
+            id: "art-1",
+            title: "Markets rally",
+            feed_title: "Newsmax",
+            url: "https://newsmax.com/a1",
+            summary: "S".repeat(600),
+            is_saved: true,
+            is_read: false,
+          },
+        ],
+        total: 1,
+        limit: 20,
+        offset: 0,
+      },
+    };
+  });
+  try {
+    const result = await runJuniorTool(
+      "search_articles",
+      '{"query":"markets","feed":"Newsmax","saved_only":true,"limit":5}',
+    );
+    const articlesCall = stub.calls.find((call) => call.url.includes("/api/v1/articles"));
+    assert.ok(articlesCall, "search_articles must GET /api/v1/articles");
+    const url = articlesCall!.url;
+    assert.match(url, /q=markets/, "the free-text query maps onto q");
+    assert.match(url, /feed_id=feed-1/, "the feed TITLE resolves to feed_id via list_feeds");
+    assert.match(url, /saved=true/, "saved_only maps onto saved");
+    assert.match(url, /limit=5/, "limit maps onto limit");
+    assert.match(result, /"Markets rally" from Newsmax/);
+    assert.match(result, /\[saved\]/);
+    assert.match(result, /\(id: art-1\)/);
+    assert.ok(!result.includes("S".repeat(600)), "summaries must be truncated");
+    assert.ok(result.includes("S".repeat(500)));
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool search_articles speaks a helpful error for an unknown feed title", async () => {
+  const stub = stubFetch((url) => {
+    if (url.includes("/api/v1/feeds")) {
+      return { ok: true, payload: [{ id: "feed-1", title: "Newsmax", url: "https://newsmax.com/rss" }] };
+    }
+    return { ok: true, payload: { items: [], total: 0, limit: 20, offset: 0 } };
+  });
+  try {
+    const result = await runJuniorTool("search_articles", '{"feed":"Medium"}');
+    assert.match(result, /don't have a feed called "Medium"/);
+    assert.ok(!stub.calls.some((call) => call.url.includes("/api/v1/articles")), "no article search without a feed");
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool read_article returns the full text and continues by offset", async () => {
+  const text = "a".repeat(DOC_READ_CHARS + 500);
+  const stub = stubFetch(() => ({
+    ok: true,
+    payload: {
+      id: "art-1",
+      title: "Long Newsmax piece",
+      feed_title: "Newsmax",
+      url: "https://newsmax.com/a1",
+      summary: "A long piece.",
+      content_text: text,
+    },
+  }));
+  try {
+    const result = await runJuniorTool("read_article", '{"id":"art-1"}');
+    assert.ok(stub.calls.some((call) => call.url.includes("/api/v1/articles/art-1")));
+    assert.match(result, /"Long Newsmax piece" from Newsmax/);
+    assert.match(result, /Summary: A long piece\./);
+    // The first chunk is exactly the read cap and announces the continuation —
+    // the same speakable marker get_document uses.
+    assert.ok(result.includes("[excerpt"), "an oversized article must carry the continuation marker");
+    assert.ok(result.includes(DOC_READ_CHARS.toLocaleString("en-US")));
+    const firstText = result
+      .slice(result.indexOf("Text: ") + "Text: ".length)
+      .replace(/ \[excerpt[^\]]*\]$/, "");
+    assert.equal(firstText.length, DOC_READ_CHARS, "the first chunk is exactly the read cap");
+    assert.equal(firstText, text.slice(0, DOC_READ_CHARS));
+  } finally {
+    stub.restore();
+  }
+
+  const stub2 = stubFetch(() => ({
+    ok: true,
+    payload: { id: "art-1", title: "Long Newsmax piece", feed_title: "Newsmax", content_text: text },
+  }));
+  try {
+    const result = await runJuniorTool("read_article", `{"id":"art-1","offset":${DOC_READ_CHARS}}`);
+    const tail = result.slice(result.indexOf("Text: ") + "Text: ".length);
+    assert.equal(tail, text.slice(DOC_READ_CHARS), "the continuation chunk holds exactly the tail");
+    assert.ok(!result.includes("[excerpt"), "the final chunk needs no continuation marker");
+  } finally {
+    stub2.restore();
+  }
+});
+
 test("runJuniorTool list_drafts and read_document_file hit their endpoints", async () => {
   const stub = stubFetch((url) => {
     if (url.includes("/files/")) {
@@ -522,6 +664,16 @@ test("JUNIOR_TALK_INSTRUCTIONS carves out read-aloud from the short-reply defaul
   assert.match(JUNIOR_TALK_INSTRUCTIONS, /do NOT summarize/);
   assert.match(JUNIOR_TALK_INSTRUCTIONS, /Summarize ONLY when he asks/);
   assert.match(JUNIOR_TALK_INSTRUCTIONS, /want me to keep reading/);
+});
+
+test("JUNIOR_TALK_INSTRUCTIONS separates feed tools from library tools", () => {
+  // The two systems must be named apart so the model picks the right one.
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /RSS FEEDS/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /LIBRARY documents/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /list_feeds/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /search_articles/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /read_article/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /'my article' or 'my feed', prefer the feed tools/);
 });
 
 test("JUNIOR_TALK_INSTRUCTIONS names every tool and the never-send rule", () => {
