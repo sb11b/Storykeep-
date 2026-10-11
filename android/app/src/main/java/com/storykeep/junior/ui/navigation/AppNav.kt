@@ -1,7 +1,6 @@
 package com.storykeep.junior.ui.navigation
 
 import android.app.Application
-import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModel
@@ -15,7 +14,6 @@ import androidx.navigation.navArgument
 import com.storykeep.junior.data.BottomTab
 import com.storykeep.junior.data.EntryMode
 import com.storykeep.junior.data.JuniorSession
-import com.storykeep.junior.data.PrefsStoryStore
 import com.storykeep.junior.audio.MediaTalkPlayer
 import com.storykeep.junior.ui.conversation.ConversationScreen
 import com.storykeep.junior.ui.home.HomeScreen
@@ -33,16 +31,8 @@ class JuniorSessionFactory(
     private val application: Application,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        val prefs = application.getSharedPreferences(
-            PrefsStoryStore.PREFS_NAME,
-            Context.MODE_PRIVATE,
-        )
-        return JuniorSession(
-            storyStore = PrefsStoryStore(prefs),
-            player = MediaTalkPlayer(application),
-        ) as T
-    }
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        JuniorSession(player = MediaTalkPlayer(application)) as T
 }
 
 @Composable

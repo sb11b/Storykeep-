@@ -11,11 +11,14 @@ import com.storykeep.junior.audio.TalkRecorder
 import com.storykeep.junior.network.ApiCallException
 import com.storykeep.junior.network.ApiError
 import com.storykeep.junior.network.ConversationTransport
+import com.storykeep.junior.network.JuniorDocumentDto
 import com.storykeep.junior.network.JuniorProjectDto
 import com.storykeep.junior.network.JuniorSharedMessageDto
 import com.storykeep.junior.network.JuniorSharedThreadDto
 import com.storykeep.junior.network.NetworkConversationTransport
+import com.storykeep.junior.network.NetworkStoryTransport
 import com.storykeep.junior.network.NetworkTalkTransport
+import com.storykeep.junior.network.StoryTransport
 import com.storykeep.junior.network.TalkResult
 import com.storykeep.junior.network.TalkTransport
 import kotlinx.coroutines.Dispatchers
@@ -52,14 +55,21 @@ data class ConversationMessage(
  * Loading and failures surface honestly through [conversationLoading] /
  * [conversationError].
  *
+ * Stories are real (slice 4): the Stories screen lists real documents from
+ * the shared-memory API through [StoryTransport] — the backend is the source
+ * of truth, there is no on-device story store. Saving a story from
+ * Conversation posts to the real create-or-update route
+ * (`POST /junior/documents`, upsert by slug); loading and failures surface
+ * honestly through [storiesLoading] / [storiesError].
+ *
  * Product lock: Talk dies on Type / End / leave / lock / network loss, and
  * an offline STT/TTS call kills it with [TalkKillReason.NetworkLost]. No new
  * kill reasons. The Conversation venue never adds kill reasons of its own.
  */
 class JuniorSession(
-    private val storyStore: StoryStore = MemoryStoryStore(),
     private val talkTransport: TalkTransport = NetworkTalkTransport(),
     private val conversationTransport: ConversationTransport = NetworkConversationTransport(),
+    private val storyTransport: StoryTransport = NetworkStoryTransport(),
     private val recorder: TalkRecorder = TalkRecorder(),
     private val player: TalkPlayer = NoopTalkPlayer(),
 ) : ViewModel() {
@@ -68,6 +78,8 @@ class JuniorSession(
     private var turnJob: Job? = null
     private var conversationJob: Job? = null
     private var sendJob: Job? = null
+    private var storiesJob: Job? = null
+    private var saveStoryJob: Job? = null
 
     var bottomTab: BottomTab by mutableStateOf(BottomTab.Talk)
         private set
@@ -75,7 +87,20 @@ class JuniorSession(
     var lastSpoke: String by mutableStateOf("Last time we spoke — a placeholder until the first save.")
         private set
 
-    var stories: List<SavedStory> by mutableStateOf(storyStore.load())
+    /** Real saved stories (documents) from the shared-memory API, newest first. */
+    var stories: List<JuniorDocumentDto> by mutableStateOf(emptyList())
+        private set
+
+    /** True while the Stories list load is in flight. */
+    var storiesLoading: Boolean by mutableStateOf(false)
+        private set
+
+    /** The last mapped Stories failure, or null. Offline shows a retry. */
+    var storiesError: ApiError? by mutableStateOf(null)
+        private set
+
+    /** True while a story save (POST /junior/documents) is in flight. */
+    var storiesSaving: Boolean by mutableStateOf(false)
         private set
 
     var weeklyQuestion: String by mutableStateOf(
@@ -204,20 +229,65 @@ class JuniorSession(
         postTypedMessage(text)
     }
 
+    /**
+     * Saves the current transcript as a story through the real backend:
+     * `POST /junior/documents` (upsert by slug). Returns false when there is
+     * nothing to save; true means the save started.
+     *
+     * The post runs on viewModelScope (off the main thread); the returned
+     * document is prepended to [stories] and [savedThisTurn] is marked only
+     * on success. A failed save surfaces honestly through [storiesError] and
+     * leaves the turn unsaved, so the caller can try again.
+     */
     fun saveAsStory(): Boolean {
         val body = conversationBody().ifBlank { return false }
-        stories = listOf(
-            SavedStory(
-                title = conversationTitle(),
-                body = body,
-                whenLabel = "Just now · transcript only",
-            ),
-        ) + stories
-        storyStore.save(stories)
-        lastSpoke = "Last time we spoke — just now. You saved a transcript."
-        core.markSaved()
-        publish()
+        val title = conversationTitle()
+        saveStoryJob?.cancel()
+        saveStoryJob = viewModelScope.launch {
+            storiesSaving = true
+            storyTransport.saveStory(
+                slug = storySlug(title),
+                title = title,
+                text = body,
+            ).fold(
+                onSuccess = { saved ->
+                    stories = listOf(saved) + stories.filterNot { it.slug == saved.slug }
+                    storiesError = null
+                    lastSpoke = "Last time we spoke — just now. You saved a transcript."
+                    core.markSaved()
+                    publish()
+                },
+                onFailure = { error ->
+                    storiesError = apiErrorOf(error)
+                },
+            )
+            storiesSaving = false
+        }
         return true
+    }
+
+    /**
+     * Loads the Stories list: `GET /junior/documents`, first page. The
+     * backend is the source of truth — no on-device story store exists
+     * anymore. Off-main-thread via viewModelScope; a failure maps onto
+     * [storiesError] and the previous list stays on screen.
+     */
+    fun loadStories() {
+        storiesJob?.cancel()
+        storiesJob = viewModelScope.launch {
+            storiesLoading = true
+            storiesError = null
+            storyTransport.listStories().fold(
+                onSuccess = { docs -> stories = docs },
+                onFailure = { error -> storiesError = apiErrorOf(error) },
+            )
+            storiesLoading = false
+        }
+    }
+
+    /** Re-runs [loadStories] — the retry affordance for an error state. */
+    fun retryStories() {
+        loadStories()
     }
 
     /**
@@ -357,6 +427,27 @@ class JuniorSession(
 
         private const val NO_THREAD_REPLY =
             "No thread is loaded yet, so this stayed on the device. It will send once a conversation loads."
+
+        /** Max slug length the backend accepts (JuniorDocumentIn.slug max_length=64). */
+        private const val SLUG_MAX = 63
+
+        /**
+         * Derives a document slug from a story title: lowercase, spaces and
+         * runs of non-alphanumerics collapse to single hyphens, trimmed to
+         * the backend's 64-char limit. An all-symbol title falls back to
+         * "story" so the slug is never empty (the backend rejects it).
+         */
+        private fun storySlug(title: String): String {
+            val cleaned = title.lowercase()
+                .map { if (it.isLetterOrDigit()) it else '-' }
+                .joinToString("")
+                .split('-')
+                .filter { it.isNotEmpty() }
+                .joinToString("-")
+                .take(SLUG_MAX)
+                .trim('-')
+            return cleaned.ifEmpty { "story" }
+        }
     }
 
     fun leaveConversation() {

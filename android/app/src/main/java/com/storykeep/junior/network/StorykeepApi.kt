@@ -89,6 +89,36 @@ interface StorykeepApi {
         @Path("threadId") threadId: String,
         @Body body: JuniorSharedMessageInDto,
     ): JuniorSharedMessagePostOutDto
+
+    // ---- Stories (slice 4): shared-memory documents ----
+
+    /**
+     * The owner's saved stories (junior_shared_documents.list_documents →
+     * `GET /junior/documents`). The Stories screen is this list.
+     *
+     * The backend defaults to limit=50 and sets X-Has-More / X-Next-Cursor
+     * response headers for pagination; those are deliberately not modelled
+     * here yet — the screen shows the first page only until paging is asked
+     * for.
+     */
+    @GET("junior/documents")
+    suspend fun listDocuments(): List<JuniorDocumentDto>
+
+    /**
+     * One story by slug (junior_shared_documents.get_document →
+     * `GET /junior/documents/{slug}`). A 404 means the slug is not yours.
+     */
+    @GET("junior/documents/{slug}")
+    suspend fun getDocument(@Path("slug") slug: String): JuniorDocumentDto
+
+    /**
+     * Creates or updates one story (junior_shared_documents.create_or_update_document →
+     * `POST /junior/documents`). The same call creates and updates — the
+     * backend upserts by slug — so saving from Conversation posts here and
+     * the returned document becomes the truth for that slug.
+     */
+    @POST("junior/documents")
+    suspend fun createOrUpdateDocument(@Body body: JuniorDocumentInDto): JuniorDocumentDto
 }
 
 /** Mirrors ProfileOut from backend/app/schemas.py. */
@@ -197,3 +227,39 @@ data class JuniorSharedMessagePostOutDto(
 
 /** The backend's default venue (JuniorSharedMessageIn.venue default). */
 const val DEFAULT_VENUE = "storykeep"
+
+// ---- Stories DTOs (slice 4) ----
+//
+// Every class below mirrors its Pydantic model in backend/app/schemas.py
+// field for field: same JSON names, same nullability, same defaults.
+// UUIDs and datetimes travel as JSON strings.
+
+/**
+ * Request body of POST /junior/documents — mirrors JuniorDocumentIn
+ * (schemas.py). [slug] identifies the document (1–64 chars); the backend
+ * upserts by slug, so a second post with the same slug updates it.
+ * [text] defaults to ""; [summary] is optional.
+ */
+@Serializable
+data class JuniorDocumentInDto(
+    val slug: String,
+    val title: String,
+    val text: String = "",
+    val summary: String? = null,
+)
+
+/**
+ * Mirrors JuniorDocumentOut (schemas.py). The list, get, and create/update
+ * responses all carry this shape: [id], [createdAt], and [updatedAt] are
+ * backend-generated; [summary] is null when none was set.
+ */
+@Serializable
+data class JuniorDocumentDto(
+    val id: String,
+    val slug: String,
+    val title: String,
+    val text: String,
+    val summary: String? = null,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
