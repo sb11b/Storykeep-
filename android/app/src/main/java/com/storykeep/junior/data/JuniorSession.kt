@@ -365,7 +365,7 @@ class JuniorSession(
                 onSuccess = { turn ->
                     messages = messages +
                         turn.userMessage.toConversationMessage() +
-                        (turn.juniorMessage?.toConversationMessage() ?: emptyList())
+                        listOfNotNull(turn.juniorMessage?.toConversationMessage())
                 },
                 onFailure = { error ->
                     conversationError = apiErrorOf(error)

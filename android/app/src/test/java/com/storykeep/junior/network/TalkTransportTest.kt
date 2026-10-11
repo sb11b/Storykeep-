@@ -179,7 +179,7 @@ class TalkTransportTest {
     }
 
     private companion object {
-        const val DISCONNECT_AT_START =
+        val DISCONNECT_AT_START =
             okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AT_START
     }
 }
