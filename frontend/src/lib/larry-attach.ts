@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api";
-import { apiUrl } from "@/lib/api-base";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 
 export const LARRY_ATTACH_ACCEPT = ".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.gif,.webp,.csv";
@@ -114,6 +114,8 @@ export async function uploadLarryAttachment(file: File): Promise<PendingAttachme
       body,
       credentials: "include",
       cache: "no-store",
+      // Desktop: bearer token (empty on the web app — cookie session only).
+      headers: authHeaders(),
     });
     status = response.status;
     if (!response.ok) {

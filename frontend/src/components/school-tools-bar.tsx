@@ -5,7 +5,7 @@ import { FileDown, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
-import { apiUrl } from "@/lib/api-base";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 import { sanitizeHtml } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import type { GrokMessage } from "@/lib/types";
@@ -222,7 +222,7 @@ async function downloadSchoolDocx(markdown: string) {
       method: "POST",
       credentials: "include",
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ markdown }),
     });
     if (!response.ok) throw new Error("Could not download that Word file.");

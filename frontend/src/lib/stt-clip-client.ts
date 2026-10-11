@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api";
-import { apiUrl } from "@/lib/api-base";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 import { formatSttEmptyHint, prepareSttUpload, STT_MODEL } from "@/lib/stt-upload";
 
@@ -48,6 +48,7 @@ export async function transcribeClip(
       signal: controller.signal,
       credentials: "include",
       cache: "no-store",
+      headers: authHeaders(),
     });
     status = response.status;
     const data = (await response.json()) as {

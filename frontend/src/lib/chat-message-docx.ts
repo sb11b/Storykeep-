@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api";
-import { apiUrl } from "@/lib/api-base";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 import { httpErrorFallback, parseErrorPayload } from "@/lib/api-errors";
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -94,6 +94,7 @@ export async function downloadChatMessageDocx(messageId: string, options?: { cle
     method: "POST",
     credentials: "include",
     cache: "no-store",
+    headers: authHeaders(),
   });
   if (!response.ok) {
     let detail: string | null = null;

@@ -36,7 +36,11 @@ export default function LoginPage() {
     setBusy(true);
     try {
       if (mode === "register") {
-        await api.register(email, password, displayName || undefined);
+        // register returns access_token (auth.py TokenOut) — store it like
+        // login does, or the desktop window's next api.me() 401s on the
+        // cross-site cookie and bounces straight back to /login.
+        const registered = await api.register(email, password, displayName || undefined);
+        setAuthToken(registered.access_token ?? null);
         await clearPwaApiCaches();
         router.replace("/");
         return;

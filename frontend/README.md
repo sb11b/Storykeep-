@@ -119,25 +119,42 @@ would load and every API call would come back 401 if the app relied on the
 cookie alone. It does not: the desktop app authenticates with a **bearer
 token**.
 
-- `/api/v1/auth/login` (and `/api/v1/auth/login/2fa`) already return
-  `access_token` in the response body (`backend/app/schemas.py`), and the
-  backend already accepts `Authorization: Bearer <token>` ahead of the cookie
+- `/api/v1/auth/login`, `/api/v1/auth/login/2fa` and
+  `/api/v1/auth/register` all return `access_token` in the response body
+  (`backend/app/schemas.py`), and the backend accepts
+  `Authorization: Bearer <token>` ahead of the cookie
   (`backend/app/deps.py` `get_current_user` checks the header first).
 - `src/app/login/page.tsx` stores that token via `setAuthToken()` from
-  `src/lib/api-base.ts`, and `request()` in `src/lib/api.ts` attaches it as an
-  `Authorization` header on every call. The web app never sets a token, so it
-  stays cookie-based and unchanged — SameSite simply stops mattering for the
-  desktop app.
-- **No backend change was needed** for authentication, and no new dependency
-  was added.
+  `src/lib/api-base.ts` — on login, on 2FA verification, and on register.
+- `request()` in `src/lib/api.ts` attaches it as an `Authorization` header on
+  every call, and the direct `fetch()` sites (Word downloads, media
+  upload/download, STT clips, TTS chunks, PDF snapshots) use the shared
+  `authHeaders()` helper from `src/lib/api-base.ts` for the same purpose.
+- `<img src>` and other subresources cannot set headers, and Lax cookies are
+  not sent on cross-site subresource loads, so the **service worker** injects
+  the bearer header for fetches to the API origin (`public/sw.js`). The token
+  is mirrored to the worker from `setAuthToken()`.
+- The STT dictation WebSocket cannot set headers either, so the client appends
+  `?token=<token>` to the socket URL and the backend accepts it as a fallback
+  **only when the cookie is absent** (`backend/app/routers/stt.py`, verified
+  through the same `deps.py` token-verification helper the bearer header
+  uses).
+- The web app never sets a token, so it stays cookie-based and unchanged.
 
 Trade-offs, stated honestly:
 
 - The token lives in **JS memory only** — never `localStorage`, never a
-  cookie. It is gone on reload, so **restarting the desktop app requires
-  signing in again**. That is deliberate: a persisted bearer token is a
-  long-lived credential sitting on disk.
-- Logout clears it (`setAuthToken(null)` in `library-app.tsx`).
+  cookie — plus **service-worker memory** for the desktop app (the worker
+  holds the same in-memory token to authenticate subresources). Neither is
+  persisted to disk; both die with the browser profile, so **restarting the
+  desktop app requires signing in again**. That is deliberate: a persisted
+  bearer token is a long-lived credential sitting on disk.
+- The `?token=` query fallback on the STT WebSocket exists because a browser
+  WebSocket cannot set an `Authorization` header. **Query-param tokens can
+  appear in access logs**, which is why it is strictly a fallback (cookie
+  first) and is never used on the web app.
+- Logout clears it (`setAuthToken(null)` in `library-app.tsx`, which also
+  tells the service worker to drop the token).
 - Requests still send `credentials: "include"` as well, so the web app's
   cookie path is untouched.
 

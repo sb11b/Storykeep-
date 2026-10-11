@@ -83,21 +83,57 @@ self.addEventListener("activate", (event) => {
 // request and the library would never cache for offline. The client posts the
 // origin once per load (see pwa-register.tsx); empty = dev, same-origin proxy.
 let API_ORIGIN = "";
+//
+// "auth-token": the bearer token for the packaged desktop window, mirrored
+// from setAuthToken() in api-base.ts (null on logout). <img src> loads and
+// other subresources to the API origin cannot set an Authorization header
+// themselves, and SameSite=Lax cookies are not sent on cross-site subresource
+// requests — so the worker injects the header for API-origin fetches below.
+// Memory-only: this variable lives in the SW global and dies with the browser
+// profile. Never set on the web app (cookie session), so nothing is touched
+// there.
+let AUTH_TOKEN = null;
 
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (data && data.type === "api-origin" && typeof data.origin === "string") {
     API_ORIGIN = data.origin.replace(/\/+$/, "");
   }
+  if (data && data.type === "auth-token") {
+    AUTH_TOKEN = typeof data.token === "string" && data.token ? data.token : null;
+  }
   if (data && data.type === "auth-change") {
     event.waitUntil(caches.delete(API_CACHE));
   }
 });
 
+/**
+ * Add the bearer token to a request when it is missing. Only ever called for
+ * API-origin requests with a token set (the desktop window); the web app
+ * keeps its cookie session untouched.
+ */
+function withBearer(request) {
+  if (!AUTH_TOKEN || !API_ORIGIN) return request;
+  if (new URL(request.url).origin !== API_ORIGIN) return request;
+  if (request.headers.has("Authorization")) return request;
+  const headers = new Headers(request.headers);
+  headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
+  return new Request(request, { headers });
+}
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") {
-    // Mutations: straight to the network, never cached, never faked.
+    // Mutations: straight to the network, never cached, never faked. Still
+    // authenticated — a cross-origin POST from the desktop window needs the
+    // bearer header the same way an <img> does.
+    if (new URL(request.url).origin === API_ORIGIN && AUTH_TOKEN) {
+      const authed = withBearer(request);
+      if (authed !== request) {
+        event.respondWith(fetch(authed));
+        return;
+      }
+    }
     return;
   }
 
@@ -106,15 +142,22 @@ self.addEventListener("fetch", (event) => {
   const isApiOrigin = Boolean(API_ORIGIN) && url.origin === API_ORIGIN;
   if (!isAppOrigin && !isApiOrigin) return;
 
+  // Subresources (avatars, chat pictures, markdown images) to the API origin
+  // cannot carry the header themselves — attach it here. The request is then
+  // handed to the same strategy functions below, which use it for both the
+  // cache key and the network fetch, so the Junior library keeps its
+  // stale-while-revalidate caching (the header is per-request, not cached).
+  const authed = isApiOrigin && AUTH_TOKEN ? withBearer(request) : request;
+
   // 1. Navigation requests: network-first, cached shell when offline.
   if (request.mode === "navigate") {
-    event.respondWith(navigationStrategy(request));
+    event.respondWith(navigationStrategy(authed));
     return;
   }
 
   // 2. Junior API GETs: stale-while-revalidate (the "library").
   if (STALE_WHILE_REVALIDATE_PREFIXES.some((p) => url.pathname.startsWith(p))) {
-    event.respondWith(staleWhileRevalidate(request, API_CACHE));
+    event.respondWith(staleWhileRevalidate(authed, API_CACHE));
     return;
   }
 

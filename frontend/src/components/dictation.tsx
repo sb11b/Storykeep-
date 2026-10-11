@@ -11,7 +11,7 @@ import {
 } from "react";
 import { Mic } from "lucide-react";
 import { toast } from "sonner";
-import { apiWsUrl } from "@/lib/api-base";
+import { AUTH_TOKEN, apiWsUrl } from "@/lib/api-base";
 import { appendSpoken, newFinalSegment, normalizeSpoken } from "@/lib/stt-buffer";
 import {
   MIC_DENIED_TOAST,
@@ -261,6 +261,13 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           const protocol = window.location.protocol === "https:" ? "wss" : "ws";
           const params = new URLSearchParams();
           if (sessionContinuous) params.set("continuous", "true");
+          // A browser WebSocket cannot set an Authorization header, and the
+          // SameSite=Lax cookie is not sent cross-site from the packaged
+          // window — so pass the bearer token as a query param. The backend
+          // only uses it as a fallback when the cookie is absent, so the web
+          // app's cookie auth is unchanged (and no token is ever appended
+          // there). Trade-off: query-param tokens can appear in access logs.
+          if (AUTH_TOKEN) params.set("token", AUTH_TOKEN);
           // Packaged builds (Tauri / static export) have no same-origin proxy:
           // dial the configured API origin instead of window.location.
           const socket = new WebSocket(

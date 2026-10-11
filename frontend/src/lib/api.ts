@@ -36,7 +36,7 @@ import type {
 } from "./types";
 
 import { httpErrorFallback, INVALID_ID_TOAST, isFeedId, isUuid, parseErrorPayload } from "@/lib/api-errors";
-import { apiUrl, AUTH_TOKEN } from "@/lib/api-base";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 import {
   CHAT_CREATE_TIMEOUT_TOAST,
   INVALID_CHAT_TOAST,
@@ -89,8 +89,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // tauri.localhost, so attach the login access_token as a bearer header.
   // The backend checks the header first (backend/app/deps.py) and falls back
   // to the cookie, so the web app (AUTH_TOKEN unset) is unaffected.
-  if (AUTH_TOKEN && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
+  for (const [name, value] of Object.entries(authHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
   }
   const response = await fetch(apiUrl(path), {
     ...init,
@@ -203,7 +203,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   register: (email: string, password: string, display_name?: string) =>
-    request<{ user: User }>("/api/v1/auth/register", {
+    request<{ user: User; access_token?: string }>("/api/v1/auth/register", {
       method: "POST",
       body: JSON.stringify({ email, password, display_name }),
     }),

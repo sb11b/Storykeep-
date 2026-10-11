@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api-base";
+import { apiUrl, authHeaders } from "@/lib/api-base";
 
 const MEDIA_ID = /\/api\/v1\/media\/([0-9a-fA-F-]{36})/;
 const UUID = /^[0-9a-fA-F-]{36}$/;
@@ -113,6 +113,7 @@ export async function downloadChatPicture(options: {
   const response = await fetch(downloadUrl, {
     method: "GET",
     credentials: "include",
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new MediaDownloadError(

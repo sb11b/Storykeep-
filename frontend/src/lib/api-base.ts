@@ -43,6 +43,45 @@ export let AUTH_TOKEN: string | null = null;
 
 export function setAuthToken(token: string | null): void {
   AUTH_TOKEN = token?.trim() || null;
+  postAuthTokenToServiceWorker(AUTH_TOKEN);
+}
+
+/**
+ * Authorization header for the desktop app, `{}` on the web app.
+ *
+ * `request()` in api.ts uses this already, but several code paths call
+ * `fetch()` directly (docx downloads, media uploads/downloads, STT clips, TTS
+ * chunks, PDF snapshots). Those endpoints sit behind `Depends(get_current_user)`,
+ * so without this header they 401 in the packaged window where the SameSite=Lax
+ * cookie is not sent cross-site. With no token set (the web app) this is an
+ * empty object and behaviour is unchanged.
+ */
+export function authHeaders(): Record<string, string> {
+  return AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {};
+}
+
+/**
+ * Mirror the token to the service worker so it can authenticate
+ * `<img src>` and other subresource loads to the API origin, which cannot
+ * carry an Authorization header themselves. Best-effort: no service worker
+ * (dev without registration, tests, unsupported browsers) is a silent no-op.
+ * The token stays in memory only — never persisted, never written to disk.
+ */
+function postAuthTokenToServiceWorker(token: string | null): void {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const message = { type: "auth-token", token };
+    navigator.serviceWorker.controller?.postMessage(message);
+    // Cold first load: this page is not yet controlled, so the controller is
+    // null. `ready` resolves once a registration exists and its active worker
+    // receives the message instead.
+    void navigator.serviceWorker.ready
+      .then((registration) => registration.active?.postMessage(message))
+      .catch(() => {});
+  } catch {
+    // Service worker support absent or messaging failed — API fetches that
+    // pass headers explicitly still work; subresources simply stay unauthed.
+  }
 }
 
 /**

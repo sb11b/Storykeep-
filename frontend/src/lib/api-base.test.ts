@@ -48,6 +48,37 @@ test("resolveChatImageSrc makes server-emitted relative media srcs absolute", as
   assert.equal(mediaDownloadUrl(ID), `${ORIGIN}${relative}`);
 });
 
+test("authHeaders carries the bearer token and is empty on the web app", async () => {
+  const base = await import("./api-base");
+  // No token (web app): empty object — cookie session only, behaviour unchanged.
+  assert.deepEqual(base.authHeaders(), {});
+  base.setAuthToken("  token-xyz  ");
+  assert.deepEqual(base.authHeaders(), { Authorization: "Bearer token-xyz" });
+  base.setAuthToken(null);
+  assert.deepEqual(base.authHeaders(), {});
+});
+
+test("renderMarkdown resolves relative media URLs against the API origin", async () => {
+  // Imported after the origin env var is set at the top of this file, so the
+  // packaged-build path (relative media src -> absolute API origin) is what
+  // runs here.
+  const { renderMarkdown } = await import("./markdown");
+  const relative = `/api/v1/media/${ID}`;
+  const html = renderMarkdown(`![cat](${relative})`);
+  assert.ok(html.includes(`src="${ORIGIN}${relative}"`), `img src not origin-resolved: ${html}`);
+  assert.ok(
+    html.includes(`data-media-url="${ORIGIN}${relative}"`),
+    `data-media-url not origin-resolved: ${html}`,
+  );
+  // An already-absolute media URL is never re-prefixed.
+  const absoluteHtml = renderMarkdown(`![cat](${ORIGIN}${relative})`);
+  assert.ok(absoluteHtml.includes(`src="${ORIGIN}${relative}"`));
+  // File attachments (MEDIA_FILE) get the same treatment on href.
+  const fileHtml = renderMarkdown(`[report.pdf](${relative})`);
+  assert.ok(fileHtml.includes(`href="${ORIGIN}${relative}"`), `href not origin-resolved: ${fileHtml}`);
+  assert.ok(fileHtml.includes(`download="report.pdf"`));
+});
+
 test("request() attaches the bearer token once one is set", async () => {
   const { api } = await import("./api");
   const base = await import("./api-base");
