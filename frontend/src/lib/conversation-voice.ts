@@ -137,7 +137,7 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "say 'That's the first part — want me to keep reading?' " +
   "and when he says yes or continue, call the tool again with the offset where the last chunk ended. " +
   "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering. " +
-  "Make at most ONE search per question, then answer from what you found — never chain search after search, and never keep going after you have answered. " +
+  "Make at most ONE search per question, then answer from what you found — never chain search after search, and never keep searching after you have answered. " +
   "You can also search X (Twitter) with x_search — use it when Steve asks about reactions, trends, or 'what are people saying on X or Twitter'. " +
   "If Steve goes quiet, stay quiet — wait for him to speak; do not fill the silence.";
 
@@ -151,7 +151,8 @@ export function buildRealtimeUrl(conversationId?: string | null): string {
  * The session.update payload: low latency, server VAD, 24kHz PCM16 in and
  * out, plus the verified xAI voice capabilities folded in this slice:
  * keyterms + language_hint (ASR accuracy), output speed, a pronunciation
- * replace map, the x_search tool, idle_timeout_ms, and adaptive reasoning.
+ * replace map, the x_search tool, and adaptive reasoning. (idle_timeout_ms
+ * was folded in and then REMOVED — see the E note above turn_detection.)
  * All of these were verified live against
  * wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-2.0 — a single
  * session.update carrying every one returned session.updated with zero
