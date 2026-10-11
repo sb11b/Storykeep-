@@ -62,6 +62,15 @@ export function useConversationVoice({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualStopRef = useRef(false);
   const startingRef = useRef(false);
+  /**
+   * Monotonic session generation. Every start() invocation captures its own
+   * generation and re-checks it after each await; stop() and any newer start()
+   * bump the counter, so a superseded start bails instead of building a second
+   * socket/mic/context alongside the live one. A single shared boolean cannot
+   * distinguish two in-flight starts — that race leaked a duplicate mic and
+   * cross-fed the new socket with the stale one.
+   */
+  const sessionRef = useRef(0);
   const statusRef = useRef<ConversationStatus>("idle");
   const onUserTranscriptRef = useRef(onUserTranscript);
   const onStatusChangeRef = useRef(onStatusChange);
@@ -165,6 +174,9 @@ export function useConversationVoice({
   }, []);
 
   const stop = useCallback(() => {
+    // Invalidate every in-flight start() — a superseded start bails at its
+    // next generation re-check without building a second session.
+    sessionRef.current += 1;
     manualStopRef.current = true;
     startingRef.current = false;
     clearReconnectTimer();
@@ -224,12 +236,15 @@ export function useConversationVoice({
 
   const start = useCallback(
     async (resume = false) => {
+      const active = statusRef.current !== "idle";
+      if (active) return;
       // A user-initiated stop cancels the CURRENT session only — re-arm so the
       // Talk button works again after "End conversation mode".
       manualStopRef.current = false;
-      if (startingRef.current) return;
-      const active = statusRef.current !== "idle";
-      if (active) return;
+      // This start supersedes any earlier in-flight start (rapid Talk taps):
+      // the generation is re-checked after every await, so a stale start bails
+      // without building a second socket/mic/context alongside the live one.
+      const session = ++sessionRef.current;
       startingRef.current = true;
       setStatusSafe("connecting");
       console.log("junior-talk", { action: resume ? "resume" : "start" });
@@ -240,6 +255,9 @@ export function useConversationVoice({
         token = tokenData.value;
         if (!token) throw new Error("Realtime token is empty.");
       } catch (error) {
+        // A newer start() or a stop() owns the session now — bail without
+        // touching shared state (startingRef/status belong to the newer one).
+        if (session !== sessionRef.current) return;
         startingRef.current = false;
         setStatusSafe("idle");
         // A 4xx from the token mint is a permanent auth failure — retrying a socket
@@ -251,13 +269,11 @@ export function useConversationVoice({
         scheduleReconnect();
         return;
       }
-      // The user may have tapped stop while the token was in flight.
-      if (manualStopRef.current) {
-        startingRef.current = false;
-        return;
-      }
+      // A newer start() or a stop() superseded this one while the token was in
+      // flight — bail before building anything.
+      if (session !== sessionRef.current) return;
 
-      let audioCtx: AudioContext;
+      let audioCtx: AudioContext | null = null;
       try {
         audioCtx = new AudioContext({ sampleRate: REALTIME_SAMPLE_RATE });
         // Assign before resume() so the failure path below can close it —
@@ -268,10 +284,20 @@ export function useConversationVoice({
           throw new Error("AudioContext failed to start.");
         }
       } catch {
+        if (session !== sessionRef.current) {
+          // Superseded mid-resume: close the context only if it is still ours.
+          if (audioCtx && audioCtxRef.current === audioCtx) closeAudioContext();
+          return;
+        }
         startingRef.current = false;
         closeAudioContext();
         setStatusSafe("idle");
         scheduleReconnect();
+        return;
+      }
+      // A stop() or a newer start() landed while the context was resuming.
+      if (session !== sessionRef.current) {
+        if (audioCtxRef.current === audioCtx) closeAudioContext();
         return;
       }
       nextStartTimeRef.current = audioCtx.currentTime + 0.05;
@@ -282,16 +308,20 @@ export function useConversationVoice({
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
       } catch (error) {
+        if (session !== sessionRef.current) {
+          if (audioCtxRef.current === audioCtx) closeAudioContext();
+          return;
+        }
         startingRef.current = false;
         closeAudioContext();
         setStatusSafe("idle");
         console.log("junior-talk", { action: "mic-fail", message: micDeniedMessage(error) });
         return;
       }
-      // The user may have tapped stop while the mic was being granted.
-      if (manualStopRef.current) {
-        startingRef.current = false;
-        closeAudioContext();
+      // The user may have tapped stop (or started a new session) while the mic
+      // was being granted — tear down everything this start created.
+      if (session !== sessionRef.current) {
+        if (audioCtxRef.current === audioCtx) closeAudioContext();
         for (const track of stream.getTracks()) {
           try {
             track.stop();
@@ -428,6 +458,7 @@ export function useConversationVoice({
 
   useEffect(() => {
     return () => {
+      sessionRef.current += 1;
       manualStopRef.current = true;
       clearReconnectTimer();
       teardownTransport();

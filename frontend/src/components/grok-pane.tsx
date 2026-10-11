@@ -1332,7 +1332,17 @@ export function GrokPane({
                 // Mutual exclusion: one mic per pane. The legacy STS/STT mic owns
                 // the capture while it is live, so Talk stands down (and vice
                 // versa — JuniorMicControls is not rendered while Talk is active).
-                disabled={locked || uploadingFiles || voice.sttBusy || voice.stsModeOn}
+                // 'connecting' is disabled too: the button must not be tappable
+                // mid-handshake, or a stop()+start() race can open a duplicate
+                // session (defense in depth — the hook's session generations are
+                // the real guard).
+                disabled={
+                  locked ||
+                  uploadingFiles ||
+                  voice.sttBusy ||
+                  voice.stsModeOn ||
+                  conversationStatus === "connecting"
+                }
                 aria-label={
                   conversationStatus !== "idle"
                     ? "End conversation mode"

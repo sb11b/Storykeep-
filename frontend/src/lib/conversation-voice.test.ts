@@ -405,6 +405,8 @@ let streams: FakeStream[] = [];
 /** Responses queued for the token endpoint; each entry is a status to fail with. */
 let tokenFailures: number[] = [];
 let tokenCalls = 0;
+/** When set, every token fetch parks on this promise until it is released. */
+let tokenGate: Promise<void> | null = null;
 
 function installFakes() {
   FakeAudioContext.instances = [];
@@ -412,6 +414,7 @@ function installFakes() {
   streams = [];
   tokenFailures = [];
   tokenCalls = 0;
+  tokenGate = null;
   const originals = {
     AudioContext: (globalThis as Record<string, unknown>).AudioContext,
     WebSocket: (globalThis as Record<string, unknown>).WebSocket,
@@ -434,6 +437,9 @@ function installFakes() {
     tokenCalls += 1;
     const failStatus = tokenFailures.shift();
     if (failStatus) throw new ApiError(failStatus, `HTTP ${failStatus}`);
+    // Park on the gate (if one is armed) before answering, so a start() can be
+    // suspended mid-handshake while the test drives stop()/start().
+    if (tokenGate) await tokenGate;
     return {
       ok: true,
       status: 200,
@@ -813,6 +819,119 @@ test("hook returns a stable object across renders", async () => {
     assert.equal(a, b, "same inputs must return the same object (useMemo)");
     assert.equal(typeof a.start, "function");
     assert.equal(typeof a.stop, "function");
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("rapid taps during connecting do not double-open the session", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const statuses: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+            onStatusChange: (s: string) => statuses.push(s),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    // Arm the gate so the token mint parks a start() mid-handshake.
+    let release!: () => void;
+    tokenGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    // Tap 1: start #1 parks on `await api.realtimeToken()`, status 'connecting'.
+    const first = start();
+    await flushMicrotasks();
+    assert.equal(statuses.at(-1), "connecting", "start #1 must reach the connecting state");
+    assert.equal(FakeWebSocket.instances.length, 0, "no socket may open before the token resolves");
+
+    // Tap 2: the Talk button was still enabled during 'connecting', so onClick
+    // calls stop() — which must invalidate the in-flight start #1.
+    stop();
+    assert.equal(statuses.at(-1), "idle");
+
+    // Tap 3: start #2 runs and supersedes start #1 with a fresh generation.
+    const second = start();
+    await flushMicrotasks();
+    assert.equal(statuses.at(-1), "connecting", "start #2 must reach the connecting state");
+
+    // Release both token fetches: start #1's mid-flight re-check must now bail.
+    release();
+    await Promise.all([first, second]);
+    await flushMicrotasks();
+
+    // THE FIX: exactly one live socket / AudioContext / mic stream. Before the
+    // session-generation guard the reviewer reproduced 2/2/2 here, with the
+    // stale mic cross-feeding the new socket through the shared wsRef.
+    assert.equal(FakeWebSocket.instances.length, 1, "rapid taps must open exactly one socket");
+    assert.equal(liveContexts(), 1, "rapid taps must create exactly one live AudioContext");
+    assert.equal(liveStreams(), 1, "rapid taps must capture exactly one live mic stream");
+    assert.equal(statuses.at(-1), "listening");
+
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("a user-initiated stop does not auto-reconnect", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const transcripts: string[] = [];
+    const statuses: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: (t: string) => transcripts.push(t),
+            onStatusChange: (s: string) => statuses.push(s),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    assert.equal(FakeWebSocket.instances.length, 1);
+
+    // Capture the close handler start() installed, then end the session —
+    // teardown nulls it on the socket itself, so this simulates a late close
+    // event racing the user's stop.
+    const ws = FakeWebSocket.instances[0];
+    const lateClose = ws.onclose;
+    stop();
+    lateClose?.();
+    await flushMicrotasks();
+    // Give any (wrongly scheduled) reconnect timer time to fire.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await flushMicrotasks();
+
+    // THE FIX: a user-initiated stop is final — no reconnect, no new socket.
+    assert.equal(FakeWebSocket.instances.length, 1, "a user stop must not reconnect");
+    assert.equal(statuses.at(-1), "idle", "status must stay idle after a user stop");
+    assert.equal(liveStreams(), 0, "no mic stream may survive a user stop");
+    assert.equal(liveContexts(), 0, "no AudioContext may survive a user stop");
+
     unmountHook(slots);
   } finally {
     restore();
