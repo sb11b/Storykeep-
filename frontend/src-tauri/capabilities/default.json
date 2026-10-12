@@ -1,7 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the StoryKeep desktop window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Default capability set for the StoryKeep desktop window and the overlay bubble",
+  "windows": ["main", "overlay"],
+  "permissions": [
+    "core:default",
+    "global-shortcut:default",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-current-monitor",
+    "core:window:allow-primary-monitor",
+    "core:window:allow-scale-factor"
+  ]
 }
