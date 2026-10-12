@@ -45,7 +45,6 @@ import {
   applyComposerStyle,
   COMPOSER_STYLE_OPTIONS,
   detectComposerStyle,
-  isPointStyle,
   type ComposerStyle,
 } from "@/lib/note-style";
 import { useComposerFont } from "@/components/composer-font";
@@ -476,22 +475,17 @@ export function NoteComposer({
             <span className="whitespace-nowrap">Size</span>
             <select
               aria-label="Text size"
-              value={isPointStyle(composerStyle) ? composerStyle : "normal"}
+              value={composerStyle}
               onPointerDown={captureSelection}
               onFocus={syncComposerStyle}
               onChange={(event) => applyStyle(event.target.value as ComposerStyle)}
               className="h-7 rounded-md border border-input bg-background px-2 text-[0.8rem] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              {COMPOSER_STYLE_OPTIONS.filter((item) => item.value === "normal" || /^\d+$/.test(item.value)).map(
-                (item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ),
-              )}
-              <option value="h1">Heading 1</option>
-              <option value="h2">Heading 2</option>
-              <option value="h3">Heading 3</option>
+              {COMPOSER_STYLE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
             </select>
           </label>
           <input

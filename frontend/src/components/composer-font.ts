@@ -98,22 +98,22 @@ export function readFontFile(file: File): Promise<CustomComposerFont> {
  * localStorage so the choice survives reloads on this device.
  */
 export function useComposerFont() {
-  const [choice, setChoice] = useState("sans");
-  const [customs, setCustoms] = useState<CustomComposerFont[]>([]);
+  const [choice, setChoice] = useState(() => {
+    if (typeof window === "undefined") return "sans";
+    try {
+      return window.localStorage.getItem(`${STORAGE_KEY}-choice`) || "sans";
+    } catch {
+      return "sans";
+    }
+  });
+  const [customs, setCustoms] = useState<CustomComposerFont[]>(() => {
+    if (typeof window === "undefined") return [];
+    return readCustomFonts();
+  });
 
   useEffect(() => {
-    const stored = readCustomFonts();
-    setCustoms(stored);
-    injectFaces(stored);
-    const storedChoice = (() => {
-      try {
-        return window.localStorage.getItem(`${STORAGE_KEY}-choice`);
-      } catch {
-        return null;
-      }
-    })();
-    if (storedChoice) setChoice(storedChoice);
-  }, []);
+    injectFaces(customs);
+  }, [customs]);
 
   function select(next: string) {
     setChoice(next);

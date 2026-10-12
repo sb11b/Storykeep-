@@ -27,8 +27,6 @@ const LIST_PREFIX = /^\s*(?:[-*]\s+|\d+\.\s+)/;
 const SIZE_CLOSE = "</span>";
 /** Matches any sk-size span: legacy sm/lg classes or point sizes (sk-size-12). */
 const SIZE_PATTERN = /<span class="sk-size-(?:sm|lg|\d+)">([\s\S]*?)<\/span>/gi;
-/** Legacy size classes (sm/lg) — stripped when a point size is applied. */
-const LEGACY_SIZE_PATTERN = /<span class="sk-size-(?:sm|lg)">([\s\S]*?)<\/span>/gi;
 
 function lineBounds(source: string, start: number, end: number): { from: number; to: number } {
   const from = source.lastIndexOf("\n", Math.max(0, Math.min(start, end) - 1)) + 1;
@@ -86,7 +84,7 @@ export function applyInlineSize(source: string, start: number, end: number, size
     from = bounds.from;
     to = bounds.to;
   }
-  let inner = stripSizeSpans(source.slice(from, to));
+  const inner = stripSizeSpans(source.slice(from, to));
   if (size === "normal") {
     return {
       text: `${source.slice(0, from)}${inner}${source.slice(to)}`,
@@ -94,7 +92,6 @@ export function applyInlineSize(source: string, start: number, end: number, size
       selectionEnd: from + inner.length,
     };
   }
-  inner = stripSizeSpans(inner).replace(LEGACY_SIZE_PATTERN, "$1");
   const open = `<span class="sk-size-${size}">`;
   const wrapped = `${open}${inner}${SIZE_CLOSE}`;
   return {
