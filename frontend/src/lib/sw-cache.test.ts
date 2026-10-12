@@ -124,7 +124,10 @@ function loadHarness(): Harness {
 
 const CONVERSATIONS_URL = "https://tauri.localhost/api/v1/chat/conversations";
 const CONVERSATION_DETAIL_URL = `${CONVERSATIONS_URL}/bde4cd80-2f69-42b9-a548-74db50522a1f`;
-const MESSAGES_URL = `${CONVERSATION_DETAIL_URL}/messages`;
+// NOTE: there is NO GET .../messages endpoint — messages are embedded in the
+// conversation detail response (POST .../messages only sends). Detail is the
+// real read path, so the detail GET is what must be cached.
+const CONVERSATIONS_EXPORT_URL = `${CONVERSATIONS_URL}-export`;
 const JUNIOR_URL = "https://tauri.localhost/api/v1/junior/documents";
 const OTHER_API_URL = "https://tauri.localhost/api/v1/me";
 
@@ -139,13 +142,16 @@ test("a chat conversations GET goes through the stale-while-revalidate path", as
   );
 });
 
-test("a conversations detail and messages GET are also cached", async () => {
+test("a conversation detail GET is cached, but a sibling -export route is not", async () => {
   const harness = loadHarness();
   await harness.dispatchFetch(new Request(CONVERSATION_DETAIL_URL));
-  await harness.dispatchFetch(new Request(MESSAGES_URL));
+  await harness.dispatchFetch(new Request(CONVERSATIONS_EXPORT_URL));
   const cached = harness.cachePuts.map((put) => put.url);
   assert.ok(cached.includes(CONVERSATION_DETAIL_URL), "the conversation detail must be cached");
-  assert.ok(cached.includes(MESSAGES_URL), "the messages GET must be cached");
+  assert.ok(
+    !cached.includes(CONVERSATIONS_EXPORT_URL),
+    "the prefix match must not swallow sibling routes like /conversations-export",
+  );
 });
 
 test("the conversations list is served from cache when the network fails", async () => {
