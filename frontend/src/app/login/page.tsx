@@ -41,7 +41,10 @@ export default function LoginPage() {
         // cross-site cookie and bounces straight back to /login.
         const registered = await api.register(email, password, displayName || undefined);
         setAuthToken(registered.access_token ?? null);
-        await clearPwaApiCaches();
+        // Never await cache clearing before navigating: in the packaged Tauri
+        // window the service-worker notification can hang, which froze the
+        // "Opening..." button. Clear in the background, navigate now.
+        void clearPwaApiCaches();
         router.replace("/");
         return;
       }
@@ -54,7 +57,10 @@ export default function LoginPage() {
         // Desktop: hold the returned token in memory so API calls authenticate
         // with a bearer header (the SameSite=Lax cookie is not sent cross-site).
         setAuthToken(verified.access_token ?? null);
-        await clearPwaApiCaches();
+        // Fire-and-forget: cache clearing must never gate the navigation to
+        // the library (a hung serviceWorker.ready in the Tauri window left
+        // the button stuck on "Opening...").
+        void clearPwaApiCaches();
         router.replace("/");
         return;
       }
@@ -70,7 +76,10 @@ export default function LoginPage() {
         return;
       }
       setAuthToken(result.access_token ?? null);
-      await clearPwaApiCaches();
+      // Fire-and-forget: cache clearing must never gate the navigation to
+      // the library (a hung serviceWorker.ready in the Tauri window left
+      // the button stuck on "Opening...").
+      void clearPwaApiCaches();
       router.replace("/");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Could not sign in");

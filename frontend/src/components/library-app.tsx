@@ -766,7 +766,10 @@ export function LibraryApp({ user, onUserChange }: { user: User; onUserChange?: 
       onLogout={async () => {
         await api.logout();
         setAuthToken(null);
-        await clearPwaApiCaches();
+        // Fire-and-forget: navigation to /login must not wait on cache
+        // clearing (a hung serviceWorker.ready in the Tauri window can stall
+        // this indefinitely).
+        void clearPwaApiCaches();
         router.replace("/login");
       }}
       onProfile={openProfile}
