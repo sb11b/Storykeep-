@@ -133,12 +133,11 @@ function inline(value: string, resolver?: WikilinkResolver): string {
     .replace(/==([\s\S]+?)==/g, "<mark>$1</mark>")
     .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/gi, "<u>$1</u>")
     .replace(
-      /&lt;span class=&quot;sk-size-sm&quot;&gt;([\s\S]*?)&lt;\/span&gt;/gi,
-      '<span class="sk-size-sm">$1</span>',
-    )
-    .replace(
-      /&lt;span class=&quot;sk-size-lg&quot;&gt;([\s\S]*?)&lt;\/span&gt;/gi,
-      '<span class="sk-size-lg">$1</span>',
+      /&lt;span class=&quot;sk-size-(?:sm|lg|\d+)&quot;&gt;([\s\S]*?)&lt;\/span&gt;/gi,
+      (_all, inner: string) => {
+        const match = /&lt;span class=&quot;sk-size-(\d+|sm|lg)&quot;&gt;/.exec(_all);
+        return `<span class="sk-size-${match ? match[1] : "16"}">${inner}</span>`;
+      },
     );
   return escaped
     .replace(/`([^`]+)`/g, "<code>$1</code>")
