@@ -1,14 +1,22 @@
 import type { WrapResult } from "@/lib/markdown";
 
 export type BlockStyle = "body" | "h1" | "h2" | "h3";
-export type InlineSize = "normal" | "small" | "large";
+/** Point size applied to a selection, e.g. "12" = 12pt. "normal" clears the size. */
+export type FontPointSize = "8" | "10" | "12" | "14" | "16" | "18" | "20" | "24" | "normal";
 
-export type ComposerStyle = BlockStyle | InlineSize;
+export type ComposerStyle = BlockStyle | FontPointSize;
 
 export const COMPOSER_STYLE_OPTIONS: { value: ComposerStyle; label: string }[] = [
   { value: "body", label: "Body" },
-  { value: "small", label: "Small text" },
-  { value: "large", label: "Large text" },
+  { value: "8", label: "8 pt" },
+  { value: "10", label: "10 pt" },
+  { value: "12", label: "12 pt" },
+  { value: "14", label: "14 pt" },
+  { value: "16", label: "16 pt" },
+  { value: "18", label: "18 pt" },
+  { value: "20", label: "20 pt" },
+  { value: "24", label: "24 pt" },
+  { value: "normal", label: "Normal" },
   { value: "h1", label: "Heading 1" },
   { value: "h2", label: "Heading 2" },
   { value: "h3", label: "Heading 3" },
@@ -16,12 +24,11 @@ export const COMPOSER_STYLE_OPTIONS: { value: ComposerStyle; label: string }[] =
 
 const HEADING_PREFIX = /^(#{1,3})\s+/;
 const LIST_PREFIX = /^\s*(?:[-*]\s+|\d+\.\s+)/;
-const SIZE_OPEN = {
-  small: '<span class="sk-size-sm">',
-  large: '<span class="sk-size-lg">',
-} as const;
 const SIZE_CLOSE = "</span>";
-const SIZE_PATTERN = /<span class="sk-size-(?:sm|lg)">([\s\S]*?)<\/span>/gi;
+/** Matches any sk-size span: legacy sm/lg classes or point sizes (sk-size-12). */
+const SIZE_PATTERN = /<span class="sk-size-(?:sm|lg|\d+)">([\s\S]*?)<\/span>/gi;
+/** Legacy size classes (sm/lg) — stripped when a point size is applied. */
+const LEGACY_SIZE_PATTERN = /<span class="sk-size-(?:sm|lg)">([\s\S]*?)<\/span>/gi;
 
 function lineBounds(source: string, start: number, end: number): { from: number; to: number } {
   const from = source.lastIndexOf("\n", Math.max(0, Math.min(start, end) - 1)) + 1;
@@ -66,11 +73,12 @@ export function applyBlockStyle(source: string, start: number, end: number, styl
   };
 }
 
-function stripSizeSpans(value: string): string {
+/** Remove every sk-size span wrapper (sm, lg, and point sizes) from a fragment. */
+export function stripSizeSpans(value: string): string {
   return value.replace(SIZE_PATTERN, "$1");
 }
 
-export function applyInlineSize(source: string, start: number, end: number, size: InlineSize): WrapResult {
+export function applyInlineSize(source: string, start: number, end: number, size: FontPointSize): WrapResult {
   let from = Math.max(0, Math.min(start, end, source.length));
   let to = Math.min(source.length, Math.max(start, end, from));
   if (from === to) {
@@ -86,8 +94,8 @@ export function applyInlineSize(source: string, start: number, end: number, size
       selectionEnd: from + inner.length,
     };
   }
-  const open = SIZE_OPEN[size];
-  inner = stripSizeSpans(inner);
+  inner = stripSizeSpans(inner).replace(LEGACY_SIZE_PATTERN, "$1");
+  const open = `<span class="sk-size-${size}">`;
   const wrapped = `${open}${inner}${SIZE_CLOSE}`;
   return {
     text: `${source.slice(0, from)}${wrapped}${source.slice(to)}`,
@@ -97,14 +105,19 @@ export function applyInlineSize(source: string, start: number, end: number, size
 }
 
 export function applyComposerStyle(source: string, start: number, end: number, style: ComposerStyle): WrapResult {
-  if (style === "small" || style === "large" || style === "normal") {
-    return applyInlineSize(source, start, end, style);
+  if (style === "normal" || /^\d+$/.test(style)) {
+    return applyInlineSize(source, start, end, style as FontPointSize);
   }
   if (style === "body") {
     const block = applyBlockStyle(source, start, end, "body");
     return applyInlineSize(block.text, block.selectionStart, block.selectionEnd, "normal");
   }
-  return applyBlockStyle(source, start, end, style);
+  return applyBlockStyle(source, start, end, style as BlockStyle);
+}
+
+/** True when the style is a point size (or "normal"). */
+export function isPointStyle(style: ComposerStyle): style is FontPointSize {
+  return style === "normal" || /^\d+$/.test(style);
 }
 
 export function detectComposerStyle(source: string, start: number, end: number): ComposerStyle {
@@ -118,7 +131,9 @@ export function detectComposerStyle(source: string, start: number, end: number):
     return "h3";
   }
   const slice = source.slice(from, to);
-  if (/<span class="sk-size-sm">/i.test(slice)) return "small";
-  if (/<span class="sk-size-lg">/i.test(slice)) return "large";
+  const sizeMatch = slice.match(/<span class="sk-size-(\d+)"/i);
+  if (sizeMatch) return sizeMatch[1] as FontPointSize;
+  if (/<span class="sk-size-sm">/i.test(slice)) return "12";
+  if (/<span class="sk-size-lg">/i.test(slice)) return "18";
   return "body";
 }
