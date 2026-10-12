@@ -41,6 +41,18 @@ pub fn run() {
                 )?;
 
                 app.global_shortcut().register(toggle_overlay)?;
+
+                // Desktop auto-update: click-to-install updates from GitHub
+                // Releases. The pubkey and the endpoint live in
+                // tauri.conf.json (plugins.updater) — nothing to configure
+                // here beyond registration. Desktop-only, same as the
+                // shortcut above, so it sits in the same cfg block instead
+                // of the top-level Builder chain. The JS side
+                // (@tauri-apps/plugin-updater, see src/lib/auto-update.ts)
+                // only ever calls check() and downloadAndInstall() after an
+                // explicit user click on the update banner.
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
             }
             Ok(())
         })

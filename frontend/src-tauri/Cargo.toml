@@ -30,6 +30,18 @@ serde_json = "1"
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-global-shortcut = "2"
 
+# Desktop auto-update: click-to-install updates served from the GitHub
+# Releases latest.json endpoint (configured with the pubkey under
+# plugins.updater in tauri.conf.json). `"2"` resolves to
+# tauri-plugin-updater 2.13.3, the latest 2.x line and the one matching the
+# tauri 2.x dependency above (verified on crates.io). Desktop-only for the
+# same reason as the shortcut plugin. The plugin is registered in src/lib.rs
+# inside the existing #[cfg(desktop)] setup block; the JS entry point is
+# @tauri-apps/plugin-updater (npm ^2.13.3) behind the "updater:default"
+# capability. Nothing downloads or installs without an explicit user click
+# (see src/lib/auto-update.ts).
+tauri-plugin-updater = "2"
+
 [profile.release]
 panic = "abort"   # Strip expensive panic clean-up logic
 codegen-units = 1 # Compile crates one after another so the compiler can optimize better

@@ -41,6 +41,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["msi", "nsis"],
     "icon": [
       "icons/32x32.png",
@@ -49,5 +50,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWQAAAAAAAAAAKdRyMTvPwFVaouIqubRcwEQw13+u1YPM7I6jUemhf0F",
+      "endpoints": [
+        "https://github.com/sb11b/Storykeep-/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
