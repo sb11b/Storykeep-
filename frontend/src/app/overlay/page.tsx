@@ -107,16 +107,6 @@ export default function OverlayPage() {
     };
   }, []);
 
-  // Esc collapses the expanded panel.
-  useEffect(() => {
-    if (!expanded) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setExpanded(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [expanded]);
-
   const collapseWindow = useCallback(() => {
     const win = activeWindow();
     setExpanded(false);
@@ -127,6 +117,16 @@ export default function OverlayPage() {
       await setClickThrough(!hoverRef.current);
     })();
   }, []);
+
+  // Esc collapses the expanded panel.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") collapseWindow();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded, collapseWindow]);
 
   const expand = useCallback(() => {
     const win = activeWindow();
