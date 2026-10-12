@@ -19,6 +19,20 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false
+      },
+      {
+        "label": "overlay",
+        "title": "StoryKeep Overlay",
+        "url": "overlay",
+        "width": 72,
+        "height": 72,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": true
       }
     ],
     "security": {

@@ -41,6 +41,29 @@ by `src/components/pwa-register.tsx`) implements four strategies:
 A small offline indicator appears at the bottom of the window when the
 network is down. No data is ever fabricated for offline use.
 
+### Desktop overlay (bubble)
+
+The desktop app ships a **second window in the same binary** — a small
+floating bubble that sits above every other app. It is configured as the
+`"overlay"` window in `src-tauri/tauri.conf.json` (transparent, no
+decorations, always on top, off the taskbar, 72×72 at startup) and rendered
+by `src/app/overlay/page.tsx`.
+
+- **Ctrl+Alt+Space** shows and hides it, from anywhere in Windows. (Not
+  Alt+Space — that's the Windows system menu.) The hotkey is registered in
+  `src-tauri/src/lib.rs` with `tauri-plugin-global-shortcut`.
+- The bubble parks itself in the bottom-right of the current monitor, 24px
+  from the edges, so it never covers the taskbar. The placement rule is a
+  pure function — `src/lib/overlay-position.ts`, covered by
+  `overlay-position.test.ts`.
+- The window is **click-through**: clicks pass to the app underneath except
+  over the bubble itself (Tauri's `setIgnoreCursorEvents`). Clicking the
+  bubble expands a small panel; Esc or a click outside collapses it.
+
+**Dictation (dictate into anything) and read-aloud (read the selection) are
+not implemented yet** — the expanded panel says so plainly and its icons are
+greyed out. Those land in later updates of the same bubble.
+
 ## Static export and the Tauri wrapper
 
 `NEXT_OUTPUT=export npx next build` produces a fully static `out/`
