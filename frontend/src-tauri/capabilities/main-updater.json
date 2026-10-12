@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-updater",
+  "description": "Auto-update RPC for the main window only — the overlay bubble never touches the updater",
+  "windows": ["main"],
+  "permissions": [
+    "updater:default"
+  ]
+}

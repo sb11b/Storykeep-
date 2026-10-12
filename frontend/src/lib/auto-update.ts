@@ -64,13 +64,44 @@ export function isDesktopWindow(): boolean {
 /** Parse `MAJOR.MINOR.PATCH[-prerelease]` into comparable parts. */
 function parseVersion(
   value: string,
-): { core: [number, number, number]; prerelease: string | null } | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value.trim());
+): { core: [number, number, number]; prerelease: string[] | null } | null {
+  // A leading "v" is explicitly valid per the Tauri updater docs
+  // ("both 1.0.0 and v1.0.0 are valid") — strip it before parsing.
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value.trim());
   if (!match) return null;
   return {
     core: [Number(match[1]), Number(match[2]), Number(match[3])],
-    prerelease: match[4] ?? null,
+    // Dot-separated identifiers per semver: ["rc", "10"].
+    prerelease: match[4] ? match[4].split(".") : null,
   };
+}
+
+/**
+ * Compare two dot-separated pre-release identifier lists per semver:
+ * numeric identifiers compare numerically (rc.10 > rc.2), alphanumeric
+ * identifiers compare lexically, numeric identifiers always rank below
+ * alphanumeric ones, and a shorter list ranks below an equal-prefix longer
+ * one. Returns <0 / 0 / >0 like a comparator.
+ */
+function comparePrerelease(a: string[], b: string[]): number {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x === undefined) return -1; // fewer identifiers ranks lower
+    if (y === undefined) return 1;
+    const xNum = /^\d+$/.test(x);
+    const yNum = /^\d+$/.test(y);
+    if (xNum && yNum) {
+      const diff = Number(x) - Number(y);
+      if (diff !== 0) return diff;
+    } else if (xNum !== yNum) {
+      return xNum ? -1 : 1; // numeric < alphanumeric
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
 }
 
 /**
@@ -79,11 +110,12 @@ function parseVersion(
  * Numeric per-component comparison (0.10.0 is newer than 0.9.0 — never
  * lexicographic), and semver's pre-release ordering when the cores match:
  * a stable release beats any pre-release of the same core, and two
- * pre-releases compare by label. Unparseable input is never "newer" —
+ * pre-releases compare identifier-by-identifier numerically (rc.10 beats
+ * rc.2). A leading `v` is accepted. Unparseable input is never "newer" —
  * the plugin's own server-side comparison stays the source of truth and
  * this guard only prevents a bogus manifest from reopening a dismissed
  * update. (This repo ships plain `0.1.0` versions; pre-release labels are
- * handled conservatively for future use.)
+ * handled properly for future use.)
  */
 export function isNewerVersion(candidate: string, current: string): boolean {
   const next = parseVersion(candidate);
@@ -95,7 +127,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   if (next.prerelease === now.prerelease) return false;
   if (next.prerelease === null) return true; // stable > prerelease, same core
   if (now.prerelease === null) return false; // prerelease < stable, same core
-  return next.prerelease > now.prerelease;
+  return comparePrerelease(next.prerelease, now.prerelease) > 0;
 }
 
 /**

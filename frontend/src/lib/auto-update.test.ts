@@ -12,6 +12,26 @@ test("isDesktopWindow is false without a Tauri runtime (browser/PWA no-op)", asy
   assert.equal(isDesktopWindow(), false);
 });
 
+test("isDesktopWindow is false with a window that lacks the Tauri runtime global", async () => {
+  // The real PWA case: a browser-like window object EXISTS but carries no
+  // Tauri internals. Node has no `window` at all, so the first test above
+  // only covers SSR — this is the contract that actually matters for the
+  // web app.
+  const hadWindow = "window" in globalThis;
+  // @ts-expect-error -- deliberately installing a browser-like global
+  globalThis.window = { location: { href: "https://storykeep.example/" } };
+  try {
+    const { isDesktopWindow } = await import("./auto-update");
+    assert.equal(isDesktopWindow(), false);
+    const { checkForUpdate } = await import("./auto-update");
+    // Must resolve null WITHOUT importing @tauri-apps/plugin-updater —
+    // if the guard were wrong this would throw on the missing IPC bridge.
+    assert.equal(await checkForUpdate(), null);
+  } finally {
+    if (!hadWindow) delete (globalThis as { window?: unknown }).window;
+  }
+});
+
 test("checkForUpdate resolves to null in the browser and never throws", async () => {
   // Would have thrown (or hung) if the guard were missing: the plugin JS
   // calls into Tauri IPC that does not exist here.
@@ -44,10 +64,28 @@ test("isNewerVersion follows semver pre-release ordering on equal cores", async 
   // A stable release beats any pre-release of the same core version.
   assert.equal(isNewerVersion("1.0.0", "1.0.0-beta"), true);
   assert.equal(isNewerVersion("1.0.0-beta", "1.0.0"), false);
-  // Pre-release labels compare lexically when both are pre-releases.
+  // Pre-release identifiers compare per semver: the review of the first
+  // cut of this test only exercised rc.1 vs rc.2, which a lexical string
+  // compare happens to get right. rc.10 is the case that breaks it.
+  assert.equal(isNewerVersion("1.0.0-rc.10", "1.0.0-rc.2"), true);
+  assert.equal(isNewerVersion("1.0.0-rc.2", "1.0.0-rc.10"), false);
   assert.equal(isNewerVersion("1.0.0-rc.2", "1.0.0-rc.1"), true);
   assert.equal(isNewerVersion("1.0.0-rc.1", "1.0.0-rc.2"), false);
   assert.equal(isNewerVersion("1.0.0-rc.1", "1.0.0-rc.1"), false);
+  // Numeric identifiers rank below alphanumeric ones; a shorter
+  // equal-prefix list ranks lower.
+  assert.equal(isNewerVersion("1.0.0-beta.1", "1.0.0-beta"), true);
+  assert.equal(isNewerVersion("1.0.0-beta", "1.0.0-beta.1"), false);
+  assert.equal(isNewerVersion("1.0.0-beta.1", "1.0.0-alpha.1"), true);
+});
+
+test("isNewerVersion accepts a leading v (Tauri manifest form)", async () => {
+  const { isNewerVersion } = await import("./auto-update");
+  // Tauri's updater docs: "both 1.0.0 and v1.0.0 are valid".
+  assert.equal(isNewerVersion("v0.2.0", "0.1.0"), true);
+  assert.equal(isNewerVersion("0.2.0", "v0.1.0"), true);
+  assert.equal(isNewerVersion("v0.2.0", "v0.2.0"), false);
+  assert.equal(isNewerVersion("v0.1.0", "v0.2.0"), false);
 });
 
 test("buildLatestJson produces the Tauri v2 manifest with the arm64 platform key", async () => {

@@ -13,14 +13,18 @@
 
       1.  Preflight: clean tree, not already tagged, on `main`, gh + git present.
       2.  Bump the version in frontend/src-tauri/tauri.conf.json,
-          frontend/src-tauri/Cargo.toml and frontend/package.json.
+          frontend/src-tauri/Cargo.toml, frontend/package.json and
+          frontend/package-lock.json.
       3.  Commit ("chore(release): v<version>"), annotated tag "v<version>",
           push both to origin.
       4.  Build the NSIS + MSI bundles with updater signing
           (`createUpdaterArtifacts: true` in tauri.conf.json makes
           `tauri build` sign and emit .sig files next to the installers).
       5.  Generate latest.json (windows-aarch64 platform key — the app is
-          built for Windows ARM64 only).
+          built for Windows ARM64 only). The manifest points at the NSIS
+          bundle: the updater cannot cross installer formats, and NSIS is
+          the format users install from. The MSI ships as an alternative
+          manual download only.
       6.  `gh release create v<version>` with the installers, their .sig
           files and latest.json.
 
@@ -57,6 +61,7 @@ $TauriDir = Join-Path $Frontend 'src-tauri'
 $TauriConf = Join-Path $TauriDir 'tauri.conf.json'
 $CargoToml = Join-Path $TauriDir 'Cargo.toml'
 $PackageJson = Join-Path $Frontend 'package.json'
+$PackageLock = Join-Path $Frontend 'package-lock.json'
 
 function Write-Step {
     param([string]$Message)
@@ -161,9 +166,41 @@ function Set-VersionInFile {
     Write-Host "  $Label -> $Version"
 }
 
+# Bump the two root version mirrors in package-lock.json: the top-level
+# "version" and packages[""].version. Parsed as JSON so the ~700 nested
+# per-package "version" keys are never touched.
+function Set-VersionInPackageLock {
+    param(
+        [string]$Path,
+        [string]$Version
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Fail "package-lock.json not found at $Path"
+    }
+    $lock = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    if (-not $lock.PSObject.Properties['packages'] -or
+        -not $lock.packages.PSObject.Properties['']) {
+        Fail "package-lock.json at $Path has no packages[\"\"] entry — unsupported lockfile shape."
+    }
+    $lock.version = $Version
+    $lock.packages.''.version = $Version
+    $json = $lock | ConvertTo-Json -Depth 100
+    [System.IO.File]::WriteAllText($Path, $json)
+    Write-Host "  package-lock.json (root + packages[\"\"]) -> $Version"
+}
+
 Set-VersionInFile -Path $TauriConf -Pattern '(?m)^(\s*"version"\s*:\s*)"[^"]*"' -Label 'tauri.conf.json'
 Set-VersionInFile -Path $CargoToml -Pattern '(?m)^(version\s*=\s*)"[^"]*"' -Label 'Cargo.toml'
 Set-VersionInFile -Path $PackageJson -Pattern '(?m)^(\s*"version"\s*:\s*)"[^"]*"' -Label 'package.json'
+# package-lock.json carries its own "version" mirroring package.json in TWO
+# places: the top-level key and packages[""].version. npm ci validates
+# package.json against the lockfile — a mismatch aborts the install the
+# build depends on. It CANNOT go through Set-VersionInFile: the file has
+# ~700 nested "version" keys, so the regex's exactly-one-match guard would
+# abort. Edit the two known spots as parsed JSON instead (key order and
+# formatting preserved by ConvertTo-Json at the same depth; the lockfile is
+# machine-generated anyway).
+Set-VersionInPackageLock -Path $PackageLock -Version $Version
 
 # Guard against a no-op bump (same version as before) — the commit below
 # would fail with a confusing "nothing to commit".
@@ -171,13 +208,17 @@ $currentTauriVersion = (Get-Content -LiteralPath $TauriConf -Raw | ConvertFrom-J
 if ($currentTauriVersion -ne $Version) {
     Fail "tauri.conf.json did not take the new version (still $currentTauriVersion)."
 }
+$currentLockVersion = (Get-Content -LiteralPath $PackageLock -Raw | ConvertFrom-Json).version
+if ($currentLockVersion -ne $Version) {
+    Fail "package-lock.json did not take the new version (still $currentLockVersion)."
+}
 
 # ---------------------------------------------------------------------------
 # 3. Commit, tag, push
 # ---------------------------------------------------------------------------
 Write-Step "Committing and tagging $Tag"
 
-Invoke-Git @('add', '--', $TauriConf, $CargoToml, $PackageJson)
+Invoke-Git @('add', '--', $TauriConf, $CargoToml, $PackageJson, $PackageLock)
 Invoke-Git @('commit', '-m', "chore(release): v$Version")
 Invoke-Git @('tag', '-a', $Tag, '-m', "StoryKeep $Tag")
 
@@ -195,6 +236,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $Frontend 'node_modules'))) {
     Write-Host "  node_modules missing — running npm ci first"
     Push-Location $Frontend
     try { npm ci } finally { Pop-Location }
+    # Native commands don't trip $ErrorActionPreference='Stop' — check the
+    # exit code explicitly or a failed npm ci would fall through to the
+    # build with a stale/partial node_modules.
+    if ($LASTEXITCODE -ne 0) {
+        Fail "npm ci failed (exit $LASTEXITCODE)."
+    }
 }
 
 $env:TAURI_SIGNING_PRIVATE_KEY = $signingKey
@@ -234,17 +281,33 @@ points at the right key.
 Write-Host "  MSI:   $($msi.Name)"
 Write-Host "  .sig:  $(Split-Path -Leaf $msiSig)"
 
-$nsis = Get-ChildItem -Path (Join-Path $BundleRoot 'nsis') -Filter *.exe -ErrorAction SilentlyContinue |
+# The updater must hand users the SAME installer format they already have:
+# Tauri has no cross-format update path (an NSIS install cannot be updated
+# by an MSI payload). Steve's existing install is the NSIS setup.exe, so
+# latest.json points at the NSIS bundle and its signature — the MSI stays
+# in the release as an alternative manual download only, never as the
+# update payload. If the installed base ever switches to MSI, flip this
+# one block (and reinstall from MSI on the affected machines).
+$nsisBundle = Get-ChildItem -Path (Join-Path $BundleRoot 'nsis') -Filter *.exe -ErrorAction SilentlyContinue |
     Select-Object -First 1
+if (-not $nsisBundle) {
+    Fail "no NSIS bundle found under $BundleRoot\nsis — latest.json must point at the same format users install from."
+}
+$nsisSig = "$($nsisBundle.FullName).sig"
+if (-not (Test-Path -LiteralPath $nsisSig)) {
+    Fail @"
+updater signature missing: $nsisSig
+`tauri build` did not sign the NSIS bundle. Check that tauri.conf.json has
+"bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY
+points at the right key.
+"@
+}
 
-# ---------------------------------------------------------------------------
-# 5. Generate latest.json (the update manifest)
-# ---------------------------------------------------------------------------
 Write-Step "Generating latest.json (windows-aarch64)"
 
 $pubDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-$signature = (Get-Content -LiteralPath $msiSig -Raw).Trim()
-$msiUrl = "https://github.com/$RepoSlug/releases/download/$Tag/$($msi.Name)"
+$signature = (Get-Content -LiteralPath $nsisSig -Raw).Trim()
+$nsisUrl = "https://github.com/$RepoSlug/releases/download/$Tag/$($nsisBundle.Name)"
 
 # Same shape as buildLatestJson() in frontend/src/lib/auto-update.ts — the
 # updater expects { version, notes, pub_date, platforms: { "<os>-<arch>":
@@ -257,7 +320,7 @@ $latest = [pscustomobject]@{
     platforms = [pscustomobject]@{
         'windows-aarch64' = [pscustomobject]@{
             signature = $signature
-            url = $msiUrl
+            url = $nsisUrl
         }
     }
 }
@@ -274,12 +337,10 @@ Write-Host $latestJson
 # ---------------------------------------------------------------------------
 Write-Step "Creating GitHub release $Tag"
 
-$assets = @($msi.FullName, $msiSig, $latestPath)
-if ($nsis) {
-    $assets += $nsis.FullName
-    $nsisSig = "$($nsis.FullName).sig"
-    if (Test-Path -LiteralPath $nsisSig) { $assets += $nsisSig }
-}
+# Both installers go up as manual downloads; latest.json (the update
+# payload) points at the NSIS bundle only. Both .sig files are uploaded so
+# a future MSI-based update path needs no rebuild.
+$assets = @($msi.FullName, $msiSig, $nsisBundle.FullName, $nsisSig, $latestPath)
 
 & gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes
 if ($LASTEXITCODE -ne 0) {
