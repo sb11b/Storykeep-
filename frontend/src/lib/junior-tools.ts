@@ -10,6 +10,8 @@
  * DOM-free: every helper is pure or fetch-based, so it runs under `node --test`.
  */
 
+import { apiUrl, authHeaders } from "@/lib/api-base";
+
 /** One xAI function-tool definition for session.update. */
 export interface JuniorToolDef {
   type: "function";
@@ -629,11 +631,26 @@ export function buildResponseCreate() {
 const TOOL_TIMEOUT_MS = 15_000;
 
 async function toolFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  // Desktop app: the SameSite=Lax cookie is not sent cross-site from
+  // tauri.localhost, so attach the login access_token as a bearer header —
+  // the same fix request() in api.ts carries. The backend checks the header
+  // first (backend/app/deps.py) and falls back to the cookie, so the web app
+  // (AUTH_TOKEN unset) is unaffected. An explicit header on the caller's
+  // init always wins over the derived one.
+  for (const [name, value] of Object.entries(authHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TOOL_TIMEOUT_MS);
   try {
-    return await fetch(path, {
+    // apiUrl resolves the app-relative path against the configured API origin
+    // (a no-op in dev, where next.config.ts proxies /api/* to the backend).
+    // Without it a packaged window fetches the raw path against tauri.localhost
+    // and every Junior tool call 404s.
+    return await fetch(apiUrl(path), {
       ...init,
+      headers,
       credentials: "include",
       cache: "no-store",
       signal: controller.signal,

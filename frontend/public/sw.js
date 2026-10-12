@@ -6,8 +6,11 @@
  * Caching strategy (library-aware):
  *  - app shell + static assets (_next/static, icons, manifest, fonts):
  *      cache-first, precached on install.
- *  - Junior API GETs (/api/v1/junior/* — jobs, memory, chats, documents):
- *      stale-while-revalidate — serve cached instantly, refresh in background.
+ *  - Junior API GETs (/api/v1/junior/* — jobs, memory, chats, documents) and
+ *    chat conversation GETs (/api/v1/chat/conversations — list, detail,
+ *    messages): stale-while-revalidate — serve cached instantly, refresh in
+ *    background. The conversation prefix is what makes the chat sidebar
+ *    recall offline in the desktop app.
  *  - POST / PATCH / PUT / DELETE (and any other mutation):
  *      never cached, network-only. Reads may fail when offline; writes never
  *      silently pretend to succeed.
@@ -39,6 +42,15 @@ const SHELL_ASSETS = [
 
 /** Junior API GET paths that may be served stale-while-revalidate. */
 const STALE_WHILE_REVALIDATE_PREFIXES = ["/api/v1/junior/"];
+
+/**
+ * Exact GET paths (list) plus a separator-terminated prefix (detail) that may
+ * be served stale-while-revalidate for offline conversation recall. The prefix
+ * ends with "/" so a sibling route like /api/v1/chat/conversations-export is
+ * NOT swallowed by startsWith.
+ */
+const STALE_WHILE_REVALIDATE_PATHS = new Set(["/api/v1/chat/conversations"]);
+const STALE_WHILE_REVALIDATE_PREFIX_PATHS = ["/api/v1/chat/conversations/"];
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -158,8 +170,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 2. Junior API GETs: stale-while-revalidate (the "library").
-  if (STALE_WHILE_REVALIDATE_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+  // 2. Junior API GETs + chat conversation GETs: stale-while-revalidate
+  //    (the "library", now plus offline chat recall).
+  const swrMatch =
+    STALE_WHILE_REVALIDATE_PREFIXES.some((p) => url.pathname.startsWith(p)) ||
+    STALE_WHILE_REVALIDATE_PATHS.has(url.pathname) ||
+    STALE_WHILE_REVALIDATE_PREFIX_PATHS.some((p) => url.pathname.startsWith(p));
+  if (swrMatch) {
     event.respondWith(staleWhileRevalidate(authed, API_CACHE));
     return;
   }
