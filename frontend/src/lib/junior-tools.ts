@@ -53,10 +53,6 @@ const FEEDS_UNAVAILABLE = "I couldn't reach your feeds right now.";
 const ARTICLES_UNAVAILABLE = "I couldn't reach your articles right now.";
 const DOC_SAVE_FAILED = "I couldn't save that document right now.";
 const DOC_DELETE_FAILED = "I couldn't delete that document right now.";
-const WEB_UNAVAILABLE = "I couldn't open that page.";
-
-/** Read cap for a browsed web page (mirrors the backend's page chunk size). */
-const WEB_PAGE_CHARS = 40_000;
 
 /** Feeds list cap (spec: ~50 entries). */
 const MAX_FEED_ITEMS = 50;
