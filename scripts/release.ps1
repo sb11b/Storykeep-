@@ -271,7 +271,7 @@ if (-not $msi) {
 }
 $msiSig = "$($msi.FullName).sig"
 if (-not (Test-Path -LiteralPath $msiSig)) {
-    Fail ('updater signature missing: ' + $msiSig + ' — `tauri build` did not sign the MSI. Check that tauri.conf.json has "bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY points at the right key.')
+    Fail ('updater signature missing: ' + $msiSig + ' - tauri build did not sign the MSI. Check that tauri.conf.json has bundle.createUpdaterArtifacts enabled and TAURI_SIGNING_PRIVATE_KEY points at the right key.')
 }
 Write-Host "  MSI:   $($msi.Name)"
 Write-Host "  .sig:  $(Split-Path -Leaf $msiSig)"
@@ -290,7 +290,7 @@ if (-not $nsisBundle) {
 }
 $nsisSig = "$($nsisBundle.FullName).sig"
 if (-not (Test-Path -LiteralPath $nsisSig)) {
-    Fail ('updater signature missing: ' + $nsisSig + ' — `tauri build` did not sign the NSIS bundle. Check that tauri.conf.json has "bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY points at the right key.')
+    Fail ('updater signature missing: ' + $nsisSig + ' - tauri build did not sign the NSIS bundle. Check that tauri.conf.json has bundle.createUpdaterArtifacts enabled and TAURI_SIGNING_PRIVATE_KEY points at the right key.')
 }
 Write-Step "Generating latest.json (windows-aarch64)"
 
