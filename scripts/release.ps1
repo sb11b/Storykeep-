@@ -111,7 +111,7 @@ if ($existingTag) {
 
 $remoteTag = & git ls-remote --tags origin "refs/tags/$Tag" 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Fail "could not query origin for tag $Tag:`n$remoteTag"
+    Fail "could not query origin for tag ${Tag}:`n$remoteTag"
 }
 if ($remoteTag) {
     Fail "tag $Tag already exists on origin."
@@ -271,12 +271,7 @@ if (-not $msi) {
 }
 $msiSig = "$($msi.FullName).sig"
 if (-not (Test-Path -LiteralPath $msiSig)) {
-    Fail @"
-updater signature missing: $msiSig
-`tauri build` did not sign the MSI. Check that tauri.conf.json has
-"bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY
-points at the right key.
-"@
+    Fail ('updater signature missing: ' + $msiSig + ' — `tauri build` did not sign the MSI. Check that tauri.conf.json has "bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY points at the right key.')
 }
 Write-Host "  MSI:   $($msi.Name)"
 Write-Host "  .sig:  $(Split-Path -Leaf $msiSig)"
@@ -295,14 +290,8 @@ if (-not $nsisBundle) {
 }
 $nsisSig = "$($nsisBundle.FullName).sig"
 if (-not (Test-Path -LiteralPath $nsisSig)) {
-    Fail @"
-updater signature missing: $nsisSig
-`tauri build` did not sign the NSIS bundle. Check that tauri.conf.json has
-"bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY
-points at the right key.
-"@
+    Fail ('updater signature missing: ' + $nsisSig + ' — `tauri build` did not sign the NSIS bundle. Check that tauri.conf.json has "bundle": { "createUpdaterArtifacts": true } and that TAURI_SIGNING_PRIVATE_KEY points at the right key.')
 }
-
 Write-Step "Generating latest.json (windows-aarch64)"
 
 $pubDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -344,7 +333,7 @@ $assets = @($msi.FullName, $msiSig, $nsisBundle.FullName, $nsisSig, $latestPath)
 
 & gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes
 if ($LASTEXITCODE -ne 0) {
-    Fail "gh release create failed. The tag is pushed but the release is not — fix and re-run just the release step: gh release create $Tag <assets> --repo $RepoSlug --title ""StoryKeep $Tag"" --generate-notes"
+    Fail ('gh release create failed. The tag is pushed but the release is not — fix the error and re-run just the release step: gh release create ' + $Tag + ' --repo ' + $RepoSlug + ' --title ''StoryKeep ' + $Tag + ''' --generate-notes')
 }
 
 Write-Step "Done — StoryKeep $Tag released"
