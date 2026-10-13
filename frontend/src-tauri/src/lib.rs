@@ -18,7 +18,7 @@ pub fn run() {
                 let toggle_overlay =
                     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
 
-                app.handle().plugin(
+                if let Err(error) = app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new()
                         .with_handler(move |app, shortcut, event| {
                             if shortcut != &toggle_overlay {
@@ -38,9 +38,21 @@ pub fn run() {
                             }
                         })
                         .build(),
-                )?;
+                ) {
+                    // A global shortcut is a convenience, never a requirement:
+                    // registration fails when another program already holds
+                    // Ctrl+Alt+Space (or a zombie instance still owns it) —
+                    // that must never crash startup, so log and carry on.
+                    eprintln!(
+                        "[storykeep] global-shortcut plugin unavailable, overlay hotkey disabled: {error}"
+                    );
+                }
 
-                app.global_shortcut().register(toggle_overlay)?;
+                if let Err(error) = app.global_shortcut().register(toggle_overlay) {
+                    eprintln!(
+                        "[storykeep] could not register Ctrl+Alt+Space, overlay hotkey disabled: {error}"
+                    );
+                }
 
                 // Desktop auto-update: click-to-install updates from GitHub
                 // Releases. The pubkey and the endpoint live in
