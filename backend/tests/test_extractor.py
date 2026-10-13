@@ -499,6 +499,52 @@ class ExtractorTests(unittest.TestCase):
         self.assertNotIn("leave a tip", text.lower())
         self.assertNotIn("Support Us", text)
 
+    def test_kill_tags_inside_article_are_still_dropped(self):
+        """The <article> guard must not exempt kill tags / nav from suppression."""
+        from lxml import html as lxml_html
+
+        from app.services import extractor
+
+        page = (
+            "<article>"
+            "<p>The council approved the bond measure after a long debate.</p>"
+            "<nav><a href='/x'>Menu item one</a></nav>"
+            "<script>tracker.load()</script>"
+            "</article>"
+        )
+        root = lxml_html.fromstring(page)
+        dropped_tags = {el.tag for el in extractor._collect_drop_targets(root)}
+        self.assertIn("nav", dropped_tags)
+        self.assertIn("script", dropped_tags)
+
+    def test_prose_wrapper_inside_article_is_kept_via_threshold(self):
+        """A chrome-hinted wrapper holding >=2 real prose <p> inside <article> survives."""
+        from lxml import html as lxml_html
+
+        from app.services import extractor
+
+        p1 = "<p>The council approved the bond measure after a lengthy debate.</p>"
+        p2 = "<p>Construction will begin early next year pending final review.</p>"
+        page = (
+            "<article><p>Lead paragraph of the story goes here.</p>"
+            f'<div class="promo">{p1}{p2}</div></article>'
+        )
+        root = lxml_html.fromstring(page)
+        dropped_tags = {el.tag for el in extractor._collect_drop_targets(root)}
+        # The prose-holding .promo must NOT be dropped (it is a div, kept by threshold)
+        self.assertNotIn("div", dropped_tags)
+
+    def test_newsletter_prose_reported_speech_is_not_noise(self):
+        """'mailed a newsletter for members' is reported prose, not a signup CTA."""
+        from app.services import extractor
+
+        legit = "The firm mailed a newsletter for members explaining the fee change."
+        self.assertFalse(extractor._is_noise_paragraph(legit))
+        cta = "Sign up for our newsletter to get the latest news."
+        self.assertTrue(extractor._is_noise_paragraph(cta))
+        cta2 = "Get updates delivered straight to your inbox every morning."
+        self.assertTrue(extractor._is_noise_paragraph(cta2))
+
 
 if __name__ == "__main__":
     unittest.main()

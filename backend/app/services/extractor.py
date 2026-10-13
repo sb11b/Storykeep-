@@ -124,6 +124,14 @@ _NOISE_LINE = re.compile(
     re.I,
 )
 
+# A newsletter/inbox mention is only a signup CTA when it is the object of a
+# signup verb — not ordinary reported prose ("mailed a newsletter for members").
+_NEWSLETTER_SIGNUP = re.compile(
+    r"(?:sign up|subscrib\w+|delivered|sent|get it)\b[^.]{0,40}\b(?:newsletter|inbox)\b"
+    r"|\b(?:newsletter|inbox)\b[^.]{0,20}\b(?:sign ?up|subscrib\w+)\b",
+    re.I,
+)
+
 
 def _is_protected_article_node(el: lxml_html.HtmlElement) -> bool:
     if el.tag == "article":
@@ -151,14 +159,20 @@ def _prose_paragraph_count_in(el: lxml_html.HtmlElement) -> int:
 def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlElement]:
     drop: list[lxml_html.HtmlElement] = []
     seen: set[int] = set()
-    # Nodes that must never be dropped even when a chrome-hint class matches:
-    # an <article> container, or anything inside one (line 144 guards ancestors,
-    # but a hint-classed descendant of <article> can still wrap real prose).
-    protected_roots = {
-        id(node)
-        for node in root.iter()
+    # Hold the actual <article> elements and compare by identity (`is`), not
+    # id(): lxml returns transient proxy objects, so id() compares recycled
+    # C-pointers and is not stable across iterations.
+    article_roots = [
+        node for node in root.iter()
         if isinstance(node.tag, str) and node.tag == "article"
-    }
+    ]
+
+    def inside_article(el: lxml_html.HtmlElement) -> bool:
+        for ancestor in el.iterancestors():
+            if any(ancestor is art for art in article_roots):
+                return True
+        return False
+
     for el in root.iter():
         if not isinstance(el.tag, str):
             continue
@@ -167,13 +181,13 @@ def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlEle
             continue
         if _is_protected_article_node(el):
             continue
-        if any(id(ancestor) in protected_roots for ancestor in el.iterancestors()):
-            continue
+        # Kill tags / header / role drop unconditionally, even inside <article> —
+        # a <script> or <nav> inside <article> is still chrome, not prose.
         if el.tag in _KILL_TAGS:
             drop.append(el)
             seen.add(ident)
             continue
-        if el.tag == "header" and not el.xpath("ancestor::article"):
+        if el.tag == "header" and not inside_article(el):
             drop.append(el)
             seen.add(ident)
             continue
@@ -189,7 +203,8 @@ def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlEle
             # .ad-container). Dropping the whole subtree there silently
             # truncates the article. When the subtree holds real prose, keep it
             # and instead prune only its noise paragraphs inline — the CTA /
-            # newsletter text goes, the article text survives.
+            # newsletter text goes, the article text survives. This applies
+            # inside <article> too, which is exactly where the bug lived.
             if _prose_paragraph_count_in(el) >= 2:
                 _prune_noise_paragraphs(el)
                 continue
@@ -214,12 +229,15 @@ def _is_noise_paragraph(text: str) -> bool:
             "subscribe button",
             "clicking the subscribe",
             "you agree to the",
-            "delivered straight to your inbox",
             "sign up for our newsletter",
-            "newsletter for",
             "enter your email",
         )
     ):
+        return True
+    # "newsletter"/"inbox" only count as noise when they are the object of a
+    # signup verb (sign up / subscribe / delivered / sent), never as ordinary
+    # reported prose like "mailed a newsletter for members".
+    if len(stripped) <= 320 and _NEWSLETTER_SIGNUP.search(lowered):
         return True
     return False
 
