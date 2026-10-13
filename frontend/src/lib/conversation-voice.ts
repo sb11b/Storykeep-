@@ -123,6 +123,12 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "when he says 'my document', 'my paper', or 'my text', prefer the library tools. " +
   "Use list_pending_work when he asks what's waiting — documents coming in or approvals going out — " +
   "and create_task when he tells you to queue work for the Hermes team. " +
+  "When Steve asks you to save, write, file, or draft a document, use create_document — " +
+  "shelves and folders are just path segments in the document's slug, so put the folder in the path " +
+  "(e.g. path 'insurance/x-drafts') and the shelf/folder exists as soon as a document lives in it; " +
+  "when he asks you to read a document or draft back, use get_document. " +
+  "You can delete ONE document with delete_document when Steve explicitly asks you to delete it by name — " +
+  "never delete anything he did not name. " +
   "You can also read Steve's business email (thebitskogroup@fastmail.com) with read_email, " +
   "search_email, and read_email_message, list saved drafts with list_drafts, " +
   "and you can draft replies with draft_email — " +
