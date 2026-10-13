@@ -510,6 +510,15 @@
 .composer-preview .sk-size-lg {
   font-size: 1.125em;
 }
+/* Point-size spans: the class carries the point value (sk-size-8 … sk-size-24). */
+.sk-size-8, .note-md .sk-size-8, .composer-preview .sk-size-8 { font-size: 8pt; }
+.sk-size-10, .note-md .sk-size-10, .composer-preview .sk-size-10 { font-size: 10pt; }
+.sk-size-12, .note-md .sk-size-12, .composer-preview .sk-size-12 { font-size: 12pt; }
+.sk-size-14, .note-md .sk-size-14, .composer-preview .sk-size-14 { font-size: 14pt; }
+.sk-size-16, .note-md .sk-size-16, .composer-preview .sk-size-16 { font-size: 16pt; }
+.sk-size-18, .note-md .sk-size-18, .composer-preview .sk-size-18 { font-size: 18pt; }
+.sk-size-20, .note-md .sk-size-20, .composer-preview .sk-size-20 { font-size: 20pt; }
+.sk-size-24, .note-md .sk-size-24, .composer-preview .sk-size-24 { font-size: 24pt; }
 .article-body a {
   color: var(--primary);
   text-decoration: underline;

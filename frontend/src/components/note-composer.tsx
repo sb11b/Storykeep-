@@ -16,6 +16,7 @@ import {
   Minimize2,
   Paperclip,
   Sparkles,
+  Type,
   Underline,
   Undo2,
 } from "lucide-react";
@@ -46,6 +47,7 @@ import {
   detectComposerStyle,
   type ComposerStyle,
 } from "@/lib/note-style";
+import { useComposerFont } from "@/components/composer-font";
 import { cn } from "@/lib/utils";
 import { wordCount } from "@/lib/word-count";
 
@@ -124,6 +126,8 @@ export function NoteComposer({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [revisions, setRevisions] = useState<NoteRevision[]>([]);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const font = useComposerFont();
+  const fontFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (readComposeFull()) setOpen(true);
@@ -442,9 +446,35 @@ export function NoteComposer({
             {uploadingFile ? "Uploading…" : "Attach"}
           </Button>
           <label className="inline-flex items-center gap-1.5 text-[0.8rem] text-muted-foreground">
-            <span className="whitespace-nowrap">Style</span>
+            <span className="whitespace-nowrap">Font</span>
             <select
-              aria-label="Text style"
+              aria-label="Font family"
+              value={font.choice}
+              onChange={(event) => font.select(event.target.value)}
+              className="h-7 max-w-36 rounded-md border border-input bg-background px-2 text-[0.8rem] text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {font.options.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => fontFileRef.current?.click()}
+            title="Upload a .ttf/.otf/.woff/.woff2 font"
+          >
+            <Type className="size-3.5" />
+            Add font
+          </Button>
+          <label className="inline-flex items-center gap-1.5 text-[0.8rem] text-muted-foreground">
+            <span className="whitespace-nowrap">Size</span>
+            <select
+              aria-label="Text size"
               value={composerStyle}
               onPointerDown={captureSelection}
               onFocus={syncComposerStyle}
@@ -458,6 +488,21 @@ export function NoteComposer({
               ))}
             </select>
           </label>
+          <input
+            ref={fontFileRef}
+            type="file"
+            accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (!file) return;
+              void font
+                .add(file)
+                .then((label) => toast.success(`Font “${label}” added`))
+                .catch((error) => toast.error(error instanceof Error ? error.message : "Could not add that font"));
+            }}
+          />
         </div>
         <div className="flex flex-wrap gap-2">
           {noteId ? (
@@ -611,6 +656,7 @@ export function NoteComposer({
             "w-full min-h-0 resize-none overflow-y-auto [field-sizing:fixed]",
             pinned ? "min-h-0 flex-1" : "min-h-[6rem] max-h-[40vh]",
           )}
+          style={{ fontFamily: font.css }}
         />
         {wikilinkPick && wikilinkTitles.length > 0 ? (
           <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-40 overflow-y-auto rounded-md border bg-popover shadow-md">
@@ -640,6 +686,7 @@ export function NoteComposer({
           <div
             className="note-md composer-preview h-40 max-h-48 overflow-y-auto rounded-md border bg-muted/40 px-2.5 py-2 text-sm"
             aria-label="Highlight preview"
+            style={{ fontFamily: font.css }}
             onClick={onCodeCopyClick}
           >
             {value.trim() ? (

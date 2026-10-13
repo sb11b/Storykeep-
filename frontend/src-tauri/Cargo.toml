@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "StoryKeep desktop wrapper (Tauri v2)"
 authors = ["StoryKeep"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -29,6 +29,18 @@ serde_json = "1"
 # plugin's own docs recommend for `cargo add`).
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-global-shortcut = "2"
+
+# Desktop auto-update: click-to-install updates served from the GitHub
+# Releases latest.json endpoint (configured with the pubkey under
+# plugins.updater in tauri.conf.json). `"2"` resolves to
+# tauri-plugin-updater 2.13.3, the latest 2.x line and the one matching the
+# tauri 2.x dependency above (verified on crates.io). Desktop-only for the
+# same reason as the shortcut plugin. The plugin is registered in src/lib.rs
+# inside the existing #[cfg(desktop)] setup block; the JS entry point is
+# @tauri-apps/plugin-updater (npm ^2.13.3) behind the "updater:default"
+# capability. Nothing downloads or installs without an explicit user click
+# (see src/lib/auto-update.ts).
+tauri-plugin-updater = "2"
 
 [profile.release]
 panic = "abort"   # Strip expensive panic clean-up logic

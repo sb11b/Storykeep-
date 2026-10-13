@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Newsreader, Source_Serif_4 } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { PwaRegister } from "@/components/pwa-register";
+import { UpdateBanner } from "@/components/update-banner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -54,6 +55,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex h-full min-h-full flex-col">
         <Providers>{children}</Providers>
         <PwaRegister />
+        <UpdateBanner />
       </body>
     </html>
   );
