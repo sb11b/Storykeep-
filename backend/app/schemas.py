@@ -1018,6 +1018,16 @@ class JuniorDocumentFileTextOut(BaseModel):
     excerpt: bool = False
 
 
+class JuniorPageTextOut(BaseModel):
+    """Readable text of one web page Junior browsed to, for reading aloud."""
+
+    url: str
+    title: str
+    text: str
+    total_chars: int = 0
+    excerpt: bool = False
+
+
 class JuniorTaskIn(BaseModel):
     kind: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=200)

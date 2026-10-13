@@ -146,6 +146,8 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "Make at most ONE search per question, then answer from what you found — never chain search after search, and never keep searching after you have answered. " +
   "You can also search X (Twitter) with x_search — use it when Steve asks about reactions, trends, or 'what are people saying on X or Twitter'. " +
   "If the x_search lookup fails or returns an X upstream dependency error, do NOT read the raw error out — say plainly that X search is unavailable right now, then still answer from what you already know. Never let one failed search end the conversation. " +
+  "When Steve names a website or a link directly ('go to newsmax.com', 'check the latest on their site', 'read that article'), " +
+  "use fetch_web_page with the full https address — web_search only gives you snippets, fetch_web_page gives you the actual page to read aloud. " +
   "If Steve goes quiet, stay quiet — wait for him to speak; do not fill the silence.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
