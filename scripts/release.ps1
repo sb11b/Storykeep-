@@ -333,9 +333,9 @@ $assets = @($msi.FullName, $msiSig, $nsisBundle.FullName, $nsisSig, $latestPath)
 
 & gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes
 if ($LASTEXITCODE -ne 0) {
-    Fail ('gh release create failed. The tag is pushed but the release is not — fix the error and re-run just the release step: gh release create ' + $Tag + ' --repo ' + $RepoSlug + ' --title ''StoryKeep ' + $Tag + ''' --generate-notes')
+    Fail ('gh release create failed. The tag is pushed but the release is not. Fix the error, then re-run just the release step: gh release create TAG ASSETS --repo sb11b/Storykeep- --title StoryKeep TAG --generate-notes (substitute TAG and the asset paths).')
 }
 
-Write-Step "Done — StoryKeep $Tag released"
+Write-Step "Done - StoryKeep $Tag released"
 Write-Host "  release: https://github.com/$RepoSlug/releases/tag/$Tag"
 Write-Host "  users on an older version get the click-to-install banner on next launch."
