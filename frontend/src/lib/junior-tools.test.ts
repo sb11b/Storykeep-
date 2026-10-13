@@ -20,6 +20,7 @@ import {
   formatEmailList,
   formatFeedList,
   formatFileText,
+  formatPageRead,
   formatPendingTasks,
   JUNIOR_TOOLS,
   JUNIOR_TOOL_NAMES,
@@ -31,6 +32,7 @@ import {
   requiredStringArg,
   runJuniorTool,
   sliceReadChunk,
+  WEB_PAGE_CHARS,
 } from "@/lib/junior-tools";
 import { JUNIOR_TALK_INSTRUCTIONS } from "@/lib/conversation-voice";
 
@@ -66,6 +68,7 @@ test("required parameters are declared for the tools that need them", () => {
   assert.deepEqual(required.create_document, ["slug", "title", "content"]);
   assert.deepEqual(required.delete_document, ["slug"]);
   assert.deepEqual(required.read_article, ["id"]);
+  assert.deepEqual(required.fetch_web_page, ["url"]);
   assert.deepEqual(required.list_pending_work, []);
   assert.deepEqual(required.create_task, ["kind", "title", "instructions"]);
   assert.deepEqual(required.read_email, []);
@@ -73,6 +76,24 @@ test("required parameters are declared for the tools that need them", () => {
   assert.deepEqual(required.read_email_message, ["message_id"]);
   assert.deepEqual(required.draft_email, ["to", "subject", "body"]);
   assert.deepEqual(required.list_drafts, []);
+});
+
+test("fetch_web_page's description steers it to direct URLs and away from feeds/library", () => {
+  const browse = JUNIOR_TOOLS.find((tool: JuniorToolDef) => tool.name === "fetch_web_page");
+  assert.ok(browse);
+  const desc = browse!.description;
+  // The model must know WHY this exists beside the built-in web_search.
+  assert.match(desc, /web_search only gives snippets/);
+  assert.match(desc, /READ IT ALOUD|read it aloud/i);
+  // …and it must not reach for it when Steve means his feeds or his library.
+  assert.match(desc, /NOT for Steve's feeds/);
+  assert.match(desc, /use get_document/);
+  // The continuation rule must match get_document/read_article's wording so
+  // the model learns one offset rule for every chunked read.
+  assert.match(
+    String((browse!.parameters.properties.offset as { description?: string }).description),
+    /use the offset where the previous chunk ended/,
+  );
 });
 
 test("the never-send invariant is baked into the draft tool description", () => {
@@ -795,6 +816,120 @@ test("runJuniorTool list_drafts and read_document_file hit their endpoints", asy
   } finally {
     stub.restore();
   }
+});
+
+/* ── fetch_web_page (browse) ── */
+
+test("formatPageRead reads the page title, url, and text aloud", () => {
+  const out = formatPageRead({
+    url: "https://www.newsmax.com/politics",
+    title: "  Senate passes bill  ",
+    text: "The Senate passed the bill on Tuesday.",
+    total_chars: 38,
+  });
+  assert.match(out, /"Senate passes bill" \(https:\/\/www\.newsmax\.com\/politics\)/);
+  assert.match(out, /Text: The Senate passed the bill on Tuesday\./);
+  assert.ok(!out.includes("[excerpt"), "a complete page needs no continuation marker");
+});
+
+test("formatPageRead marks an oversized page with the speakable continuation marker", () => {
+  const text = "p".repeat(WEB_PAGE_CHARS + 500);
+  const out = formatPageRead({
+    url: "https://x.com/a",
+    title: "Long",
+    text: text.slice(0, WEB_PAGE_CHARS),
+    total_chars: text.length,
+    excerpt: true,
+  });
+  assert.ok(out.includes("[excerpt"));
+  // Cumulative positioning, same rule as every other chunked read: the first
+  // chunk reports "first <cap> of <total>".
+  assert.ok(out.includes(WEB_PAGE_CHARS.toLocaleString("en-US")));
+  assert.ok(out.includes(text.length.toLocaleString("en-US")));
+});
+
+test("formatPageRead continuation chunk holds exactly the tail, like read_article", () => {
+  const text = "q".repeat(WEB_PAGE_CHARS + 100);
+  const second = formatPageRead(
+    { url: "https://x.com/a", title: "T", text: text.slice(WEB_PAGE_CHARS), total_chars: text.length },
+    WEB_PAGE_CHARS,
+  );
+  assert.equal(second.slice(second.indexOf("Text: ") + "Text: ".length), text.slice(WEB_PAGE_CHARS));
+  assert.ok(!second.includes("[excerpt"), "the final chunk is complete");
+});
+
+test("formatPageRead speaks a line for a page with no readable text", () => {
+  const out = formatPageRead({ url: "https://x.com/blank", title: "", text: "", total_chars: 0 });
+  assert.match(out, /didn't have any text I could read/);
+});
+
+test("runJuniorTool fetch_web_page sends the url and reads the page aloud", async () => {
+  const stub = stubFetch(() => ({
+    ok: true,
+    payload: {
+      url: "https://www.newsmax.com/us-news",
+      title: "Markets rally",
+      text: "Markets closed higher on Tuesday.",
+      total_chars: 34,
+    },
+  }));
+  try {
+    const result = await runJuniorTool("fetch_web_page", '{"url":"https://www.newsmax.com/us-news"}');
+    const call = stub.calls.find((c) => c.url.includes("/api/v1/junior/browse"));
+    assert.ok(call, "fetch_web_page must call the backend browse route");
+    // The URL rides as a query param, properly encoded (parse against an
+    // origin: the tool path is relative, like every other tool call).
+    const params = new URL(call!.url, "https://app.test").searchParams;
+    assert.equal(params.get("url"), "https://www.newsmax.com/us-news");
+    assert.equal(params.get("offset"), null, "no offset on the first read");
+    assert.match(result, /"Markets rally" \(https:\/\/www\.newsmax\.com\/us-news\)/);
+    assert.match(result, /Text: Markets closed higher on Tuesday\./);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool fetch_web_page passes the offset for continued reads", async () => {
+  const stub = stubFetch(() => ({
+    ok: true,
+    payload: { url: "https://x.com/a", title: "T", text: "tail", total_chars: WEB_PAGE_CHARS + 4 },
+  }));
+  try {
+    await runJuniorTool("fetch_web_page", `{"url":"https://x.com/a","offset":${WEB_PAGE_CHARS}}`);
+    const call = stub.calls.find((c) => c.url.includes("/api/v1/junior/browse"));
+    const params = new URL(call!.url, "https://app.test").searchParams;
+    assert.equal(params.get("offset"), String(WEB_PAGE_CHARS));
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool fetch_web_page speaks the backend's refusal detail on a 400", async () => {
+  const stub = stubFetch(() => ({
+    ok: false,
+    status: 400,
+    payload: { detail: "I can only open http and https web pages." },
+  }));
+  try {
+    const result = await runJuniorTool("fetch_web_page", '{"url":"file:///etc/passwd"}');
+    assert.match(result, /I can only open http and https web pages/);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool fetch_web_page maps a backend failure to a speakable line", async () => {
+  const stub = stubFetch(() => ({ ok: false, status: 500, payload: null }));
+  try {
+    const result = await runJuniorTool("fetch_web_page", '{"url":"https://x.com/a"}');
+    assert.match(result, /I couldn't open that page/);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("runJuniorTool fetch_web_page asks for a url when the model omits one", async () => {
+  assert.match(await runJuniorTool("fetch_web_page", "{}"), /Which web page should I open/);
 });
 
 /* ── Instructions ── */

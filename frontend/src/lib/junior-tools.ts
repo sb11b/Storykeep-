@@ -53,6 +53,10 @@ const FEEDS_UNAVAILABLE = "I couldn't reach your feeds right now.";
 const ARTICLES_UNAVAILABLE = "I couldn't reach your articles right now.";
 const DOC_SAVE_FAILED = "I couldn't save that document right now.";
 const DOC_DELETE_FAILED = "I couldn't delete that document right now.";
+const WEB_UNAVAILABLE = "I couldn't open that page.";
+
+/** Read cap for a browsed web page (mirrors the backend's page chunk size). */
+export const WEB_PAGE_CHARS = 40_000;
 
 /** Feeds list cap (spec: ~50 entries). */
 const MAX_FEED_ITEMS = 50;
@@ -233,6 +237,28 @@ export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
         },
       },
       required: ["id"],
+    },
+  },
+  {
+    type: "function",
+    name: "fetch_web_page",
+    description:
+      "Open a web page at a URL and return its readable text so Junior can read it aloud. Use this when Steve names a site or a link directly ('go to newsmax.com', 'check the latest on nytimes.com', 'read that article'), or when he wants the FULL text of a page that came back from web_search or a search_articles result — web_search only gives snippets, this gives the actual page. Returns the title and body text. Long pages are capped; call again with an increased offset to continue reading where you left off — when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended. Only for public http/https web pages; this is NOT for Steve's feeds (use read_article) or his library documents (use get_document).",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description:
+            "The full web address to open, e.g. 'https://www.newsmax.com/politics' — include the scheme (https://).",
+        },
+        offset: {
+          type: "integer",
+          description:
+            "Character offset to start reading from. Omit (or 0) to start at the beginning; when Steve says 'continue' or 'keep reading', use the offset where the previous chunk ended.",
+        },
+      },
+      required: ["url"],
     },
   },
   {
@@ -665,6 +691,31 @@ export function formatFileText(file: { filename?: string; text?: string; excerpt
   return parts.join(" ");
 }
 
+/**
+ * Format a browsed web page for reading aloud — mirrors formatArticleRead so
+ * the model learns one shape for "read me this thing": title, source, then
+ * the capped text with a speakable continuation marker.
+ */
+export function formatPageRead(
+  page: { url?: string; title?: string; text?: string; total_chars?: number; excerpt?: boolean },
+  offset = 0,
+): string {
+  const text = page.text ?? "";
+  const total = page.total_chars ?? text.length;
+  const parts = [`"${page.title?.trim() || "web page"}"`];
+  if (page.url?.trim()) parts.push(`(${page.url.trim()})`);
+  parts.push(".");
+  if (text) {
+    parts.push(`Text: ${text}`);
+    if (page.excerpt || offset + text.length < total) {
+      parts.push(chunkExcerptMarker(offset, text.length, total));
+    }
+  } else {
+    parts.push("That page didn't have any text I could read.");
+  }
+  return parts.join(" ");
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Event helpers for the function-call loop (pure — unit-tested).
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -1004,6 +1055,48 @@ async function readArticle(args: Record<string, unknown>): Promise<string> {
   }
 }
 
+interface JuniorPageRow {
+  url?: string;
+  title?: string;
+  text?: string;
+  total_chars?: number;
+  excerpt?: boolean;
+}
+
+async function fetchWebPage(args: Record<string, unknown>): Promise<string> {
+  const url = requiredStringArg(args, "url");
+  if (!url) return "Which web page should I open?";
+  const offset = optionalIntArg(args, "offset") ?? 0;
+  try {
+    const params = new URLSearchParams({ url });
+    if (offset > 0) params.set("offset", String(offset));
+    const path = `/api/v1/junior/browse?${params.toString()}`;
+    // Use toolFetch, not toolJson: on a 400 the service answers with a
+    // speakable detail in FastAPI's {detail} envelope, and toolJson drops
+    // the body on any non-ok response. Junior should say what the backend
+    // told him, not a generic failure.
+    const response = await toolFetch(path);
+    if (response.ok) {
+      try {
+        return formatPageRead((await response.json()) as JuniorPageRow, offset);
+      } catch {
+        return WEB_UNAVAILABLE;
+      }
+    }
+    if (response.status === 400) {
+      try {
+        const detail = ((await response.json()) as { detail?: unknown } | null)?.detail;
+        if (typeof detail === "string" && detail.trim()) return detail.trim();
+      } catch {
+        // fall through to the generic line
+      }
+    }
+    return WEB_UNAVAILABLE;
+  } catch {
+    return WEB_UNAVAILABLE;
+  }
+}
+
 async function listPendingWork(): Promise<string> {
   try {
     const [open, claimed] = await Promise.all([
@@ -1140,6 +1233,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<string
   list_feeds: listFeeds,
   search_articles: searchArticles,
   read_article: readArticle,
+  fetch_web_page: fetchWebPage,
   list_pending_work: listPendingWork,
   create_task: createTask,
   read_email: readEmail,
