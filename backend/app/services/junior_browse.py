@@ -173,6 +173,11 @@ def fetch_page(url: str) -> PageText:
                     raise PageFetchError(
                         f"That page returned an error ({response.status_code})."
                     )
+                # SSRF: follow_redirects=True can land on a private/loopback
+                # host the initial gate never saw — re-validate the FINAL url.
+                final_url = str(response.url)
+                if final_url != url and not is_allowed_url(final_url):
+                    raise PageFetchError("I can only open http and https web pages.")
                 ctype = (response.headers.get("content-type") or "").lower()
                 if ctype and "html" not in ctype and "xml" not in ctype and "text" not in ctype:
                     # A PDF or an image: Junior has no reader for those and

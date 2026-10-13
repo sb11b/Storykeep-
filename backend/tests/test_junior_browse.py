@@ -98,6 +98,31 @@ class JuniorBrowseExtractTests(unittest.TestCase):
             junior_browse.fetch_page("http://169.254.169.254/latest/meta-data/")
         self.assertIn("http and https", ctx.exception.detail)
 
+    def test_fetch_page_revalidates_the_final_url_after_a_redirect(self):
+        # SSRF: a public page that 302-redirects to a private host must be
+        # refused on the FINAL url, not trusted because the initial url passed.
+        import httpx
+        from app.services import junior_browse
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "public.example.com":
+                return httpx.Response(
+                    302,
+                    headers={"location": "http://169.254.169.254/latest/meta-data/"},
+                )
+            # Should never be reached — the redirect target is gated.
+            return httpx.Response(200, text="<html><body>secret</body></html>")
+
+        transport = httpx.MockTransport(handler)
+        original_client = httpx.Client
+        httpx.Client = lambda *a, **k: original_client(*a, transport=transport, **k)
+        try:
+            with self.assertRaises(PageFetchError) as ctx:
+                junior_browse.fetch_page("https://public.example.com/article")
+        finally:
+            httpx.Client = original_client
+        self.assertIn("http and https", ctx.exception.detail)
+
 
 if __name__ == "__main__":
     unittest.main()
