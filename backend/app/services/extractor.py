@@ -132,9 +132,33 @@ def _is_protected_article_node(el: lxml_html.HtmlElement) -> bool:
     return any(marker in hay for marker in _PROTECTED_ARTICLE_MARKERS)
 
 
+def _prose_paragraph_count_in(el: lxml_html.HtmlElement) -> int:
+    """Real prose <p> descendants — used to refuse dropping live article text."""
+    try:
+        nodes = el.xpath(".//p")
+    except Exception:
+        return 0
+    count = 0
+    for node in nodes:
+        if not isinstance(node.tag, str):
+            continue
+        text = (node.text_content() or "").strip()
+        if len(text) >= 60 and not _is_cta_line(text):
+            count += 1
+    return count
+
+
 def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlElement]:
     drop: list[lxml_html.HtmlElement] = []
     seen: set[int] = set()
+    # Nodes that must never be dropped even when a chrome-hint class matches:
+    # an <article> container, or anything inside one (line 144 guards ancestors,
+    # but a hint-classed descendant of <article> can still wrap real prose).
+    protected_roots = {
+        id(node)
+        for node in root.iter()
+        if isinstance(node.tag, str) and node.tag == "article"
+    }
     for el in root.iter():
         if not isinstance(el.tag, str):
             continue
@@ -142,6 +166,8 @@ def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlEle
         if ident in seen:
             continue
         if _is_protected_article_node(el):
+            continue
+        if any(id(ancestor) in protected_roots for ancestor in el.iterancestors()):
             continue
         if el.tag in _KILL_TAGS:
             drop.append(el)
@@ -158,9 +184,63 @@ def _collect_drop_targets(root: lxml_html.HtmlElement) -> list[lxml_html.HtmlEle
             continue
         hay = f"{(el.get('class') or '').lower()} {(el.get('id') or '').lower()}"
         if any(hint in hay for hint in _CHROME_HINTS):
+            # A chrome-hinted wrapper can still hold real article prose (news
+            # sites nest the tail of the body inside .promo / .article-footer /
+            # .ad-container). Dropping the whole subtree there silently
+            # truncates the article. When the subtree holds real prose, keep it
+            # and instead prune only its noise paragraphs inline — the CTA /
+            # newsletter text goes, the article text survives.
+            if _prose_paragraph_count_in(el) >= 2:
+                _prune_noise_paragraphs(el)
+                continue
             drop.append(el)
             seen.add(ident)
     return drop
+
+
+def _is_noise_paragraph(text: str) -> bool:
+    """True for a newsletter/subscribe/consent paragraph that must never be read aloud."""
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if _is_cta_line(stripped):
+        return True
+    if _NOISE_LINE.match(stripped):
+        return True
+    lowered = stripped.lower()
+    if len(stripped) <= 320 and any(
+        phrase in lowered
+        for phrase in (
+            "subscribe button",
+            "clicking the subscribe",
+            "you agree to the",
+            "delivered straight to your inbox",
+            "sign up for our newsletter",
+            "newsletter for",
+            "enter your email",
+        )
+    ):
+        return True
+    return False
+
+
+def _prune_noise_paragraphs(el: lxml_html.HtmlElement) -> None:
+    """Remove CTA/newsletter/cookie paragraphs inside a kept chrome-hinted node."""
+    try:
+        nodes = el.xpath(".//p")
+    except Exception:
+        return
+    for node in nodes:
+        if not isinstance(node.tag, str):
+            continue
+        text = (node.text_content() or "").strip()
+        if not text:
+            continue
+        if not _is_noise_paragraph(text):
+            continue
+        parent = node.getparent()
+        if parent is not None:
+            node.drop_tree()
 
 
 def _prepare_html(raw: str) -> str:
