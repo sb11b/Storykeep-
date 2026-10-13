@@ -82,6 +82,8 @@ test("session.update includes web_search plus Junior's function tools so Talk ca
       "search_library",
       "get_document",
       "read_document_file",
+      "create_document",
+      "delete_document",
       "list_feeds",
       "search_articles",
       "read_article",
@@ -103,7 +105,7 @@ test("session.update includes web_search plus Junior's function tools so Talk ca
 
 test("session.update keeps the full tool set when resuming a conversation", () => {
   const resumed = buildSessionUpdate("castor", "conv-9");
-  assert.equal(resumed.session.tools.length, 15);
+  assert.equal(resumed.session.tools.length, 17);
 });
 
 test("MIC_CHUNK_SAMPLES is 100ms of audio at 24kHz", () => {

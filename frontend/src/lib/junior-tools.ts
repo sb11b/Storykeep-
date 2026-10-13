@@ -51,6 +51,8 @@ const DRAFT_FAILED = "I couldn't save that draft right now.";
 const TASK_FAILED = "I couldn't queue that task right now.";
 const FEEDS_UNAVAILABLE = "I couldn't reach your feeds right now.";
 const ARTICLES_UNAVAILABLE = "I couldn't reach your articles right now.";
+const DOC_SAVE_FAILED = "I couldn't save that document right now.";
+const DOC_DELETE_FAILED = "I couldn't delete that document right now.";
 
 /** Feeds list cap (spec: ~50 entries). */
 const MAX_FEED_ITEMS = 50;
@@ -122,6 +124,53 @@ export const JUNIOR_TOOLS: readonly JuniorToolDef[] = [
         },
       },
       required: ["slug", "file_id"],
+    },
+  },
+  {
+    type: "function",
+    name: "create_document",
+    description:
+      "Create or update a document in Steve's Storykeep library — an article, note, text, doc, or file content — at a shelf/folder location. Storykeep has ONE flat document model: SHELVES and FOLDERS are just path segments inside the document's slug (e.g. a doc at shelf 'insurance', folder 'x-drafts' has slug 'insurance-x-drafts-<name>'), so 'create a folder/shelf' means pick the path prefix for a document and the folder exists implicitly. Use when Steve asks Junior to write, save, file, or draft a document ('save this under my insurance drafts', 'create a note about...'). To read a draft back, use get_document. NEVER claim the document was saved before this tool returns — if it fails, say so.",
+    parameters: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description:
+            "The document's own short name, e.g. 'term-life-comparison' or 'insurance-x-drafts-term-life-comparison' if you want to give the full slug including the folder. Combined with path when path is given.",
+        },
+        path: {
+          type: "string",
+          description:
+            "Shelf/folder path prefix, e.g. 'insurance' or 'hermes/work-bot/insurance/x-drafts'. Each segment becomes part of the document's slug, so this is how shelves/folders are created. Omit for a top-level document.",
+        },
+        title: {
+          type: "string",
+          description: "The document's title, e.g. 'Term life comparison — 3 quotes'.",
+        },
+        content: {
+          type: "string",
+          description: "The full text/markdown body of the document to save.",
+        },
+      },
+      required: ["slug", "title", "content"],
+    },
+  },
+  {
+    type: "function",
+    name: "delete_document",
+    description:
+      "Permanently DELETE one document from Steve's Storykeep library by its exact slug (shelves and folders are path segments inside the slug, so the slug identifies the full location). Use ONLY when Steve explicitly asks to delete or remove a specific document — confirm which document he means before calling. NEVER delete a whole shelf/folder. NEVER claim the document was deleted before this tool returns — if it fails, say so.",
+    parameters: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description:
+            "The exact slug of the document to delete, e.g. 'insurance-x-drafts-term-life-comparison' — exactly as returned by search_library or create_document.",
+        },
+      },
+      required: ["slug"],
     },
   },
   {
@@ -561,6 +610,48 @@ export function formatDraftSaved(draft: { to?: string; subject?: string }): stri
   return `Draft saved in Fastmail for ${draft.to || "the recipient"} about "${draft.subject || "(no subject)".trim()}". It is NOT sent — open Fastmail to review and send it yourself.`;
 }
 
+/**
+ * Build a document slug from a shelf/folder path prefix and the document's
+ * own name, mirroring sk-push's slug convention: the path segments and the
+ * name are joined with '-' and slugified (lowercase, non-alphanumerics
+ * collapsed to '-'). A path already containing the full slug (name included)
+ * still resolves correctly: a trailing segment equal to the slug's own name
+ * is not duplicated. Slugs over 64 chars carry a short hash suffix so
+ * distinct long names never collide (same trick as sk-push).
+ */
+export function documentSlugFromPath(path: string | null, slug: string): string {
+  const parts = (path ?? "")
+    .split("/")
+    .map((part) => slugifySegment(part))
+    .filter(Boolean);
+  const name = slugifySegment(slug);
+  if (!name) return "";
+  const full = [...(parts[parts.length - 1] === name ? parts.slice(0, -1) : parts), name];
+  const joined = full.filter(Boolean).join("-");
+  if (joined.length <= 64) return joined;
+  const head = joined.slice(0, 57).replace(/-+$/, "");
+  let hash = 0;
+  for (const char of joined) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  return `${head}-${(hash >>> 0).toString(16).padStart(8, "0").slice(0, 6)}`;
+}
+
+function slugifySegment(segment: string): string {
+  return segment
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** Format a created/updated document for voice — shelf path included. */
+export function formatDocumentSaved(doc: { slug?: string; title?: string }): string {
+  return `Saved "${doc.title || "your document"}" in your library (slug: ${doc.slug ?? "unknown"}). I can read it back whenever you want.`;
+}
+
+/** Format a deleted document for voice — confirms exactly what was deleted. */
+export function formatDocumentDeleted(slug: string): string {
+  return `Deleted "${slug}" from your library.`;
+}
+
 /** Format an attached file's extracted text for reading aloud. */
 export function formatFileText(file: { filename?: string; text?: string; excerpt?: boolean }): string {
   const text = file.text ?? "";
@@ -759,6 +850,62 @@ async function readDocumentFile(args: Record<string, unknown>): Promise<string> 
     return formatFileText(file.data as { filename?: string; text?: string; excerpt?: boolean });
   } catch {
     return LIBRARY_UNAVAILABLE;
+  }
+}
+
+/**
+ * Create or update a library document (POST /documents — the existing
+ * create_or_update_document route). The shelf/folder `path` is folded into
+ * the slug: Storykeep has one flat document model where folders are slug
+ * path segments (see documentSlugFromPath). Never claims success before the
+ * API confirms.
+ */
+async function createDocument(args: Record<string, unknown>): Promise<string> {
+  const slug = requiredStringArg(args, "slug");
+  const title = requiredStringArg(args, "title");
+  const content = requiredStringArg(args, "content");
+  const path = requiredStringArg(args, "path");
+  if (!slug) return "What should I call the document?";
+  if (!title) return "What's the title?";
+  if (content == null) return "What should the document say?";
+  const fullSlug = documentSlugFromPath(path, slug);
+  if (!fullSlug) return "What should I call the document?";
+  if (fullSlug.length > 64) return "That document name is too long — try a shorter one.";
+  try {
+    const saved = (await toolJson("/api/v1/junior/documents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: fullSlug, title: title.slice(0, 120), text: content.slice(0, 32_000) }),
+    }));
+    if (!saved.ok) return DOC_SAVE_FAILED;
+    // Confirm from the API's own echo of the saved row, not the request.
+    const row = saved.data as JuniorDocumentRow | null;
+    return formatDocumentSaved({ slug: row?.slug ?? fullSlug, title: row?.title ?? title });
+  } catch {
+    return DOC_SAVE_FAILED;
+  }
+}
+
+/**
+ * Delete one library document by exact slug (DELETE /documents/{slug} — the
+ * existing delete_document route). Destructive: the handler only runs with an
+ * explicit slug, and the confirmation names exactly what was deleted.
+ */
+async function deleteDocument(args: Record<string, unknown>): Promise<string> {
+  const slug = requiredStringArg(args, "slug");
+  if (!slug) return "Which document should I delete? Give me its exact name.";
+  try {
+    const res = await toolFetch(`/api/v1/junior/documents/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      return res.status === 404
+        ? `I couldn't find a document called "${slug}" in your library.`
+        : DOC_DELETE_FAILED;
+    }
+    return formatDocumentDeleted(slug);
+  } catch {
+    return DOC_DELETE_FAILED;
   }
 }
 
@@ -988,6 +1135,8 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<string
   search_library: searchLibrary,
   get_document: getDocument,
   read_document_file: readDocumentFile,
+  create_document: createDocument,
+  delete_document: deleteDocument,
   list_feeds: listFeeds,
   search_articles: searchArticles,
   read_article: readArticle,
