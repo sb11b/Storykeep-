@@ -376,9 +376,23 @@ export function DictationProvider({ children }: { children: ReactNode }) {
           if (context.state === "suspended") await context.resume();
           const source = context.createMediaStreamSource(stream);
           const processor = context.createScriptProcessor(4096, 1, 1);
+          // The audio callback outlives this start() frame: it is registered on
+          // the node, not on `context`. Ownership of the AudioContext moves to
+          // audioRef below (so disconnectEngine() can close it), and the local
+          // is nulled so the catch path does not double-close — but the
+          // callback then reads `context!.sampleRate` through a nulled local and
+          // throws on the very first audio hop. The ScriptProcessor dispatcher
+          // swallows that throw (it surfaces as an AudioContext "error" event,
+          // no toast, no log), so the socket never receives PCM, Junior stays
+          // silent, and the backend's idle watchdog eventually closes the take
+          // with no visible reason. Capture the context in its own binding that
+          // is never nulled — the same shape use-conversation-voice.ts uses.
+          const audioContext = context;
           processor.onaudioprocess = (event) => {
             if (socket.readyState !== WebSocket.OPEN || stoppingRef.current || abortedRef.current) return;
-            const pcm = floatToPcm16(downsample(event.inputBuffer.getChannelData(0), context!.sampleRate, 16000));
+            const pcm = floatToPcm16(
+              downsample(event.inputBuffer.getChannelData(0), audioContext.sampleRate, 16000),
+            );
             if (!listeningRef.current) {
               pending.push(pcm);
               if (pending.length > 24) pending.shift();
