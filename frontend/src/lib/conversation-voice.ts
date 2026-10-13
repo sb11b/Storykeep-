@@ -145,6 +145,7 @@ export const JUNIOR_TALK_INSTRUCTIONS =
   "When asked about current events, recent news, or anything time-sensitive, use your web_search tool before answering. " +
   "Make at most ONE search per question, then answer from what you found — never chain search after search, and never keep searching after you have answered. " +
   "You can also search X (Twitter) with x_search — use it when Steve asks about reactions, trends, or 'what are people saying on X or Twitter'. " +
+  "If the x_search lookup fails or returns an X upstream dependency error, do NOT read the raw error out — say plainly that X search is unavailable right now, then still answer from what you already know. Never let one failed search end the conversation. " +
   "If Steve goes quiet, stay quiet — wait for him to speak; do not fill the silence.";
 
 /** Build the realtime WebSocket URL, resuming a prior conversation when we have its id. */
@@ -232,6 +233,36 @@ export type RealtimeEventKind =
   | "session"
   | "error"
   | "other";
+
+/**
+ * Spoken when xAI's built-in X search cannot run, instead of leaking the raw
+ * upstream error. `x_search` is xAI's OWN server-side tool (see buildSessionUpdate
+ * below) — Storykeep has no handler for it, so when its upstream X/Twitter
+ * dependency fails, xAI reports
+ * "X upstream dependency error: DependencyError: Unspecified (path:
+ * [search_by_raw_query, ranked_tweets])" over the realtime `error` event.
+ * Junior previously surfaced that string verbatim. Nothing on the Storykeep side
+ * can retry or repair it — the only fixable behaviour is to (a) say something a
+ * human can hear, and (b) keep the voice turn alive so Junior still answers from
+ * the rest of what it knows.
+ */
+export const X_SEARCH_UNAVAILABLE_MESSAGE =
+  "X search is temporarily unavailable — I couldn't pull posts from X just now.";
+
+/** xAI's upstream X/Twitter dependency failed on the built-in x_search tool. */
+export function isXSearchDependencyError(message: string): boolean {
+  return /x upstream dependency error|dependencyerror/i.test(message) &&
+    /(search_by_raw_query|ranked_tweets|\bx_search\b)/i.test(message);
+}
+
+/**
+ * Turn a realtime `error` message into something worth showing/speaking.
+ * Upstream X-search failures degrade to a clean sentence; everything else is
+ * passed through untouched so a real Storykeep/xAI bug stays visible.
+ */
+export function readableRealtimeError(message: string): string {
+  return isXSearchDependencyError(message) ? X_SEARCH_UNAVAILABLE_MESSAGE : message;
+}
 
 /** Buckets every realtime event we care about. */
 export function classifyRealtimeEvent(type: unknown): RealtimeEventKind {
