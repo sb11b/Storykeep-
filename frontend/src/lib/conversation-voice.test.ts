@@ -28,6 +28,9 @@ import {
   pcm16ToBase64,
   REALTIME_MODEL,
   REALTIME_SAMPLE_RATE,
+  readableRealtimeError,
+  isXSearchDependencyError,
+  X_SEARCH_UNAVAILABLE_MESSAGE,
   splitMicChunks,
 } from "@/lib/conversation-voice";
 
@@ -82,9 +85,12 @@ test("session.update includes web_search plus Junior's function tools so Talk ca
       "search_library",
       "get_document",
       "read_document_file",
+      "create_document",
+      "delete_document",
       "list_feeds",
       "search_articles",
       "read_article",
+      "fetch_web_page",
       "list_pending_work",
       "create_task",
       "read_email",
@@ -103,7 +109,7 @@ test("session.update includes web_search plus Junior's function tools so Talk ca
 
 test("session.update keeps the full tool set when resuming a conversation", () => {
   const resumed = buildSessionUpdate("castor", "conv-9");
-  assert.equal(resumed.session.tools.length, 15);
+  assert.equal(resumed.session.tools.length, 18);
 });
 
 test("MIC_CHUNK_SAMPLES is 100ms of audio at 24kHz", () => {
@@ -1499,6 +1505,152 @@ test("a stop during an in-flight tool call swallows the late result (barge-in sa
     unmountHook(slots);
   } finally {
     restoreFetch();
+    restore();
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * X search graceful degradation.
+ *
+ * `x_search` is xAI's OWN server-side realtime tool — it is declared in
+ * buildSessionUpdate (test D above) and has no Storykeep handler at all.
+ * When its upstream X/Twitter dependency fails, xAI emits a realtime `error`
+ * event carrying
+ *   "X upstream dependency error: DependencyError: Unspecified
+ *    (path: [search_by_raw_query, ranked_tweets])"
+ * and Junior used to surface that raw string. There is nothing Storykeep can
+ * repair server-side, so the fix is degradation: a spoken-friendly sentence,
+ * and a voice turn that survives the failure.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const XAI_X_SEARCH_ERROR =
+  "X upstream dependency error: DependencyError: Unspecified (path: [search_by_raw_query, ranked_tweets])";
+
+test("isXSearchDependencyError matches the xAI upstream X failure", () => {
+  assert.equal(isXSearchDependencyError(XAI_X_SEARCH_ERROR), true);
+  // Same class of failure without the inner path list.
+  assert.equal(isXSearchDependencyError("x_search: X upstream dependency error"), true);
+  assert.equal(isXSearchDependencyError("DependencyError: Unspecified (path: [ranked_tweets])"), true);
+});
+
+test("isXSearchDependencyError does not match unrelated realtime errors", () => {
+  assert.equal(isXSearchDependencyError("rate limit exceeded"), false);
+  assert.equal(isXSearchDependencyError(""), false);
+  // A dependency error for something else is NOT the X-search failure.
+  assert.equal(isXSearchDependencyError("DependencyError: Unspecified (path: [web_search])"), false);
+});
+
+test("readableRealtimeError degrades the X-search failure to a spoken sentence", () => {
+  assert.equal(readableRealtimeError(XAI_X_SEARCH_ERROR), X_SEARCH_UNAVAILABLE_MESSAGE);
+  assert.match(readableRealtimeError(XAI_X_SEARCH_ERROR), /X search is temporarily unavailable/);
+  // The raw internals never reach the user.
+  assert.ok(!/DependencyError|ranked_tweets/.test(readableRealtimeError(XAI_X_SEARCH_ERROR)));
+});
+
+test("readableRealtimeError passes every other error through untouched", () => {
+  assert.equal(readableRealtimeError("rate limit exceeded"), "rate limit exceeded");
+  assert.equal(readableRealtimeError("Conversation error"), "Conversation error");
+  assert.equal(readableRealtimeError("WebSocket closed unexpectedly"), "WebSocket closed unexpectedly");
+});
+
+test("instructions tell Junior to degrade a failed x_search without leaking the raw error", () => {
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /x_search lookup fails/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /do NOT read the raw error out/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /still answer from what you already know/);
+  assert.match(JUNIOR_TALK_INSTRUCTIONS, /Never let one failed search end the conversation/);
+});
+
+test("an x_search dependency error degrades and keeps the voice turn alive", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const statuses: string[] = [];
+    const errors: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: () => {},
+            onStatusChange: (s: string) => statuses.push(s),
+            onRealtimeError: (m: string) => errors.push(m),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+    assert.equal(statuses.at(-1), "listening");
+
+    // THE FAILURE: xAI's built-in x_search hit its upstream X dependency.
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "error", error: { message: XAI_X_SEARCH_ERROR } }),
+    });
+    await flushMicrotasks();
+
+    // The user hears a clean sentence, never the raw DependencyError.
+    assert.deepEqual(errors, [X_SEARCH_UNAVAILABLE_MESSAGE]);
+
+    // THE FIX: the failed search does not kill the turn — the socket stays
+    // open, the status stays "listening", and no reconnect was scheduled.
+    assert.equal(ws.closed, false, "the session must survive a failed x_search");
+    assert.equal(statuses.at(-1), "listening", "a failed x_search must not drop the status");
+    assert.equal(FakeWebSocket.instances.length, 1, "no reconnect socket for a tool-level failure");
+
+    // Junior still answers: a later audio delta from the same socket plays.
+    ws.onmessage?.({ data: JSON.stringify({ type: "response.audio.delta", delta: "AAAA" }) });
+    await flushMicrotasks();
+    assert.equal(statuses.at(-1), "speaking", "Junior must still speak after the failed search");
+
+    stop();
+    unmountHook(slots);
+  } finally {
+    restore();
+  }
+});
+
+test("a non-X realtime error is NOT degraded and not surfaced to onRealtimeError", async () => {
+  const restore = installFakes();
+  try {
+    const { useConversationVoice } = await import("@/lib/use-conversation-voice");
+    const slots: HookSlots = { refs: [], states: [], callbacks: [], memos: [], effects: [], index: 0 };
+    const errors: string[] = [];
+    const voiceIdRef = { current: "castor" } as React.RefObject<string>;
+    const render = () =>
+      renderHook(
+        () =>
+          useConversationVoice({
+            voiceIdRef,
+            onUserTranscript: () => {},
+            onStatusChange: () => {},
+            onRealtimeError: (m: string) => errors.push(m),
+          }),
+        slots,
+      );
+    render();
+    const start = render().start;
+    const stop = render().stop;
+
+    await start();
+    await flushMicrotasks();
+    const ws = FakeWebSocket.instances[0];
+
+    // A genuine transport/rate-limit error keeps its exact message and does not
+    // masquerade as an X-search outage.
+    ws.onmessage?.({ data: JSON.stringify({ type: "error", error: { message: "rate limit exceeded" } }) });
+    await flushMicrotasks();
+    assert.deepEqual(errors, []);
+    assert.equal(ws.closed, false);
+
+    stop();
+    unmountHook(slots);
+  } finally {
     restore();
   }
 });

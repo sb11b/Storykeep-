@@ -424,6 +424,127 @@ class ExtractorTests(unittest.TestCase):
         self.assertIn("Congress moved Tuesday", updated.content_text or "")
         self.assertEqual(notice, CHROME_NOTICE)
 
+    def test_prose_inside_chrome_hinted_wrapper_is_not_truncated(self):
+        """Regression: a .promo / .article-footer wrapper holding the article tail
+        must not be dropped wholesale — the prose survives, the noise does not."""
+        def paras(items):
+            return "\n".join(
+                f"<p>Paragraph {i} with enough text to matter for this story line here.</p>"
+                for i in items
+            )
+
+        page = (
+            "<html><body><main>"
+            '<article class="article-wrap has-video"><div class="article-body">'
+            + paras(range(4))
+            + '<div class="promo">'
+            + paras(range(4, 14))
+            + "</div>"
+            "</div></article>"
+            "</main></body></html>"
+        )
+        html, text = extract_html(page, "https://www.foxnews.com/politics/truncation")
+        self.assertIsNotNone(text)
+        assert text is not None
+        self.assertIn("Paragraph 4", text)
+        self.assertIn("Paragraph 13", text, "the tail of the article inside the hinted wrapper is lost")
+        self.assertGreater(len(text), 800)
+
+    def test_newsletter_prose_inside_article_is_still_dropped(self):
+        """The prose-protection rule must not leak newsletter/consent copy."""
+        def paras(items):
+            return "\n".join(
+                f"<p>Paragraph {i} with enough text to matter for this story line here.</p>"
+                for i in items
+            )
+
+        page = (
+            "<html><body><main>"
+            '<article class="article-wrap"><div class="article-body">'
+            + paras(range(4))
+            + '<div class="item-newsletter">'
+            "<p>Get the latest updates on the Trump administration and Congress, "
+            "delivered straight to your inbox.</p>"
+            "<p>By entering your email and clicking the Subscribe button, you agree "
+            "to the Fox News Terms of Service and Privacy Policy.</p>"
+            "</div>"
+            + paras(range(4, 14))
+            + "</div></article>"
+            "</main></body></html>"
+        )
+        _html, text = extract_html(page, "https://www.foxnews.com/politics/newsletter")
+        self.assertIsNotNone(text)
+        assert text is not None
+        self.assertIn("Paragraph 13", text)
+        self.assertNotIn("Subscribe button", text)
+        self.assertNotIn("delivered straight to your inbox", text)
+
+    def test_noise_only_chrome_hinted_node_is_still_dropped(self):
+        """A hinted node with no real prose (pure CTA) is still removed entirely."""
+        body = " ".join(
+            f"Sentence {i} about the policy shift that is reshaping the federal budget."
+            for i in range(12)
+        )
+        page = (
+            "<html><body><main>"
+            '<article class="article-wrap"><div class="article-body">'
+            f"<p>{body}</p><p>{body} The follow-up detail matters for the hearing.</p>"
+            '<div class="promo"><p>Want to leave a tip?</p><p>Support Us</p></div>'
+            "</div></article>"
+            "</main></body></html>"
+        )
+        _html, text = extract_html(page, "https://www.foxnews.com/politics/cta")
+        assert text is not None
+        self.assertIn("policy shift", text)
+        self.assertNotIn("leave a tip", text.lower())
+        self.assertNotIn("Support Us", text)
+
+    def test_kill_tags_inside_article_are_still_dropped(self):
+        """The <article> guard must not exempt kill tags / nav from suppression."""
+        from lxml import html as lxml_html
+
+        from app.services import extractor
+
+        page = (
+            "<article>"
+            "<p>The council approved the bond measure after a long debate.</p>"
+            "<nav><a href='/x'>Menu item one</a></nav>"
+            "<script>tracker.load()</script>"
+            "</article>"
+        )
+        root = lxml_html.fromstring(page)
+        dropped_tags = {el.tag for el in extractor._collect_drop_targets(root)}
+        self.assertIn("nav", dropped_tags)
+        self.assertIn("script", dropped_tags)
+
+    def test_prose_wrapper_inside_article_is_kept_via_threshold(self):
+        """A chrome-hinted wrapper holding >=2 real prose <p> inside <article> survives."""
+        from lxml import html as lxml_html
+
+        from app.services import extractor
+
+        p1 = "<p>The council approved the bond measure after a lengthy debate.</p>"
+        p2 = "<p>Construction will begin early next year pending final review.</p>"
+        page = (
+            "<article><p>Lead paragraph of the story goes here.</p>"
+            f'<div class="promo">{p1}{p2}</div></article>'
+        )
+        root = lxml_html.fromstring(page)
+        dropped_tags = {el.tag for el in extractor._collect_drop_targets(root)}
+        # The prose-holding .promo must NOT be dropped (it is a div, kept by threshold)
+        self.assertNotIn("div", dropped_tags)
+
+    def test_newsletter_prose_reported_speech_is_not_noise(self):
+        """'mailed a newsletter for members' is reported prose, not a signup CTA."""
+        from app.services import extractor
+
+        legit = "The firm mailed a newsletter for members explaining the fee change."
+        self.assertFalse(extractor._is_noise_paragraph(legit))
+        cta = "Sign up for our newsletter to get the latest news."
+        self.assertTrue(extractor._is_noise_paragraph(cta))
+        cta2 = "Get updates delivered straight to your inbox every morning."
+        self.assertTrue(extractor._is_noise_paragraph(cta2))
+
 
 if __name__ == "__main__":
     unittest.main()

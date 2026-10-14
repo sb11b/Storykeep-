@@ -20,6 +20,7 @@ import {
   nextBackoffDelay,
   OUTPUT_SPEED_DEFAULT,
   REALTIME_SAMPLE_RATE,
+  readableRealtimeError,
   runJuniorTool,
   splitMicChunks,
   DEFAULT_REASONING_EFFORT,
@@ -38,6 +39,13 @@ export interface UseConversationVoiceOptions {
   onUserTranscript: (text: string) => void;
   /** Called whenever the mic/speaker status changes, for pane chrome. */
   onStatusChange?: (status: ConversationStatus) => void;
+  /**
+   * Called with a clean, human-readable message when the realtime session
+   * reports a degraded condition the user should hear about — currently only
+   * xAI's built-in x_search hitting its upstream X/Twitter dependency error.
+   * Optional: the socket stays open and the turn continues regardless.
+   */
+  onRealtimeError?: (message: string) => void;
 }
 
 /** Conversation-mode chrome. Keep copy identical in the button title and status line. */
@@ -58,6 +66,7 @@ export function useConversationVoice({
   voiceIdRef,
   onUserTranscript,
   onStatusChange,
+  onRealtimeError,
 }: UseConversationVoiceOptions) {
   const [status, setStatus] = useState<ConversationStatus>("idle");
 
@@ -85,6 +94,7 @@ export function useConversationVoice({
   const statusRef = useRef<ConversationStatus>("idle");
   const onUserTranscriptRef = useRef(onUserTranscript);
   const onStatusChangeRef = useRef(onStatusChange);
+  const onRealtimeErrorRef = useRef(onRealtimeError);
   /**
    * Completed function-call ids already handled. xAI emits the completed call
    * twice — response.function_call_arguments.done AND inside
@@ -149,7 +159,8 @@ export function useConversationVoice({
   useEffect(() => {
     onUserTranscriptRef.current = onUserTranscript;
     onStatusChangeRef.current = onStatusChange;
-  }, [onUserTranscript, onStatusChange]);
+    onRealtimeErrorRef.current = onRealtimeError;
+  }, [onUserTranscript, onStatusChange, onRealtimeError]);
 
   const setStatusSafe = useCallback((next: ConversationStatus) => {
     if (statusRef.current === next) return;
@@ -509,11 +520,22 @@ export function useConversationVoice({
             setStatusSafe("listening");
             break;
           case "error": {
-            const message =
+            const raw =
               typeof (msg as { error?: { message?: unknown } }).error?.message === "string"
                 ? (msg as { error: { message: string } }).error.message
                 : "Conversation error";
-            console.log("junior-talk", { action: "error", message });
+            // xAI's built-in x_search runs server-side; when its upstream
+            // X/Twitter dependency fails, xAI emits this over `error` and
+            // Junior would otherwise speak the raw DependencyError. Degrade to
+            // a clean spoken line and keep listening — one failed tool call
+            // must not tear down the whole voice turn.
+            const message = readableRealtimeError(raw);
+            console.log("junior-talk", {
+              action: "error",
+              message,
+              ...(message === raw ? {} : { raw, degraded: "x_search" }),
+            });
+            if (message !== raw) onRealtimeErrorRef.current?.(message);
             break;
           }
           default:
