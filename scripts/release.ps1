@@ -121,7 +121,7 @@ if ($remoteTag) {
 $signingKey = $env:STORYKEEP_UPDATE_KEY
 if (-not $signingKey) { $signingKey = $env:TAURI_SIGNING_PRIVATE_KEY }
 if (-not $signingKey) {
-    Fail @"
+    $signingKeyHelp = @"
 no signing key configured. The minisign private key lives in your password
 manager (or a safe file). Set ONE of:
 
@@ -130,6 +130,7 @@ manager (or a safe file). Set ONE of:
 
 Both accept the key CONTENT as well as the path. Never commit the private key.
 "@
+    Fail $signingKeyHelp
 }
 
 Write-Host "  branch: $branch (clean, untagged)"
