@@ -279,7 +279,14 @@ Write-Step "Building bundles (NSIS + MSI) with updater signing"
 if (-not (Test-Path -LiteralPath (Join-Path $Frontend 'node_modules'))) {
     Write-Host "  node_modules missing -- running npm ci first"
     Push-Location $Frontend
-    try { npm ci } finally { Pop-Location }
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & npm ci 2>&1 | Out-Host
+    } finally {
+        $ErrorActionPreference = $oldEAP
+        Pop-Location
+    }
     # Native commands don't trip $ErrorActionPreference='Stop' -- check the
     # exit code explicitly or a failed npm ci would fall through to the
     # build with a stale/partial node_modules.
@@ -294,17 +301,20 @@ $env:TAURI_SIGNING_PRIVATE_KEY = $signingKey
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
 
 Push-Location $Frontend
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 try {
     # `tauri build` runs beforeBuildCommand (the Next.js static export)
     # and, thanks to createUpdaterArtifacts, signs every bundle and writes
-    # a matching .sig next to each installer.
-    npm run tauri:build
-    if ($LASTEXITCODE -ne 0) {
-        Fail "npm run tauri:build failed (exit $LASTEXITCODE)."
-    }
-}
-finally {
+    # a matching .sig next to each installer. Stream output live (Out-Host);
+    # stderr is normal build chatter, not an error -- $LASTEXITCODE is the signal.
+    & npm run tauri:build 2>&1 | Out-Host
+} finally {
+    $ErrorActionPreference = $oldEAP
     Pop-Location
+}
+if ($LASTEXITCODE -ne 0) {
+    Fail "npm run tauri:build failed (exit $LASTEXITCODE)."
 }
 
 $BundleRoot = Join-Path $TauriDir 'target\release\bundle'
