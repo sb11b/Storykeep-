@@ -76,9 +76,20 @@ function Fail {
 
 function Invoke-Git {
     param([string[]]$Arguments)
-    $output = & git @Arguments 2>&1
+    # Native commands (git) write progress to STDERR and exit 0 on success.
+    # Under $ErrorActionPreference='Stop', PowerShell 5.1 promotes that stderr
+    # to a terminating NativeCommandError -- so a SUCCESSFUL push would throw
+    # and abort the release. Drop to 'Continue' for the call so stderr is just
+    # captured text; the exit code is the real success signal, checked below.
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & git @Arguments 2>&1
+    } finally {
+        $ErrorActionPreference = $oldEAP
+    }
     if ($LASTEXITCODE -ne 0) {
-        Fail "git $($Arguments -join ' ') failed:`n$output"
+        Fail "git $($Arguments -join ' ') failed:`n$($output | Out-String)"
     }
     return ($output | Out-String).Trim()
 }
@@ -109,9 +120,15 @@ if ($existingTag) {
     Fail "tag $Tag already exists locally."
 }
 
-$remoteTag = & git ls-remote --tags origin "refs/tags/$Tag" 2>&1
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $remoteTag = & git ls-remote --tags origin "refs/tags/$Tag" 2>&1
+} finally {
+    $ErrorActionPreference = $oldEAP
+}
 if ($LASTEXITCODE -ne 0) {
-    Fail "could not query origin for tag ${Tag}:`n$remoteTag"
+    Fail "could not query origin for tag ${Tag}:`n$($remoteTag | Out-String)"
 }
 if ($remoteTag) {
     Fail "tag $Tag already exists on origin."
@@ -358,7 +375,14 @@ Write-Step "Creating GitHub release $Tag"
 # a future MSI-based update path needs no rebuild.
 $assets = @($msi.FullName, $msiSig, $nsisBundle.FullName, $nsisSig, $latestPath)
 
-& gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    & gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes 2>&1 |
+        Out-Host
+} finally {
+    $ErrorActionPreference = $oldEAP
+}
 if ($LASTEXITCODE -ne 0) {
     Fail ('gh release create failed. The tag is pushed but the release is not. Fix the error, then re-run just the release step: gh release create TAG ASSETS --repo sb11b/Storykeep- --title StoryKeep TAG --generate-notes (substitute TAG and the asset paths).')
 }
