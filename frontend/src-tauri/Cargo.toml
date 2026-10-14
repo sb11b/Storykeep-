@@ -1,6 +1,6 @@
 [package]
 name = "storykeep-desktop"
-version = "1.0.2"
+version = "1.0.3"
 description = "StoryKeep desktop wrapper (Tauri v2)"
 authors = ["StoryKeep"]
 edition = "2021"
