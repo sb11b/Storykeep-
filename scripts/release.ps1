@@ -8,7 +8,7 @@
     in-app banner, which reads the `latest.json` this script publishes to
     GitHub Releases.
 
-    Steps (each one fails loudly — the script stops at the first error and
+    Steps (each one fails loudly -- the script stops at the first error and
     prints what it did):
 
       1.  Preflight: clean tree, not already tagged, on `main`, gh + git present.
@@ -20,7 +20,7 @@
       4.  Build the NSIS + MSI bundles with updater signing
           (`createUpdaterArtifacts: true` in tauri.conf.json makes
           `tauri build` sign and emit .sig files next to the installers).
-      5.  Generate latest.json (windows-aarch64 platform key — the app is
+      5.  Generate latest.json (windows-aarch64 platform key -- the app is
           built for Windows ARM64 only). The manifest points at the NSIS
           bundle: the updater cannot cross installer formats, and NSIS is
           the format users install from. The MSI ships as an alternative
@@ -32,7 +32,7 @@
     (password manager). Point the script at it ONE of these ways:
 
       - `$env:STORYKEEP_UPDATE_KEY = "C:\keys\storykeep-update.key"`
-        (a path OR the key content itself — the Tauri CLI accepts both),
+        (a path OR the key content itself -- the Tauri CLI accepts both),
       - or `$env:TAURI_SIGNING_PRIVATE_KEY` already set in your session.
 
     The key has no passphrase, so `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
@@ -90,7 +90,7 @@ Write-Step "Preflight checks for StoryKeep $Tag"
 
 foreach ($tool in @('git', 'gh')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        Fail "'$tool' is not on PATH — install it first."
+        Fail "'$tool' is not on PATH -- install it first."
     }
 }
 
@@ -101,7 +101,7 @@ if ($branch -ne 'main') {
 
 $porcelain = Invoke-Git @('status', '--porcelain')
 if ($porcelain) {
-    Fail "working tree is dirty — commit or stash first:`n$porcelain"
+    Fail "working tree is dirty -- commit or stash first:`n$porcelain"
 }
 
 $existingTag = Invoke-Git @('tag', '--list', $Tag)
@@ -154,7 +154,7 @@ function Set-VersionInFile {
     $content = Get-Content -LiteralPath $Path -Raw
     $matches = [regex]::Matches($content, $Pattern)
     if ($matches.Count -ne 1) {
-        Fail "$Label at $Path has $($matches.Count) 'version' entries — expected exactly 1."
+        Fail "$Label at $Path has $($matches.Count) 'version' entries -- expected exactly 1."
     }
     $updated = [regex]::Replace(
         $content,
@@ -162,7 +162,7 @@ function Set-VersionInFile {
         { param($m) $m.Groups[1].Value + '"' + $Version + '"' },
         [System.Text.RegularExpressions.RegexOptions]::Multiline
     )
-    # .NET writes UTF-8 without a BOM — a BOM would corrupt tauri.conf.json.
+    # .NET writes UTF-8 without a BOM -- a BOM would corrupt tauri.conf.json.
     [System.IO.File]::WriteAllText($Path, $updated)
     Write-Host "  $Label -> $Version"
 }
@@ -181,7 +181,7 @@ function Set-VersionInPackageLock {
     $lock = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
     if (-not $lock.PSObject.Properties['packages'] -or
         -not $lock.packages.PSObject.Properties['']) {
-        Fail "package-lock.json at $Path has no packages[\"\"] entry — unsupported lockfile shape."
+        Fail "package-lock.json at $Path has no packages[\"\"] entry -- unsupported lockfile shape."
     }
     $lock.version = $Version
     $lock.packages.''.version = $Version
@@ -195,7 +195,7 @@ Set-VersionInFile -Path $CargoToml -Pattern '(?m)^(version\s*=\s*)"[^"]*"' -Labe
 Set-VersionInFile -Path $PackageJson -Pattern '(?m)^(\s*"version"\s*:\s*)"[^"]*"' -Label 'package.json'
 # package-lock.json carries its own "version" mirroring package.json in TWO
 # places: the top-level key and packages[""].version. npm ci validates
-# package.json against the lockfile — a mismatch aborts the install the
+# package.json against the lockfile -- a mismatch aborts the install the
 # build depends on. It CANNOT go through Set-VersionInFile: the file has
 # ~700 nested "version" keys, so the regex's exactly-one-match guard would
 # abort. Edit the two known spots as parsed JSON instead (key order and
@@ -203,7 +203,7 @@ Set-VersionInFile -Path $PackageJson -Pattern '(?m)^(\s*"version"\s*:\s*)"[^"]*"
 # machine-generated anyway).
 Set-VersionInPackageLock -Path $PackageLock -Version $Version
 
-# Guard against a no-op bump (same version as before) — the commit below
+# Guard against a no-op bump (same version as before) -- the commit below
 # would fail with a confusing "nothing to commit".
 $currentTauriVersion = (Get-Content -LiteralPath $TauriConf -Raw | ConvertFrom-Json).version
 if ($currentTauriVersion -ne $Version) {
@@ -234,10 +234,10 @@ Write-Host "  pushed commit + tag $Tag"
 Write-Step "Building bundles (NSIS + MSI) with updater signing"
 
 if (-not (Test-Path -LiteralPath (Join-Path $Frontend 'node_modules'))) {
-    Write-Host "  node_modules missing — running npm ci first"
+    Write-Host "  node_modules missing -- running npm ci first"
     Push-Location $Frontend
     try { npm ci } finally { Pop-Location }
-    # Native commands don't trip $ErrorActionPreference='Stop' — check the
+    # Native commands don't trip $ErrorActionPreference='Stop' -- check the
     # exit code explicitly or a failed npm ci would fall through to the
     # build with a stale/partial node_modules.
     if ($LASTEXITCODE -ne 0) {
@@ -246,7 +246,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $Frontend 'node_modules'))) {
 }
 
 $env:TAURI_SIGNING_PRIVATE_KEY = $signingKey
-# The key has no passphrase — the empty string is what makes the build
+# The key has no passphrase -- the empty string is what makes the build
 # non-interactive. (An empty value is not the same as unset for the CLI.)
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
 
@@ -280,14 +280,14 @@ Write-Host "  .sig:  $(Split-Path -Leaf $msiSig)"
 # The updater must hand users the SAME installer format they already have:
 # Tauri has no cross-format update path (an NSIS install cannot be updated
 # by an MSI payload). Steve's existing install is the NSIS setup.exe, so
-# latest.json points at the NSIS bundle and its signature — the MSI stays
+# latest.json points at the NSIS bundle and its signature -- the MSI stays
 # in the release as an alternative manual download only, never as the
 # update payload. If the installed base ever switches to MSI, flip this
 # one block (and reinstall from MSI on the affected machines).
 $nsisBundle = Get-ChildItem -Path (Join-Path $BundleRoot 'nsis') -Filter *.exe -ErrorAction SilentlyContinue |
     Select-Object -First 1
 if (-not $nsisBundle) {
-    Fail "no NSIS bundle found under $BundleRoot\nsis — latest.json must point at the same format users install from."
+    Fail "no NSIS bundle found under $BundleRoot\nsis -- latest.json must point at the same format users install from."
 }
 $nsisSig = "$($nsisBundle.FullName).sig"
 if (-not (Test-Path -LiteralPath $nsisSig)) {
@@ -299,7 +299,7 @@ $pubDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 $signature = (Get-Content -LiteralPath $nsisSig -Raw).Trim()
 $nsisUrl = "https://github.com/$RepoSlug/releases/download/$Tag/$($nsisBundle.Name)"
 
-# Same shape as buildLatestJson() in frontend/src/lib/auto-update.ts — the
+# Same shape as buildLatestJson() in frontend/src/lib/auto-update.ts -- the
 # updater expects { version, notes, pub_date, platforms: { "<os>-<arch>":
 # { signature, url } } }. PSCustomObject (not [ordered]@{}) because
 # ConvertTo-Json preserves property order reliably on PowerShell 5.1.
