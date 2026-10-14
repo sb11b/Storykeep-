@@ -94,6 +94,23 @@ function Invoke-Git {
     return ($output | Out-String).Trim()
 }
 
+# Echo a native command's captured output (stdout+stderr merged) line by line.
+# Forces array semantics with @() so a single-line result is not iterated as
+# characters, and stringifies ErrorRecords (native stderr) explicitly -- under
+# Set-StrictMode, PS 5.1's formatter reads .InvocationInfo.Statement on a
+# native ErrorRecord (which is $null) and aborts with "property 'Statement'
+# cannot be found" if such a record reaches the pipeline/formatter directly.
+function Write-NativeOutput {
+    param($Output)
+    foreach ($line in @($Output)) {
+        if ($line -is [System.Management.Automation.ErrorRecord]) {
+            Write-Host $line.ToString()
+        } elseif ($null -ne $line) {
+            Write-Host $line
+        }
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 1. Preflight
 # ---------------------------------------------------------------------------
@@ -281,8 +298,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $Frontend 'node_modules'))) {
     Push-Location $Frontend
     $oldEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    $ciOutput = $null
     try {
-        & npm ci 2>&1 | Out-Host
+        $ciOutput = & npm ci 2>&1
+        Write-NativeOutput $ciOutput
     } finally {
         $ErrorActionPreference = $oldEAP
         Pop-Location
@@ -291,7 +310,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $Frontend 'node_modules'))) {
     # exit code explicitly or a failed npm ci would fall through to the
     # build with a stale/partial node_modules.
     if ($LASTEXITCODE -ne 0) {
-        Fail "npm ci failed (exit $LASTEXITCODE)."
+        Fail "npm ci failed (exit $LASTEXITCODE).`n$($ciOutput | Out-String)"
     }
 }
 
@@ -303,18 +322,24 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
 Push-Location $Frontend
 $oldEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
+$buildOutput = $null
 try {
     # `tauri build` runs beforeBuildCommand (the Next.js static export)
     # and, thanks to createUpdaterArtifacts, signs every bundle and writes
-    # a matching .sig next to each installer. Stream output live (Out-Host);
-    # stderr is normal build chatter, not an error -- $LASTEXITCODE is the signal.
-    & npm run tauri:build 2>&1 | Out-Host
+    # a matching .sig next to each installer.
+    # Capture merged stdout+stderr into a variable, then echo only the
+    # string lines. Piping native stderr straight to Out-Host under
+    # Set-StrictMode makes PS 5.1's error formatter read .InvocationInfo
+    # .Statement on a native ErrorRecord (which is $null) and abort with
+    # "property 'Statement' cannot be found". Writing strings avoids that.
+    $buildOutput = & npm run tauri:build 2>&1
+    Write-NativeOutput $buildOutput
 } finally {
     $ErrorActionPreference = $oldEAP
     Pop-Location
 }
 if ($LASTEXITCODE -ne 0) {
-    Fail "npm run tauri:build failed (exit $LASTEXITCODE)."
+    Fail "npm run tauri:build failed (exit $LASTEXITCODE).`n$($buildOutput | Out-String)"
 }
 
 $BundleRoot = Join-Path $TauriDir 'target\release\bundle'
@@ -387,14 +412,15 @@ $assets = @($msi.FullName, $msiSig, $nsisBundle.FullName, $nsisSig, $latestPath)
 
 $oldEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
+$ghOutput = $null
 try {
-    & gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes 2>&1 |
-        Out-Host
+    $ghOutput = & gh release create $Tag @assets --repo $RepoSlug --title "StoryKeep $Tag" --generate-notes 2>&1
+    Write-NativeOutput $ghOutput
 } finally {
     $ErrorActionPreference = $oldEAP
 }
 if ($LASTEXITCODE -ne 0) {
-    Fail ('gh release create failed. The tag is pushed but the release is not. Fix the error, then re-run just the release step: gh release create TAG ASSETS --repo sb11b/Storykeep- --title StoryKeep TAG --generate-notes (substitute TAG and the asset paths).')
+    Fail ('gh release create failed (exit ' + $LASTEXITCODE + '). The tag is pushed but the release is not. Fix the error, then re-run just the release step: gh release create TAG ASSETS --repo sb11b/Storykeep- --title StoryKeep TAG --generate-notes (substitute TAG and the asset paths).`n' + ($ghOutput | Out-String))
 }
 
 Write-Step "Done - StoryKeep $Tag released"
