@@ -168,8 +168,14 @@ function Set-VersionInFile {
 }
 
 # Bump the two root version mirrors in package-lock.json: the top-level
-# "version" and packages[""].version. Parsed as JSON so the ~700 nested
-# per-package "version" keys are never touched.
+# "version" and packages[""].version. npm lockfileVersion 3 stores an
+# empty-string key packages[""], and Windows PowerShell 5.1 ConvertFrom-Json
+# cannot build a property named "" (it throws "value of argument name is not
+# valid"). So we never round-trip through a PSCustomObject: edit the two known
+# version mirrors as text. Each is the ONLY "version" at its position (the
+# top-level one precedes the packages block; the packages[""] one is the first
+# "version" after the "": { marker), so a scoped single-match replace is exact
+# and never touches the ~700 nested per-package version keys.
 function Set-VersionInPackageLock {
     param(
         [string]$Path,
@@ -178,29 +184,44 @@ function Set-VersionInPackageLock {
     if (-not (Test-Path -LiteralPath $Path)) {
         Fail "package-lock.json not found at $Path"
     }
-    $lock = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-    if (-not $lock.PSObject.Properties['packages'] -or
-        -not $lock.packages.PSObject.Properties['']) {
-        Fail "package-lock.json at $Path has no packages[\"\"] entry -- unsupported lockfile shape."
+    $raw = [System.IO.File]::ReadAllText($Path)
+    $rootMarker = '"packages": {'
+    $rootIdx = $raw.IndexOf($rootMarker)
+    if ($rootIdx -lt 0) {
+        Fail "package-lock.json at $Path has no packages block -- unsupported lockfile shape."
     }
-    $lock.version = $Version
-    $lock.packages.''.version = $Version
-    $json = $lock | ConvertTo-Json -Depth 100
-    [System.IO.File]::WriteAllText($Path, $json)
-    Write-Host "  package-lock.json (root + packages[\"\"]) -> $Version"
+    $emptyKeyIdx = $raw.IndexOf('"": {', $rootIdx)
+    if ($emptyKeyIdx -lt 0) {
+        Fail "package-lock.json at $Path has no packages[""] entry -- unsupported lockfile shape."
+    }
+    # Replace only the FIRST "version" match in a given slice, by index, so the
+    # ~700 nested per-package version keys are never touched. [regex]::Replace
+    # with a count argument does not limit matches in PowerShell, so we match
+    # once and splice by index instead.
+    $versionRe = '(?m)^([ ]*"version"[ ]*:[ ]*)"[^"]*"'
+    # 1) top-level mirror: the first "version" before the packages block.
+    $head = $raw.Substring(0, $rootIdx)
+    $hm = [regex]::Match($head, $versionRe)
+    if (-not $hm.Success) {
+        Fail "package-lock.json at $Path has no top-level version -- unsupported lockfile shape."
+    }
+    $headNew = $head.Substring(0, $hm.Index) + $hm.Groups[1].Value + '"' + $Version + '"' + $head.Substring($hm.Index + $hm.Length)
+    # 2) packages[""] mirror: the first "version" after the "": { marker.
+    $tail = $raw.Substring($emptyKeyIdx)
+    $tm = [regex]::Match($tail, $versionRe)
+    if (-not $tm.Success) {
+        Fail "package-lock.json at $Path has no packages[""] version -- unsupported lockfile shape."
+    }
+    $tailNew = $tail.Substring(0, $tm.Index) + $tm.Groups[1].Value + '"' + $Version + '"' + $tail.Substring($tm.Index + $tm.Length)
+    $middle = $raw.Substring($rootIdx, $emptyKeyIdx - $rootIdx)
+    $newRaw = $headNew + $middle + $tailNew
+    [System.IO.File]::WriteAllText($Path, $newRaw)
+    Write-Host "  package-lock.json (root + packages[""]) -> $Version"
 }
 
 Set-VersionInFile -Path $TauriConf -Pattern '(?m)^(\s*"version"\s*:\s*)"[^"]*"' -Label 'tauri.conf.json'
 Set-VersionInFile -Path $CargoToml -Pattern '(?m)^(version\s*=\s*)"[^"]*"' -Label 'Cargo.toml'
 Set-VersionInFile -Path $PackageJson -Pattern '(?m)^(\s*"version"\s*:\s*)"[^"]*"' -Label 'package.json'
-# package-lock.json carries its own "version" mirroring package.json in TWO
-# places: the top-level key and packages[""].version. npm ci validates
-# package.json against the lockfile -- a mismatch aborts the install the
-# build depends on. It CANNOT go through Set-VersionInFile: the file has
-# ~700 nested "version" keys, so the regex's exactly-one-match guard would
-# abort. Edit the two known spots as parsed JSON instead (key order and
-# formatting preserved by ConvertTo-Json at the same depth; the lockfile is
-# machine-generated anyway).
 Set-VersionInPackageLock -Path $PackageLock -Version $Version
 
 # Guard against a no-op bump (same version as before) -- the commit below
@@ -209,7 +230,12 @@ $currentTauriVersion = (Get-Content -LiteralPath $TauriConf -Raw | ConvertFrom-J
 if ($currentTauriVersion -ne $Version) {
     Fail "tauri.conf.json did not take the new version (still $currentTauriVersion)."
 }
-$currentLockVersion = (Get-Content -LiteralPath $PackageLock -Raw | ConvertFrom-Json).version
+# Read the lockfile version as text (ConvertFrom-Json would throw on the
+# empty-string key under PS 5.1). The first "version" in the file is the
+# top-level mirror we just wrote.
+$lockText = [System.IO.File]::ReadAllText($PackageLock)
+$lockMatch = [regex]::Match($lockText, '(?m)^[ ]*"version"[ ]*:[ ]*"([^"]*)"')
+$currentLockVersion = $lockMatch.Groups[1].Value
 if ($currentLockVersion -ne $Version) {
     Fail "package-lock.json did not take the new version (still $currentLockVersion)."
 }
