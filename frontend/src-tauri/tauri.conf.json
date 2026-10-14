@@ -53,7 +53,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWTsIXLvKyreM5Y+rGbclpUmePLMQ3qR0q5Bsz5gqUi1hYMPO+Mh89Nq",
+      "pubkey": "RWTkKpcRht3hp83OIuWZYaco3wruSINcDnx4G4Wcn0v9ocDjfccFvuZz",
       "endpoints": [
         "https://github.com/sb11b/Storykeep-/releases/latest/download/latest.json"
       ],
